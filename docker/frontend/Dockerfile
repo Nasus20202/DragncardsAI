@@ -2,7 +2,9 @@
 # Clones the upstream repo and installs dependencies at build time
 # for faster container startup. Runs the React dev server.
 
-FROM node:20 AS frontend
+FROM node:24.14-alpine AS frontend
+
+RUN apk add --no-cache git
 
 WORKDIR /app
 

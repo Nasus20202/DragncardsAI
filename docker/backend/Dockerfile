@@ -1,12 +1,9 @@
 # DragnCards Backend
-# Clones the upstream repo, applies source patches at build time,
-# then runs in dev mode (mix phx.server).
+# Clones the upstream repo at build time, then runs in dev mode (mix phx.server).
 
-FROM elixir:1.14.4-slim AS backend
+FROM elixir:1.14.5-otp-25-alpine AS backend
 
-RUN apt-get update && \
-    apt-get install -y git inotify-tools patch && \
-    rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache git inotify-tools build-base
 
 WORKDIR /app
 
@@ -19,7 +16,7 @@ RUN git clone --depth 1 https://github.com/seastan/dragncards.git /tmp/dragncard
 # Install hex and rebar
 RUN mix local.hex --force && mix local.rebar --force
 
-# Copy static files
+# Copy static config and seed files
 COPY /backend/files/ /app
 
 # Fetch and compile dependencies

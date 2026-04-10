@@ -6,21 +6,22 @@ build-backend = "hatchling.build"
 name = "game-service"
 version = "0.1.0"
 description = "DragnCards Game Service — HTTP API and MCP server for programmatic game interaction"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "websockets>=13",
+    "uvicorn[standard]>=0.34",
+    "websockets>=14",
     "httpx>=0.28",
     "pydantic>=2.10",
-    "mcp>=1.0",
+    "mcp>=1.6",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8",
-    "pytest-asyncio>=0.24",
-    "anyio[trio]",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "anyio[trio]>=4.7",
+    "httpx>=0.28",
 ]
 
 [project.scripts]
@@ -32,3 +33,4 @@ packages = ["src/game_service"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["src"]
