@@ -1,20 +1,107 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  ## Project: DragnCardsAI
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  An LLM-powered bot that plays card games on the DragnCards platform.
+  The first target game is Marvel Champions (a cooperative card game).
+
+  ## Goal
+
+  Build an AI agent that can observe and act within a DragnCards game,
+  starting with solo Marvel Champions. The system is designed to eventually
+  support full game play: hero selection, deck loading, turn-by-turn decisions.
+
+  ## Architecture
+
+  ```
+  LLM Client (MCP)
+       │
+       ▼
+  Game Service  ──HTTP──▶  (scripts / tests / future UI)
+  (Python)
+       │
+       ▼ Phoenix Channels (WebSocket)
+  DragnCards Backend (Elixir/Phoenix)
+       │
+       ▼
+  PostgreSQL
+  ```
+
+  ## Components
+
+  - **game-service** (`services/game-service/`): Python service (FastAPI + MCP SDK).
+    Connects to DragnCards via Phoenix Channels WebSocket. Exposes:
+    - HTTP REST API: session lifecycle, state queries, action execution
+    - MCP tools/resources: same capabilities for LLM clients
+    Both interfaces share a single `SessionManager` and WebSocket session pool.
+  - **DragnCards backend** (`docker/backend/`): Upstream Elixir/Phoenix app.
+    Manages all game state, DragnLang automation, phase/round logic.
+    Runs in Docker. We never modify it.
+  - **Marvel Champions plugin** (`docker/mc-plugin/`): Built as a multi-stage
+    Docker image. Produces TSV + JSON artifacts mounted into the backend.
+  - **Docker Compose** (`docker/docker-compose.yml`): Orchestrates postgres,
+    mc-plugin (build only), backend, frontend, and game-service.
+
+  ## Tech Stack
+
+  - Python 3.13+, FastAPI, MCP SDK (Python), websockets, httpx, pydantic
+  - Elixir/Phoenix (upstream, Docker only — not modified)
+  - PostgreSQL 18 (Docker)
+  - pytest + pytest-asyncio, httpx ASGI transport for integration tests
+  - Docker Compose for local development
+
+  ## Key Protocols
+
+  - **Phoenix Channels wire format**: `[join_ref, ref, topic, event, payload]`
+  - **Auth**: POST /api/v1/session → bearer token; passed as `authToken` query param on WebSocket URL
+  - **Room channel**: topic `room:<slug>`; join triggers `current_state` broadcast
+  - **Game actions**: push `game_action` with DragnLang payload `{"action": [...], "options": {"description": "..."}, "timestamp": <ms>}`
+  - **State events**: `current_state` (full), `state_update` (delta, marks state stale), `send_update` (legacy alias)
+  - **State request**: push `request_state` → server broadcasts `current_state`
+
+  ## DragnLang Actions (known)
+
+  - `["NEXT_STEP"]` / `["PREV_STEP"]` — advance/rewind game phase
+  - `["DRAW_CARD", player_n, count]` — draw cards
+  - `["MOVE_CARD", card_id, dest_group_id, dest_stack_index, (dest_card_index)]`
+  - `["SET", "/cardById/<id>/<path>", value]` — set card property
+
+  ## Existing Specs
+
+  - `openspec/specs/game-service/spec.md` — HTTP API, MCP, WebSocket, session mgmt, plugins, dual interface
+  - `openspec/specs/dragncards/spec.md` — Integration contract with DragnCards (auth, room creation, channels, actions)
+  - `openspec/specs/testing/spec.md` — Test suite requirements (unit isolation, integration layers, e2e)
+
+  ## Conventions
+
+  - New capabilities use kebab-case folder names under `openspec/specs/`
+  - Integration tests require a running DragnCards instance; unit tests run offline
+  - Tests use `pytest-asyncio`; endpoints touching WebSocket use `httpx.AsyncClient` with ASGI transport
+  - Session teardown in `finally` blocks — never leak sessions between tests
+  - Environment variables for test config: DRAGNCARDS_HTTP_URL, DRAGNCARDS_WS_URL, DEV_USER_EMAIL, DEV_USER_PASSWORD, MC_PLUGIN_ID, MC_PLUGIN_VERSION
+
+rules:
+  proposal:
+    - Keep proposals concise (1-2 pages). The "why" matters more than the "how".
+    - Always include a Non-goals section to prevent scope creep.
+    - List only capabilities that have spec-level requirement changes — not implementation details.
+    - Check openspec/specs/ before naming new capabilities to avoid duplicates.
+
+  specs:
+    - Use SHALL/MUST for all normative requirements. Never use "should" or "may".
+    - Every requirement MUST have at least one concrete WHEN/THEN scenario.
+    - Scenarios must use exactly 4 hashtags (####). Never use 3 hashtags or bullets for scenarios.
+    - Specs should be testable — each scenario is a potential test case.
+    - When adding requirements for the game-service, check the existing spec first to avoid duplication.
+
+  design:
+    - Focus on architecture and key decisions, not line-by-line implementation.
+    - Every decision MUST include alternatives considered and the reason they were rejected.
+    - Explicitly call out risks that relate to the DragnCards WebSocket protocol or upstream behavior we don't control.
+
+  tasks:
+    - "Every task MUST use checkbox format: `- [ ] X.Y description`"
+    - Tasks that touch the WebSocket/Phoenix layer should be separate from HTTP API tasks.
+    - Include integration test tasks alongside the features they test (not as a separate phase at the end).
+    - Keep tasks small — completable in a single focused session.
