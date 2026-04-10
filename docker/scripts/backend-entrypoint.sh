@@ -1,13 +1,6 @@
 #!/bin/bash
 set -e
 
-echo "==> Installing Hex and Rebar..."
-mix local.hex --force
-mix local.rebar --force
-
-echo "==> Fetching dependencies..."
-mix deps.get
-
 echo "==> Setting up database..."
 mix ecto.setup
 

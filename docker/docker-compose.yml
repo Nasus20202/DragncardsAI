@@ -1,19 +1,22 @@
 # DragnCardsAI Docker Compose
 #
 # Services:
-#   postgres  - PostgreSQL database for DragnCards
-#   mc-plugin - Builds Marvel Champions plugin (TSV + JSON artifacts)
-#   backend   - DragnCards Elixir/Phoenix backend (seeds user + plugin on first run)
-#   frontend  - DragnCards React frontend (dev server)
+#   postgres      - PostgreSQL database for DragnCards
+#   mc-plugin     - Builds Marvel Champions plugin (TSV + JSON artifacts)
+#   backend       - DragnCards Elixir/Phoenix backend (seeds user + plugin on first run)
+#   frontend      - DragnCards React frontend (dev server)
+#   game-service  - Python HTTP API + MCP server for LLM game interaction
 #
 # Usage:
 #   docker compose build
 #   docker compose up -d
 #
 # Access:
-#   Frontend: http://localhost:3000
-#   Backend:  http://localhost:4000 (WebSocket at ws://localhost:4000/socket)
-#   Login:    dev_user@example.com / password
+#   Frontend:     http://localhost:3000
+#   Backend:      http://localhost:4000 (WebSocket at ws://localhost:4000/socket)
+#   Mailbox:      http://localhost:4000/dev/mailbox (dev email viewer)
+#   Game Service: http://localhost:8000 (HTTP API)
+#   Login:        dev_user@example.com / password
 
 services:
   postgres:
@@ -56,7 +59,6 @@ services:
       - "4000:4000"
     volumes:
       - mc-plugin-data:/plugin:ro
-      - ./scripts/seed_plugin.exs:/app/priv/seed_plugin.exs:ro
     environment:
       DB_HOSTNAME: postgres
 
@@ -70,6 +72,22 @@ services:
       - "3000:3000"
     environment:
       REACT_APP_BE_HOSTNAME: backend
+
+  game-service:
+    build:
+      context: ..
+      dockerfile: docker/game-service/Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "8000:8000"
+    environment:
+      DRAGNCARDS_HTTP_URL: http://backend:4000
+      DRAGNCARDS_WS_URL: ws://backend:4000/socket
+      BOT_EMAIL: dev_user@example.com
+      BOT_PASSWORD: password
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: "8000"
 
 volumes:
   pgdata:
