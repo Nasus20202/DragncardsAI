@@ -27,6 +27,7 @@ import logging
 from typing import Any
 
 from mcp.server import Server
+from mcp.server.lowlevel.server import ReadResourceContents
 from mcp.types import (
     CallToolResult,
     EmbeddedResource,
@@ -231,23 +232,17 @@ def create_mcp_server(session_manager: SessionManager) -> Server:
         ]
 
     @server.read_resource()
-    async def read_resource(uri: str) -> ReadResourceResult:
+    async def read_resource(uri) -> list[ReadResourceContents]:
         # Parse game://{session_id}/state
-        if not uri.startswith("game://") or not uri.endswith("/state"):
-            raise ValueError(f"Unknown resource URI: {uri}")
-        session_id = uri[len("game://") : -len("/state")]
+        # The MCP library may pass uri as an AnyUrl object; coerce to str for parsing.
+        uri_str = str(uri)
+        if not uri_str.startswith("game://") or not uri_str.endswith("/state"):
+            raise ValueError(f"Unknown resource URI: {uri_str}")
+        session_id = uri_str[len("game://") : -len("/state")]
         session = await session_manager.get_session(session_id)
         state = await session.get_state()
         content = json.dumps(state, indent=2) if state is not None else "null"
-        return ReadResourceResult(
-            contents=[
-                TextResourceContents(
-                    uri=uri,
-                    mimeType="application/json",
-                    text=content,
-                )
-            ]
-        )
+        return [ReadResourceContents(content=content, mime_type="application/json")]
 
     return server
 
