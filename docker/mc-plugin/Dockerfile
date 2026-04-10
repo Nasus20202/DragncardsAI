@@ -1,0 +1,21 @@
+# Stage 1: Build the MC plugin (Rust CLI that generates TSV + JSON)
+FROM rust:1.82-slim-bookworm AS builder
+
+RUN apt-get update && apt-get install -y git pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+RUN git clone --depth 1 https://github.com/hone/dragncards-mc-plugin.git .
+
+RUN cargo build --release
+
+# Generate card database (TSV) and deck files (JSON) using offline fixtures
+RUN cargo run --release -- database --offline --output /build/marvelcdb.tsv
+RUN cargo run --release -- decks --offline
+
+# Stage 2: Collect just the plugin artifacts
+FROM alpine:3.20 AS artifacts
+
+COPY --from=builder /build/marvelcdb.tsv /plugin/tsv/marvelcdb.tsv
+COPY --from=builder /build/json/ /plugin/json/
+
+# This image is used as a source for COPY --from in other Dockerfiles

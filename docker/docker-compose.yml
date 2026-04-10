@@ -1,0 +1,76 @@
+# DragnCardsAI Docker Compose
+#
+# Services:
+#   postgres  - PostgreSQL database for DragnCards
+#   mc-plugin - Builds Marvel Champions plugin (TSV + JSON artifacts)
+#   backend   - DragnCards Elixir/Phoenix backend (seeds user + plugin on first run)
+#   frontend  - DragnCards React frontend (dev server)
+#
+# Usage:
+#   docker compose build
+#   docker compose up -d
+#
+# Access:
+#   Frontend: http://localhost:3000
+#   Backend:  http://localhost:4000 (WebSocket at ws://localhost:4000/socket)
+#   Login:    dev_user@example.com / password
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mc-plugin:
+    build:
+      context: .
+      dockerfile: mc-plugin/Dockerfile
+    # This service just builds plugin artifacts and exits.
+    # The artifacts are stored in a named volume for the backend to use.
+    volumes:
+      - mc-plugin-data:/output
+    entrypoint: >
+      sh -c "cp -r /plugin/json /output/json && cp -r /plugin/tsv /output/tsv && echo 'Plugin artifacts copied to volume' && ls -la /output/json/ /output/tsv/"
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mc-plugin:
+        condition: service_completed_successfully
+    ports:
+      - "4000:4000"
+    volumes:
+      - mc-plugin-data:/plugin:ro
+      - ./scripts/seed_plugin.exs:/app/priv/seed_plugin.exs:ro
+    environment:
+      DB_HOSTNAME: postgres
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_BE_HOSTNAME: backend
+
+volumes:
+  pgdata:
+  mc-plugin-data:
