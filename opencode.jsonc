@@ -1,37 +1,10 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    // DragnCards Game Service — MCP tools for creating/managing Marvel Champions
-    // game sessions and executing game actions via the DragnCards backend.
-    //
-    // Requires the full stack to be running:
-    //   cd docker && docker compose up -d
-    //
-    // Tools exposed:
-    //   create_game       — create a new game session
-    //   list_games        — list active sessions
-    //   get_game_state    — return current state formatted for LLM consumption
-    //   execute_action    — execute a game action, return new state
-    //   delete_game       — end a session
-    //
-    // Resource:
-    //   game://{session_id}/state
     "game-service": {
-      "type": "local",
-      "command": [
-        "docker",
-        "compose",
-        "--project-directory",
-        "docker",
-        "run",
-        "--rm",
-        "-T",
-        "--no-deps",
-        "game-service",
-        "game-service",
-        "mcp"
-      ],
-      "enabled": true
-    }
-  }
+      "type": "remote",
+      "url": "http://localhost:8000/mcp/",
+      "enabled": true,
+    },
+  },
 }

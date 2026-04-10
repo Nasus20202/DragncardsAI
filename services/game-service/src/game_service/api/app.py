@@ -12,15 +12,18 @@ Endpoints:
   GET  /games/{id}/state
   POST /games/{id}/actions
   DELETE /games/{id}
+  *    /mcp   (MCP streamable-HTTP transport)
 """
 
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from game_service.api.models import (
     ActionRequest,
@@ -33,6 +36,7 @@ from game_service.api.models import (
     ListGamesResponse,
     SessionMetadata,
 )
+from game_service.mcp.server import create_mcp_server
 from game_service.session.manager import (
     SessionError,
     SessionManager,
@@ -53,11 +57,32 @@ def create_app(session_manager: SessionManager | None = None) -> FastAPI:
 
     Pass a SessionManager instance to inject it (useful for tests).
     In production, the manager is set on app.state after creation.
+
+    The MCP server is mounted at /mcp using the streamable-HTTP transport,
+    sharing the same SessionManager as the REST API.
     """
+    # Build MCP session manager upfront so it can be referenced in lifespan
+    mcp_http_manager: StreamableHTTPSessionManager | None = None
+    if session_manager is not None:
+        mcp_server = create_mcp_server(session_manager)
+        mcp_http_manager = StreamableHTTPSessionManager(
+            app=mcp_server,
+            stateless=True,
+        )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if mcp_http_manager is not None:
+            async with mcp_http_manager.run():
+                yield
+        else:
+            yield
+
     app = FastAPI(
         title="DragnCards Game Service",
         version="0.1.0",
-        description="HTTP REST API for programmatic interaction with DragnCards games.",
+        description="HTTP REST API and MCP server for programmatic interaction with DragnCards games.",
+        lifespan=lifespan,
     )
 
     # CORS — allow all origins for development; restrict in production
@@ -71,6 +96,17 @@ def create_app(session_manager: SessionManager | None = None) -> FastAPI:
     # Inject session manager if provided
     if session_manager is not None:
         app.state.session_manager = session_manager
+
+    # Mount MCP streamable-HTTP transport at /mcp.
+    # Wrap handle_request in a minimal ASGI app class because app.mount()
+    # requires an object with __call__, not a bare coroutine function.
+    if mcp_http_manager is not None:
+
+        class _MCPApp:
+            async def __call__(self, scope, receive, send):
+                await mcp_http_manager.handle_request(scope, receive, send)
+
+        app.mount("/mcp", _MCPApp())
 
     # ------------------------------------------------------------------
     # Exception handlers
