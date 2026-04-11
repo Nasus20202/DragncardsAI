@@ -35,13 +35,17 @@ context: |
     - HTTP REST API: session lifecycle, state queries, action execution
     - MCP tools/resources: same capabilities for LLM clients
     Both interfaces share a single `SessionManager` and WebSocket session pool.
-  - **DragnCards backend** (`docker/backend/`): Upstream Elixir/Phoenix app.
-    Manages all game state, DragnLang automation, phase/round logic.
+  - **DragnCards backend** (`external/dragncards/backend/`): Upstream Elixir/Phoenix app,
+    tracked as a git submodule. Manages all game state, DragnLang automation, phase/round logic.
     Runs in Docker. We never modify it.
-  - **Marvel Champions plugin** (`docker/mc-plugin/`): Built as a multi-stage
-    Docker image. Produces TSV + JSON artifacts mounted into the backend.
-  - **Docker Compose** (`docker/docker-compose.yml`): Orchestrates postgres,
-    mc-plugin (build only), backend, frontend, and game-service.
+  - **Marvel Champions plugin** (`external/dragncards-mc-plugin/`): Upstream Rust CLI,
+    tracked as a git submodule. Built as a multi-stage Docker image. Produces TSV + JSON
+    artifacts mounted into the backend.
+  - **External Docker config** (`external/docker/`): Dockerfiles and compose file for
+    DragnCards backend, frontend, and mc-plugin.
+  - **Docker Compose** (`docker-compose.yml` at repo root): Orchestrates all services via
+    `include: external/docker/docker-compose.yml` (postgres, mc-plugin, backend, frontend)
+    plus game-service defined inline.
 
   ## Tech Stack
 
@@ -72,6 +76,7 @@ context: |
   - `openspec/specs/game-service/spec.md` — HTTP API, MCP, WebSocket, session mgmt, plugins, dual interface
   - `openspec/specs/dragncards/spec.md` — Integration contract with DragnCards (auth, room creation, channels, actions)
   - `openspec/specs/testing/spec.md` — Test suite requirements (unit isolation, integration layers, e2e)
+  - `openspec/specs/infrastructure/spec.md` — Docker Compose layout, git submodules, build configuration
 
   ## Conventions
 

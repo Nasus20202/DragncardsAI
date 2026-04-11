@@ -1,0 +1,57 @@
+services:
+  dragncards-postgres:
+    image: postgres:18.3-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - dragncards-postgres-data:/var/lib/postgresql/18/docker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  dragncards-mc-plugin:
+    build:
+      context: ../..
+      dockerfile: external/docker/mc-plugin/Dockerfile
+    # Builds plugin artifacts and exits; artifacts stored in a named volume.
+    volumes:
+      - dragncards-mc-plugin-data:/output
+    entrypoint: >
+      sh -c "cp -r /plugin/json /output/json && cp -r /plugin/tsv /output/tsv && echo 'Plugin artifacts copied to volume' && ls -la /output/json/ /output/tsv/"
+
+  dragncards-backend:
+    build:
+      context: ../..
+      dockerfile: external/docker/backend/Dockerfile
+    depends_on:
+      dragncards-postgres:
+        condition: service_healthy
+      dragncards-mc-plugin:
+        condition: service_completed_successfully
+    ports:
+      - "4000:4000"
+    volumes:
+      - dragncards-mc-plugin-data:/plugin:ro
+    environment:
+      DB_HOSTNAME: dragncards-postgres
+
+  dragncards-frontend:
+    build:
+      context: ../..
+      dockerfile: external/docker/frontend/Dockerfile
+    depends_on:
+      - dragncards-backend
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_BE_HOSTNAME: dragncards-backend
+
+volumes:
+  dragncards-postgres-data:
+  dragncards-mc-plugin-data:

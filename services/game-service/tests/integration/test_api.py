@@ -18,6 +18,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+pytestmark = pytest.mark.live
+
 from game_service.api.app import create_app
 from game_service.session.manager import SessionManager
 

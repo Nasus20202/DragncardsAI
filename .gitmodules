@@ -1,0 +1,6 @@
+[submodule "external/dragncards"]
+	path = external/dragncards
+	url = https://github.com/seastan/dragncards.git
+[submodule "external/dragncards-mc-plugin"]
+	path = external/dragncards-mc-plugin
+	url = https://github.com/hone/dragncards-mc-plugin.git

@@ -14,6 +14,8 @@ import os
 import httpx
 import pytest
 
+pytestmark = pytest.mark.live
+
 from game_service.phoenix_client.client import PhoenixClient, PhoenixChannelError
 
 DRAGNCARDS_URL = os.environ.get("DRAGNCARDS_WS_URL", "ws://localhost:4000/socket")

@@ -17,9 +17,12 @@ import os
 
 import httpx
 import pytest
+from fastmcp import Client
+
+pytestmark = pytest.mark.live
 
 from game_service.api.app import create_app
-from game_service.mcp.server import _dispatch_tool
+from game_service.mcp.server import create_mcp_server
 from game_service.session.manager import SessionManager
 
 DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:4000")
@@ -50,6 +53,11 @@ def manager():
 @pytest.fixture
 def app(manager):
     return create_app(session_manager=manager)
+
+
+@pytest.fixture
+def mcp(manager, app):
+    return create_mcp_server(session_manager=manager, fastapi_app=app)
 
 
 # ---------------------------------------------------------------------------
@@ -110,59 +118,65 @@ async def test_e2e_http_game_lifecycle(app, manager):
 
 
 @pytest.mark.asyncio
-async def test_e2e_mcp_game_lifecycle(manager):
+async def test_e2e_mcp_game_lifecycle(mcp):
     """
-    Full lifecycle via MCP tool dispatch:
+    Full lifecycle via MCP tool calls using fastmcp.Client:
       1. create_game
       2. get_game_state
       3. execute_action (next_step)
       4. delete_game
     """
-    # 1. Create
-    results = await _dispatch_tool(
-        "create_game", {"plugin_name": "marvel-champions"}, manager
-    )
-    assert results
-    text = results[0].text
-    assert "session_id" in text
-    # Parse session_id from the JSON embedded in the response
-    meta = json.loads(text.split("\n", 1)[1])  # skip "Game session created:\n"
-    session_id = meta["session_id"]
-
-    try:
-        # 2. Get state
-        state_results = await _dispatch_tool(
-            "get_game_state", {"session_id": session_id}, manager
+    async with Client(mcp) as client:
+        # 1. Create
+        result = await client.call_tool(
+            "create_game", {"plugin_name": "marvel-champions"}
         )
-        state_text = state_results[0].text
-        assert session_id in state_text
-        assert "game" in state_text.lower()
+        text = result.content[0].text
+        assert "session_id" in text
+        data = json.loads(text)
+        session_id = data["session"]["session_id"]
 
-        # 3. Execute next_step
-        action_results = await _dispatch_tool(
-            "execute_action",
-            {"session_id": session_id, "action": {"type": "next_step"}},
-            manager,
-        )
-        assert action_results
-        assert "Action executed" in action_results[0].text
+        try:
+            # 2. Get state
+            state_result = await client.call_tool(
+                "get_game_state", {"session_id": session_id}
+            )
+            state_data = json.loads(state_result.content[0].text)
+            assert state_data["session_id"] == session_id
+            assert "game" in state_data["state"]
 
-        # 4. List games — session should appear
-        list_results = await _dispatch_tool("list_games", {}, manager)
-        assert session_id in list_results[0].text
+            # 3. Execute next_step
+            action_result = await client.call_tool(
+                "execute_action",
+                {"session_id": session_id, "action": {"type": "next_step"}},
+            )
+            action_data = json.loads(action_result.content[0].text)
+            assert action_data["session_id"] == session_id
+            assert "game" in action_data["state"]
 
-    finally:
-        # 5. Delete
-        del_results = await _dispatch_tool(
-            "delete_game", {"session_id": session_id}, manager
-        )
-        assert "deleted" in del_results[0].text.lower()
+            # 4. List games — session should appear
+            list_result = await client.call_tool("list_games", {})
+            list_data = json.loads(list_result.content[0].text)
+            session_ids = [s["session_id"] for s in list_data["sessions"]]
+            assert session_id in session_ids
 
-    # Session should be gone — _dispatch_tool returns error text (doesn't raise)
-    gone_results = await _dispatch_tool(
-        "get_game_state", {"session_id": session_id}, manager
-    )
-    assert "not found" in gone_results[0].text.lower()
+        finally:
+            # 5. Delete
+            del_result = await client.call_tool(
+                "delete_game", {"session_id": session_id}
+            )
+            del_data = json.loads(del_result.content[0].text)
+            assert del_data["session_id"] == session_id
+
+        # Session should be gone — tool call should raise or return 404 detail
+        try:
+            gone_result = await client.call_tool(
+                "get_game_state", {"session_id": session_id}
+            )
+            gone_text = gone_result.content[0].text
+            assert "not found" in gone_text.lower()
+        except Exception as exc:
+            assert "not found" in str(exc).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -171,52 +185,55 @@ async def test_e2e_mcp_game_lifecycle(manager):
 
 
 @pytest.mark.asyncio
-async def test_e2e_concurrent_http_and_mcp(app, manager):
+async def test_e2e_concurrent_http_and_mcp(app, mcp, manager):
     """
     Both HTTP and MCP interfaces can concurrently read the same session state
     and both return consistent results.
     """
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        # Create session via HTTP
-        create_resp = await client.post(
-            "/games", json={"plugin_name": "marvel-champions"}
-        )
-        assert create_resp.status_code == 201
-        session_id = create_resp.json()["session"]["session_id"]
+    ) as http_client:
+        async with Client(mcp) as mcp_client:
+            # Create session via HTTP
+            create_resp = await http_client.post(
+                "/games", json={"plugin_name": "marvel-champions"}
+            )
+            assert create_resp.status_code == 201
+            session_id = create_resp.json()["session"]["session_id"]
 
-        try:
-            # Concurrently query state via HTTP and MCP
-            async def http_query():
-                resp = await client.get(f"/games/{session_id}/state")
-                return resp.json()["state"]
+            try:
+                # Concurrently query state via HTTP and MCP
+                async def http_query():
+                    resp = await http_client.get(f"/games/{session_id}/state")
+                    return resp.json()["state"]
 
-            async def mcp_query():
-                results = await _dispatch_tool(
-                    "get_game_state", {"session_id": session_id}, manager
+                async def mcp_query():
+                    results = await mcp_client.call_tool(
+                        "get_game_state", {"session_id": session_id}
+                    )
+                    return json.loads(results.content[0].text)["state"]
+
+                http_state, mcp_state = await asyncio.gather(http_query(), mcp_query())
+
+                # Both should return valid state
+                assert http_state is not None
+                assert "game" in http_state
+                assert mcp_state is not None
+                assert "game" in mcp_state
+
+                # Execute an action via HTTP, then verify MCP sees updated state
+                action_resp = await http_client.post(
+                    f"/games/{session_id}/actions",
+                    json={"type": "next_step"},
                 )
-                return results[0].text
+                assert action_resp.status_code == 200
 
-            http_state, mcp_text = await asyncio.gather(http_query(), mcp_query())
+                # MCP should see updated state
+                mcp_after = await mcp_client.call_tool(
+                    "get_game_state", {"session_id": session_id}
+                )
+                after_state = json.loads(mcp_after.content[0].text)["state"]
+                assert "game" in after_state
 
-            # Both should return valid state
-            assert http_state is not None
-            assert "game" in http_state
-            assert session_id in mcp_text
-
-            # Execute an action via HTTP, then verify MCP sees updated state
-            action_resp = await client.post(
-                f"/games/{session_id}/actions",
-                json={"type": "next_step"},
-            )
-            assert action_resp.status_code == 200
-
-            # MCP should see updated state
-            mcp_after = await _dispatch_tool(
-                "get_game_state", {"session_id": session_id}, manager
-            )
-            assert "game" in mcp_after[0].text.lower()
-
-        finally:
-            await manager.delete_session(session_id)
+            finally:
+                await manager.delete_session(session_id)

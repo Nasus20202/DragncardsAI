@@ -1,10 +1,12 @@
 # Stage 1: Build the MC plugin (Rust CLI that generates TSV + JSON)
 FROM rust:1.86-alpine AS builder
 
-RUN apk add --no-cache git pkgconf openssl-dev openssl-libs-static musl-dev
+RUN apk add --no-cache pkgconf openssl-dev openssl-libs-static musl-dev
 
 WORKDIR /build
-RUN git clone --depth 1 https://github.com/hone/dragncards-mc-plugin.git .
+
+# Copy source from submodule
+COPY external/dragncards-mc-plugin/ .
 
 RUN cargo build --release
 

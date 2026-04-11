@@ -1,13 +1,15 @@
 """
-Game session management.
+Session pool manager.
 
-A GameSession represents a single DragnCards game room with:
-- A persistent WebSocket connection (PhoenixClient + Channel)
-- Cached latest game state (updated on broadcasts)
-- Metadata: session ID, plugin name, creation time, room slug
+SessionManager maintains a pool of active GameSession objects and is shared
+by both the HTTP API and the MCP server. All public methods are async and safe
+to call from concurrent request handlers.
 
-SessionManager maintains a pool of active sessions, shared by both
-the HTTP API and MCP server.
+Configuration is injected at construction time:
+  - dragncards_http_url: e.g. "http://localhost:4000"
+  - dragncards_ws_url:   e.g. "ws://localhost:4000/socket"
+  - email / password:    credentials for the bot user account
+  - plugin_registry:     dict mapping plugin name -> {id, version, name}
 """
 
 from __future__ import annotations
@@ -15,188 +17,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
 
-import httpx
+from game_service.phoenix_client.client import PhoenixClient
+from game_service.session.exceptions import SessionError, SessionNotFoundError
+from game_service.session.game_session import GameSession
+from game_service.session.http_client import create_room, get_auth_token, get_user_id
 
-from game_service.phoenix_client.client import (
-    Channel,
-    PhoenixClient,
-    PhoenixChannelError,
-    PhxMessage,
+# Re-export the full exception hierarchy and GameSession so existing callers
+# importing from game_service.session.manager continue to work without changes.
+from game_service.session.exceptions import (  # noqa: F401
+    BadGameStateError,
+    SessionError,
+    SessionNotFoundError,
+    StateUnavailableError,
 )
-from game_service.session.actions import GameAction, translate_action
+from game_service.session.game_session import GameSession  # noqa: F401
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# DragnCards HTTP helpers
-# ---------------------------------------------------------------------------
-
-
-async def _get_auth_token(http_url: str, email: str, password: str) -> str:
-    """Authenticate with DragnCards and return a Pow session token."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{http_url}/api/v1/session",
-            json={"user": {"email": email, "password": password}},
-            timeout=10.0,
-        )
-        resp.raise_for_status()
-        return resp.json()["data"]["token"]
-
-
-async def _create_room(
-    http_url: str,
-    auth_token: str,
-    user_id: int,
-    plugin_id: int,
-    plugin_version: int,
-    plugin_name: str,
-) -> dict:
-    """Create a DragnCards game room and return the room dict."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{http_url}/api/v1/games",
-            headers={"authorization": auth_token},
-            json={
-                "room": {"user": user_id, "privacy_type": "public"},
-                "game_options": {
-                    "plugin_id": plugin_id,
-                    "plugin_version": plugin_version,
-                    "plugin_name": plugin_name,
-                    "replay_uuid": None,
-                    "external_data": None,
-                    "ringsdb_info": None,
-                },
-            },
-            timeout=15.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["success"]["room"]
-
-
-async def _get_user_id(http_url: str, auth_token: str) -> int:
-    """Return the numeric user ID for the authenticated user."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{http_url}/api/v1/profile",
-            headers={"authorization": auth_token},
-            timeout=10.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        # Profile endpoint returns {"user_profile": {...}} not {"data": {...}}
-        if "user_profile" in data:
-            return data["user_profile"]["id"]
-        return data["data"]["id"]
-
-
-# ---------------------------------------------------------------------------
-# Session data class
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class GameSession:
-    """Represents a single active game session."""
-
-    session_id: str
-    plugin_name: str
-    plugin_id: int
-    room_slug: str
-    created_at: datetime
-    client: PhoenixClient
-    channel: Channel
-    _state: Any = field(default=None, init=False)
-    _state_stale: bool = field(default=False, init=False)
-    _state_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
-
-    def __post_init__(self):
-        # Subscribe to state broadcasts and cache them
-        self.channel.on("current_state", self._on_full_state)
-        # state_update carries a delta; we mark state as dirty to re-fetch on next read
-        self.channel.on("state_update", self._on_delta)
-
-    def _on_full_state(self, payload: Any) -> None:
-        self._state = payload
-
-    def _on_delta(self, payload: Any) -> None:
-        # Mark state as stale so the next get_state() fetches fresh data.
-        # We don't attempt to apply deltas client-side — DragnCards delta format
-        # is complex and not officially documented.
-        self._state_stale = True
-
-    async def execute_action(self, action: GameAction, timeout: float = 15.0) -> Any:
-        """
-        Translate and execute a game action, then return the resulting state.
-
-        Sends a "game_action" message on the channel, waits for the state_update
-        delta broadcast, requests the full state via request_state, and returns it.
-        Raises SessionError if the action is rejected or times out.
-        """
-        payload = translate_action(action)
-        try:
-            # Push action; DragnCards acknowledges immediately then broadcasts state_update
-            await self.channel.push("game_action", payload, timeout=timeout)
-            # Wait for the state_update delta (signals the action was applied)
-            await self.channel.wait_for_event(
-                "state_update", "current_state", timeout=timeout
-            )
-            # Request the full current state
-            await self.channel.push("request_state", {}, timeout=timeout)
-            # Wait for the resulting current_state broadcast
-            new_state = await self.channel.wait_for_state_update(timeout=timeout)
-            async with self._state_lock:
-                self._state = new_state
-                self._state_stale = False
-            return new_state
-        except PhoenixChannelError as exc:
-            raise SessionError(f"Action rejected by DragnCards: {exc}") from exc
-        except asyncio.TimeoutError as exc:
-            raise SessionError(
-                "Timed out waiting for state update after action"
-            ) from exc
-
-    async def get_state(self) -> Any:
-        """Return the latest cached game state, re-fetching if stale or absent."""
-        async with self._state_lock:
-            if self._state is None or self._state_stale:
-                try:
-                    await self.channel.push("request_state", {}, timeout=10.0)
-                    # Wait for the current_state broadcast
-                    self._state = await self.channel.wait_for_state_update(timeout=10.0)
-                    self._state_stale = False
-                except (PhoenixChannelError, asyncio.TimeoutError) as exc:
-                    raise SessionError(f"Could not fetch game state: {exc}") from exc
-            return self._state
-
-    def to_metadata(self) -> dict:
-        """Return session metadata (no full state)."""
-        return {
-            "session_id": self.session_id,
-            "plugin_name": self.plugin_name,
-            "plugin_id": self.plugin_id,
-            "room_slug": self.room_slug,
-            "created_at": self.created_at.isoformat(),
-        }
-
-
-class SessionError(Exception):
-    """Raised when a session operation fails."""
-
-
-class SessionNotFoundError(SessionError):
-    """Raised when a session ID is not found."""
-
-
-# ---------------------------------------------------------------------------
-# Session manager
-# ---------------------------------------------------------------------------
 
 
 class SessionManager:
@@ -205,12 +43,6 @@ class SessionManager:
 
     Both the HTTP API and MCP server share a single SessionManager instance.
     All public methods are async and safe to call from concurrent request handlers.
-
-    Configuration is injected at construction time:
-      - dragncards_http_url: e.g. "http://localhost:4000"
-      - dragncards_ws_url:   e.g. "ws://localhost:4000/socket"
-      - email / password:    credentials for the bot user account
-      - plugin_registry:     dict mapping plugin name -> {id, version, name}
     """
 
     def __init__(
@@ -250,11 +82,11 @@ class SessionManager:
             )
 
         # 1. Authenticate
-        auth_token = await _get_auth_token(self._http_url, self._email, self._password)
-        user_id = await _get_user_id(self._http_url, auth_token)
+        auth_token = await get_auth_token(self._http_url, self._email, self._password)
+        user_id = await get_user_id(self._http_url, auth_token)
 
         # 2. Create room
-        room = await _create_room(
+        room = await create_room(
             self._http_url,
             auth_token,
             user_id=user_id,
@@ -290,11 +122,67 @@ class SessionManager:
             channel=channel,
         )
         session._state = initial_state
+        session._manager = self
 
         async with self._lock:
             self._sessions[session_id] = session
 
         logger.info("Session %s created (room=%s)", session_id, room_slug)
+        return session
+
+    async def attach_session(self, plugin_name: str, room_slug: str) -> GameSession:
+        """
+        Attach to an existing DragnCards room without creating a new one.
+
+        Useful when the service restarts and the bot needs to reconnect to a
+        room that is still open on the DragnCards server. The caller is
+        responsible for knowing the room_slug (e.g. stored externally).
+
+        Returns a new GameSession connected to the existing room.
+        Raises SessionError if the plugin is unknown or the WS join fails.
+        """
+        plugin_info = self._plugin_registry.get(plugin_name)
+        if plugin_info is None:
+            available = list(self._plugin_registry.keys())
+            raise SessionError(
+                f"Plugin {plugin_name!r} not found. Available: {available}"
+            )
+
+        # Authenticate
+        auth_token = await get_auth_token(self._http_url, self._email, self._password)
+
+        # Connect WebSocket and join existing room channel (no room creation)
+        ws_client = PhoenixClient(self._ws_url, auth_token=auth_token)
+        await ws_client.connect()
+        channel = await ws_client.join(f"room:{room_slug}")
+
+        # Wait for initial state broadcast
+        try:
+            initial_state = await channel.wait_for_state_update(timeout=15.0)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "No initial state received for room %s on attach, will fetch on demand",
+                room_slug,
+            )
+            initial_state = None
+
+        session_id = str(uuid.uuid4())
+        session = GameSession(
+            session_id=session_id,
+            plugin_name=plugin_name,
+            plugin_id=plugin_info["id"],
+            room_slug=room_slug,
+            created_at=datetime.now(timezone.utc),
+            client=ws_client,
+            channel=channel,
+        )
+        session._state = initial_state
+        session._manager = self
+
+        async with self._lock:
+            self._sessions[session_id] = session
+
+        logger.info("Session %s attached to existing room %s", session_id, room_slug)
         return session
 
     async def get_session(self, session_id: str) -> GameSession:
@@ -303,6 +191,12 @@ class SessionManager:
         if session is None:
             raise SessionNotFoundError(f"Session {session_id!r} not found")
         return session
+
+    async def _remove_session(self, session_id: str) -> None:
+        """Remove a session from the pool without closing WS (used after close_room)."""
+        async with self._lock:
+            self._sessions.pop(session_id, None)
+        logger.info("Session %s removed from pool (room closed)", session_id)
 
     async def delete_session(self, session_id: str) -> None:
         """Leave the channel, close the WebSocket, and remove from the pool."""

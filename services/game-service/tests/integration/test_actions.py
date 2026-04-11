@@ -12,6 +12,8 @@ import os
 
 import pytest
 
+pytestmark = pytest.mark.live
+
 from game_service.session.actions import (
     DrawCardAction,
     NextStepAction,
@@ -45,7 +47,13 @@ def test_translate_move_card():
         card_id="card-1", dest_group_id="player1Hand", dest_stack_index=-1
     )
     payload = translate_action(action)
-    assert payload["action"] == ["MOVE_CARD", "card-1", "player1Hand", -1]
+    assert payload["action"] == "evaluate"
+    assert payload["options"]["action_list"] == [
+        "MOVE_CARD",
+        "card-1",
+        "player1Hand",
+        -1,
+    ]
     assert "description" in payload["options"]
     assert "timestamp" in payload
 
@@ -53,19 +61,23 @@ def test_translate_move_card():
 def test_translate_draw_card():
     action = DrawCardAction(player_n="player1", count=3)
     payload = translate_action(action)
-    assert payload["action"] == ["DRAW_CARD", "player1", 3]
+    assert payload["action"] == "evaluate"
+    assert payload["options"]["action_list"] == ["DRAW_CARD", 3]
+    assert payload["options"]["player_ui"] == {"playerN": "player1"}
 
 
 def test_translate_next_step():
     payload = translate_action(NextStepAction())
-    assert payload["action"] == ["NEXT_STEP"]
+    assert payload["action"] == "evaluate"
+    assert payload["options"]["action_list"] == ["NEXT_STEP"]
 
 
 def test_translate_raw():
     raw = ["SOME_FUNC", "arg1", 42]
     action = RawAction(action_list=raw, description="test raw")
     payload = translate_action(action)
-    assert payload["action"] == raw
+    assert payload["action"] == "evaluate"
+    assert payload["options"]["action_list"] == raw
     assert payload["options"]["description"] == "test raw"
 
 

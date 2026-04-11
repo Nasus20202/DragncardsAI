@@ -12,6 +12,8 @@ import os
 
 import pytest
 
+pytestmark = pytest.mark.live
+
 from game_service.session.manager import SessionManager, SessionNotFoundError
 
 DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:4000")

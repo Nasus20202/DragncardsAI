@@ -77,36 +77,46 @@ def build_session_manager():
 
 
 def run_http():
-    """Start the FastAPI app via uvicorn."""
+    """Start the FastAPI app (+ MCP mounted at /mcp) via uvicorn."""
     import uvicorn
+    from fastmcp.utilities.lifespan import combine_lifespans
 
     from game_service.api.app import create_app
+    from game_service.mcp.server import create_mcp_server
 
     manager = build_session_manager()
     app = create_app(session_manager=manager)
+    mcp = create_mcp_server(session_manager=manager, fastapi_app=app)
+
+    # Mount MCP streamable-HTTP transport at /mcp.
+    # combine_lifespans ensures both the FastAPI app and the MCP session
+    # manager are started and stopped together.
+    mcp_asgi = mcp.http_app(path="/")
+    app.router.lifespan_context = combine_lifespans(
+        app.router.lifespan_context, mcp_asgi.lifespan
+    )
+    app.mount("/mcp", mcp_asgi)
 
     logger.info("Starting HTTP server on %s:%s", HTTP_HOST, HTTP_PORT)
     uvicorn.run(app, host=HTTP_HOST, port=HTTP_PORT)
 
 
 # ---------------------------------------------------------------------------
-# MCP mode
+# MCP mode (stdio)
 # ---------------------------------------------------------------------------
 
 
 async def run_mcp():
     """Start the MCP server over stdio."""
-    from mcp.server.stdio import stdio_server
-
+    from game_service.api.app import create_app
     from game_service.mcp.server import create_mcp_server
 
     manager = build_session_manager()
-    server = create_mcp_server(manager)
-    init_options = server.create_initialization_options()
+    app = create_app(session_manager=manager)
+    mcp = create_mcp_server(session_manager=manager, fastapi_app=app)
 
     logger.info("Starting MCP server (stdio transport)")
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, init_options)
+    mcp.run(transport="stdio")
 
 
 # ---------------------------------------------------------------------------

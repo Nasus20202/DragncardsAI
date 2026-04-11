@@ -87,6 +87,7 @@ class PhoenixClient:
         self._channels: dict[str, "Channel"] = {}  # topic -> Channel
         self._recv_task: asyncio.Task | None = None
         self._heartbeat_task: asyncio.Task | None = None
+        self._reconnect_task: asyncio.Task | None = None
         self._connected = asyncio.Event()
         self._closed = False
 
@@ -108,6 +109,12 @@ class PhoenixClient:
     async def disconnect(self) -> None:
         """Close the WebSocket and cancel background tasks."""
         self._closed = True
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
         if self._recv_task:
@@ -206,7 +213,9 @@ class PhoenixClient:
             self._connected.clear()
             if not self._closed:
                 logger.warning("Connection lost, scheduling reconnect")
-                asyncio.create_task(self._reconnect())
+                self._reconnect_task = asyncio.create_task(
+                    self._reconnect(), name="phx-reconnect"
+                )
 
     def _dispatch(self, msg: PhxMessage) -> None:
         """Route an incoming message to a pending future or channel handler."""
@@ -243,22 +252,28 @@ class PhoenixClient:
 
     async def _reconnect(self) -> None:
         """Attempt to reconnect after connection loss."""
-        for attempt in range(1, self.MAX_RECONNECT_ATTEMPTS + 1):
-            logger.info("Reconnect attempt %d/%d", attempt, self.MAX_RECONNECT_ATTEMPTS)
-            await asyncio.sleep(self.RECONNECT_DELAY * attempt)
-            try:
-                await self.connect()
-                # Rejoin all previously joined channels
-                for topic, channel in list(self._channels.items()):
-                    try:
-                        await self.join(topic)
-                        logger.info("Rejoined channel %s after reconnect", topic)
-                    except Exception as exc:
-                        logger.error("Failed to rejoin %s: %s", topic, exc)
-                return
-            except Exception as exc:
-                logger.warning("Reconnect attempt %d failed: %s", attempt, exc)
-        logger.error("All reconnect attempts exhausted — session degraded")
+        try:
+            for attempt in range(1, self.MAX_RECONNECT_ATTEMPTS + 1):
+                logger.info(
+                    "Reconnect attempt %d/%d", attempt, self.MAX_RECONNECT_ATTEMPTS
+                )
+                await asyncio.sleep(self.RECONNECT_DELAY * attempt)
+                try:
+                    await self.connect()
+                    # Rejoin all previously joined channels
+                    for topic, channel in list(self._channels.items()):
+                        try:
+                            await self.join(topic)
+                            logger.info("Rejoined channel %s after reconnect", topic)
+                        except Exception as exc:
+                            logger.error("Failed to rejoin %s: %s", topic, exc)
+                    return
+                except Exception as exc:
+                    logger.warning("Reconnect attempt %d failed: %s", attempt, exc)
+            logger.error("All reconnect attempts exhausted — session degraded")
+        except asyncio.CancelledError:
+            logger.debug("Reconnect task cancelled")
+            raise
 
 
 @dataclass

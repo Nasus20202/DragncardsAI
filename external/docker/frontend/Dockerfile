@@ -1,18 +1,13 @@
 # DragnCards Frontend
-# Clones the upstream repo and installs dependencies at build time
-# for faster container startup. Runs the React dev server.
+# Copies frontend source from the dragncards git submodule (external/dragncards).
+# Installs dependencies at build time for faster container startup. Runs the React dev server.
 
 FROM node:24.14-alpine AS frontend
 
-RUN apk add --no-cache git
-
 WORKDIR /app
 
-# Clone DragnCards frontend source
-RUN git clone --depth 1 https://github.com/seastan/dragncards.git /tmp/dragncards && \
-    cp -r /tmp/dragncards/frontend/* /app/ && \
-    cp -r /tmp/dragncards/frontend/.env* /app/ 2>/dev/null || true && \
-    rm -rf /tmp/dragncards
+# Copy DragnCards frontend source from submodule
+COPY external/dragncards/frontend/ /app/
 
 # Install dependencies at build time (cached layer)
 RUN npm install --legacy-peer-deps
@@ -23,7 +18,7 @@ RUN npm install --legacy-peer-deps
 RUN npx postcss src/css/tailwind.src.css -o src/css/tailwind.compiled.css
 
 # Copy entrypoint
-COPY scripts/frontend-entrypoint.sh /app/entrypoint.sh
+COPY external/docker/scripts/frontend-entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 ENV REACT_APP_BE_HOSTNAME=backend
