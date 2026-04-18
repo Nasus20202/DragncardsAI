@@ -12,9 +12,11 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy source and install the project
 COPY services/game-service/src ./src
+COPY external/dragncards-mc-plugin/fixtures/cerebro/cards.json /app/data/cards.json
 RUN uv sync --frozen --no-dev
 
 ENV PYTHONPATH=/app/src
+ENV DRAGNCARDS_CARDS_PATH=/app/data/cards.json
 
 EXPOSE 8000
 
