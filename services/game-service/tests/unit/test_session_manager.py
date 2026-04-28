@@ -116,6 +116,34 @@ async def test_execute_action_raises_state_unavailable_before_push():
         await session.execute_action(NextStepAction())
 
 
+async def test_execute_action_recovers_with_request_state_after_timeout():
+    from game_service.session.actions import NextStepAction
+
+    session = _make_session()
+    session.channel.push = AsyncMock(side_effect=[{}, {"game": {"ok": True}}])
+    session.channel.wait_for_event = AsyncMock(side_effect=asyncio.TimeoutError)
+    session.channel.wait_for_state_update = AsyncMock(return_value={"game": {"ok": True}})
+
+    state = await session.execute_action(NextStepAction())
+
+    assert state == {"game": {"ok": True}}
+    assert session.channel.push.await_args_list[0].args[0] == "game_action"
+    assert session.channel.push.await_args_list[1].args[0] == "request_state"
+    session.channel.wait_for_state_update.assert_awaited_once()
+
+
+async def test_execute_action_timeout_raises_when_recovery_also_times_out():
+    from game_service.session.actions import NextStepAction
+
+    session = _make_session()
+    session.channel.push = AsyncMock(side_effect=[{}, {}])
+    session.channel.wait_for_event = AsyncMock(side_effect=asyncio.TimeoutError)
+    session.channel.wait_for_state_update = AsyncMock(side_effect=asyncio.TimeoutError)
+
+    with pytest.raises(SessionError, match="Timed out waiting for state update after action"):
+        await session.execute_action(NextStepAction())
+
+
 # ---------------------------------------------------------------------------
 # 1.9 — Alert buffer
 # ---------------------------------------------------------------------------

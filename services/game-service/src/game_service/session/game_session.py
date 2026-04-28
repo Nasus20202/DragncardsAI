@@ -117,6 +117,16 @@ class GameSession:
                 f"Session {self.session_id}: game state is temporarily unavailable"
             )
 
+    async def _request_fresh_state(self, timeout: float) -> Any:
+        """Request and cache a fresh full state from DragnCards."""
+        await self.channel.push("request_state", {}, timeout=timeout)
+        new_state = await self.channel.wait_for_state_update(timeout=timeout)
+        self._check_state_flags()
+        async with self._state_lock:
+            self._state = new_state
+            self._state_stale = False
+        return new_state
+
     # ------------------------------------------------------------------
     # State access
     # ------------------------------------------------------------------
@@ -140,12 +150,7 @@ class GameSession:
                 "state_update", "current_state", timeout=timeout
             )
             self._check_state_flags()
-            await self.channel.push("request_state", {}, timeout=timeout)
-            new_state = await self.channel.wait_for_state_update(timeout=timeout)
-            self._check_state_flags()
-            async with self._state_lock:
-                self._state = new_state
-                self._state_stale = False
+            new_state = await self._request_fresh_state(timeout=timeout)
             logger.info(
                 "execute_action: session_id=%s -> state updated", self.session_id
             )
@@ -156,7 +161,24 @@ class GameSession:
             )
             raise SessionError(f"Action rejected by DragnCards: {exc}") from exc
         except asyncio.TimeoutError as exc:
-            logger.error("execute_action: session_id=%s timed out", self.session_id)
+            logger.warning(
+                "execute_action: session_id=%s timed out, attempting state refresh",
+                self.session_id,
+            )
+            try:
+                recovery_timeout = min(timeout, 5.0)
+                new_state = await self._request_fresh_state(timeout=recovery_timeout)
+                logger.info(
+                    "execute_action: session_id=%s recovered via request_state",
+                    self.session_id,
+                )
+                return new_state
+            except (PhoenixChannelError, asyncio.TimeoutError) as recovery_exc:
+                logger.error(
+                    "execute_action: session_id=%s recovery failed: %s",
+                    self.session_id,
+                    recovery_exc,
+                )
             raise SessionError(
                 "Timed out waiting for state update after action"
             ) from exc
@@ -172,9 +194,7 @@ class GameSession:
                     self._state_stale,
                 )
                 try:
-                    await self.channel.push("request_state", {}, timeout=10.0)
-                    self._state = await self.channel.wait_for_state_update(timeout=10.0)
-                    self._state_stale = False
+                    await self._request_fresh_state(timeout=10.0)
                 except (PhoenixChannelError, asyncio.TimeoutError) as exc:
                     logger.error(
                         "get_state: session_id=%s failed: %s", self.session_id, exc
@@ -199,12 +219,8 @@ class GameSession:
             await self.channel.push(
                 event, {"options": {"save?": save}}, timeout=timeout
             )
-            await self.channel.push("request_state", {}, timeout=timeout)
-            new_state = await self.channel.wait_for_state_update(timeout=timeout)
-            async with self._state_lock:
-                self._state = new_state
-                self._state_stale = False
-                self._bad_state = False
+            new_state = await self._request_fresh_state(timeout=timeout)
+            self._bad_state = False
             logger.info("reset_game: session_id=%s -> state updated", self.session_id)
             return new_state
         except PhoenixChannelError as exc:
@@ -290,12 +306,7 @@ class GameSession:
                 "state_update", "current_state", timeout=timeout
             )
             self._check_state_flags()
-            await self.channel.push("request_state", {}, timeout=timeout)
-            new_state = await self.channel.wait_for_state_update(timeout=timeout)
-            self._check_state_flags()
-            async with self._state_lock:
-                self._state = new_state
-                self._state_stale = False
+            new_state = await self._request_fresh_state(timeout=timeout)
             logger.info(
                 "set_player_count: session_id=%s -> state updated", self.session_id
             )
