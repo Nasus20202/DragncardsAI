@@ -187,20 +187,24 @@ class GameSession:
         """Return the latest cached game state, re-fetching if stale or absent."""
         self._check_state_flags()
         async with self._state_lock:
-            if self._state is None or self._state_stale:
-                logger.info(
-                    "get_state: session_id=%s fetching fresh state (stale=%s)",
-                    self.session_id,
-                    self._state_stale,
-                )
-                try:
-                    await self._request_fresh_state(timeout=10.0)
-                except (PhoenixChannelError, asyncio.TimeoutError) as exc:
-                    logger.error(
-                        "get_state: session_id=%s failed: %s", self.session_id, exc
-                    )
-                    raise SessionError(f"Could not fetch game state: {exc}") from exc
-            self._check_state_flags()
+            if self._state is not None and not self._state_stale:
+                return self._state
+
+            stale = self._state_stale
+
+        logger.info(
+            "get_state: session_id=%s fetching fresh state (stale=%s)",
+            self.session_id,
+            stale,
+        )
+        try:
+            await self._request_fresh_state(timeout=10.0)
+        except (PhoenixChannelError, asyncio.TimeoutError) as exc:
+            logger.error("get_state: session_id=%s failed: %s", self.session_id, exc)
+            raise SessionError(f"Could not fetch game state: {exc}") from exc
+
+        self._check_state_flags()
+        async with self._state_lock:
             return self._state
 
     # ------------------------------------------------------------------

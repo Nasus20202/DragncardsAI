@@ -2,212 +2,152 @@
 
 ## Purpose
 
-This spec defines the requirements for the Game Service test suite. Tests are organized into two layers — unit and integration — each with distinct dependencies and coverage goals. The test suite uses pytest with asyncio support.
+This spec defines the functional testing requirements for the Game Service. The test suite SHALL focus on externally observable behavior and supported workflows rather than internal implementation details, and it SHALL cover those behaviors with both unit and integration tests.
 
 ## Requirements
 
+### Requirement: Functional coverage at multiple test layers
+The Game Service test suite SHALL cover supported functionality with both unit tests and integration tests. Unit tests SHALL verify behavior in isolation, and integration tests SHALL verify live behavior where network protocols, external dependencies, or interoperability matter.
+
+#### Scenario: Functional behavior covered by unit tests
+- **WHEN** a Game Service behavior can be validated without network access or external processes
+- **THEN** the test suite SHALL cover that behavior with unit tests using in-process fakes, mocks, or fixtures
+
+#### Scenario: Functional behavior covered by integration tests
+- **WHEN** a Game Service behavior depends on DragnCards, WebSocket communication, HTTP transport, or MCP interoperability
+- **THEN** the test suite SHALL cover that behavior with integration tests against the local stack
+
 ### Requirement: Unit test isolation
-Unit tests SHALL run without any network access, running DragnCards instance, or external services. All external dependencies SHALL be replaced with in-process fakes or mocks.
+Unit tests SHALL run without any network access, running DragnCards instance, or external services.
 
 #### Scenario: Unit tests run offline
 - **WHEN** the unit test suite is executed with no DragnCards or network available
 - **THEN** all unit tests SHALL pass
 
-#### Scenario: No fixture overhead
+#### Scenario: Unit tests require no live setup
 - **WHEN** unit tests are collected and run
-- **THEN** no async fixtures requiring network I/O SHALL be used, and no session setup time SHALL be incurred
+- **THEN** they SHALL not require live sockets, live HTTP services, or external database setup
 
-### Requirement: Phoenix protocol unit coverage
-The `PhxMessage` encode/decode contract and `PhoenixClient` configuration logic SHALL be verified by unit tests without network I/O.
+### Requirement: Unit coverage for protocol and action behavior
+Unit tests SHALL verify the functional contracts for message handling, state-update handling, and action payload generation without requiring a live DragnCards connection.
 
-#### Scenario: PhxMessage round-trip encoding
-- **WHEN** a `PhxMessage` is encoded to JSON and decoded back
-- **THEN** all five fields (`join_ref`, `ref`, `topic`, `event`, `payload`) SHALL round-trip without loss, including `None` refs and non-dict payload types (list, string)
+#### Scenario: Phoenix message data round-trips correctly
+- **WHEN** Phoenix wire-format message data is serialized and deserialized in unit tests
+- **THEN** the message fields and payload content SHALL round-trip without loss for supported payload shapes
 
-#### Scenario: URL construction
-- **WHEN** a `PhoenixClient` is constructed with a base socket URL and an optional `auth_token`
-- **THEN** the resulting `_url` SHALL include `/websocket`, `vsn=2.0.0`, and `authToken=<token>` when a token is provided, and SHALL omit the `authToken` param when no token is provided
+#### Scenario: Connection targets are derived correctly
+- **WHEN** the service prepares a Phoenix connection using a socket URL and optional authentication token
+- **THEN** the resulting connection target SHALL contain the expected websocket path and authentication query parameters
 
-#### Scenario: Ref counter
-- **WHEN** `_next_ref()` is called repeatedly on a `PhoenixClient`
-- **THEN** it SHALL return monotonically increasing string integers starting at `"1"`
+#### Scenario: State-bearing events are recognized correctly
+- **WHEN** the service receives a mix of room events in unit tests
+- **THEN** state-bearing events SHALL be recognized as state updates and non-state events SHALL remain separate from state refresh handling
 
-#### Scenario: Channel event dispatch
-- **WHEN** a `PhxMessage` arrives for a registered event on a `Channel`
-- **THEN** all registered handlers for that event SHALL be called with the message payload, handler exceptions SHALL be suppressed, and state-update events (`current_state`, `state_update`, `send_update`) SHALL be placed on the state queue while other events SHALL not
+#### Scenario: Supported actions produce valid DragnCards payloads
+- **WHEN** a supported action is translated in unit tests
+- **THEN** the resulting payload SHALL preserve the requested game intent, include required metadata, and reject invalid input combinations
 
-### Requirement: Action translation unit coverage
-Every concrete action type SHALL have unit test coverage for `translate_action()` verifying the exact DragnLang payload structure produced.
+### Requirement: Unit coverage for interface behavior
+Unit tests SHALL verify the functional behavior of the Game Service HTTP and MCP interfaces without requiring a live DragnCards instance.
 
-#### Scenario: Required payload keys
-- **WHEN** `translate_action()` is called with any action
-- **THEN** the result SHALL contain exactly the keys `"action"`, `"options"`, and `"timestamp"`, where `"timestamp"` is a current epoch millisecond integer and `"options"` contains a `"description"` string
+#### Scenario: Public operations are discoverable
+- **WHEN** unit tests inspect the generated HTTP or MCP interface metadata
+- **THEN** the supported operations SHALL be discoverable with non-empty descriptions and machine-readable schemas
 
-#### Scenario: NextStepAction and PrevStepAction payloads
-- **WHEN** `translate_action(NextStepAction())` or `translate_action(PrevStepAction())` is called
-- **THEN** `payload["action"]` SHALL be `["NEXT_STEP"]` or `["PREV_STEP"]` respectively
+#### Scenario: Invalid input yields descriptive errors
+- **WHEN** unit tests exercise invalid session identifiers, unsupported actions, or malformed requests
+- **THEN** the service SHALL return descriptive errors through its HTTP or MCP response contract
 
-#### Scenario: DrawCardAction payload
-- **WHEN** `translate_action(DrawCardAction(player_n="player1", count=3))` is called
-- **THEN** `payload["action"]` SHALL be `["DRAW_CARD", "player1", 3]` and `count` SHALL be validated to be at least 1
-
-#### Scenario: MoveCardAction payload
-- **WHEN** `translate_action(MoveCardAction(...))` is called
-- **THEN** `payload["action"]` SHALL be `["MOVE_CARD", card_id, dest_group_id, dest_stack_index]` with a fifth element `dest_card_index` appended only when `dest_card_index` is non-zero
-
-#### Scenario: SetCardPropertyAction payload
-- **WHEN** `translate_action(SetCardPropertyAction(card_id="c1", property_path="currentSide", value="B"))` is called
-- **THEN** `payload["action"]` SHALL be `["SET", "/cardById/c1/currentSide", "B"]`
-
-#### Scenario: RawAction passthrough
-- **WHEN** `translate_action(RawAction(action_list=[...], description="..."))` is called
-- **THEN** `payload["action"]` SHALL equal the provided `action_list` verbatim
-
-### Requirement: MCP server unit coverage
-The MCP server's tool dispatch, state formatting, action deserialization, and tool schema definitions SHALL be verified by unit tests using a mocked `SessionManager`.
-
-#### Scenario: Tool set
-- **WHEN** the MCP server's tool list is queried
-- **THEN** it SHALL advertise exactly five tools: `create_game`, `list_games`, `get_game_state`, `execute_action`, `delete_game`, each with a non-empty description and a JSON Schema input definition
-
-#### Scenario: _dispatch_tool return type contract
-- **WHEN** `_dispatch_tool` is called for any tool name (including unknown names and error paths)
-- **THEN** it SHALL always return a `list[TextContent]` with `type == "text"`, never raising an exception
-
-#### Scenario: _action_from_dict deserialization
-- **WHEN** `_action_from_dict` is called with a dict containing a known `"type"` key
-- **THEN** it SHALL return the corresponding typed action dataclass with all fields populated
-- **WHEN** called with an unknown or missing `"type"`
-- **THEN** it SHALL raise `ValueError`
-
-#### Scenario: _format_state_for_llm formatting
-- **WHEN** `_format_state_for_llm` is called with a `None` state
-- **THEN** the result SHALL be a string indicating no state is available
-- **WHEN** called with a dict state
-- **THEN** the result SHALL include the session ID and the full JSON of the state
-
-#### Scenario: MCP resource URI format
-- **WHEN** the MCP resource list is queried with one active session
-- **THEN** the resource URI SHALL be `game://<session_id>/state` with MIME type `application/json`
-
-#### Scenario: Error propagation in tool dispatch
-- **WHEN** `_dispatch_tool` encounters a `SessionNotFoundError`, `SessionError`, `ValueError`, or unexpected `Exception`
-- **THEN** the returned `TextContent.text` SHALL contain a descriptive error prefix (`"Error (not found)"`, `"Error (session)"`, `"Error (invalid input)"`, or `"Error (unexpected)"`)
+#### Scenario: State responses remain usable when no state is available
+- **WHEN** unit tests request formatted state output for a session with missing or unavailable state
+- **THEN** the returned response SHALL remain well-formed and explain that no current state is available
 
 ### Requirement: Integration test structure
-Integration tests SHALL require a running DragnCards instance and SHALL be organized to test each layer of the stack independently before testing them together.
+Integration tests SHALL require a running DragnCards instance and SHALL validate live behavior without leaking state between tests.
 
-#### Scenario: Integration test dependency
+#### Scenario: Integration tests fail clearly without dependencies
 - **WHEN** integration tests are run without a reachable DragnCards instance
-- **THEN** the tests SHALL fail with a clear connection error (not a silent pass or confusing assertion failure)
+- **THEN** the tests SHALL fail with a clear dependency error rather than a silent pass or ambiguous assertion failure
 
-#### Scenario: Test isolation via fixture teardown
-- **WHEN** any integration test creates a game session
-- **THEN** the session SHALL be deleted in a `finally` block or equivalent teardown, ensuring no sessions leak between tests
+#### Scenario: Integration tests clean up created sessions
+- **WHEN** an integration test creates a game session
+- **THEN** the session SHALL be deleted in teardown so later tests start from a clean state
 
-### Requirement: Phoenix client integration coverage
-The `PhoenixClient` SHALL be tested against a live DragnCards WebSocket endpoint to verify connection, heartbeat, and channel operations.
+### Requirement: Integration coverage for live DragnCards connectivity
+Integration tests SHALL verify that the Game Service can establish and maintain the live connection behaviors it depends on.
 
-#### Scenario: Connect and disconnect
-- **WHEN** `PhoenixClient.connect()` is called with a valid auth token
-- **THEN** the connection SHALL be established (`_ws` is not None, `_connected` is set), and `disconnect()` SHALL cleanly close it
+#### Scenario: Service connects to DragnCards successfully
+- **WHEN** the service authenticates and opens a Phoenix websocket connection to DragnCards
+- **THEN** the connection SHALL be established and usable for room operations
 
-#### Scenario: Heartbeat keeps connection alive
-- **WHEN** the client is connected with a short heartbeat interval and time passes for at least two heartbeat cycles
-- **THEN** the connection SHALL remain alive (`_connected` is still set)
+#### Scenario: Heartbeat keeps a live connection healthy
+- **WHEN** a connection remains open across multiple heartbeat intervals
+- **THEN** the connection SHALL remain alive and continue to accept room operations
 
-#### Scenario: Join and leave a channel
-- **WHEN** `client.join("room_list:lobby")` is called on a connected client
-- **THEN** a `Channel` object SHALL be returned with the correct topic, and `leave()` SHALL succeed
+#### Scenario: Room channels can be joined and left
+- **WHEN** the service joins and later leaves a room channel in an integration test
+- **THEN** the join and leave workflow SHALL succeed through the live Phoenix channel
 
-### Requirement: Session manager integration coverage
-The `SessionManager` and `GameSession` SHALL be tested end-to-end against a live DragnCards instance.
+### Requirement: Integration coverage for session lifecycle and state access
+Integration tests SHALL verify the externally visible session lifecycle and state retrieval workflows.
 
-#### Scenario: Create session returns valid metadata
-- **WHEN** `manager.create_session("marvel-champions")` is called
-- **THEN** the returned `GameSession` SHALL have a non-empty `session_id`, `plugin_name == "marvel-champions"`, and a non-empty `room_slug`
+#### Scenario: Session creation returns usable metadata
+- **WHEN** a client creates a game session for a supported plugin
+- **THEN** the service SHALL return a non-empty session identifier, plugin metadata, and room metadata
 
-#### Scenario: State available after creation
-- **WHEN** `session.get_state()` is called on a newly created session
-- **THEN** the result SHALL be a non-None dict containing a `"game"` key
+#### Scenario: Newly created session exposes current state
+- **WHEN** a client requests state for a newly created session
+- **THEN** the service SHALL return current game state data including the game payload
 
-#### Scenario: Session appears in list
-- **WHEN** a session is created and `manager.list_sessions()` is called
-- **THEN** the session's `session_id` SHALL appear in the returned list
+#### Scenario: Active sessions are listed
+- **WHEN** a client lists active sessions after creating a session
+- **THEN** the created session SHALL appear in the returned session list
 
-#### Scenario: Delete session removes from pool
-- **WHEN** `manager.delete_session(session_id)` is called
-- **THEN** the session SHALL no longer appear in `manager.list_sessions()`
+#### Scenario: Unknown sessions are rejected
+- **WHEN** a client requests state or other session operations for an unknown session identifier
+- **THEN** the service SHALL return a not-found error through the relevant interface
 
-#### Scenario: Access non-existent session raises
-- **WHEN** `manager.get_session("<unknown-id>")` is called
-- **THEN** it SHALL raise `SessionNotFoundError`
+#### Scenario: Session deletion removes access
+- **WHEN** a client deletes an active session
+- **THEN** the session SHALL be removed from the active pool and subsequent access SHALL fail as not found
 
-#### Scenario: Unknown plugin raises on create
-- **WHEN** `manager.create_session("nonexistent-plugin")` is called
-- **THEN** it SHALL raise `SessionError` with a message indicating the plugin is not found
+#### Scenario: Unknown plugins are rejected at creation time
+- **WHEN** a client requests a game session for a plugin that is not configured
+- **THEN** the service SHALL reject the request with a descriptive validation error
 
-### Requirement: HTTP API integration coverage
-The FastAPI HTTP endpoints SHALL be tested using `httpx.AsyncClient` with ASGI transport for all endpoints that invoke WebSocket operations.
+### Requirement: Integration coverage for action, room-control, and room-event workflows
+Integration tests SHALL verify that the Game Service exposes the gameplay and room-management functionality promised by its public API.
 
-#### Scenario: Health check
-- **WHEN** `GET /health` is called
-- **THEN** the response SHALL be HTTP 200 with `{"status": "ok"}`
+#### Scenario: Gameplay actions update observable state
+- **WHEN** a client executes a supported gameplay action against an active session
+- **THEN** the returned or subsequently fetched state SHALL reflect that action's effect
 
-#### Scenario: List sessions on fresh manager
-- **WHEN** `GET /games` is called with no active sessions
-- **THEN** the response SHALL be HTTP 200 with `{"sessions": []}`
+#### Scenario: Room-control operations succeed through the public API
+- **WHEN** a client invokes supported room-control operations such as reset, seat assignment, spectator changes, alert broadcast, replay save, or room close
+- **THEN** the Game Service SHALL perform the requested operation or return a descriptive error if the session is invalid
 
-#### Scenario: Create game session via HTTP
-- **WHEN** `POST /games` is called with `{"plugin_name": "marvel-champions"}`
-- **THEN** the response SHALL be HTTP 201 with a body containing `session.session_id`, `session.plugin_name`, `session.room_slug`, and `session.created_at`
+#### Scenario: Room-event observation returns captured data
+- **WHEN** alert or GUI-update events are produced for an active session
+- **THEN** the corresponding room-event endpoints or resources SHALL expose the captured data in a consumable format
 
-#### Scenario: Create game with unknown plugin returns 400
-- **WHEN** `POST /games` is called with an unknown plugin name
-- **THEN** the response SHALL be HTTP 400 with a detail message containing "not found"
+### Requirement: Integration coverage for HTTP and MCP interfaces
+Integration and end-to-end tests SHALL verify that both public interfaces expose consistent functionality.
 
-#### Scenario: Get game state returns game data
-- **WHEN** `GET /games/{id}/state` is called for an active session
-- **THEN** the response SHALL be HTTP 200 with `session_id` and a `state` dict containing `"game"`
+#### Scenario: Core lifecycle works through HTTP
+- **WHEN** a client creates a game, queries state, executes an action, and deletes the game through HTTP
+- **THEN** each operation SHALL succeed in sequence and the deleted session SHALL no longer be accessible
 
-#### Scenario: Get state for unknown session returns 404
-- **WHEN** `GET /games/{id}/state` is called with an unknown session ID
-- **THEN** the response SHALL be HTTP 404
+#### Scenario: Core lifecycle works through MCP
+- **WHEN** an MCP client creates a game, queries state, executes an action, lists sessions, and deletes the game
+- **THEN** each operation SHALL succeed through MCP with valid responses
 
-#### Scenario: Execute action returns updated state
-- **WHEN** `POST /games/{id}/actions` is called with `{"type": "next_step"}`
-- **THEN** the response SHALL be HTTP 200 with `session_id` and a non-None `state`
+#### Scenario: HTTP and MCP observe the same shared state
+- **WHEN** one interface mutates an active session and the other interface reads that same session
+- **THEN** both interfaces SHALL observe the same updated session state
 
-#### Scenario: Execute action on unknown session returns 404
-- **WHEN** `POST /games/{id}/actions` is called with an unknown session ID
-- **THEN** the response SHALL be HTTP 404
-
-#### Scenario: Delete session returns confirmation
-- **WHEN** `DELETE /games/{id}` is called for an active session
-- **THEN** the response SHALL be HTTP 200 with `{"session_id": "...", "deleted": true}`, and a subsequent `GET /games/{id}/state` SHALL return 404
-
-#### Scenario: Delete unknown session returns 404
-- **WHEN** `DELETE /games/{id}` is called with an unknown session ID
-- **THEN** the response SHALL be HTTP 404
-
-### Requirement: End-to-end coverage
-The test suite SHALL include end-to-end tests that exercise the complete lifecycle through both interfaces and verify consistent shared state.
-
-#### Scenario: Full lifecycle via HTTP
-- **WHEN** a game is created, its state queried, an action executed, and then the session deleted via HTTP
-- **THEN** all four operations SHALL succeed, and the session SHALL no longer exist after deletion
-
-#### Scenario: Full lifecycle via MCP
-- **WHEN** `create_game`, `get_game_state`, `execute_action`, `list_games`, and `delete_game` are invoked via `_dispatch_tool` in sequence
-- **THEN** all operations SHALL succeed with valid text responses, and the session SHALL be gone after `delete_game`
-
-#### Scenario: Concurrent HTTP and MCP access
-- **WHEN** both an HTTP client and an MCP tool call query the same session state concurrently via `asyncio.gather`
-- **THEN** both SHALL return valid, non-None game state for the same session
-
-#### Scenario: Shared state consistency after action
-- **WHEN** an action is executed via HTTP and then the game state is queried via MCP
-- **THEN** the MCP response SHALL reflect the post-action state
+#### Scenario: HTTP and MCP can access the same session concurrently
+- **WHEN** HTTP and MCP clients query or operate on the same session concurrently
+- **THEN** both interfaces SHALL return valid responses for that shared session
 
 ### Requirement: Test environment configuration
 Integration tests SHALL read their connection parameters from environment variables with sensible defaults for local development.
@@ -218,4 +158,4 @@ Integration tests SHALL read their connection parameters from environment variab
 
 #### Scenario: Plugin registry configuration
 - **WHEN** `MC_PLUGIN_ID` and `MC_PLUGIN_VERSION` environment variables are not set
-- **THEN** the integration test plugin registry SHALL default to plugin ID `1` and version `3` for `"marvel-champions"`
+- **THEN** the integration test plugin registry SHALL default to plugin ID `1` and version `3` for `marvel-champions`

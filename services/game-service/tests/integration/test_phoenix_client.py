@@ -80,15 +80,11 @@ async def test_heartbeat_sent_and_acknowledged(auth_token):
 @pytest.mark.asyncio
 async def test_join_lobby_channel(connected_client):
     """Client can join the lobby channel without error."""
-    # DragnCards exposes a "room_list" channel the frontend uses for the lobby.
-    # Unauthenticated join should still succeed (server allows it).
-    # We just check we don't get an exception.
-    try:
-        channel = await connected_client.join("room_list:lobby")
-        assert channel.topic == "room_list:lobby"
-        await connected_client.leave("room_list:lobby")
-    except PhoenixChannelError as exc:
-        pytest.skip(f"Lobby channel not available: {exc}")
+    # DragnCards exposes the public lobby on "lobby:lobby".
+    # This should succeed even without a game room.
+    channel = await connected_client.join("lobby:lobby")
+    assert channel.topic == "lobby:lobby"
+    await connected_client.leave("lobby:lobby")
 
 
 @pytest.mark.asyncio

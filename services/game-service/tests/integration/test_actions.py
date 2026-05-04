@@ -1,5 +1,5 @@
 """
-Integration tests for game action translation and execution.
+Integration tests for game action execution.
 
 Requires a running DragnCards instance with Marvel Champions plugin.
 
@@ -7,20 +7,13 @@ Run with:
     pytest tests/integration/test_actions.py -v
 """
 
-import asyncio
 import os
 
 import pytest
 
 pytestmark = pytest.mark.live
 
-from game_service.session.actions import (
-    DrawCardAction,
-    NextStepAction,
-    MoveCardAction,
-    RawAction,
-    translate_action,
-)
+from game_service.session.actions import DrawCardAction, NextStepAction
 from game_service.session.manager import SessionManager
 
 DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:4000")
@@ -35,55 +28,6 @@ PLUGIN_REGISTRY = {
         "name": "Marvel Champions",
     }
 }
-
-
-# ---------------------------------------------------------------------------
-# Unit tests for action translation (no DragnCards needed)
-# ---------------------------------------------------------------------------
-
-
-def test_translate_move_card():
-    action = MoveCardAction(
-        card_id="card-1", dest_group_id="player1Hand", dest_stack_index=-1
-    )
-    payload = translate_action(action)
-    assert payload["action"] == "evaluate"
-    assert payload["options"]["action_list"] == [
-        "MOVE_CARD",
-        "card-1",
-        "player1Hand",
-        -1,
-    ]
-    assert "description" in payload["options"]
-    assert "timestamp" in payload
-
-
-def test_translate_draw_card():
-    action = DrawCardAction(player_n="player1", count=3)
-    payload = translate_action(action)
-    assert payload["action"] == "evaluate"
-    assert payload["options"]["action_list"] == ["DRAW_CARD", 3]
-    assert payload["options"]["player_ui"] == {"playerN": "player1"}
-
-
-def test_translate_next_step():
-    payload = translate_action(NextStepAction())
-    assert payload["action"] == "evaluate"
-    assert payload["options"]["action_list"] == ["NEXT_STEP"]
-
-
-def test_translate_raw():
-    raw = ["SOME_FUNC", "arg1", 42]
-    action = RawAction(action_list=raw, description="test raw")
-    payload = translate_action(action)
-    assert payload["action"] == "evaluate"
-    assert payload["options"]["action_list"] == raw
-    assert payload["options"]["description"] == "test raw"
-
-
-# ---------------------------------------------------------------------------
-# Integration tests (require running DragnCards)
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture

@@ -98,6 +98,18 @@ async def test_get_state_raises_state_unavailable_error():
         await session.get_state()
 
 
+async def test_get_state_fetches_fresh_state_without_deadlocking():
+    session = _make_session()
+    session.channel.push = AsyncMock(return_value={})
+    session.channel.wait_for_state_update = AsyncMock(return_value={"game": {"ok": True}})
+
+    state = await asyncio.wait_for(session.get_state(), timeout=1.0)
+
+    assert state == {"game": {"ok": True}}
+    session.channel.push.assert_awaited_once_with("request_state", {}, timeout=10.0)
+    session.channel.wait_for_state_update.assert_awaited_once_with(timeout=10.0)
+
+
 async def test_execute_action_raises_bad_game_state_before_push():
     from game_service.session.actions import NextStepAction
 
