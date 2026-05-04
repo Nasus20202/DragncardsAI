@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from game_service.session.actions import (
+from game_service.logic.actions import (
     DrawCardAction,
     LoadCardsAction,
     MoveCardAction,
@@ -19,6 +19,7 @@ from game_service.session.actions import (
     SetPlayerCountAction,
     UnloadCardsAction,
 )
+from game_service.logic.snapshots import GameStateSnapshot
 
 # ---------------------------------------------------------------------------
 # Request models

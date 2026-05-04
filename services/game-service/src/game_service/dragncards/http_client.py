@@ -34,7 +34,6 @@ async def get_user_id(http_url: str, auth_token: str) -> int:
         )
         resp.raise_for_status()
         data = resp.json()
-        # Profile endpoint returns {"user_profile": {...}} not {"data": {...}}
         if "user_profile" in data:
             return data["user_profile"]["id"]
         return data["data"]["id"]

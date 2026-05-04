@@ -25,11 +25,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-# ---------------------------------------------------------------------------
-# Action models
-# ---------------------------------------------------------------------------
-
-
 class MoveCardAction(BaseModel):
     """Move a card to a different group/position on the table."""
 
@@ -215,7 +210,6 @@ class UnloadCardsAction(BaseModel):
     )
 
 
-# Union type used in API/MCP schemas
 GameAction = (
     MoveCardAction
     | DrawCardAction
@@ -229,32 +223,11 @@ GameAction = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Translator
-# ---------------------------------------------------------------------------
-
-
 def translate_action(action: GameAction) -> dict:
     """
     Translate a typed GameAction into the DragnCards WebSocket game_action payload.
 
     Returns a dict ready to pass to Channel.push("game_action", payload).
-
-    DragnCards expects:
-      {
-        "action": "evaluate",
-        "options": {
-          "action_list": [...],
-          "description": "...",
-          "player_ui": {"playerN": "player1"}   # optional; required when $PLAYER_N needed
-        },
-        "timestamp": <unix_ms>
-      }
-
-    The "player_ui" key is included whenever the action carries a player_n so
-    that the DragnCards backend populates game["playerUi"]["playerN"], which
-    is read by $PLAYER_N (used to expand "playerN" group ID templates like
-    "playerNDeck" → "player1Deck").
     """
     action_list, description, player_n = _to_dragncards(action)
     options: dict = {

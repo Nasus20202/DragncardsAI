@@ -14,7 +14,7 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-from game_service.session.manager import SessionManager, SessionNotFoundError
+from game_service.logic.session_manager import SessionManager, SessionNotFoundError
 
 DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:4000")
 DRAGNCARDS_WS_URL = os.environ.get("DRAGNCARDS_WS_URL", "ws://localhost:4000/socket")
@@ -99,7 +99,7 @@ async def test_get_nonexistent_session_raises(manager):
 @pytest.mark.asyncio
 async def test_invalid_plugin_raises(manager):
     """Creating a session with an unknown plugin raises SessionError."""
-    from game_service.session.manager import SessionError
+    from game_service.logic.session_manager import SessionError
 
     with pytest.raises(SessionError, match="not found"):
         await manager.create_session("nonexistent-plugin")

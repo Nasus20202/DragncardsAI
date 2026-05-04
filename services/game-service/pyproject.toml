@@ -33,6 +33,7 @@ packages = ["src/game_service"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+addopts = ["--import-mode=importlib"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [

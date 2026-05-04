@@ -1,19 +1,9 @@
 """
-Card database loader for the Marvel Champions plugin.
+Marvel Champions card catalog provider.
 
 Reads Cerebro card data from the plugin fixtures and computes the databaseId
 UUID (uuid5/NAMESPACE_OID) used by DragnCards LOAD_CARDS, matching the Rust
 implementation in the DragnCards card database builder.
-
-The card data is loaded once at module import and cached in memory.
-
-DatabaseId computation rules (from dragncards/src/dragncards/database.rs):
-  - Purely numeric ArtificialId (e.g. "23012") → use as-is
-  - ArtificialId ending in A/B/C/D (e.g. "01040A") → strip trailing letter
-  - Otherwise → use as-is (handles special/unofficial IDs)
-  → databaseId = str(uuid.uuid5(uuid.NAMESPACE_OID, code))
-
-Only official cards (Official == True, Deleted == False) are indexed.
 """
 
 from __future__ import annotations
@@ -26,10 +16,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Path to the Cerebro cards fixture — relative to this file's location.
-# Adjust via DRAGNCARDS_CARDS_PATH env var if running outside the repo.
 _DEFAULT_CARDS_PATH = os.path.join(
     os.path.dirname(__file__),
+    "..",
     "..",
     "..",
     "..",
@@ -45,28 +34,18 @@ CARDS_PATH = os.environ.get("DRAGNCARDS_CARDS_PATH", _DEFAULT_CARDS_PATH)
 
 
 def _compute_database_id(artificial_id: str) -> str:
-    """
-    Compute the DragnCards databaseId UUID from a card's ArtificialId.
-
-    Mirrors the Rust uuid() function in dragncards/src/dragncards/database.rs.
-    """
+    """Compute the DragnCards databaseId UUID from a card's ArtificialId."""
     aid = artificial_id.upper()
     if aid.isdigit():
         code = aid
     elif aid[-1] in "ABCD":
         code = aid[:-1]
     else:
-        # Custom/unofficial IDs (e.g. "583884764084305920/01067") — use as-is.
-        # These are not typically searched by name so we still index them.
         code = aid
     return str(uuid.uuid5(uuid.NAMESPACE_OID, code))
 
 
 def _card_type_code(card: dict) -> str | None:
-    """
-    Map Cerebro card Type string to a marvelcdb-style type_code.
-    Returns lowercase snake_case or None if unrecognised.
-    """
     mapping = {
         "Hero": "hero",
         "Alter-Ego": "alter_ego",
@@ -91,24 +70,7 @@ def _card_type_code(card: dict) -> str | None:
 
 @lru_cache(maxsize=1)
 def load_card_db() -> list[dict[str, Any]]:
-    """
-    Load and index the Cerebro card database.
-
-    Returns a flat list of card records, one per printing of each official card.
-    Each record contains:
-      - database_id: str (UUID used by LOAD_CARDS)
-      - name: str
-      - subname: str | None
-      - type_code: str | None  (e.g. "hero", "ally", "villain")
-      - classification: str | None  (e.g. "Justice", "Aggression")
-      - traits: list[str]
-      - official: bool
-      - pack_id: str | None  (UUID of the pack)
-      - set_id: str | None   (UUID of the set)
-      - pack_number: str | None  (position within pack, e.g. "40A")
-
-    Cached after first call — safe to call repeatedly.
-    """
+    """Load and index the Marvel Champions card database."""
     import json
 
     path = os.path.normpath(CARDS_PATH)
@@ -169,21 +131,7 @@ def search_cards(
     official_only: bool = True,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """
-    Search the card database.
-
-    Args:
-        name: Substring match on card name (case-insensitive).
-        type_code: Exact match on type_code (e.g. "hero", "ally", "villain").
-        classification: Substring match on classification/aspect
-                        (e.g. "Justice", "Aggression", "Basic").
-        official_only: If True (default), exclude custom/unofficial cards.
-        limit: Maximum number of results to return (default 50, max 200).
-
-    Returns:
-        List of matching card records (each has database_id, name, type_code, etc.)
-        De-duplicated by database_id — only the first printing of each card is returned.
-    """
+    """Search the Marvel Champions card database."""
     db = load_card_db()
     seen_ids: set[str] = set()
     results: list[dict[str, Any]] = []

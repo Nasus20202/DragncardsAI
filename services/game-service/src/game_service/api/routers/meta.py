@@ -11,7 +11,7 @@ from game_service.api.models import (
     HealthResponse,
     ListActionsResponse,
 )
-from game_service.session.actions import (
+from game_service.logic.actions import (
     DrawCardAction,
     LoadCardsAction,
     MoveCardAction,

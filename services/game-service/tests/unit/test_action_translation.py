@@ -7,7 +7,7 @@ structure for each action type.
 
 import pytest
 
-from game_service.session.actions import (
+from game_service.logic.actions import (
     DrawCardAction,
     MoveCardAction,
     NextStepAction,

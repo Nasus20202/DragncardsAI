@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from game_service.session.actions import (
+from game_service.logic.actions import (
     LoadCardItem,
     LoadCardsAction,
     UnloadCardsAction,

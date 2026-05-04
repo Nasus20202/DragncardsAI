@@ -13,8 +13,8 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-from game_service.session.actions import DrawCardAction, NextStepAction
-from game_service.session.manager import SessionManager
+from game_service.logic.actions import DrawCardAction, NextStepAction
+from game_service.logic.session_manager import SessionManager
 
 DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:4000")
 DRAGNCARDS_WS_URL = os.environ.get("DRAGNCARDS_WS_URL", "ws://localhost:4000/socket")

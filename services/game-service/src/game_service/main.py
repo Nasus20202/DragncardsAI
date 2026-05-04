@@ -60,7 +60,7 @@ PLUGIN_REGISTRY: dict[str, dict] = {
 
 
 def build_session_manager():
-    from game_service.session.manager import SessionManager
+    from game_service.logic.session_manager import SessionManager
 
     return SessionManager(
         dragncards_http_url=DRAGNCARDS_HTTP_URL,

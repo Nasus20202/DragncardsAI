@@ -17,11 +17,13 @@ import os
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from fastmcp import Client
 
 pytestmark = pytest.mark.live
 
 from game_service.api.app import create_app
-from game_service.session.manager import SessionManager
+from game_service.logic.session_manager import SessionManager
+from game_service.mcp.server import create_mcp_server
 
 DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:4000")
 DRAGNCARDS_WS_URL = os.environ.get("DRAGNCARDS_WS_URL", "ws://localhost:4000/socket")
@@ -51,6 +53,11 @@ def manager():
 @pytest.fixture
 def app(manager):
     return create_app(session_manager=manager)
+
+
+@pytest.fixture
+def mcp(manager, app):
+    return create_mcp_server(session_manager=manager, fastapi_app=app)
 
 
 @pytest.fixture
@@ -162,6 +169,93 @@ def test_get_game_state_not_found(sync_client):
     """GET /games/{id}/state with unknown ID returns 404."""
     resp = sync_client.get("/games/00000000-0000-0000-0000-000000000000/state")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_snapshot_export_and_load_round_trip(app, manager):
+    """Exporting a snapshot and loading it back restores the mutated state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            export_resp = await client.get(f"/games/{session.session_id}/snapshot")
+            assert export_resp.status_code == 200
+            snapshot = export_resp.json()
+            assert snapshot["plugin_name"] == "marvel-champions"
+
+            mutated = dict(snapshot)
+            mutated["game"] = dict(snapshot["game"])
+            mutated["game"]["roundNumber"] = 13
+
+            load_resp = await client.put(
+                f"/games/{session.session_id}/snapshot",
+                json=mutated,
+            )
+            assert load_resp.status_code == 200
+            assert load_resp.json()["state"]["game"]["roundNumber"] == 13
+
+            state_resp = await client.get(f"/games/{session.session_id}/state")
+            assert state_resp.status_code == 200
+            assert state_resp.json()["state"]["game"]["roundNumber"] == 13
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_load_rejects_plugin_mismatch(app, manager):
+    """Loading a snapshot for another plugin returns HTTP 400 and does not mutate."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            export_resp = await client.get(f"/games/{session.session_id}/snapshot")
+            assert export_resp.status_code == 200
+            snapshot = export_resp.json()
+            snapshot["plugin_name"] = "other-game"
+
+            load_resp = await client.put(
+                f"/games/{session.session_id}/snapshot",
+                json=snapshot,
+            )
+            assert load_resp.status_code == 400
+            assert "does not match" in load_resp.json()["detail"]
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_load_rejects_schema_version_mismatch(app, manager):
+    """Loading a snapshot with an unsupported schema version returns HTTP 400."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            export_resp = await client.get(f"/games/{session.session_id}/snapshot")
+            assert export_resp.status_code == 200
+            snapshot = export_resp.json()
+            snapshot["schema_version"] = 999
+
+            load_resp = await client.put(
+                f"/games/{session.session_id}/snapshot",
+                json=snapshot,
+            )
+            assert load_resp.status_code == 400
+            assert "Unsupported snapshot schema version" in load_resp.json()["detail"]
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_mcp_does_not_expose_snapshot_tools(mcp):
+    """Snapshot HTTP endpoints stay out of MCP discovery."""
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    names = {tool.name for tool in tools}
+    assert "export_game_state_snapshot" not in names
+    assert "load_game_state_snapshot" not in names
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,18 @@ The Game Service SHALL provide HTTP endpoints and MCP tools to create, query, an
 - **WHEN** a client sends `GET /games` or invokes the `list_games` MCP tool
 - **THEN** the Game Service SHALL return a list of all active game sessions with their IDs, plugin names, and creation timestamps
 
+#### Scenario: Export session state for setup automation
+- **WHEN** a client sends an HTTP export request for an active session
+- **THEN** the Game Service SHALL return a versioned snapshot document containing the session plugin identity and the game payload required to restore that state later
+
+#### Scenario: Load exported state into a compatible session
+- **WHEN** a client sends an HTTP import request with a supported snapshot document whose plugin identity matches the target session
+- **THEN** the Game Service SHALL load the snapshot into the target session and return the updated game state
+
+#### Scenario: Reject incompatible imported state
+- **WHEN** a client sends an HTTP import request with an unsupported snapshot version or a snapshot for a different plugin than the target session
+- **THEN** the Game Service SHALL reject the request with a descriptive client error and SHALL NOT mutate the session
+
 ### Requirement: Game state observation
 The Game Service SHALL provide endpoints and MCP tools to query the current game state for a given session.
 
@@ -100,6 +112,10 @@ The Game Service SHALL implement the Model Context Protocol, exposing game capab
 #### Scenario: MCP error handling
 - **WHEN** the Game Service encounters an error processing an MCP tool call
 - **THEN** it SHALL return the error as an MCP error response with a descriptive message
+
+#### Scenario: Setup import and export excluded from MCP
+- **WHEN** an MCP client requests the list of available tools or resources
+- **THEN** the Game Service SHALL NOT expose game-state export or load-state operations through MCP discovery
 
 ### Requirement: Plugin management
 The Game Service SHALL support loading DragnCards-compatible plugins for game initialization.

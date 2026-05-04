@@ -19,8 +19,8 @@ import pytest
 from fastmcp import Client
 
 from game_service.api.app import create_app
+from game_service.logic.session_manager import SessionNotFoundError
 from game_service.mcp.server import create_mcp_server
-from game_service.session.manager import SessionNotFoundError
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +152,15 @@ async def test_set_player_count_requires_num_players():
         tools = await client.list_tools()
     tool = next(t for t in tools if t.name == "set_player_count")
     assert "num_players" in tool.inputSchema.get("required", [])
+
+
+async def test_snapshot_endpoints_not_exposed_as_tools():
+    mcp = _make_mcp()
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    names = {t.name for t in tools}
+    assert "export_game_state_snapshot" not in names
+    assert "load_game_state_snapshot" not in names
 
 
 # ---------------------------------------------------------------------------

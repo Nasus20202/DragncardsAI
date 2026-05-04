@@ -1,19 +1,7 @@
-"""
-Unit-level integration tests for the new HTTP API endpoints.
+"""Unit tests for split game room and state HTTP routes.
 
-Uses httpx.AsyncClient with ASGITransport + a mocked SessionManager/GameSession —
-no real DragnCards backend required.
-
-Covers:
-- POST /games/{id}/reset  (200, 404)
-- POST /games/{id}/seat   (204, 404)
-- POST /games/{id}/spectator (204, 404)
-- POST /games/{id}/alert  (204, 404)
-- POST /games/{id}/replay (204, 404)
-- GET  /games/{id}/alerts  (200, 404)
-- GET  /games/{id}/gui-update (200, 404)
-- BadGameStateError → 409
-- StateUnavailableError → 503
+Uses httpx.AsyncClient with ASGITransport plus a mocked SessionManager/GameSession,
+so no real DragnCards backend is required.
 """
 
 from __future__ import annotations
@@ -24,11 +12,12 @@ import httpx
 import pytest
 
 from game_service.api.app import create_app
-from game_service.session.manager import (
+from game_service.logic.session_manager import (
     BadGameStateError,
     SessionNotFoundError,
     StateUnavailableError,
 )
+from game_service.logic.snapshots import GameStateSnapshot
 
 SESSION_ID = "test-session-id"
 UNKNOWN_ID = "00000000-0000-0000-0000-000000000000"
@@ -47,6 +36,14 @@ def _mock_session(**kwargs) -> MagicMock:
     session.set_spectator = AsyncMock()
     session.send_alert = AsyncMock()
     session.save_replay = AsyncMock()
+    session.export_state = AsyncMock(
+        return_value=GameStateSnapshot(
+            schema_version=1,
+            plugin_name="marvel-champions",
+            game={"roundNumber": 0},
+        )
+    )
+    session.load_state = AsyncMock(return_value={"game": {"roundNumber": 2}})
     session.get_alerts = MagicMock(return_value=[{"level": "info", "text": "hello"}])
     session.get_gui_updates = MagicMock(
         return_value={"player1": {"player_n": "player1", "prompt": "choose"}}
@@ -108,6 +105,51 @@ async def test_reset_game_not_found():
     async with _make_client() as client:
         resp = await client.post(f"/games/{UNKNOWN_ID}/reset", json={})
     assert resp.status_code == 404
+
+
+async def test_export_snapshot_200():
+    session = _mock_session()
+    async with _make_client(_mock_manager(session)) as client:
+        resp = await client.get(f"/games/{SESSION_ID}/snapshot")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["schema_version"] == 1
+    assert body["plugin_name"] == "marvel-champions"
+    assert body["game"]["roundNumber"] == 0
+
+
+async def test_load_snapshot_200():
+    session = _mock_session()
+    async with _make_client(_mock_manager(session)) as client:
+        resp = await client.put(
+            f"/games/{SESSION_ID}/snapshot",
+            json={
+                "schema_version": 1,
+                "plugin_name": "marvel-champions",
+                "game": {"roundNumber": 2},
+            },
+        )
+    assert resp.status_code == 200
+    session.load_state.assert_awaited_once()
+    assert resp.json()["state"]["game"]["roundNumber"] == 2
+
+
+async def test_load_snapshot_validation_error_returns_400():
+    from game_service.logic.session_manager import SnapshotValidationError
+
+    session = _mock_session()
+    session.load_state = AsyncMock(side_effect=SnapshotValidationError("plugin mismatch"))
+    async with _make_client(_mock_manager(session)) as client:
+        resp = await client.put(
+            f"/games/{SESSION_ID}/snapshot",
+            json={
+                "schema_version": 1,
+                "plugin_name": "other-game",
+                "game": {},
+            },
+        )
+    assert resp.status_code == 400
+    assert "plugin mismatch" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

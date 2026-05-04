@@ -17,13 +17,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from game_service.phoenix_client.client import Channel, PhoenixClient, PhxMessage
-from game_service.session.exceptions import (
+from game_service.logic.exceptions import (
     BadGameStateError,
     SessionError,
+    SnapshotValidationError,
     StateUnavailableError,
 )
-from game_service.session.game_session import GameSession
+from game_service.logic.session import GameSession
+from game_service.phoenix_client.client import Channel, PhoenixClient, PhxMessage
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@ async def test_get_state_fetches_fresh_state_without_deadlocking():
 
 
 async def test_execute_action_raises_bad_game_state_before_push():
-    from game_service.session.actions import NextStepAction
+    from game_service.logic.actions import NextStepAction
 
     session = _make_session()
     session._bad_state = True
@@ -120,7 +121,7 @@ async def test_execute_action_raises_bad_game_state_before_push():
 
 
 async def test_execute_action_raises_state_unavailable_before_push():
-    from game_service.session.actions import NextStepAction
+    from game_service.logic.actions import NextStepAction
 
     session = _make_session()
     session._state_unavailable = True
@@ -129,7 +130,7 @@ async def test_execute_action_raises_state_unavailable_before_push():
 
 
 async def test_execute_action_recovers_with_request_state_after_timeout():
-    from game_service.session.actions import NextStepAction
+    from game_service.logic.actions import NextStepAction
 
     session = _make_session()
     session.channel.push = AsyncMock(side_effect=[{}, {"game": {"ok": True}}])
@@ -145,7 +146,7 @@ async def test_execute_action_recovers_with_request_state_after_timeout():
 
 
 async def test_execute_action_timeout_raises_when_recovery_also_times_out():
-    from game_service.session.actions import NextStepAction
+    from game_service.logic.actions import NextStepAction
 
     session = _make_session()
     session.channel.push = AsyncMock(side_effect=[{}, {}])
@@ -154,6 +155,66 @@ async def test_execute_action_timeout_raises_when_recovery_also_times_out():
 
     with pytest.raises(SessionError, match="Timed out waiting for state update after action"):
         await session.execute_action(NextStepAction())
+
+
+async def test_export_state_returns_snapshot_document():
+    session = _make_session()
+    session._state = {"game": {"stepId": 0, "roundNumber": 1}}
+
+    snapshot = await session.export_state()
+
+    assert snapshot.schema_version == 1
+    assert snapshot.plugin_name == "marvel-champions"
+    assert snapshot.game["roundNumber"] == 1
+
+
+async def test_load_state_pushes_set_game_and_refreshes_state():
+    session = _make_session()
+    session.channel.push = AsyncMock(side_effect=[{}, {"game": {"roundNumber": 4}}])
+    session.channel.wait_for_event = AsyncMock(return_value=MagicMock(event="state_update"))
+    session.channel.wait_for_state_update = AsyncMock(
+        return_value={"game": {"roundNumber": 4}}
+    )
+
+    state = await session.load_state(
+        {
+            "schema_version": 1,
+            "plugin_name": "marvel-champions",
+            "game": {"roundNumber": 4},
+        }
+    )
+
+    assert state == {"game": {"roundNumber": 4}}
+    first_call = session.channel.push.await_args_list[0]
+    assert first_call.args[0] == "game_action"
+    assert first_call.args[1]["action"] == "set_game"
+    assert first_call.args[1]["options"]["game"] == {"roundNumber": 4}
+
+
+async def test_load_state_rejects_wrong_plugin():
+    session = _make_session()
+
+    with pytest.raises(SnapshotValidationError, match="does not match"):
+        await session.load_state(
+            {
+                "schema_version": 1,
+                "plugin_name": "other-game",
+                "game": {},
+            }
+        )
+
+
+async def test_load_state_rejects_unsupported_schema_version():
+    session = _make_session()
+
+    with pytest.raises(SnapshotValidationError, match="Unsupported snapshot schema version"):
+        await session.load_state(
+            {
+                "schema_version": 999,
+                "plugin_name": "marvel-champions",
+                "game": {},
+            }
+        )
 
 
 # ---------------------------------------------------------------------------

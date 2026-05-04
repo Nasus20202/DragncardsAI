@@ -18,17 +18,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from game_service.phoenix_client.client import (
-    Channel,
-    PhoenixClient,
-    PhoenixChannelError,
-    PhxMessage,
-)
-from game_service.session.actions import GameAction, translate_action
-from game_service.session.exceptions import (
+from game_service.logic.actions import GameAction, translate_action
+from game_service.logic.exceptions import (
     BadGameStateError,
     SessionError,
+    SnapshotValidationError,
     StateUnavailableError,
+)
+from game_service.logic.snapshots import GameStateSnapshot, SNAPSHOT_SCHEMA_VERSION
+from game_service.phoenix_client.client import (
+    Channel,
+    PhoenixChannelError,
+    PhoenixClient,
+    PhxMessage,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,9 +47,7 @@ class GameSession:
     created_at: datetime
     client: PhoenixClient
     channel: Channel
-    _manager: Any = field(
-        default=None, init=False
-    )  # back-reference set by SessionManager
+    _manager: Any = field(default=None, init=False)
     _state: Any = field(default=None, init=False)
     _state_stale: bool = field(default=False, init=False)
     _state_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
@@ -57,29 +57,18 @@ class GameSession:
     _gui_updates: dict = field(default_factory=dict, init=False)
 
     def __post_init__(self):
-        # Subscribe to state broadcasts and cache them
         self.channel.on("current_state", self._on_full_state)
-        # state_update carries a delta; we mark state as dirty to re-fetch on next read
         self.channel.on("state_update", self._on_delta)
-        # Inbound error events
         self.channel.on("bad_game_state", self._on_bad_game_state)
         self.channel.on("unable_to_get_state_on_join", self._on_state_unavailable)
         self.channel.on("unable_to_get_state_on_request", self._on_state_unavailable)
-        # Observable events
         self.channel.on("send_alert", self._on_alert)
         self.channel.on("gui_update", self._on_gui_update)
-
-    # ------------------------------------------------------------------
-    # Inbound event handlers
-    # ------------------------------------------------------------------
 
     def _on_full_state(self, payload: Any) -> None:
         self._state = payload
 
     def _on_delta(self, payload: Any) -> None:
-        # Mark state as stale so the next get_state() fetches fresh data.
-        # We don't attempt to apply deltas client-side — DragnCards delta format
-        # is complex and not officially documented.
         self._state_stale = True
 
     def _on_bad_game_state(self, payload: Any) -> None:
@@ -102,12 +91,7 @@ class GameSession:
         if player_n:
             self._gui_updates[player_n] = payload
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     def _check_state_flags(self) -> None:
-        """Raise if the session has a persistent error flag set."""
         if self._bad_state:
             raise BadGameStateError(
                 f"Session {self.session_id}: game state is corrupted or unavailable"
@@ -118,7 +102,6 @@ class GameSession:
             )
 
     async def _request_fresh_state(self, timeout: float) -> Any:
-        """Request and cache a fresh full state from DragnCards."""
         await self.channel.push("request_state", {}, timeout=timeout)
         new_state = await self.channel.wait_for_state_update(timeout=timeout)
         self._check_state_flags()
@@ -127,18 +110,30 @@ class GameSession:
             self._state_stale = False
         return new_state
 
-    # ------------------------------------------------------------------
-    # State access
-    # ------------------------------------------------------------------
+    async def get_state(self) -> Any:
+        self._check_state_flags()
+        async with self._state_lock:
+            if self._state is not None and not self._state_stale:
+                return self._state
+
+            stale = self._state_stale
+
+        logger.info(
+            "get_state: session_id=%s fetching fresh state (stale=%s)",
+            self.session_id,
+            stale,
+        )
+        try:
+            await self._request_fresh_state(timeout=10.0)
+        except (PhoenixChannelError, asyncio.TimeoutError) as exc:
+            logger.error("get_state: session_id=%s failed: %s", self.session_id, exc)
+            raise SessionError(f"Could not fetch game state: {exc}") from exc
+
+        self._check_state_flags()
+        async with self._state_lock:
+            return self._state
 
     async def execute_action(self, action: GameAction, timeout: float = 15.0) -> Any:
-        """
-        Translate and execute a game action, then return the resulting state.
-
-        Sends a "game_action" message on the channel, waits for the state_update
-        delta broadcast, requests the full state via request_state, and returns it.
-        Raises SessionError if the action is rejected or times out.
-        """
         self._check_state_flags()
         payload = translate_action(action)
         logger.info(
@@ -183,38 +178,58 @@ class GameSession:
                 "Timed out waiting for state update after action"
             ) from exc
 
-    async def get_state(self) -> Any:
-        """Return the latest cached game state, re-fetching if stale or absent."""
-        self._check_state_flags()
-        async with self._state_lock:
-            if self._state is not None and not self._state_stale:
-                return self._state
-
-            stale = self._state_stale
-
-        logger.info(
-            "get_state: session_id=%s fetching fresh state (stale=%s)",
-            self.session_id,
-            stale,
+    async def export_state(self) -> GameStateSnapshot:
+        state = await self.get_state()
+        if not isinstance(state, dict) or not isinstance(state.get("game"), dict):
+            raise SessionError(
+                f"Session {self.session_id}: current state has no exportable game payload"
+            )
+        return GameStateSnapshot(
+            schema_version=SNAPSHOT_SCHEMA_VERSION,
+            plugin_name=self.plugin_name,
+            game=state["game"],
         )
+
+    async def load_state(
+        self, snapshot: GameStateSnapshot | dict[str, Any], timeout: float = 15.0
+    ) -> Any:
+        snapshot_doc = (
+            snapshot
+            if isinstance(snapshot, GameStateSnapshot)
+            else GameStateSnapshot.model_validate(snapshot)
+        )
+        if snapshot_doc.schema_version != SNAPSHOT_SCHEMA_VERSION:
+            raise SnapshotValidationError(
+                f"Unsupported snapshot schema version {snapshot_doc.schema_version}; expected {SNAPSHOT_SCHEMA_VERSION}"
+            )
+        if snapshot_doc.plugin_name != self.plugin_name:
+            raise SnapshotValidationError(
+                f"Snapshot plugin {snapshot_doc.plugin_name!r} does not match session plugin {self.plugin_name!r}"
+            )
+
+        payload = {
+            "action": "set_game",
+            "options": {
+                "game": snapshot_doc.game,
+                "description": "Load game state snapshot",
+            },
+            "timestamp": int(time.time() * 1000),
+        }
         try:
-            await self._request_fresh_state(timeout=10.0)
-        except (PhoenixChannelError, asyncio.TimeoutError) as exc:
-            logger.error("get_state: session_id=%s failed: %s", self.session_id, exc)
-            raise SessionError(f"Could not fetch game state: {exc}") from exc
-
-        self._check_state_flags()
-        async with self._state_lock:
-            return self._state
-
-    # ------------------------------------------------------------------
-    # Room control outbound methods
-    # ------------------------------------------------------------------
+            await self.channel.push("game_action", payload, timeout=timeout)
+            await self.channel.wait_for_event(
+                "state_update", "current_state", timeout=timeout
+            )
+            self._check_state_flags()
+            return await self._request_fresh_state(timeout=timeout)
+        except PhoenixChannelError as exc:
+            raise SessionError(f"load_state rejected: {exc}") from exc
+        except asyncio.TimeoutError as exc:
+            raise SessionError("Timed out waiting for state after load_state") from exc
 
     async def reset_game(
         self, save: bool = False, reload_plugin: bool = False, timeout: float = 15.0
     ) -> Any:
-        """Reset the game, optionally reloading the plugin. Returns new state."""
         event = "reset_and_reload" if reload_plugin else "reset_game"
         logger.info(
             "reset_game: session_id=%s event=%s save=%s", self.session_id, event, save
@@ -235,7 +250,6 @@ class GameSession:
             raise SessionError("Timed out waiting for state after reset") from exc
 
     async def set_seat(self, player_index: int, user_id: int) -> None:
-        """Assign a user to a player seat (fire-and-forget — no phx_reply expected)."""
         timestamp = int(time.time() * 1000)
         msg = PhxMessage(
             join_ref=self.channel.join_ref,
@@ -251,7 +265,6 @@ class GameSession:
         await self.client._send(msg)
 
     async def set_spectator(self, user_id: int, spectating: bool) -> None:
-        """Toggle spectator mode for a user (fire-and-forget — no phx_reply expected)."""
         msg = PhxMessage(
             join_ref=self.channel.join_ref,
             ref=self.client._next_ref(),
@@ -267,21 +280,6 @@ class GameSession:
         layout_id: str | None = None,
         timeout: float = 15.0,
     ) -> Any:
-        """
-        Set the number of players for this game room and return the resulting state.
-
-        Sends a compound DragnLang action via game_action:
-          ["SET", "/numPlayers", num_players]
-
-        If layout_id is provided, also sends:
-          ["SET_LAYOUT", "shared", layout_id]
-
-        The layout ID is plugin-specific (e.g. "standard2Player" for Marvel Champions).
-        If your plugin requires a layout change when altering player count, pass it here;
-        otherwise the server will use whatever layout is currently active.
-
-        Raises SessionError on timeout or channel rejection.
-        """
         logger.info(
             "set_player_count: session_id=%s num_players=%s layout_id=%r",
             self.session_id,
@@ -327,7 +325,6 @@ class GameSession:
             ) from exc
 
     async def close_room(self, timeout: float = 10.0) -> None:
-        """Save and close the DragnCards room, then clean up this session from the pool."""
         try:
             await self.channel.push("close_room", {"options": {}}, timeout=timeout)
         except PhoenixChannelError as exc:
@@ -335,7 +332,6 @@ class GameSession:
         except asyncio.TimeoutError as exc:
             raise SessionError("Timed out waiting for close_room ack") from exc
         finally:
-            # Always clean up the pool entry — whether the push succeeded or not
             if self._manager is not None:
                 try:
                     await self._manager._remove_session(self.session_id)
@@ -343,7 +339,6 @@ class GameSession:
                     pass
 
     async def send_alert(self, message: str, timeout: float = 10.0) -> None:
-        """Broadcast an alert message to all participants in the room."""
         try:
             await self.channel.push("send_alert", {"message": message}, timeout=timeout)
         except PhoenixChannelError as exc:
@@ -352,7 +347,6 @@ class GameSession:
             raise SessionError("Timed out waiting for send_alert ack") from exc
 
     async def save_replay(self, timeout: float = 10.0) -> None:
-        """Manually save the current replay."""
         timestamp = int(time.time() * 1000)
         try:
             await self.channel.push(
@@ -363,24 +357,13 @@ class GameSession:
         except asyncio.TimeoutError as exc:
             raise SessionError("Timed out waiting for save_replay ack") from exc
 
-    # ------------------------------------------------------------------
-    # Observable event accessors
-    # ------------------------------------------------------------------
-
     def get_alerts(self) -> list[dict]:
-        """Return a copy of the buffered alerts."""
         return list(self._alerts)
 
     def get_gui_updates(self) -> dict[str, Any]:
-        """Return a copy of the latest GUI update hints per player."""
         return dict(self._gui_updates)
 
-    # ------------------------------------------------------------------
-    # Metadata
-    # ------------------------------------------------------------------
-
     def to_metadata(self) -> dict:
-        """Return session metadata (no full state)."""
         return {
             "session_id": self.session_id,
             "plugin_name": self.plugin_name,

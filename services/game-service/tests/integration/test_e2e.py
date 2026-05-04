@@ -22,8 +22,8 @@ from fastmcp import Client
 pytestmark = pytest.mark.live
 
 from game_service.api.app import create_app
+from game_service.logic.session_manager import SessionManager
 from game_service.mcp.server import create_mcp_server
-from game_service.session.manager import SessionManager
 
 DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:4000")
 DRAGNCARDS_WS_URL = os.environ.get("DRAGNCARDS_WS_URL", "ws://localhost:4000/socket")

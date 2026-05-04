@@ -1,5 +1,5 @@
 """
-Unit tests for game_service.session.actions
+Unit tests for game_service.logic.actions
 
 All tests are pure (no network, no DragnCards). They verify:
 - translate_action() returns the correct DragnLang payload structure
@@ -20,7 +20,7 @@ import time
 
 import pytest
 
-from game_service.session.actions import (
+from game_service.logic.actions import (
     DrawCardAction,
     MoveCardAction,
     NextStepAction,
@@ -50,7 +50,7 @@ def test_translate_action_no_player_ui_when_no_player_n():
 
 def test_translate_action_player_ui_included_when_player_n_present():
     """Actions with player_n must include player_ui so DragnCards resolves $PLAYER_N."""
-    from game_service.session.actions import DrawCardAction
+    from game_service.logic.actions import DrawCardAction
 
     payload = translate_action(DrawCardAction(player_n="player2", count=1))
     assert payload["options"]["player_ui"] == {"playerN": "player2"}

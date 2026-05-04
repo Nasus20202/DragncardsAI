@@ -18,7 +18,7 @@ import logging
 from fastmcp import FastMCP
 from fastmcp.server.providers.openapi import MCPType, RouteMap
 
-from game_service.session.manager import SessionManager
+from game_service.logic.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,8 @@ def create_mcp_server(session_manager: SessionManager, fastapi_app) -> FastMCP:
             # exclude them from tools to avoid duplication
             RouteMap(pattern=r"^/games/[^/]+/alerts$", mcp_type=MCPType.EXCLUDE),
             RouteMap(pattern=r"^/games/[^/]+/gui-update$", mcp_type=MCPType.EXCLUDE),
+            # snapshot import/export are privileged HTTP-only operations
+            RouteMap(pattern=r"^/games/[^/]+/snapshot$", mcp_type=MCPType.EXCLUDE),
         ],
     )
 

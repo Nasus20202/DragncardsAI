@@ -23,3 +23,7 @@ class BadGameStateError(SessionError):
 
 class StateUnavailableError(SessionError):
     """Raised when the DragnCards backend cannot provide the game state."""
+
+
+class SnapshotValidationError(SessionError):
+    """Raised when a snapshot document is invalid for the target session."""

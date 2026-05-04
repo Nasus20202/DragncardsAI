@@ -7,7 +7,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from game_service.session.manager import (
+from game_service.logic.session_manager import (
     BadGameStateError,
     SessionError,
     SessionNotFoundError,

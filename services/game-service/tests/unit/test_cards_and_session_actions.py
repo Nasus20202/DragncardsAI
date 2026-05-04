@@ -14,8 +14,8 @@ import httpx
 import pytest
 
 from game_service.api.app import create_app
-from game_service.session.card_db import search_cards
-from game_service.session.manager import SessionNotFoundError
+from game_service.catalog.service import search_cards
+from game_service.logic.session_manager import SessionNotFoundError
 
 SESSION_ID = "test-session-id"
 UNKNOWN_ID = "00000000-0000-0000-0000-000000000000"

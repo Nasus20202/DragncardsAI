@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from fastapi import Request
 
-from game_service.session.manager import SessionManager
+from game_service.logic.session_manager import SessionManager
 
 
 def get_manager(request: Request) -> SessionManager:

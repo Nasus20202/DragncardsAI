@@ -1,4 +1,4 @@
-"""Router: room control endpoints (reset, seat, spectator, alert, replay, player-count)."""
+"""Router: room control and room event observation endpoints."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ import logging
 from fastapi import APIRouter, Depends
 
 from game_service.api.deps import get_manager
-
-logger = logging.getLogger(__name__)
 from game_service.api.models import (
+    AlertsResponse,
+    GuiUpdateResponse,
     ResetGameRequest,
     ResetGameResponse,
     SendAlertRequest,
@@ -18,9 +18,11 @@ from game_service.api.models import (
     SetSeatRequest,
     SetSpectatorRequest,
 )
-from game_service.session.manager import SessionManager
+from game_service.logic.session_manager import SessionManager
 
-router = APIRouter(tags=["room-control"])
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["games"])
 
 
 @router.post(
@@ -34,10 +36,6 @@ async def reset_game(
     body: ResetGameRequest,
     manager: SessionManager = Depends(get_manager),
 ):
-    """
-    Reset the DragnCards game. Pass `reload_plugin: true` to reload the
-    plugin after reset. Pass `save: true` to save a replay first.
-    """
     logger.info(
         "reset_game: session_id=%s save=%s reload_plugin=%s",
         session_id,
@@ -63,7 +61,6 @@ async def set_seat(
     body: SetSeatRequest,
     manager: SessionManager = Depends(get_manager),
 ):
-    """Assign a DragnCards user to a specific player seat (0-indexed)."""
     logger.info(
         "set_seat: session_id=%s player_index=%s user_id=%s",
         session_id,
@@ -85,7 +82,6 @@ async def set_spectator(
     body: SetSpectatorRequest,
     manager: SessionManager = Depends(get_manager),
 ):
-    """Enable or disable omniscient spectator mode for the given user."""
     logger.info(
         "set_spectator: session_id=%s user_id=%s spectating=%s",
         session_id,
@@ -107,7 +103,6 @@ async def send_alert(
     body: SendAlertRequest,
     manager: SessionManager = Depends(get_manager),
 ):
-    """Broadcast a text alert message to all participants in the room."""
     logger.info("send_alert: session_id=%s message=%r", session_id, body.message)
     session = await manager.get_session(session_id)
     await session.send_alert(body.message)
@@ -123,7 +118,6 @@ async def save_replay(
     session_id: str,
     manager: SessionManager = Depends(get_manager),
 ):
-    """Manually trigger a replay save for the current game session."""
     logger.info("save_replay: session_id=%s", session_id)
     session = await manager.get_session(session_id)
     await session.save_replay()
@@ -140,13 +134,6 @@ async def set_player_count(
     body: SetPlayerCountRequest,
     manager: SessionManager = Depends(get_manager),
 ):
-    """
-    Set the number of active players for the game room.
-
-    Pass `layout_id` if the plugin uses per-player-count layouts (consult
-    the plugin's playerCountMenu configuration for valid values).
-    Returns the resulting game state.
-    """
     logger.info(
         "set_player_count: session_id=%s num_players=%s layout_id=%r",
         session_id,
@@ -159,3 +146,31 @@ async def set_player_count(
     )
     logger.info("set_player_count: session_id=%s -> success", session_id)
     return SetPlayerCountResponse(session_id=session_id, state=new_state)
+
+
+@router.get(
+    "/games/{session_id}/alerts",
+    response_model=AlertsResponse,
+    summary="Get buffered room alerts",
+    operation_id="get_alerts",
+)
+async def get_alerts(
+    session_id: str,
+    manager: SessionManager = Depends(get_manager),
+):
+    session = await manager.get_session(session_id)
+    return AlertsResponse(session_id=session_id, alerts=session.get_alerts())
+
+
+@router.get(
+    "/games/{session_id}/gui-update",
+    response_model=GuiUpdateResponse,
+    summary="Get latest GUI update hints",
+    operation_id="get_gui_update",
+)
+async def get_gui_update(
+    session_id: str,
+    manager: SessionManager = Depends(get_manager),
+):
+    session = await manager.get_session(session_id)
+    return GuiUpdateResponse(session_id=session_id, updates=session.get_gui_updates())

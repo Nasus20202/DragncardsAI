@@ -14,9 +14,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from game_service.api.exception_handlers import register_exception_handlers
-from game_service.api.routers import games, meta, room_control, room_events
 from game_service.api.routers import cards as cards_router
-from game_service.session.manager import SessionManager
+from game_service.api.routers import (
+    game_actions,
+    game_lifecycle,
+    game_room,
+    game_state,
+    meta,
+)
+from game_service.logic.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +54,10 @@ def create_app(session_manager: SessionManager | None = None) -> FastAPI:
     register_exception_handlers(app)
 
     app.include_router(meta.router)
-    app.include_router(games.router)
-    app.include_router(room_control.router)
-    app.include_router(room_events.router)
+    app.include_router(game_lifecycle.router)
+    app.include_router(game_state.router)
+    app.include_router(game_actions.router)
+    app.include_router(game_room.router)
     app.include_router(cards_router.router)
 
     return app

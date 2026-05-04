@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, Query
 
 from game_service.api.models import CardResult, SearchCardsResponse
-from game_service.session.card_db import search_cards
+from game_service.catalog.service import search_cards
 
 logger = logging.getLogger(__name__)
 
