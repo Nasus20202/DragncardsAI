@@ -5,7 +5,7 @@ set -e
 
 ACTION="${1:-start}"
 
-INFRA_SERVICES="dragncards-backend"
+INFRA_SERVICES="dragncards-backend dragncards-frontend"
 
 case "$ACTION" in
     start)

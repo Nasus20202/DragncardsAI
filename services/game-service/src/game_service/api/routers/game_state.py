@@ -12,7 +12,7 @@ from game_service.logic.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["games"])
+router = APIRouter(tags=["game-state"])
 
 
 @router.get(

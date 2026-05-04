@@ -1,25 +1,33 @@
 #!/bin/bash
-# Start/stop game-service container via docker-compose
+# Build/start/stop the repo Docker Compose stack.
 
-set -e
+set -euo pipefail
 
 ACTION="${1:-start}"
 
 case "$ACTION" in
+    build)
+        echo "Building Docker stack..."
+        docker compose build
+        ;;
     start)
-        echo "Starting game-service container..."
-        docker compose up game-service -d
+        echo "Starting Docker stack..."
+        docker compose up -d
         ;;
     stop)
-        echo "Stopping game-service container..."
-        docker compose stop game-service
+        echo "Stopping Docker stack..."
+        docker compose stop
+        ;;
+    down)
+        echo "Tearing down Docker stack..."
+        docker compose down -v
         ;;
     restart)
-        echo "Restarting game-service container..."
-        docker compose restart game-service
+        echo "Restarting Docker stack..."
+        docker compose restart
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart}"
+        echo "Usage: $0 {build|start|stop|down|restart}"
         exit 1
         ;;
 esac

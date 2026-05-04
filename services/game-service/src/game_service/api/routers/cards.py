@@ -1,82 +1,125 @@
-"""Router: card database search endpoint."""
+"""Router: plugin card catalog search endpoint."""
 
 from __future__ import annotations
 
 import logging
+import re
+from inspect import Parameter, Signature
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from game_service.api.models import CardResult, SearchCardsResponse
-from game_service.catalog.service import search_cards
+from game_service.catalog.exceptions import (
+    CardFilterValueError,
+    UnknownCardProviderError,
+    UnsupportedCardFilterError,
+)
+from game_service.catalog.service import (
+    get_card_provider,
+    search_cards,
+    supported_plugins,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["cards"])
 
 
-@router.get(
-    "/cards",
-    response_model=SearchCardsResponse,
-    operation_id="search_cards",
-    summary="Search the card database",
-)
-async def search_cards_endpoint(
-    name: str | None = Query(
-        default=None,
-        description="Substring match on card name (case-insensitive), e.g. 'Spider-Man'",
-    ),
-    type_code: str | None = Query(
-        default=None,
-        description=(
-            "Exact match on card type. One of: hero, alter_ego, ally, event, upgrade, "
-            "support, resource, villain, main_scheme, side_scheme, minion, attachment, "
-            "treachery, environment, obligation, player_side_scheme, leader"
-        ),
-    ),
-    classification: str | None = Query(
-        default=None,
-        description=(
-            "Substring match on classification/aspect, e.g. 'Justice', 'Aggression', "
-            "'Leadership', 'Protection', 'Basic', 'Hero'"
-        ),
-    ),
-    official_only: bool = Query(
-        default=True,
-        description="If true (default), exclude custom/unofficial cards",
-    ),
-    limit: int = Query(
-        default=50,
-        ge=1,
-        le=200,
-        description="Maximum number of results to return",
-    ),
-):
-    """
-    Search the DragnCards card database by name, type, and/or classification.
+def _provider_operation_suffix(provider_name: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9]+", "_", provider_name).strip("_")
 
-    Returns card records including the `database_id` (UUID) needed to construct
-    a `load_cards` action. Searches are case-insensitive substring matches.
 
-    Examples:
-    - `?name=Spider-Man&type_code=hero` — find hero cards named Spider-Man
-    - `?name=Black Panther` — all cards with Black Panther in the name
-    - `?type_code=villain` — all villain cards (use limit to page)
-    - `?type_code=ally&classification=Justice` — Justice aspect allies
-    """
-    logger.info(
-        "search_cards: name=%r type_code=%r classification=%r official_only=%s limit=%d",
-        name,
-        type_code,
-        classification,
-        official_only,
-        limit,
-    )
-    results = search_cards(
-        name=name,
-        type_code=type_code,
-        classification=classification,
-        official_only=official_only,
-        limit=limit,
-    )
+def _query_parameter_for_filter(filter_spec: dict):
+    query_kwargs = {"description": filter_spec["description"]}
+    if filter_spec["type"] == "integer":
+        if filter_spec.get("minimum") is not None:
+            query_kwargs["ge"] = filter_spec["minimum"]
+        if filter_spec.get("maximum") is not None:
+            query_kwargs["le"] = filter_spec["maximum"]
+    default = filter_spec["default"] if "default" in filter_spec else None
+    return Query(default=default, **query_kwargs)
+
+
+def _annotation_for_filter(filter_spec: dict):
+    annotation = {
+        "string": str,
+        "integer": int,
+        "boolean": bool,
+    }[filter_spec["type"]]
+    if "default" not in filter_spec:
+        return annotation | None
+    return annotation
+
+
+def _search_cards_response(provider_name: str | None, raw_filters: dict[str, str]):
+    try:
+        results = search_cards(plugin_name=provider_name, filters=raw_filters)
+    except UnknownCardProviderError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except UnsupportedCardFilterError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except CardFilterValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     cards = [CardResult(**r) for r in results]
     return SearchCardsResponse(total=len(cards), cards=cards)
+
+
+def _build_provider_search_endpoint(provider_name: str):
+    provider = get_card_provider(provider_name)
+    allowed_filter_names = {filter_spec["name"] for filter_spec in provider["filters"]}
+
+    async def endpoint(request: Request, **filters):
+        unknown_filters = sorted(set(request.query_params) - allowed_filter_names)
+        if unknown_filters:
+            allowed = ", ".join(sorted(allowed_filter_names))
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported filter {unknown_filters[0]!r} for provider {provider_name!r}. "
+                    f"Allowed filters: {allowed}"
+                ),
+            )
+        raw_filters = {key: value for key, value in filters.items() if value is not None}
+        logger.info(
+            "search_provider_cards: provider=%r filters=%r",
+            provider_name,
+            raw_filters,
+        )
+        return _search_cards_response(provider_name, raw_filters)
+
+    endpoint.__name__ = f"search_cards_{_provider_operation_suffix(provider_name)}_endpoint"
+    endpoint.__doc__ = (
+        f"Search the {provider['display_name']} card catalog using provider-defined filters."
+    )
+    endpoint.__signature__ = Signature(
+        parameters=[
+            Parameter(
+                "request",
+                kind=Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=Request,
+            )
+        ]
+        + [
+            Parameter(
+                filter_spec["name"],
+                kind=Parameter.KEYWORD_ONLY,
+                default=_query_parameter_for_filter(filter_spec),
+                annotation=_annotation_for_filter(filter_spec),
+            )
+            for filter_spec in provider["filters"]
+        ],
+        return_annotation=SearchCardsResponse,
+    )
+    return endpoint
+
+
+for provider_name in supported_plugins():
+    provider = get_card_provider(provider_name)
+    router.add_api_route(
+        f"/cards/{provider_name}",
+        _build_provider_search_endpoint(provider_name),
+        response_model=SearchCardsResponse,
+        operation_id=f"search_cards_{_provider_operation_suffix(provider_name)}",
+        summary=f"Search {provider['display_name']} card catalog",
+        methods=["GET"],
+    )

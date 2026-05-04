@@ -95,26 +95,22 @@ The Game Service SHALL maintain persistent WebSocket connections to the DragnCar
 - **THEN** the Game Service SHALL send periodic heartbeat messages as required by the Phoenix Channels protocol to keep the connection alive
 
 ### Requirement: MCP protocol compliance
-The Game Service SHALL implement the Model Context Protocol, exposing game capabilities as MCP tools and resources accessible to any MCP-compatible client.
+The Game Service SHALL implement the Model Context Protocol, exposing game capabilities as MCP tools accessible to any MCP-compatible client.
 
 #### Scenario: MCP client connection
 - **WHEN** an MCP client connects to the Game Service
-- **THEN** the server SHALL complete the MCP handshake and advertise available tools and resources
+- **THEN** the server SHALL complete the MCP handshake and advertise available tools
 
 #### Scenario: Tool discovery
 - **WHEN** an MCP client requests the list of available tools
 - **THEN** the server SHALL return tool definitions for game session management (`create_game`, `list_games`, `delete_game`), state observation (`get_game_state`), and action execution (`execute_action`), each with proper JSON Schema parameter descriptions
-
-#### Scenario: Game state as MCP resource
-- **WHEN** an MCP client reads the resource `game://{session_id}/state`
-- **THEN** the Game Service SHALL return the current game state as a resource with appropriate content type
 
 #### Scenario: MCP error handling
 - **WHEN** the Game Service encounters an error processing an MCP tool call
 - **THEN** it SHALL return the error as an MCP error response with a descriptive message
 
 #### Scenario: Setup import and export excluded from MCP
-- **WHEN** an MCP client requests the list of available tools or resources
+- **WHEN** an MCP client requests the list of available tools
 - **THEN** the Game Service SHALL NOT expose game-state export or load-state operations through MCP discovery
 
 ### Requirement: Plugin management
@@ -304,14 +300,3 @@ The Game Service SHALL expose each room-control operation as an MCP tool.
 #### Scenario: MCP set_player_count tool
 - **WHEN** an MCP client invokes `set_player_count` with `session_id`, `num_players`, and optional `layout_id`
 - **THEN** the Game Service SHALL push the game actions and return the updated state as text content
-
-### Requirement: Room event MCP resources
-The Game Service SHALL expose room event observations as MCP resources.
-
-#### Scenario: Alert buffer as MCP resource
-- **WHEN** an MCP client reads the resource `game://{session_id}/alerts`
-- **THEN** the Game Service SHALL return the alert buffer as formatted text content
-
-#### Scenario: GUI update as MCP resource
-- **WHEN** an MCP client reads the resource `game://{session_id}/gui-update`
-- **THEN** the Game Service SHALL return the latest GUI hints formatted as text content suitable for LLM consumption

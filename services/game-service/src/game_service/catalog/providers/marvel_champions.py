@@ -16,6 +16,65 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+FILTERS = [
+    {
+        "name": "name",
+        "type": "string",
+        "description": "Substring match on card name (case-insensitive)",
+        "match": "contains_ci",
+    },
+    {
+        "name": "type_code",
+        "type": "string",
+        "description": "Exact match on Marvel Champions card type code",
+        "match": "exact",
+    },
+    {
+        "name": "classification",
+        "type": "string",
+        "description": "Substring match on aspect/classification",
+        "match": "contains_ci",
+    },
+    {
+        "name": "official_only",
+        "type": "boolean",
+        "description": "If true (default), exclude custom/unofficial cards",
+        "default": True,
+    },
+    {
+        "name": "limit",
+        "type": "integer",
+        "description": "Maximum number of results to return",
+        "default": 50,
+        "minimum": 1,
+        "maximum": 200,
+    },
+]
+
+LOAD_GROUPS = [
+    "playerNDeck",
+    "playerNDeck2",
+    "playerNDiscard",
+    "playerNHand",
+    "playerNPlay1",
+    "playerNPlay2",
+    "playerNPlay3",
+    "playerNPlay4",
+    "playerNEngaged",
+    "playerNNemesisSet",
+    "sharedEncounterDeck",
+    "sharedEncounterDiscard",
+    "sharedEncounter2Deck",
+    "sharedEncounter2Discard",
+    "sharedEncounter3Deck",
+    "sharedMainScheme",
+    "sharedMainSchemeDeck",
+    "sharedVillain",
+    "sharedVillainDeck",
+    "sharedVictoryDisplay",
+    "sharedCampaignDeck",
+]
+
 _DEFAULT_CARDS_PATH = os.path.join(
     os.path.dirname(__file__),
     "..",
@@ -124,17 +183,17 @@ def load_card_db() -> list[dict[str, Any]]:
     return records
 
 
-def search_cards(
-    name: str | None = None,
-    type_code: str | None = None,
-    classification: str | None = None,
-    official_only: bool = True,
-    limit: int = 50,
-) -> list[dict[str, Any]]:
+def search_cards(filters: dict[str, Any]) -> list[dict[str, Any]]:
     """Search the Marvel Champions card database."""
     db = load_card_db()
     seen_ids: set[str] = set()
     results: list[dict[str, Any]] = []
+
+    name = filters.get("name")
+    type_code = filters.get("type_code")
+    classification = filters.get("classification")
+    official_only = filters.get("official_only", True)
+    limit = filters.get("limit", 50)
 
     name_lower = name.lower() if name else None
     classification_lower = classification.lower() if classification else None

@@ -2,8 +2,7 @@
 Unit tests for GET /cards and GET /games/{id}/actions endpoints.
 
 Uses httpx.AsyncClient with ASGITransport + mocked SessionManager.
-Card DB is tested directly via the card_db module (no mocking needed —
-it reads real fixture files from the repo).
+The card catalog is tested directly against the real fixture-backed provider.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ import httpx
 import pytest
 
 from game_service.api.app import create_app
-from game_service.catalog.service import search_cards
+from game_service.catalog.service import get_card_provider, get_load_groups, list_card_providers, search_cards
 from game_service.logic.session_manager import SessionNotFoundError
 
 SESSION_ID = "test-session-id"
@@ -55,7 +54,7 @@ def _make_client(manager=None):
 
 
 # ---------------------------------------------------------------------------
-# card_db.search_cards unit tests (no HTTP — pure logic)
+# card catalog search unit tests (no HTTP — pure logic)
 # ---------------------------------------------------------------------------
 
 
@@ -111,15 +110,38 @@ def test_search_cards_empty_query_returns_up_to_limit():
     assert len(results) <= 10
 
 
+def test_search_cards_unknown_plugin_returns_empty_list():
+    with pytest.raises(ValueError, match="Unknown card provider"):
+        search_cards(plugin_name="unknown-plugin")
+
+
+def test_list_card_providers_exposes_filters():
+    providers = list_card_providers()
+    assert len(providers) >= 1
+    marvel = next(provider for provider in providers if provider["provider"] == "marvel-champions")
+    filter_names = {item["name"] for item in marvel["filters"]}
+    assert filter_names >= {"name", "type_code", "classification", "official_only", "limit"}
+
+
+def test_get_card_provider_exposes_load_groups():
+    provider = get_card_provider("marvel-champions")
+    assert "playerNDeck" in provider["load_groups"]
+    assert "sharedVillain" in provider["load_groups"]
+
+
+def test_get_load_groups_unknown_plugin_returns_empty_list():
+    assert get_load_groups("unknown-plugin") == []
+
+
 # ---------------------------------------------------------------------------
-# GET /cards HTTP endpoint tests
+# GET /cards/{provider} HTTP endpoint tests
 # ---------------------------------------------------------------------------
 
 
-async def test_get_cards_200():
+async def test_search_provider_cards_200():
     async with _make_client() as client:
         resp = await client.get(
-            "/cards", params={"name": "Spider-Man", "type_code": "hero"}
+            "/cards/marvel-champions", params={"name": "Spider-Man", "type_code": "hero"}
         )
     assert resp.status_code == 200
     data = resp.json()
@@ -129,19 +151,19 @@ async def test_get_cards_200():
     assert data["total"] > 0
 
 
-async def test_get_cards_each_has_database_id():
+async def test_search_provider_cards_each_has_database_id():
     async with _make_client() as client:
-        resp = await client.get("/cards", params={"name": "Black Panther"})
+        resp = await client.get("/cards/marvel-champions", params={"name": "Black Panther"})
     assert resp.status_code == 200
     for card in resp.json()["cards"]:
         assert "database_id" in card
         assert len(card["database_id"]) == 36
 
 
-async def test_get_cards_type_filter():
+async def test_search_provider_cards_type_filter():
     async with _make_client() as client:
         resp = await client.get(
-            "/cards", params={"name": "Nick Fury", "type_code": "ally"}
+            "/cards/marvel-champions", params={"name": "Nick Fury", "type_code": "ally"}
         )
     assert resp.status_code == 200
     data = resp.json()
@@ -149,23 +171,50 @@ async def test_get_cards_type_filter():
         assert card["type_code"] == "ally"
 
 
-async def test_get_cards_limit_param():
+async def test_search_provider_cards_limit_param():
     async with _make_client() as client:
-        resp = await client.get("/cards", params={"type_code": "ally", "limit": 5})
+        resp = await client.get(
+            "/cards/marvel-champions", params={"type_code": "ally", "limit": 5}
+        )
     assert resp.status_code == 200
     assert resp.json()["total"] <= 5
 
 
-async def test_get_cards_no_params_returns_200():
+async def test_search_provider_cards_no_params_returns_200():
     async with _make_client() as client:
-        resp = await client.get("/cards")
+        resp = await client.get("/cards/marvel-champions")
     assert resp.status_code == 200
 
 
-async def test_get_cards_limit_over_200_rejected():
+async def test_search_provider_cards_unknown_filter_rejected():
     async with _make_client() as client:
-        resp = await client.get("/cards", params={"limit": 201})
+        resp = await client.get("/cards/marvel-champions", params={"unknown": "value"})
+    assert resp.status_code == 400
+    assert "Unsupported filter" in resp.json()["detail"]
+
+
+async def test_search_provider_cards_limit_over_200_rejected():
+    async with _make_client() as client:
+        resp = await client.get("/cards/marvel-champions", params={"limit": 201})
     assert resp.status_code == 422
+
+
+async def test_cards_openapi_lists_provider_specific_filters():
+    async with _make_client() as client:
+        resp = await client.get("/openapi.json")
+    assert resp.status_code == 200
+    operation = resp.json()["paths"]["/cards/marvel-champions"]["get"]
+    param_names = {param["name"] for param in operation["parameters"]}
+    assert param_names == {"name", "type_code", "classification", "official_only", "limit"}
+
+
+async def test_no_generic_provider_path_in_openapi():
+    async with _make_client() as client:
+        resp = await client.get("/openapi.json")
+    assert resp.status_code == 200
+    assert "/cards/{provider}" not in resp.json()["paths"]
+    assert "/cards" not in resp.json()["paths"]
+    assert "/cards/providers" not in resp.json()["paths"]
 
 
 # ---------------------------------------------------------------------------

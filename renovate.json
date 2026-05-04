@@ -6,6 +6,5 @@
       "updateTypes": ["minor", "patch"],
       "automerge": true
     }
-  ],
-  "ignorePaths": ["external/**"]
+  ]
 }

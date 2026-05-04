@@ -128,7 +128,7 @@ Integration tests SHALL verify that the Game Service exposes the gameplay and ro
 
 #### Scenario: Room-event observation returns captured data
 - **WHEN** alert or GUI-update events are produced for an active session
-- **THEN** the corresponding room-event endpoints or resources SHALL expose the captured data in a consumable format
+- **THEN** the corresponding room-event endpoints SHALL expose the captured data in a consumable format
 
 ### Requirement: Integration coverage for HTTP and MCP interfaces
 Integration and end-to-end tests SHALL verify that both public interfaces expose consistent functionality.

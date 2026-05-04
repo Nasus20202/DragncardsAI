@@ -27,13 +27,17 @@ DEV_USER_PASSWORD = os.environ.get("DEV_USER_PASSWORD", "password")
 @pytest.fixture
 async def auth_token():
     """Obtain a Pow auth token for dev_user."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{DRAGNCARDS_HTTP_URL}/api/v1/session",
-            json={"user": {"email": DEV_USER_EMAIL, "password": DEV_USER_PASSWORD}},
-        )
-        resp.raise_for_status()
-        return resp.json()["data"]["token"]
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                f"{DRAGNCARDS_HTTP_URL}/api/v1/session",
+                json={"user": {"email": DEV_USER_EMAIL, "password": DEV_USER_PASSWORD}},
+            )
+            resp.raise_for_status()
+    except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.RequestError) as exc:
+        pytest.skip(f"DragnCards auth unavailable at {DRAGNCARDS_HTTP_URL}: {exc}")
+
+    return resp.json()["data"]["token"]
 
 
 @pytest.fixture

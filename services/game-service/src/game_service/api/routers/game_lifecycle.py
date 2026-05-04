@@ -20,7 +20,7 @@ from game_service.logic.session_manager import SessionError, SessionManager
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["games"])
+router = APIRouter(tags=["game-lifecycle"])
 
 
 @router.post(

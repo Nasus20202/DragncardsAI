@@ -20,10 +20,11 @@ docker compose up -d
 
 ```bash
 # Unit tests (no network required)
-cd services/game-service
-python -m pytest tests/unit/ -v
+scripts/test.sh unit
+
+# Integration tests (requires Docker stack running)
+scripts/test.sh integration
 
 # Rebuild images
-cd docker
-docker compose build
+scripts/docker.sh build
 ```

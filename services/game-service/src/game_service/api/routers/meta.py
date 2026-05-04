@@ -50,13 +50,11 @@ RAW_OPS: list[DragnLangOp] = [
         description="Shuffle all stacks in the named group.",
         args=[
             DragnLangArg(
-                name="groupId",
-                type="string",
-                description="ID of the group to shuffle, e.g. 'sharedEncounterDeck'",
+                name="groupId", type="string", description="ID of the group to shuffle"
             )
         ],
         returns="game state",
-        example=["SHUFFLE_GROUP", "sharedEncounterDeck"],
+        example=["SHUFFLE_GROUP", "$GROUP_ID"],
     ),
     DragnLangOp(
         op="MOVE_CARD",
@@ -81,7 +79,7 @@ RAW_OPS: list[DragnLangOp] = [
             ),
         ],
         returns="game state",
-        example=["MOVE_CARD", "$CARD_ID", "player1Discard", -1],
+        example=["MOVE_CARD", "$CARD_ID", "$DEST_GROUP_ID", -1],
     ),
     DragnLangOp(
         op="MOVE_STACK",
@@ -106,7 +104,7 @@ RAW_OPS: list[DragnLangOp] = [
             ),
         ],
         returns="game state",
-        example=["MOVE_STACK", "$STACK_ID", "sharedVillain", -1],
+        example=["MOVE_STACK", "$STACK_ID", "$DEST_GROUP_ID", -1],
     ),
     DragnLangOp(
         op="MOVE_STACKS",
@@ -132,7 +130,7 @@ RAW_OPS: list[DragnLangOp] = [
             ),
         ],
         returns="game state",
-        example=["MOVE_STACKS", "player1Hand", "player1Discard", -1],
+        example=["MOVE_STACKS", "$SOURCE_GROUP_ID", "$DEST_GROUP_ID", -1],
     ),
     DragnLangOp(
         op="ATTACH_CARD",
@@ -194,7 +192,7 @@ RAW_OPS: list[DragnLangOp] = [
             ),
         ],
         returns="game state",
-        example=["SHUFFLE_TOP_X", "sharedEncounterDeck", 3],
+        example=["SHUFFLE_TOP_X", "$GROUP_ID", 3],
     ),
     DragnLangOp(
         op="SHUFFLE_BOTTOM_X",
@@ -208,7 +206,7 @@ RAW_OPS: list[DragnLangOp] = [
             ),
         ],
         returns="game state",
-        example=["SHUFFLE_BOTTOM_X", "sharedEncounterDeck", 3],
+        example=["SHUFFLE_BOTTOM_X", "$GROUP_ID", 3],
     ),
     # --- Visibility / browsing ---
     DragnLangOp(
@@ -233,7 +231,7 @@ RAW_OPS: list[DragnLangOp] = [
             ),
         ],
         returns="game state",
-        example=["LOOK_AT", "player1", "sharedEncounterDeck", 3, True],
+        example=["LOOK_AT", "player1", "$GROUP_ID", 3, True],
     ),
     DragnLangOp(
         op="STOP_LOOKING",
@@ -544,7 +542,7 @@ RAW_OPS: list[DragnLangOp] = [
         example=[
             "DEFINE",
             "$TARGET",
-            ["ONE_CARD", "$C", ["EQUAL", "$C.groupId", "sharedVillain"]],
+            ["ONE_CARD", "$C", ["EQUAL", "$C.groupId", "$GROUP_ID"]],
         ],
     ),
     # --- Game lifecycle ---
@@ -607,6 +605,6 @@ async def list_actions():
     `action_list` ready to drop into `{"type": "raw", "action_list": [...]}`.
 
     To use a raw op: POST /games/{id}/actions with
-      `{"type": "raw", "action_list": ["SHUFFLE_GROUP", "sharedEncounterDeck"]}`
+      `{"type": "raw", "action_list": ["SHUFFLE_GROUP", "$GROUP_ID"]}`
     """
     return ListActionsResponse(actions=build_action_schemas(), raw_ops=RAW_OPS)

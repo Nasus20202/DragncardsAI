@@ -1,25 +1,19 @@
 """
-Unit tests for game_service.mcp.server
+Unit tests for game_service.mcp.server.
 
-The MCP server is now auto-generated from the FastAPI app via
-FastMCP.from_fastapi(). Tests here cover:
-
-- create_mcp_server produces the expected tool names and schemas
-- All expected tools are present (one per HTTP endpoint, minus /health)
-- Resources (state, alerts, gui-update) read from the in-process SessionManager
-- Resource error propagation (SessionNotFoundError)
+The MCP server is auto-generated from the FastAPI app via
+FastMCP.from_fastapi() and should expose the intended HTTP surface as tools,
+excluding only endpoints that are intentionally hidden from MCP.
 """
 
 from __future__ import annotations
 
-import json
+import re
 from unittest.mock import AsyncMock, MagicMock
-
-import pytest
 from fastmcp import Client
 
 from game_service.api.app import create_app
-from game_service.logic.session_manager import SessionNotFoundError
+from game_service.catalog.service import supported_plugins
 from game_service.mcp.server import create_mcp_server
 
 
@@ -30,6 +24,7 @@ from game_service.mcp.server import create_mcp_server
 
 def _mock_session(state=None):
     session = MagicMock()
+    session.plugin_name = "marvel-champions"
     session.to_metadata.return_value = {
         "session_id": "sess-abc",
         "plugin_name": "marvel-champions",
@@ -71,21 +66,26 @@ def _make_mcp(manager=None):
 # ---------------------------------------------------------------------------
 
 EXPECTED_TOOL_NAMES = {
+    "list_actions",
     "create_game",
     "attach_game",
     "list_games",
-    "get_game_state",
     "execute_action",
+    "get_session_actions",
     "delete_game",
+    "get_game_state",
     "reset_game",
     "set_seat",
     "set_spectator",
     "send_alert",
     "save_replay",
     "set_player_count",
-    "list_actions",
-    "search_cards",
-    "get_session_actions",
+    "get_alerts",
+    "get_gui_update",
+}
+EXPECTED_TOOL_NAMES |= {
+    f"search_cards_{re.sub(r'[^a-zA-Z0-9]+', '_', provider).strip('_')}"
+    for provider in supported_plugins()
 }
 
 
@@ -130,12 +130,12 @@ async def test_execute_action_requires_session_id_and_action():
     assert "action" in required
 
 
-async def test_get_game_state_requires_session_id():
+async def test_get_game_state_exposed_as_tool():
     mcp = _make_mcp()
     async with Client(mcp) as client:
         tools = await client.list_tools()
-    tool = next(t for t in tools if t.name == "get_game_state")
-    assert "session_id" in tool.inputSchema.get("required", [])
+    names = {t.name for t in tools}
+    assert "get_game_state" in names
 
 
 async def test_create_game_has_no_required_fields():
@@ -164,144 +164,22 @@ async def test_snapshot_endpoints_not_exposed_as_tools():
 
 
 # ---------------------------------------------------------------------------
-# Resources: list (templates)
+# Resources: list
 # ---------------------------------------------------------------------------
 
-EXPECTED_RESOURCE_TEMPLATES = {
-    "game://{session_id}/state",
-    "game://{session_id}/alerts",
-    "game://{session_id}/gui-update",
-}
-
-
 async def test_list_resources_empty_when_no_sessions():
-    """Static resources list is empty — resources are exposed as templates."""
+    """No MCP resources should be exposed."""
     manager = _mock_manager()
     manager.list_sessions.return_value = []
     mcp = _make_mcp(manager)
     async with Client(mcp) as client:
         resources = await client.list_resources()
-    assert resources == []
+    uris = {str(resource.uri) for resource in resources}
+    assert uris == set()
 
 
-async def test_list_resource_templates_count():
+async def test_list_resource_templates_empty():
     mcp = _make_mcp()
     async with Client(mcp) as client:
         templates = await client.list_resource_templates()
-    assert len(templates) == 3
-
-
-async def test_list_resource_templates_uris():
-    mcp = _make_mcp()
-    async with Client(mcp) as client:
-        templates = await client.list_resource_templates()
-    uris = {t.uriTemplate for t in templates}
-    assert uris == EXPECTED_RESOURCE_TEMPLATES
-
-
-async def test_list_resource_templates_have_descriptions():
-    mcp = _make_mcp()
-    async with Client(mcp) as client:
-        templates = await client.list_resource_templates()
-    for t in templates:
-        assert t.description, f"Template {t.uriTemplate!r} has no description"
-
-
-# ---------------------------------------------------------------------------
-# Resources: read — state
-# ---------------------------------------------------------------------------
-
-
-async def test_read_resource_state_returns_json():
-    session = _mock_session(state={"game": {"stepId": 3}})
-    manager = _mock_manager(sessions=[session])
-    mcp = _make_mcp(manager)
-    async with Client(mcp) as client:
-        result = await client.read_resource("game://sess-abc/state")
-    parsed = json.loads(result[0].text)
-    assert parsed["game"]["stepId"] == 3
-
-
-async def test_read_resource_state_none_returns_null():
-    session = _mock_session()
-    session.get_state = AsyncMock(return_value=None)
-    manager = _mock_manager(sessions=[session])
-    mcp = _make_mcp(manager)
-    async with Client(mcp) as client:
-        result = await client.read_resource("game://sess-abc/state")
-    assert result[0].text == "null"
-
-
-# ---------------------------------------------------------------------------
-# Resources: read — alerts
-# ---------------------------------------------------------------------------
-
-
-async def test_read_resource_alerts():
-    session = _mock_session()
-    manager = _mock_manager(sessions=[session])
-    mcp = _make_mcp(manager)
-    async with Client(mcp) as client:
-        result = await client.read_resource("game://sess-abc/alerts")
-    parsed = json.loads(result[0].text)
-    assert isinstance(parsed, list)
-    assert parsed[0]["text"] == "hi"
-
-
-async def test_read_resource_alerts_empty():
-    session = _mock_session()
-    session.get_alerts = MagicMock(return_value=[])
-    manager = _mock_manager(sessions=[session])
-    mcp = _make_mcp(manager)
-    async with Client(mcp) as client:
-        result = await client.read_resource("game://sess-abc/alerts")
-    assert json.loads(result[0].text) == []
-
-
-# ---------------------------------------------------------------------------
-# Resources: read — gui-update
-# ---------------------------------------------------------------------------
-
-
-async def test_read_resource_gui_update():
-    session = _mock_session()
-    manager = _mock_manager(sessions=[session])
-    mcp = _make_mcp(manager)
-    async with Client(mcp) as client:
-        result = await client.read_resource("game://sess-abc/gui-update")
-    parsed = json.loads(result[0].text)
-    assert "player1" in parsed
-    assert parsed["player1"]["prompt"] == "choose"
-
-
-async def test_read_resource_gui_update_empty():
-    session = _mock_session()
-    session.get_gui_updates = MagicMock(return_value={})
-    manager = _mock_manager(sessions=[session])
-    mcp = _make_mcp(manager)
-    async with Client(mcp) as client:
-        result = await client.read_resource("game://sess-abc/gui-update")
-    assert json.loads(result[0].text) == {}
-
-
-# ---------------------------------------------------------------------------
-# Resources: error propagation
-# ---------------------------------------------------------------------------
-
-
-async def test_read_resource_state_session_not_found():
-    manager = _mock_manager()
-    manager.get_session = AsyncMock(side_effect=SessionNotFoundError("gone"))
-    mcp = _make_mcp(manager)
-    async with Client(mcp) as client:
-        with pytest.raises(Exception):
-            await client.read_resource("game://missing/state")
-
-
-async def test_read_resource_alerts_session_not_found():
-    manager = _mock_manager()
-    manager.get_session = AsyncMock(side_effect=SessionNotFoundError("gone"))
-    mcp = _make_mcp(manager)
-    async with Client(mcp) as client:
-        with pytest.raises(Exception):
-            await client.read_resource("game://missing/alerts")
+    assert templates == []

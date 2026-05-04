@@ -20,7 +20,6 @@ Environment variables:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import sys
@@ -106,7 +105,7 @@ def run_http():
 # ---------------------------------------------------------------------------
 
 
-async def run_mcp():
+def run_mcp():
     """Start the MCP server over stdio."""
     from game_service.api.app import create_app
     from game_service.mcp.server import create_mcp_server
@@ -130,7 +129,7 @@ def main():
     if mode == "http":
         run_http()
     elif mode == "mcp":
-        asyncio.run(run_mcp())
+        run_mcp()
     else:
         print(f"Unknown mode {mode!r}. Use 'http' or 'mcp'.", file=sys.stderr)
         sys.exit(1)
