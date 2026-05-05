@@ -1,7 +1,7 @@
 # DragnCards Backend
 # Copies backend source from the dragncards git submodule (external/dragncards).
 
-FROM elixir:1.14.5-otp-25-alpine AS backend
+FROM elixir:1.18.4-otp-25-alpine AS backend
 
 RUN apk add --no-cache inotify-tools build-base git
 
