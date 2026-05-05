@@ -2,7 +2,7 @@
 # Copies frontend source from the dragncards git submodule (external/dragncards).
 # Installs dependencies at build time for faster container startup. Runs the React dev server.
 
-FROM node:24.14-alpine AS frontend
+FROM node:24.15-alpine AS frontend
 
 WORKDIR /app
 
