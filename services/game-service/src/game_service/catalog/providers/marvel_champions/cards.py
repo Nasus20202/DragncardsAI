@@ -1,22 +1,24 @@
-"""
-Marvel Champions card catalog provider.
-
-Reads Cerebro card data from the plugin fixtures and computes the databaseId
-UUID (uuid5/NAMESPACE_OID) used by DragnCards LOAD_CARDS, matching the Rust
-implementation in the DragnCards card database builder.
-"""
+"""Marvel Champions card normalization and search helpers."""
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import uuid
 from functools import lru_cache
 from typing import Any
 
+from game_service.catalog.providers.base import (
+    CatalogCardAttributes,
+    CatalogCardRecord,
+    FilterSpec,
+)
+
 logger = logging.getLogger(__name__)
 
-FILTERS = [
+FILTERS: list[FilterSpec] = [
     {
         "name": "name",
         "type": "string",
@@ -51,32 +53,13 @@ FILTERS = [
     },
 ]
 
-LOAD_GROUPS = [
-    "playerNDeck",
-    "playerNDeck2",
-    "playerNDiscard",
-    "playerNHand",
-    "playerNPlay1",
-    "playerNPlay2",
-    "playerNPlay3",
-    "playerNPlay4",
-    "playerNEngaged",
-    "playerNNemesisSet",
-    "sharedEncounterDeck",
-    "sharedEncounterDiscard",
-    "sharedEncounter2Deck",
-    "sharedEncounter2Discard",
-    "sharedEncounter3Deck",
-    "sharedMainScheme",
-    "sharedMainSchemeDeck",
-    "sharedVillain",
-    "sharedVillainDeck",
-    "sharedVictoryDisplay",
-    "sharedCampaignDeck",
-]
+PROMOTED_CARD_FIELDS = frozenset(
+    {"Deleted", "Printings", "Name", "Subname", "Classification", "Traits", "Official"}
+)
 
 _DEFAULT_CARDS_PATH = os.path.join(
     os.path.dirname(__file__),
+    "..",
     "..",
     "..",
     "..",
@@ -104,53 +87,59 @@ def _compute_database_id(artificial_id: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_OID, code))
 
 
-def _card_type_code(card: dict) -> str | None:
-    mapping = {
-        "Hero": "hero",
-        "Alter-Ego": "alter_ego",
-        "Ally": "ally",
-        "Event": "event",
-        "Upgrade": "upgrade",
-        "Support": "support",
-        "Resource": "resource",
-        "Villain": "villain",
-        "Main Scheme": "main_scheme",
-        "Side Scheme": "side_scheme",
-        "Minion": "minion",
-        "Attachment": "attachment",
-        "Treachery": "treachery",
-        "Environment": "environment",
-        "Obligation": "obligation",
-        "Player Side Scheme": "player_side_scheme",
-        "Leader": "leader",
-    }
-    return mapping.get(card.get("Type", ""))
+def _card_type_code(card: dict[str, Any]) -> str | None:
+    type_name = (card.get("Type") or "").strip()
+    if not type_name:
+        return None
+    normalized = re.sub(r"[^a-z0-9]+", "_", type_name.lower()).strip("_")
+    return normalized or None
+
+
+def _snake_case(name: str) -> str:
+    value = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    value = re.sub(r"[^a-zA-Z0-9]+", "_", value)
+    return value.strip("_").lower()
+
+
+def _normalize_card_attributes(
+    card: dict[str, Any], printing: dict[str, Any]
+) -> CatalogCardAttributes:
+    attributes: dict[str, Any] = {}
+    for key, value in card.items():
+        if key in PROMOTED_CARD_FIELDS:
+            continue
+        attributes[_snake_case(key)] = value
+
+    for key, value in printing.items():
+        attributes[_snake_case(key)] = value
+
+    attributes.setdefault("type_code", _card_type_code(card))
+    return CatalogCardAttributes.model_validate(attributes)
 
 
 @lru_cache(maxsize=1)
-def load_card_db() -> list[dict[str, Any]]:
+def load_card_db() -> list[CatalogCardRecord]:
     """Load and index the Marvel Champions card database."""
-    import json
-
     path = os.path.normpath(CARDS_PATH)
     if not os.path.exists(path):
         logger.warning("Card database not found at %s — card search unavailable", path)
         return []
 
     with open(path, encoding="utf-8") as f:
-        raw = json.load(f)
+        raw: list[dict[str, Any]] = json.load(f)
 
-    records: list[dict[str, Any]] = []
+    records: list[CatalogCardRecord] = []
     skipped = 0
     for card in raw:
         if card.get("Deleted"):
             continue
+
         name = card.get("Name") or ""
         subname = card.get("Subname")
         official = bool(card.get("Official"))
         type_code = _card_type_code(card)
         classification = card.get("Classification")
-        traits = card.get("Traits") or []
+        traits = list(card.get("Traits") or [])
 
         for printing in card.get("Printings", []):
             aid = printing.get("ArtificialId", "")
@@ -162,19 +151,18 @@ def load_card_db() -> list[dict[str, Any]]:
             except Exception:
                 skipped += 1
                 continue
+
             records.append(
-                {
-                    "database_id": db_id,
-                    "name": name,
-                    "subname": subname,
-                    "type_code": type_code,
-                    "classification": classification,
-                    "traits": traits,
-                    "official": official,
-                    "pack_id": printing.get("PackId"),
-                    "set_id": printing.get("SetId"),
-                    "pack_number": printing.get("PackNumber"),
-                }
+                CatalogCardRecord(
+                    database_id=db_id,
+                    name=name,
+                    subname=subname,
+                    type_code=type_code,
+                    classification=classification,
+                    traits=traits,
+                    official=official,
+                    attributes=_normalize_card_attributes(card, printing),
+                )
             )
 
     logger.info(
@@ -183,11 +171,11 @@ def load_card_db() -> list[dict[str, Any]]:
     return records
 
 
-def search_cards(filters: dict[str, Any]) -> list[dict[str, Any]]:
+def search_cards(filters: dict[str, Any]) -> list[CatalogCardRecord]:
     """Search the Marvel Champions card database."""
     db = load_card_db()
     seen_ids: set[str] = set()
-    results: list[dict[str, Any]] = []
+    results: list[CatalogCardRecord] = []
 
     name = filters.get("name")
     type_code = filters.get("type_code")
@@ -199,20 +187,20 @@ def search_cards(filters: dict[str, Any]) -> list[dict[str, Any]]:
     classification_lower = classification.lower() if classification else None
 
     for card in db:
-        if official_only and not card["official"]:
+        if official_only and not card.official:
             continue
-        if name_lower and name_lower not in card["name"].lower():
+        if name_lower and name_lower not in card.name.lower():
             continue
-        if type_code and card["type_code"] != type_code:
+        if type_code and card.type_code != type_code:
             continue
         if classification_lower:
-            card_class = (card["classification"] or "").lower()
+            card_class = (card.classification or "").lower()
             if classification_lower not in card_class:
                 continue
-        db_id = card["database_id"]
-        if db_id in seen_ids:
+
+        if card.database_id in seen_ids:
             continue
-        seen_ids.add(db_id)
+        seen_ids.add(card.database_id)
         results.append(card)
         if len(results) >= min(limit, 200):
             break

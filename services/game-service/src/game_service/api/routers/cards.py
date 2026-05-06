@@ -60,7 +60,7 @@ def _search_cards_response(provider_name: str | None, raw_filters: dict[str, str
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except CardFilterValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    cards = [CardResult(**r) for r in results]
+    cards = [CardResult.model_validate(record.to_dict()) for record in results]
     return SearchCardsResponse(total=len(cards), cards=cards)
 
 

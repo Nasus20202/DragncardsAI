@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from game_service.catalog.providers.base import CatalogProvider
+from game_service.catalog.providers.marvel_champions import MarvelChampionsProvider
 
-from game_service.catalog.providers import marvel_champions
+_REGISTERED_PROVIDERS: list[CatalogProvider] = [MarvelChampionsProvider()]
 
-PROVIDERS: dict[str, dict[str, Any]] = {
-    "marvel-champions": {
-        "display_name": "Marvel Champions",
-        "filters": marvel_champions.FILTERS,
-        "load_groups": marvel_champions.LOAD_GROUPS,
-        "load_db": marvel_champions.load_card_db,
-        "search": marvel_champions.search_cards,
-    }
+PROVIDERS: dict[str, CatalogProvider] = {
+    provider.plugin_name: provider for provider in _REGISTERED_PROVIDERS
 }
 
 DEFAULT_PROVIDER_NAME = next(iter(PROVIDERS), None)

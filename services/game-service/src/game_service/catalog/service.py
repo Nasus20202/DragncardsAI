@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
 
 from game_service.catalog.exceptions import (
     CardFilterValueError,
     UnknownCardProviderError,
     UnsupportedCardFilterError,
 )
+from game_service.catalog.providers.base import (
+    CatalogProvider,
+    FilterSpec,
+    PluginActionCatalog,
+)
 from game_service.catalog.providers.registry import DEFAULT_PROVIDER_NAME, PROVIDERS
 
-CardSearchFn = Callable[..., list[dict[str, Any]]]
 ProviderMetadata = dict[str, Any]
 
 
@@ -20,7 +24,7 @@ def default_plugin_name() -> str | None:
     return DEFAULT_PROVIDER_NAME
 
 
-def _get_provider(provider_name: str | None) -> dict[str, Any]:
+def _get_provider(provider_name: str | None) -> CatalogProvider:
     resolved_name = provider_name or DEFAULT_PROVIDER_NAME
     provider = PROVIDERS.get(resolved_name)
     if provider is None:
@@ -44,10 +48,10 @@ def list_card_providers() -> list[ProviderMetadata]:
         providers.append(
             {
                 "provider": provider_name,
-                "display_name": provider["display_name"],
+                "display_name": provider.display_name,
                 "default": provider_name == DEFAULT_PROVIDER_NAME,
-                "filters": provider["filters"],
-                "load_groups": provider.get("load_groups", []),
+                "filters": provider.filters,
+                "load_groups": provider.get_load_groups(),
             }
         )
     return providers
@@ -59,10 +63,10 @@ def get_card_provider(provider_name: str | None) -> ProviderMetadata:
     provider = _get_provider(resolved_name)
     return {
         "provider": resolved_name,
-        "display_name": provider["display_name"],
+        "display_name": provider.display_name,
         "default": resolved_name == DEFAULT_PROVIDER_NAME,
-        "filters": provider["filters"],
-        "load_groups": provider.get("load_groups", []),
+        "filters": provider.filters,
+        "load_groups": provider.get_load_groups(),
     }
 
 
@@ -72,7 +76,16 @@ def get_load_groups(provider_name: str | None) -> list[str]:
     provider = PROVIDERS.get(resolved_name)
     if provider is None:
         return []
-    return list(provider.get("load_groups", []))
+    return provider.get_load_groups()
+
+
+def get_plugin_action_catalog(provider_name: str | None) -> PluginActionCatalog:
+    """Return provider-defined plugin action metadata, or an empty catalog."""
+    resolved_name = provider_name or DEFAULT_PROVIDER_NAME
+    provider = PROVIDERS.get(resolved_name)
+    if provider is None:
+        return PluginActionCatalog()
+    return provider.get_action_catalog()
 
 
 def _coerce_boolean(name: str, value: Any) -> bool:
@@ -113,9 +126,11 @@ def normalize_search_filters(
     provider_name: str | None, raw_filters: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """Validate and coerce provider-specific filter values."""
-    provider = get_card_provider(provider_name)
+    provider = _get_provider(provider_name)
     raw_filters = raw_filters or {}
-    filter_specs = {item["name"]: item for item in provider["filters"]}
+    filter_specs: dict[str, FilterSpec] = {
+        item["name"]: item for item in provider.filters
+    }
     allowed_names = sorted(filter_specs)
 
     normalized: dict[str, Any] = {}
@@ -124,7 +139,7 @@ def normalize_search_filters(
         if spec is None:
             allowed = ", ".join(allowed_names)
             raise UnsupportedCardFilterError(
-                f"Unsupported filter {name!r} for provider {provider['provider']!r}. Allowed filters: {allowed}"
+                f"Unsupported filter {name!r} for provider {provider.plugin_name!r}. Allowed filters: {allowed}"
             )
         if spec["type"] == "boolean":
             normalized[name] = _coerce_boolean(name, value)
@@ -133,17 +148,17 @@ def normalize_search_filters(
         else:
             normalized[name] = str(value)
 
-    for spec in provider["filters"]:
+    for spec in provider.filters:
         if spec["name"] not in normalized and "default" in spec:
             normalized[spec["name"]] = spec["default"]
 
     return normalized
 
 
-def load_card_db(plugin_name: str | None = None) -> list[dict[str, Any]]:
+def load_card_db(plugin_name: str | None = None):
     """Compatibility helper for the current default plugin."""
     provider = _get_provider(plugin_name)
-    return provider["load_db"]()
+    return provider.load_card_db()
 
 
 def search_cards(
@@ -154,7 +169,7 @@ def search_cards(
     limit: int = 50,
     plugin_name: str | None = None,
     filters: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+):
     """Search cards for the given plugin, defaulting to the first available provider."""
     resolved_name = plugin_name or DEFAULT_PROVIDER_NAME
     raw_filters = dict(filters or {})
@@ -171,5 +186,4 @@ def search_cards(
 
     normalized_filters = normalize_search_filters(resolved_name, raw_filters)
     provider = _get_provider(resolved_name)
-    search_fn: CardSearchFn = provider["search"]
-    return search_fn(normalized_filters)
+    return provider.search_cards(normalized_filters)
