@@ -18,6 +18,7 @@ def create_mcp_server(session_manager, fastapi_app) -> FastMCP:
     schema. Read-only GET routes are mapped to MCP resources/templates where that
     produces a better read surface than a tool call.
     """
+    logger.info("Initializing MCP server from FastAPI OpenAPI schema")
     return FastMCP.from_fastapi(
         app=fastapi_app,
         name="game-service",
