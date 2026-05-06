@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from game_service.logic.actions import (
     DrawCardAction,
@@ -251,9 +251,85 @@ class CardResult(BaseModel):
     )
     traits: list[str] = Field(default_factory=list)
     official: bool
-    pack_id: str | None = None
-    set_id: str | None = None
-    pack_number: str | None = None
+    attributes: "CardAttributes" = Field(
+        default_factory=lambda: CardAttributes(),
+        description=(
+            "Provider-derived card metadata normalized from the source card and printing data. "
+            "Keys are provider-defined snake_case field names."
+        ),
+    )
+
+
+class CardAttributes(BaseModel):
+    """Provider-specific card attributes normalized into a typed object."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class PluginNamedActionList(BaseModel):
+    id: str = Field(description="Plugin-defined named action list identifier")
+    action_list: Any = Field(
+        description="Named or inline DragnLang action list defined by the plugin"
+    )
+
+
+class PluginHotkey(BaseModel):
+    scope: str = Field(description="Hotkey scope such as 'game', 'card', or 'token'")
+    key: str = Field(description="Keyboard shortcut")
+    label: str | None = Field(default=None, description="Plugin label for the hotkey")
+    action_list: Any = Field(
+        default=None,
+        description="Named or inline action list triggered by the hotkey, if any",
+    )
+    token_type: str | None = Field(
+        default=None, description="Token type adjusted by the hotkey, if any"
+    )
+
+
+class PluginTouchBarAction(BaseModel):
+    id: str = Field(description="Plugin-defined touch bar action identifier")
+    row: int = Field(description="Zero-based touch bar row index")
+    order: int = Field(description="Zero-based order within the row")
+    action_type: str = Field(description="Plugin action type such as card, game, token, or engine")
+    label: str | None = Field(default=None, description="Plugin label for the touch bar action")
+    action_list: Any = Field(
+        default=None,
+        description="Named or inline action list triggered by the touch bar action, if any",
+    )
+    token_type: str | None = Field(
+        default=None, description="Token type adjusted by the touch bar action, if any"
+    )
+    image_url: str | None = Field(
+        default=None, description="Optional image URL used by the plugin UI"
+    )
+
+
+class PluginDefaultAction(BaseModel):
+    label: str | None = Field(default=None, description="Plugin label for the default action")
+    action_list: Any = Field(description="Named or inline default action list")
+    condition: Any = Field(
+        default=None, description="Plugin condition that controls whether the action is available"
+    )
+    position: str | None = Field(
+        default=None, description="Optional plugin UI position for the action"
+    )
+
+
+class PluginPlayerCountLayout(BaseModel):
+    label: str = Field(description="Plugin label for the player-count option")
+    num_players: int = Field(description="Number of active players")
+    layout_id: str | None = Field(
+        default=None, description="Plugin layout ID associated with the player count"
+    )
+
+
+class PluginActionCatalogMetadata(BaseModel):
+    named_action_lists: list[PluginNamedActionList] = Field(default_factory=list)
+    hotkeys: list[PluginHotkey] = Field(default_factory=list)
+    touch_bar: list[PluginTouchBarAction] = Field(default_factory=list)
+    default_actions: list[PluginDefaultAction] = Field(default_factory=list)
+    player_count_layouts: list[PluginPlayerCountLayout] = Field(default_factory=list)
+    load_groups: list[str] = Field(default_factory=list)
 
 
 class SearchCardsResponse(BaseModel):
@@ -283,4 +359,7 @@ class SessionActionsResponse(BaseModel):
             "Valid loadGroupId values for this plugin's load_cards action. "
             "Use 'playerNDeck' etc. where N is substituted with the player number at runtime."
         )
+    )
+    plugin_metadata: PluginActionCatalogMetadata = Field(
+        description="Plugin-defined action metadata and UI affordances for this session"
     )

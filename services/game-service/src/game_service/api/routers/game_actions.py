@@ -12,8 +12,8 @@ from game_service.api.models import (
     ExecuteActionResponse,
     SessionActionsResponse,
 )
-from game_service.catalog.service import get_load_groups
-from game_service.api.routers.meta import RAW_OPS, build_action_schemas
+from game_service.catalog.service import get_plugin_action_catalog
+from game_service.api.routers.meta import build_generic_action_catalog
 from game_service.logic.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -55,10 +55,13 @@ async def get_session_actions(
 ):
     logger.info("get_session_actions: session_id=%s", session_id)
     session = await manager.get_session(session_id)
+    actions, raw_ops = build_generic_action_catalog()
+    plugin_metadata = get_plugin_action_catalog(session.plugin_name)
     return SessionActionsResponse(
         session_id=session_id,
         plugin_name=session.plugin_name,
-        actions=build_action_schemas(),
-        raw_ops=RAW_OPS,
-        load_groups=get_load_groups(session.plugin_name),
+        actions=actions,
+        raw_ops=raw_ops,
+        load_groups=plugin_metadata.load_groups,
+        plugin_metadata=plugin_metadata.to_dict(),
     )

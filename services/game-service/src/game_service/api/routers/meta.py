@@ -580,6 +580,11 @@ def build_action_schemas() -> list[ActionSchema]:
     return actions
 
 
+def build_generic_action_catalog() -> tuple[list[ActionSchema], list[DragnLangOp]]:
+    """Return the generic typed action and raw-op catalog."""
+    return build_action_schemas(), RAW_OPS
+
+
 @router.get("/health", response_model=HealthResponse, operation_id="health")
 async def health():
     """Simple liveness check."""
@@ -607,4 +612,5 @@ async def list_actions():
     To use a raw op: POST /games/{id}/actions with
       `{"type": "raw", "action_list": ["SHUFFLE_GROUP", "$GROUP_ID"]}`
     """
-    return ListActionsResponse(actions=build_action_schemas(), raw_ops=RAW_OPS)
+    actions, raw_ops = build_generic_action_catalog()
+    return ListActionsResponse(actions=actions, raw_ops=raw_ops)
