@@ -33,9 +33,9 @@ async def execute_action(
     manager: SessionManager = Depends(get_manager),
 ):
     logger.info(
-        "execute_action: session_id=%s action_type=%r",
+        "execute_action: session_id=%s action=%s",
         session_id,
-        action.__class__.__name__,
+        action,
     )
     session = await manager.get_session(session_id)
     new_state = await session.execute_action(action)
