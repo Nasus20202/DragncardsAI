@@ -1,0 +1,342 @@
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from agent_orchestrator.integrations.bifrost import BifrostError, ChatResponse, ToolCall
+from agent_orchestrator.integrations.mcp.client import McpClientError, McpToolDefinition
+from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
+from agent_orchestrator.runtime.skills import SkillRegistry
+from agent_orchestrator.runtime.worker import WorkerService
+from agent_orchestrator.config import Settings
+from agent_orchestrator.storage.db import create_engine, create_session_factory
+from agent_orchestrator.storage.migrations import ensure_schema
+from agent_orchestrator.storage.repository import Repository
+
+
+class FakeBifrost:
+    def __init__(self, responses=None, error: BifrostError | None = None):
+        self.responses = responses or []
+        self.error = error
+        self.calls = []
+
+    async def health(self) -> bool:
+        return True
+
+    async def aclose(self) -> None:
+        return None
+
+    async def chat_completion(self, provider_id, model_name, messages, tools, gateway_options, provider_options):
+        self.calls.append({"provider_id": provider_id, "model_name": model_name, "tools": tools})
+        if self.error is not None:
+            raise self.error
+        return self.responses.pop(0)
+
+
+class FakeMcp:
+    def __init__(self):
+        self.calls = []
+
+    async def list_tools(self, server_url, headers=None):
+        return [
+            McpToolDefinition(
+                name="next_step",
+                description="Advance the game",
+                input_schema={"type": "object", "properties": {}},
+            )
+        ]
+
+    async def call_tool(self, server_url, tool_name, arguments, headers=None):
+        self.calls.append({"server_url": server_url, "tool_name": tool_name, "arguments": arguments})
+        return {"is_error": False, "content": [{"type": "text", "text": "done"}]}
+
+
+class ErrorMcp(FakeMcp):
+    async def call_tool(self, server_url, tool_name, arguments, headers=None):
+        raise McpClientError("tool transport failed")
+
+
+@pytest.fixture
+async def repository(tmp_path: Path):
+    engine = create_engine("sqlite+aiosqlite:///:memory:")
+    await ensure_schema(engine)
+    repo = Repository(create_session_factory(engine))
+    yield repo
+    await engine.dispose()
+
+
+@pytest.fixture
+def skill_registry(tmp_path: Path):
+    root = tmp_path / "skills"
+    root.mkdir()
+    skill_dir = root / "demo-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("follow instructions", encoding="utf-8")
+    return SkillRegistry((root,))
+
+
+async def _prepare_session(repo: Repository):
+    session = await repo.create_session("demo", {})
+    await repo.set_model_config(
+        session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
+    )
+    await repo.add_skill_assignment(session.id, "demo-skill", "/tmp/demo-skill")
+    await repo.add_mcp_assignment(
+        session.id,
+        name="game-service",
+        transport="streamable-http",
+        server_url="http://localhost:8000/mcp",
+        headers_json={},
+    )
+    return session
+
+
+async def _prepare_session_without_model(repo: Repository):
+    return await repo.create_session("demo", {})
+
+
+@pytest.mark.asyncio
+async def test_worker_completes_prompt_with_tool(repository: Repository, skill_registry: SkillRegistry):
+    session = await _prepare_session(repository)
+    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    assert job is not None
+    claimed = await repository.claim_next_job()
+    assert claimed is not None
+
+    bifrost = FakeBifrost(
+        responses=[
+            ChatResponse(
+                content="",
+                tool_calls=[ToolCall(id="tool-1", name="game-service_next_step", arguments={})],
+                raw={},
+            ),
+            ChatResponse(content="finished", tool_calls=[], raw={}),
+        ]
+    )
+    mcp = FakeMcp()
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=bifrost,
+        mcp_tool_catalog=McpToolCatalog(mcp),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "completed"
+    assert stored.result_text == "finished"
+    assert len(bifrost.calls) == 2
+    assert mcp.calls[0]["tool_name"] == "next_step"
+    events = await repository.list_events(job.id)
+    assert [event.event_type for event in events][-1] == "completion"
+
+
+@pytest.mark.asyncio
+async def test_worker_retries_gateway_errors(repository: Repository, skill_registry: SkillRegistry):
+    session = await _prepare_session(repository)
+    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=2)
+    assert job is not None
+    claimed = await repository.claim_next_job()
+    assert claimed is not None
+
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=FakeBifrost(error=BifrostError("gateway_error", "temporary", retryable=True)),
+        mcp_tool_catalog=McpToolCatalog(FakeMcp()),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_worker_cancels_before_tool_call(repository: Repository, skill_registry: SkillRegistry):
+    session = await _prepare_session(repository)
+    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    assert job is not None
+    claimed = await repository.claim_next_job()
+    assert claimed is not None
+    await repository.request_cancel(job.id)
+
+    mcp = FakeMcp()
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=FakeBifrost(responses=[ChatResponse(content="done", tool_calls=[], raw={})]),
+        mcp_tool_catalog=McpToolCatalog(mcp),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "cancelled"
+    assert mcp.calls == []
+
+
+def test_worker_formats_nested_execution_error(skill_registry: SkillRegistry):
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=SimpleNamespace(),
+        bifrost_client=SimpleNamespace(),
+        mcp_tool_catalog=SimpleNamespace(),
+        skill_registry=skill_registry,
+    )
+
+    error = ExceptionGroup("wrapper", [RuntimeError("Redirect response '307 Temporary Redirect'")])
+    assert worker._format_execution_error(error) == "Redirect response '307 Temporary Redirect'"
+
+
+@pytest.mark.asyncio
+async def test_worker_fails_without_model_config(repository: Repository, skill_registry: SkillRegistry):
+    session = await _prepare_session_without_model(repository)
+    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    claimed = await repository.claim_next_job()
+    assert job is not None
+    assert claimed is not None
+
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=FakeBifrost(),
+        mcp_tool_catalog=McpToolCatalog(FakeMcp()),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error_code == "missing_model_config"
+
+
+@pytest.mark.asyncio
+async def test_worker_fails_on_unknown_tool_request(repository: Repository, skill_registry: SkillRegistry):
+    session = await _prepare_session(repository)
+    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    claimed = await repository.claim_next_job()
+    assert job is not None
+    assert claimed is not None
+
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=FakeBifrost(
+            responses=[ChatResponse(content="", tool_calls=[ToolCall(id="tool-1", name="unknown_tool", arguments={})], raw={})]
+        ),
+        mcp_tool_catalog=McpToolCatalog(FakeMcp()),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error_code == "execution_error"
+    assert "Unknown tool requested" in stored.error_message
+
+
+@pytest.mark.asyncio
+async def test_worker_fails_when_tool_round_limit_is_exceeded(repository: Repository, skill_registry: SkillRegistry):
+    session = await _prepare_session(repository)
+    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    claimed = await repository.claim_next_job()
+    assert job is not None
+    assert claimed is not None
+
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0]), worker_max_tool_rounds=1),
+        repository=repository,
+        bifrost_client=FakeBifrost(
+            responses=[
+                ChatResponse(
+                    content="",
+                    tool_calls=[ToolCall(id="tool-1", name="game-service_next_step", arguments={})],
+                    raw={},
+                )
+            ]
+        ),
+        mcp_tool_catalog=McpToolCatalog(FakeMcp()),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error_code == "execution_error"
+    assert stored.error_message == "tool round limit exceeded"
+
+
+@pytest.mark.asyncio
+async def test_worker_fails_on_mcp_client_error(repository: Repository, skill_registry: SkillRegistry):
+    session = await _prepare_session(repository)
+    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    claimed = await repository.claim_next_job()
+    assert job is not None
+    assert claimed is not None
+
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=FakeBifrost(
+            responses=[
+                ChatResponse(
+                    content="",
+                    tool_calls=[ToolCall(id="tool-1", name="game-service_next_step", arguments={})],
+                    raw={},
+                )
+            ]
+        ),
+        mcp_tool_catalog=McpToolCatalog(ErrorMcp()),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error_code == "execution_error"
+    assert stored.error_message == "tool transport failed"
+
+
+@pytest.mark.asyncio
+async def test_worker_marks_non_retryable_bifrost_error_as_failed(repository: Repository, skill_registry: SkillRegistry):
+    session = await _prepare_session(repository)
+    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=2)
+    claimed = await repository.claim_next_job()
+    assert job is not None
+    assert claimed is not None
+
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=FakeBifrost(error=BifrostError("gateway_error", "fatal", retryable=False)),
+        mcp_tool_catalog=McpToolCatalog(FakeMcp()),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error_code == "gateway_error"
+    assert stored.error_message == "fatal"

@@ -12,17 +12,17 @@ APP_COMPOSE_FILE="docker-compose.yaml"
 case "$ACTION" in
     start)
         echo "Starting infrastructure..."
-        docker compose -f "$INFRA_COMPOSE_FILE" up -d game-service-valkey
+        docker compose -f "$INFRA_COMPOSE_FILE" up -d
         docker compose -f "$APP_COMPOSE_FILE" up -d $INFRA_SERVICES
         ;;
     stop)
         echo "Stopping infrastructure..."
-        docker compose -f "$INFRA_COMPOSE_FILE" stop game-service-valkey
+        docker compose -f "$INFRA_COMPOSE_FILE" stop
         docker compose -f "$APP_COMPOSE_FILE" stop $INFRA_SERVICES
         ;;
     restart)
         echo "Restarting infrastructure..."
-        docker compose -f "$INFRA_COMPOSE_FILE" restart game-service-valkey
+        docker compose -f "$INFRA_COMPOSE_FILE" restart
         docker compose -f "$APP_COMPOSE_FILE" restart $INFRA_SERVICES
         ;;
     *)

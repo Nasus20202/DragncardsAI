@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+from agent_orchestrator.schemas.jobs import (
+    JobDetail,
+    JobEventResponse,
+    JobSummary,
+    PromptRunSummary,
+    SessionToolResponse,
+)
+from agent_orchestrator.schemas.sessions import (
+    McpAssignmentResponse,
+    ModelConfigResponse,
+    SessionDetail,
+    SessionSummary,
+    SkillAssignmentResponse,
+)
+
+
+def serialize_session_summary(item) -> SessionSummary:
+    recent_jobs = sorted(item.jobs, key=lambda job: job.created_at, reverse=True)
+    return SessionSummary(
+        id=item.id,
+        name=item.name,
+        status=item.status,
+        metadata=item.metadata_json,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+        terminated_at=item.terminated_at,
+        session_model_config=None if item.model_config is None else serialize_model_config(item.model_config),
+        skills=[serialize_skill(skill) for skill in item.skill_assignments],
+        mcps=[serialize_mcp(mcp) for mcp in item.mcp_assignments],
+        recent_job=None if not recent_jobs else serialize_job(recent_jobs[0]),
+    )
+
+
+def serialize_model_config(item) -> ModelConfigResponse:
+    return ModelConfigResponse(
+        provider_id=item.provider_id,
+        model_name=item.model_name,
+        gateway_options=item.gateway_options,
+        provider_options=item.provider_options,
+        updated_at=item.updated_at,
+    )
+
+
+def serialize_skill(item) -> SkillAssignmentResponse:
+    return SkillAssignmentResponse(
+        id=item.id,
+        skill_name=item.skill_name,
+        skill_path=item.skill_path,
+        created_at=item.created_at,
+    )
+
+
+def serialize_mcp(item) -> McpAssignmentResponse:
+    return McpAssignmentResponse(
+        id=item.id,
+        name=item.name,
+        transport=item.transport,
+        server_url=item.server_url,
+        headers=item.headers_json,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+def serialize_job(item) -> JobSummary:
+    latest_event = max(item.events, key=lambda event: event.id) if getattr(item, "events", None) else None
+    return JobSummary(
+        id=item.id,
+        prompt_run_id=item.prompt_run_id,
+        status=item.status,
+        attempts=item.attempts,
+        max_attempts=item.max_attempts,
+        error_code=item.error_code,
+        error_message=item.error_message,
+        result_text=item.result_text,
+        cancellation_requested_at=item.cancellation_requested_at,
+        created_at=item.created_at,
+        started_at=item.started_at,
+        completed_at=item.completed_at,
+        latest_event_id=None if latest_event is None else latest_event.id,
+        latest_event_type=None if latest_event is None else latest_event.event_type,
+    )
+
+
+def serialize_prompt_run(item) -> PromptRunSummary:
+    return PromptRunSummary(
+        id=item.id,
+        prompt=item.prompt,
+        status=item.status,
+        metadata=item.metadata_json,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+def serialize_event(item) -> JobEventResponse:
+    return JobEventResponse(
+        id=item.id,
+        event_type=item.event_type,
+        payload=item.payload_json,
+        created_at=item.created_at,
+    )
+
+
+def serialize_tool_definition(item) -> SessionToolResponse:
+    return SessionToolResponse(
+        name=item.exposed_name,
+        assignment_name=item.assignment_name,
+        transport=item.transport,
+        server_url=item.server_url,
+        actual_name=item.actual_name,
+        description=item.description,
+        parameters=item.parameters,
+    )
+
+
+def serialize_session_detail(item) -> SessionDetail:
+    recent_jobs = sorted(item.jobs, key=lambda job: job.created_at, reverse=True)[:5]
+    summary = serialize_session_summary(item)
+    return SessionDetail(
+        id=summary.id,
+        name=summary.name,
+        status=summary.status,
+        metadata=summary.metadata,
+        created_at=summary.created_at,
+        updated_at=summary.updated_at,
+        terminated_at=summary.terminated_at,
+        session_model_config=summary.session_model_config,
+        skills=summary.skills,
+        mcps=summary.mcps,
+        recent_job=summary.recent_job,
+        recent_jobs=[serialize_job(job) for job in recent_jobs],
+    )
+
+
+def serialize_job_detail(item, events, available_tools) -> JobDetail:
+    return JobDetail(
+        **serialize_job(item).model_dump(),
+        prompt_run=serialize_prompt_run(item.prompt_run),
+        outputs=[output.content for output in item.outputs],
+        events=[serialize_event(event) for event in events],
+        available_tools=[serialize_tool_definition(tool) for tool in available_tools],
+    )

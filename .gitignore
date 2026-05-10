@@ -2,3 +2,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 .env
+node_modules/
+.next/
+coverage/
