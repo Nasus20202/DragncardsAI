@@ -23,6 +23,36 @@ services:
     networks:
       - dragncards-shared
 
+  agent-orchestrator:
+    build:
+      context: .
+      dockerfile: services/agent-orchestrator/docker/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: services/agent-orchestrator/.env
+        required: false
+    depends_on:
+      agent-orchestrator-postgres:
+        condition: service_healthy
+      bifrost:
+        condition: service_healthy
+      game-service:
+        condition: service_started
+    ports:
+      - "8010:8010"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@agent-orchestrator-postgres:5432/agent_orchestrator
+      BIFROST_URL: http://bifrost:8080
+      BIFROST_API_KEY: dummy
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: "8010"
+      SKILL_ROOTS: /app/skills
+      GAME_SERVICE_MCP_URL: http://game-service:8000/mcp
+      ENABLED_PROVIDER_IDS: ${ENABLED_PROVIDER_IDS:-openrouter}
+      PROVIDER_MODELS_CACHE_TTL_SECONDS: ${PROVIDER_MODELS_CACHE_TTL_SECONDS:-60}
+    networks:
+      - dragncards-shared
+
 networks:
   dragncards-shared:
     name: dragncards-shared

@@ -64,13 +64,23 @@ def build_session_manager():
     from game_service.coordination.session_store import InMemorySessionStore, ValkeySessionStore
     from game_service.logic.session_manager import SessionManager
 
-    session_store = ValkeySessionStore(VALKEY_URL)
     parsed = urlparse(VALKEY_URL)
-    logger.info(
-        "Using Valkey session coordination store at %s:%s",
-        parsed.hostname,
-        parsed.port or 6379,
-    )
+    use_in_memory = os.environ.get("GAME_SERVICE_USE_IN_MEMORY_SESSION_STORE", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+    if use_in_memory:
+        session_store = InMemorySessionStore()
+        logger.warning("Using in-memory session coordination store")
+    else:
+        session_store = ValkeySessionStore(VALKEY_URL)
+        logger.info(
+            "Using Valkey session coordination store at %s:%s",
+            parsed.hostname,
+            parsed.port or 6379,
+        )
 
     return SessionManager(
         dragncards_http_url=DRAGNCARDS_HTTP_URL,
@@ -110,7 +120,17 @@ def run_http():
 
     @app.on_event("startup")
     async def _restore_sessions() -> None:
-        await manager.restore_sessions()
+        try:
+            await manager.restore_sessions()
+        except OSError as exc:
+            if os.environ.get("GAME_SERVICE_USE_IN_MEMORY_SESSION_STORE", "").lower() in {
+                "1",
+                "true",
+                "yes",
+            }:
+                logger.warning("Skipping session restore because local session store is unavailable: %s", exc)
+            else:
+                raise
 
     logger.info("Starting HTTP server on %s:%s", HTTP_HOST, HTTP_PORT)
     uvicorn.run(app, host=HTTP_HOST, port=HTTP_PORT)

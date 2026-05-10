@@ -2,7 +2,8 @@
 
 list_services() {
     printf '%s\n' \
-        "game-service"
+        "game-service" \
+        "agent-orchestrator"
 }
 
 
@@ -72,6 +73,22 @@ service_test_command() {
                     ;;
             esac
             ;;
+        agent-orchestrator)
+            case "$mode" in
+                unit)
+                    printf 'cd "%s/services/agent-orchestrator" && exec uv run pytest tests/unit/ -v' "$root_dir"
+                    ;;
+                integration)
+                    printf 'cd "%s/services/agent-orchestrator" && exec uv run pytest tests/integration/ -v' "$root_dir"
+                    ;;
+                all)
+                    printf 'cd "%s/services/agent-orchestrator" && exec uv run pytest tests/ -v' "$root_dir"
+                    ;;
+                *)
+                    return 1
+                    ;;
+            esac
+            ;;
         *)
             return 1
             ;;
@@ -116,6 +133,9 @@ service_start_command() {
         game-service)
             printf 'cd "%s/services/game-service" && exec uv run%s game-service' "$root_dir" "$env_args"
             ;;
+        agent-orchestrator)
+            printf 'cd "%s/services/agent-orchestrator" && exec uv run%s agent-orchestrator' "$root_dir" "$env_args"
+            ;;
         *)
             return 1
             ;;
@@ -129,6 +149,9 @@ service_http_port() {
     case "$service" in
         game-service)
             printf '%s' '8000'
+            ;;
+        agent-orchestrator)
+            printf '%s' '8010'
             ;;
         *)
             return 1

@@ -13,6 +13,56 @@ services:
     networks:
       - dragncards-shared
 
+  agent-orchestrator-postgres:
+    image: postgres:18.3-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: agent_orchestrator
+    ports:
+      - "5433:5432"
+    volumes:
+      - agent-orchestrator-postgres-data:/var/lib/postgresql/18/docker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agent_orchestrator"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - dragncards-shared
+
+  bifrost:
+    image: maximhq/bifrost:v1.5.0
+    restart: unless-stopped
+    env_file:
+      - path: services/bifrost/.env
+        required: false
+    environment:
+      BIFROST_API_KEY: ${BIFROST_API_KEY:-dummy}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      GITHUB_COPILOT_TOKEN: ${GITHUB_COPILOT_TOKEN:-}
+      LMSTUDIO_BASE_URL: ${LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
+    volumes:
+      - ./services/bifrost/config.json:/app/data/config.json:ro
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - dragncards-shared
+
 networks:
   dragncards-shared:
     name: dragncards-shared
+
+volumes:
+  agent-orchestrator-postgres-data:
