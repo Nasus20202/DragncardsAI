@@ -12,6 +12,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from game_service.dragncards.http_client import create_room, get_auth_token, get_user_id
 from game_service.logic.exceptions import (  # noqa: F401
@@ -22,6 +23,7 @@ from game_service.logic.exceptions import (  # noqa: F401
     StateUnavailableError,
 )
 from game_service.logic.session import GameSession
+from game_service.coordination.session_store import InMemorySessionStore, SessionStore
 from game_service.phoenix_client.client import PhoenixClient
 
 logger = logging.getLogger(__name__)
@@ -37,14 +39,64 @@ class SessionManager:
         email: str,
         password: str,
         plugin_registry: dict[str, dict],
+        session_store: SessionStore | None = None,
     ):
         self._http_url = dragncards_http_url
         self._ws_url = dragncards_ws_url
         self._email = email
         self._password = password
         self._plugin_registry = plugin_registry
+        self._session_store = session_store or InMemorySessionStore()
         self._sessions: dict[str, GameSession] = {}
         self._lock = asyncio.Lock()
+
+    async def restore_sessions(self) -> None:
+        records = await self._session_store.list_sessions()
+        for record in records:
+            session_id = record["session_id"]
+            if session_id in self._sessions:
+                continue
+            await self._restore_session(record)
+
+    async def _restore_session(self, record: dict[str, Any]) -> GameSession:
+        plugin_name = record["plugin_name"]
+        plugin_info = self._plugin_registry.get(plugin_name)
+        if plugin_info is None:
+            raise SessionError(
+                f"Cannot restore session {record['session_id']!r}: plugin {plugin_name!r} is not available"
+            )
+
+        auth_token = await get_auth_token(self._http_url, self._email, self._password)
+        ws_client = PhoenixClient(self._ws_url, auth_token=auth_token)
+        await ws_client.connect()
+        channel = await ws_client.join(f"room:{record['room_slug']}")
+
+        try:
+            initial_state = await channel.wait_for_state_update(timeout=15.0)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "No initial state received while restoring session %s, will fetch on demand",
+                record["session_id"],
+            )
+            initial_state = None
+
+        session = GameSession(
+            session_id=record["session_id"],
+            plugin_name=plugin_name,
+            plugin_id=plugin_info["id"],
+            room_slug=record["room_slug"],
+            created_at=datetime.fromisoformat(record["created_at"]),
+            client=ws_client,
+            channel=channel,
+        )
+        session._state = initial_state
+        session._manager = self
+
+        async with self._lock:
+            self._sessions[session.session_id] = session
+
+        logger.info("Restored session %s from coordination store", session.session_id)
+        return session
 
     async def create_session(self, plugin_name: str) -> GameSession:
         plugin_info = self._plugin_registry.get(plugin_name)
@@ -93,6 +145,8 @@ class SessionManager:
         session._state = initial_state
         session._manager = self
 
+        await self._session_store.put_session(session.to_metadata())
+
         async with self._lock:
             self._sessions[session_id] = session
 
@@ -134,6 +188,8 @@ class SessionManager:
         session._state = initial_state
         session._manager = self
 
+        await self._session_store.put_session(session.to_metadata())
+
         async with self._lock:
             self._sessions[session_id] = session
 
@@ -143,12 +199,16 @@ class SessionManager:
     async def get_session(self, session_id: str) -> GameSession:
         session = self._sessions.get(session_id)
         if session is None:
-            raise SessionNotFoundError(f"Session {session_id!r} not found")
+            record = await self._session_store.get_session(session_id)
+            if record is None:
+                raise SessionNotFoundError(f"Session {session_id!r} not found")
+            session = await self._restore_session(record)
         return session
 
     async def _remove_session(self, session_id: str) -> None:
         async with self._lock:
             self._sessions.pop(session_id, None)
+        await self._session_store.delete_session(session_id)
         logger.info("Session %s removed from pool (room closed)", session_id)
 
     async def delete_session(self, session_id: str) -> None:
@@ -164,10 +224,12 @@ class SessionManager:
             await session.client.disconnect()
         except Exception as exc:
             logger.warning("Error disconnecting session %s: %s", session_id, exc)
+        await self._session_store.delete_session(session_id)
         logger.info("Session %s deleted", session_id)
 
-    def list_sessions(self) -> list[dict]:
-        return [s.to_metadata() for s in self._sessions.values()]
+    async def list_sessions(self) -> list[dict]:
+        records = await self._session_store.list_sessions()
+        return [dict(record) for record in records]
 
     async def close_all(self) -> None:
         session_ids = list(self._sessions.keys())

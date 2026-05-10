@@ -1,11 +1,13 @@
 include:
   - external/docker/docker-compose.yaml
+  - docker-compose.infra.yaml
 
 services:
   game-service:
     build:
       context: .
       dockerfile: services/game-service/docker/Dockerfile
+    restart: unless-stopped
     depends_on:
       - dragncards-backend
     ports:
@@ -13,7 +15,14 @@ services:
     environment:
       DRAGNCARDS_HTTP_URL: http://dragncards-backend:4000
       DRAGNCARDS_WS_URL: ws://dragncards-backend:4000/socket
+      VALKEY_URL: redis://game-service-valkey:6379/0
       BOT_EMAIL: dev_user@example.com
       BOT_PASSWORD: password
       HTTP_HOST: 0.0.0.0
       HTTP_PORT: "8000"
+    networks:
+      - dragncards-shared
+
+networks:
+  dragncards-shared:
+    name: dragncards-shared

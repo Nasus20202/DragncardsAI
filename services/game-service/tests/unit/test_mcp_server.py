@@ -43,7 +43,7 @@ def _mock_session(state=None):
 def _mock_manager(sessions=None):
     manager = MagicMock()
     _sessions = sessions or []
-    manager.list_sessions.return_value = [s.to_metadata() for s in _sessions]
+    manager.list_sessions = AsyncMock(return_value=[s.to_metadata() for s in _sessions])
     if _sessions:
         manager.create_session = AsyncMock(return_value=_sessions[0])
         manager.get_session = AsyncMock(return_value=_sessions[0])

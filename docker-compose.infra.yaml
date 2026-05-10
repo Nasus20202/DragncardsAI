@@ -1,0 +1,18 @@
+services:
+  game-service-valkey:
+    image: valkey/valkey:9.0.4-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "8379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - dragncards-shared
+
+networks:
+  dragncards-shared:
+    name: dragncards-shared
