@@ -370,4 +370,5 @@ class GameSession:
             "plugin_id": self.plugin_id,
             "room_slug": self.room_slug,
             "created_at": self.created_at.isoformat(),
+            "frontend_url": None,
         }

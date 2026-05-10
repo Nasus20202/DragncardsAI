@@ -8,13 +8,19 @@ from inspect import Parameter, Signature
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from game_service.api.models import CardResult, SearchCardsResponse
+from game_service.api.models import (
+    CardProviderMetadataResponse,
+    CardResult,
+    ListCardProvidersResponse,
+    SearchCardsResponse,
+)
 from game_service.catalog.exceptions import (
     CardFilterValueError,
     UnknownCardProviderError,
     UnsupportedCardFilterError,
 )
 from game_service.catalog.service import (
+    list_card_providers,
     get_card_provider,
     search_cards,
     supported_plugins,
@@ -23,6 +29,20 @@ from game_service.catalog.service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["cards"])
+
+
+@router.get(
+    "/card-providers",
+    response_model=ListCardProvidersResponse,
+    operation_id="list_card_providers",
+    summary="List supported game plugins and card providers",
+)
+async def list_supported_card_providers():
+    providers = [
+        CardProviderMetadataResponse.model_validate(item)
+        for item in list_card_providers()
+    ]
+    return ListCardProvidersResponse(providers=providers)
 
 
 def _provider_operation_suffix(provider_name: str) -> str:

@@ -13,6 +13,20 @@ services:
     networks:
       - dragncards-shared
 
+  agent-orchestrator-valkey:
+    image: valkey/valkey:9.0.4-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "8380:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - dragncards-shared
+
   agent-orchestrator-postgres:
     image: postgres:18.3-alpine
     restart: unless-stopped
@@ -38,16 +52,6 @@ services:
     env_file:
       - path: services/bifrost/.env
         required: false
-    environment:
-      BIFROST_API_KEY: ${BIFROST_API_KEY:-dummy}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
-      GITHUB_COPILOT_TOKEN: ${GITHUB_COPILOT_TOKEN:-}
-      LMSTUDIO_BASE_URL: ${LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
     volumes:
       - ./services/bifrost/config.json:/app/data/config.json:ro
     ports:

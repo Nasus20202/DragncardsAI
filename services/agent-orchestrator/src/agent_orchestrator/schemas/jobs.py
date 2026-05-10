@@ -27,7 +27,7 @@ class JobSummary(BaseModel):
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
-    latest_event_id: int | None = None
+    latest_event_id: str | None = None
     latest_event_type: str | None = None
 
 
@@ -41,7 +41,7 @@ class PromptRunSummary(BaseModel):
 
 
 class JobEventResponse(BaseModel):
-    id: int
+    id: str
     event_type: str
     payload: dict[str, Any]
     created_at: datetime

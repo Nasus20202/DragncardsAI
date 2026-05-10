@@ -39,3 +39,8 @@ def test_settings_parse_enabled_providers_from_env(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("ENABLED_PROVIDER_IDS", "openrouter")
     settings = Settings()
     assert settings.enabled_provider_ids == ("openrouter",)
+
+
+def test_settings_default_valkey_url():
+    settings = Settings()
+    assert settings.valkey_url == "redis://localhost:8380/0"

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request
 
 from agent_orchestrator.api.deps import get_repository, get_settings
 from agent_orchestrator.config import Settings
+from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus, ValkeyLiveEventBus
 from agent_orchestrator.storage.db import ping_database
 from agent_orchestrator.storage.repository import Repository
 
@@ -24,6 +25,7 @@ async def ready(
     ready_state = {
         "database": False,
         "bifrost": False,
+        "valkey": False,
         "worker": bool(request.app.state.worker.is_running),
     }
     if hasattr(repo, "_session_factory"):
@@ -36,6 +38,13 @@ async def ready(
         ready_state["bifrost"] = await request.app.state.bifrost_client.health()
     except Exception:
         ready_state["bifrost"] = False
+    try:
+        ready_state["valkey"] = isinstance(
+            request.app.state.live_event_bus,
+            (ValkeyLiveEventBus, InMemoryLiveEventBus),
+        )
+    except Exception:
+        ready_state["valkey"] = False
     ready_flag = all(ready_state.values())
     return {
         "status": "ready" if ready_flag else "not_ready",

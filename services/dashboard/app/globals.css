@@ -1,0 +1,45 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+@plugin "@tailwindcss/typography";
+
+/* ─── Base ─────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+html,
+body,
+#__next {
+  height: 100%;
+}
+
+body {
+  background: hsl(var(--heroui-background));
+  color: hsl(var(--heroui-foreground));
+  /* Let the app shell own scrolling, not the body */
+  overflow: hidden;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ─── Swagger embed ─────────────────────────────────────────────── */
+
+#swagger-ui {
+  min-height: calc(100vh - 8rem);
+}
+
+#swagger-ui .swagger-ui {
+  font-family: inherit;
+}
+
+#swagger-ui .topbar {
+  display: none;
+}

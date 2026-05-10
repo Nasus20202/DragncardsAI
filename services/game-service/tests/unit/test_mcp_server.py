@@ -31,6 +31,7 @@ def _mock_session(state=None):
         "plugin_id": 1,
         "room_slug": "abc123",
         "created_at": "2024-01-01T00:00:00+00:00",
+        "frontend_url": None,
     }
     session.get_state = AsyncMock(return_value=state or {"game": {}})
     session.get_alerts = MagicMock(return_value=[{"level": "info", "text": "hi"}])
@@ -67,6 +68,7 @@ def _make_mcp(manager=None):
 
 EXPECTED_TOOL_NAMES = {
     "list_actions",
+    "list_card_providers",
     "create_game",
     "attach_game",
     "list_games",

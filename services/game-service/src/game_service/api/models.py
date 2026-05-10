@@ -71,6 +71,7 @@ class SessionMetadata(BaseModel):
     plugin_id: int
     room_slug: str
     created_at: str  # ISO-8601
+    frontend_url: str | None = None
 
 
 class CreateGameResponse(BaseModel):
@@ -337,6 +338,24 @@ class SearchCardsResponse(BaseModel):
         description="Number of results returned (may be capped by limit)"
     )
     cards: list[CardResult]
+
+
+class CardProviderMetadataResponse(BaseModel):
+    provider: str = Field(description="Plugin/provider identifier")
+    display_name: str = Field(description="Human-readable plugin/provider name")
+    default: bool = Field(description="Whether this is the default provider")
+    filters: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Supported search filters for this provider",
+    )
+    load_groups: list[str] = Field(
+        default_factory=list,
+        description="Supported load group IDs for this provider",
+    )
+
+
+class ListCardProvidersResponse(BaseModel):
+    providers: list[CardProviderMetadataResponse]
 
 
 # ---------------------------------------------------------------------------

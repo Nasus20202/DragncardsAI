@@ -10,6 +10,7 @@ import pytest
 from agent_orchestrator.integrations.bifrost import ChatResponse, ToolCall
 from agent_orchestrator.integrations.mcp.client import McpToolDefinition
 from agent_orchestrator.runtime.app import create_app
+from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.config import Settings
 from agent_orchestrator.storage.db import create_engine, create_session_factory
@@ -37,7 +38,13 @@ class FakeBifrost:
 
     async def chat_completion(self, *args, **kwargs):
         await asyncio.sleep(0.02)
-        return self.responses.pop(0)
+        on_delta = kwargs.get("on_delta")
+        response = self.responses.pop(0)
+        if on_delta is not None and response.content:
+            from agent_orchestrator.integrations.bifrost import ChatDelta
+
+            await on_delta(ChatDelta(content=response.content))
+        return response
 
 
 class FakeMcp:
@@ -71,6 +78,7 @@ async def app(tmp_path: Path):
         settings=Settings(database_url=f"sqlite+aiosqlite:///{database_path}", SKILL_ROOTS=str(skill_root)),
         repository=repository,
         bifrost_client=FakeBifrost(),
+        live_event_bus=InMemoryLiveEventBus(),
         mcp_client=FakeMcp(),
         skill_registry=SkillRegistry((skill_root,)),
     )
@@ -121,6 +129,7 @@ async def test_prompt_run_completes_background_job(app):
         assert job["available_tools"][0]["name"] == "game-service_next_step"
         assert job["latest_event_type"] == "completion"
         assert any(event["event_type"] == "tool_result" for event in job["events"])
+        assert not any(event["event_type"] == "model_output" and event["payload"].get("stream") for event in job["events"])
         tool_call_event = next(event for event in job["events"] if event["event_type"] == "tool_call")
         assert tool_call_event["payload"]["server_url"] == "http://game-service/mcp/"
 
@@ -171,8 +180,9 @@ async def test_event_stream_replays_and_resumes(app):
             assert response.status_code == 200
             lines = [line async for line in response.aiter_lines() if line]
 
-        ids = [int(line.removeprefix("id: ")) for line in lines if line.startswith("id: ")]
+        ids = [line.removeprefix("id: ") for line in lines if line.startswith("id: ")]
         events = [json.loads(line.removeprefix("data: ")) for line in lines if line.startswith("data: ")]
+        assert any(event["event_type"] == "model_output" and event["payload"].get("stream") for event in events)
         assert any(event["event_type"] == "tool_call" for event in events)
         assert events[-1]["event_type"] == "completion"
 
@@ -185,7 +195,7 @@ async def test_event_stream_replays_and_resumes(app):
             assert resumed_response.status_code == 200
             resumed_lines = [line async for line in resumed_response.aiter_lines() if line]
 
-        resumed_ids = [int(line.removeprefix("id: ")) for line in resumed_lines if line.startswith("id: ")]
+        resumed_ids = [line.removeprefix("id: ") for line in resumed_lines if line.startswith("id: ")]
         resumed_events = [
             json.loads(line.removeprefix("data: ")) for line in resumed_lines if line.startswith("data: ")
         ]

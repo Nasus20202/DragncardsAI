@@ -130,6 +130,12 @@ class JobRepositoryMixin:
             await session.flush()
             return item.id
 
+    async def update_event(self, event_id: int, payload_json: dict[str, Any]) -> None:
+        async with self._session_factory() as session, session.begin():
+            item = await session.get(JobEvent, event_id)
+            if item is not None:
+                item.payload_json = payload_json
+
     async def list_events(self, job_id: str, *, after_id: int = 0, limit: int = 100) -> list[JobEvent]:
         async with self._session_factory() as session:
             result = await session.execute(
