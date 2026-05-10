@@ -78,7 +78,7 @@ async def attach_game(
     operation_id="list_games",
 )
 async def list_games(manager: SessionManager = Depends(get_manager)):
-    sessions = [SessionMetadata(**m) for m in manager.list_sessions()]
+    sessions = [SessionMetadata(**m) for m in await manager.list_sessions()]
     logger.debug("list_games: %d active session(s)", len(sessions))
     return ListGamesResponse(sessions=sessions)
 

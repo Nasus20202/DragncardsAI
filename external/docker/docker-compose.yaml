@@ -1,12 +1,13 @@
 services:
   dragncards-postgres:
     image: postgres:18.3-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "5433:5432"
+      - "4432:5432"
     volumes:
       - dragncards-postgres-data:/var/lib/postgresql/18/docker
     healthcheck:
@@ -14,21 +15,27 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - dragncards-shared
 
   dragncards-mc-plugin:
     build:
       context: ../..
       dockerfile: external/docker/mc-plugin/Dockerfile
+    restart: on-failure
     # Builds plugin artifacts and exits; artifacts stored in a named volume.
     volumes:
       - dragncards-mc-plugin-data:/output
     entrypoint: >
       sh -c "cp -r /plugin/json /output/json && cp -r /plugin/tsv /output/tsv && echo 'Plugin artifacts copied to volume' && ls -la /output/json/ /output/tsv/"
+    networks:
+      - dragncards-shared
 
   dragncards-backend:
     build:
       context: ../..
       dockerfile: external/docker/backend/Dockerfile
+    restart: unless-stopped
     depends_on:
       dragncards-postgres:
         condition: service_healthy
@@ -40,17 +47,26 @@ services:
       - dragncards-mc-plugin-data:/plugin:ro
     environment:
       DB_HOSTNAME: dragncards-postgres
+    networks:
+      - dragncards-shared
 
   dragncards-frontend:
     build:
       context: ../..
       dockerfile: external/docker/frontend/Dockerfile
+    restart: unless-stopped
     depends_on:
       - dragncards-backend
     ports:
       - "3000:3000"
     environment:
       REACT_APP_BE_HOSTNAME: dragncards-backend
+    networks:
+      - dragncards-shared
+
+networks:
+  dragncards-shared:
+    name: dragncards-shared
 
 volumes:
   dragncards-postgres-data:

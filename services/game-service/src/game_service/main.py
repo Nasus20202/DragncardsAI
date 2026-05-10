@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from urllib.parse import urlparse
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,6 +40,7 @@ DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:40
 DRAGNCARDS_WS_URL = os.environ.get("DRAGNCARDS_WS_URL", "ws://localhost:4000/socket")
 BOT_EMAIL = os.environ.get("BOT_EMAIL", "dev@example.com")
 BOT_PASSWORD = os.environ.get("BOT_PASSWORD", "dev_password")
+VALKEY_URL = os.environ.get("VALKEY_URL", "redis://localhost:8379/0")
 HTTP_HOST = os.environ.get("HTTP_HOST", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "8000"))
 
@@ -59,7 +61,16 @@ PLUGIN_REGISTRY: dict[str, dict] = {
 
 
 def build_session_manager():
+    from game_service.coordination.session_store import InMemorySessionStore, ValkeySessionStore
     from game_service.logic.session_manager import SessionManager
+
+    session_store = ValkeySessionStore(VALKEY_URL)
+    parsed = urlparse(VALKEY_URL)
+    logger.info(
+        "Using Valkey session coordination store at %s:%s",
+        parsed.hostname,
+        parsed.port or 6379,
+    )
 
     return SessionManager(
         dragncards_http_url=DRAGNCARDS_HTTP_URL,
@@ -67,6 +78,7 @@ def build_session_manager():
         email=BOT_EMAIL,
         password=BOT_PASSWORD,
         plugin_registry=PLUGIN_REGISTRY,
+        session_store=session_store,
     )
 
 
@@ -95,6 +107,10 @@ def run_http():
         app.router.lifespan_context, mcp_asgi.lifespan
     )
     app.mount("/mcp", mcp_asgi)
+
+    @app.on_event("startup")
+    async def _restore_sessions() -> None:
+        await manager.restore_sessions()
 
     logger.info("Starting HTTP server on %s:%s", HTTP_HOST, HTTP_PORT)
     uvicorn.run(app, host=HTTP_HOST, port=HTTP_PORT)

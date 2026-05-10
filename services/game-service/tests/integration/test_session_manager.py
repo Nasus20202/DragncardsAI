@@ -72,7 +72,7 @@ async def test_list_sessions(manager):
     """list_sessions returns metadata for all active sessions."""
     session = await manager.create_session("marvel-champions")
     try:
-        sessions = manager.list_sessions()
+        sessions = await manager.list_sessions()
         ids = [s["session_id"] for s in sessions]
         assert session.session_id in ids
     finally:
@@ -85,7 +85,7 @@ async def test_delete_session_removes_from_pool(manager):
     session = await manager.create_session("marvel-champions")
     session_id = session.session_id
     await manager.delete_session(session_id)
-    sessions = manager.list_sessions()
+    sessions = await manager.list_sessions()
     assert not any(s["session_id"] == session_id for s in sessions)
 
 
