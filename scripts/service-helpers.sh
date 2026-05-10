@@ -3,7 +3,8 @@
 list_services() {
     printf '%s\n' \
         "game-service" \
-        "agent-orchestrator"
+        "agent-orchestrator" \
+        "dashboard"
 }
 
 
@@ -89,6 +90,16 @@ service_test_command() {
                     ;;
             esac
             ;;
+        dashboard)
+            case "$mode" in
+                unit|integration|all)
+                    printf 'cd "%s/services/dashboard" && exec pnpm test' "$root_dir"
+                    ;;
+                *)
+                    return 1
+                    ;;
+            esac
+            ;;
         *)
             return 1
             ;;
@@ -136,6 +147,9 @@ service_start_command() {
         agent-orchestrator)
             printf 'cd "%s/services/agent-orchestrator" && exec uv run%s agent-orchestrator' "$root_dir" "$env_args"
             ;;
+        dashboard)
+            printf 'cd "%s/services/dashboard" && exec pnpm dev --hostname 0.0.0.0 --port 3020' "$root_dir"
+            ;;
         *)
             return 1
             ;;
@@ -152,6 +166,9 @@ service_http_port() {
             ;;
         agent-orchestrator)
             printf '%s' '8010'
+            ;;
+        dashboard)
+            printf '%s' '3020'
             ;;
         *)
             return 1

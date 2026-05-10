@@ -34,7 +34,7 @@ Use `agent-orchestrator` when you need to:
 - choose which provider/model an agent should use
 - list supported providers
 - list available skills for picker-style UI flows
-- assign local skills from `skills/<skill_name>`
+- assign local skills from `../../skills/<skill_name>` or `../../.opencode/skills/<skill_name>` when running from the service directory
 - assign MCP servers like `game-service`
 - inspect the effective tool catalog exposed to a session
 - submit prompts as background jobs
@@ -52,6 +52,12 @@ services/agent-orchestrator/.env
 ```
 
 This file is only for agent-orchestrator runtime settings.
+
+For direct local runs from `services/agent-orchestrator`, set skill roots back to the repo-level skill directories:
+
+```text
+SKILL_ROOTS=../../skills,../../.opencode/skills
+```
 
 For Docker Compose, this file is optional. If it does not exist, Compose uses the defaults declared in `docker-compose.yaml`, which keeps CI and pipeline parsing from failing on missing local-only env files.
 
@@ -106,7 +112,7 @@ Supported provider IDs include `github-copilot`, `nvidia`, `openrouter`, `mistra
 To avoid hitting Bifrost on every provider-picker refresh, agent-orchestrator keeps an in-memory TTL cache for provider model lists. Configure it with:
 
 ```text
-PROVIDER_MODELS_CACHE_TTL_SECONDS=60
+PROVIDER_MODELS_CACHE_TTL_SECONDS=600
 ```
 
 Set it to `0` to disable caching.
@@ -177,9 +183,44 @@ Typical payload:
 }
 ```
 
+Reasoning-capable models can be configured through `gateway_options.reasoning`.
+
+Example:
+
+```json
+{
+  "provider_id": "openai",
+  "model_name": "gpt-4o-mini",
+  "gateway_options": {
+    "reasoning": {
+      "effort": "high",
+      "max_tokens": 4096
+    }
+  },
+  "provider_options": {}
+}
+```
+
+agent-orchestrator requests streamed chat completions from Bifrost for prompt execution.
+Transient chunk events are fanned out across replicas through the dedicated orchestrator Valkey instance and then exposed on the job SSE endpoint.
+
+When reasoning is enabled:
+- live `reasoning` chunks are sent over the SSE job stream and are not persisted to PostgreSQL
+
+Always:
+- live streamed `model_output` chunks are sent over the SSE job stream and are not persisted to PostgreSQL
+- final completion state, tool events, failures, cancellations, and the completed output remain persisted
+
+In the dashboard UI, the session settings drawer now includes first-class controls for:
+- enabling reasoning stream
+- choosing reasoning effort
+- setting reasoning max tokens
+
+Those controls write the `gateway_options.reasoning` block for you. The advanced JSON editor is still available for manual overrides and other provider-specific settings.
+
 ### Session Skills
 
-Use these to manage `skills/<skill_name>` entries available to the session.
+Use these to manage skills discovered from the configured `SKILL_ROOTS` entries.
 
 - `GET /sessions/{session_id}/skills`
 - `POST /sessions/{session_id}/skills`
@@ -264,6 +305,7 @@ Use these for polling or frontend streaming.
 
 Event types include:
 - `progress`
+- `reasoning`
 - `model_output`
 - `tool_call`
 - `tool_result`
@@ -298,9 +340,18 @@ Event types include:
 
 The service expects:
 - dedicated orchestrator PostgreSQL
+- dedicated orchestrator Valkey for transient cross-replica streaming events
 - Bifrost
 - one or more skill roots, usually `/app/skills` in Docker or `skills` locally
 - optional MCP servers such as `game-service`
+
+Set the Valkey connection with:
+
+```text
+VALKEY_URL=redis://localhost:8380/0
+```
+
+In Docker Compose, agent-orchestrator uses the dedicated `agent-orchestrator-valkey` service.
 
 ## Tests
 

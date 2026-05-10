@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError, ChatResponse
 from agent_orchestrator.integrations.mcp.client import StreamableHttpMcpClient, McpToolDefinition
 from agent_orchestrator.runtime.app import create_app
+from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.config import Settings
 from agent_orchestrator.storage.db import create_engine, create_session_factory
@@ -92,6 +93,7 @@ async def build_test_app(
         ),
         repository=repository,
         bifrost_client=bifrost_client or FakeBifrostClient(unavailable_provider_ids=unavailable_provider_ids),
+        live_event_bus=InMemoryLiveEventBus(),
         mcp_client=FakeMcpClient(),
         skill_registry=SkillRegistry((skill_root,)),
     )
@@ -111,7 +113,7 @@ def test_ready_reports_dependencies(app):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ready"
-    assert body["checks"] == {"database": True, "bifrost": True, "worker": True}
+    assert body["checks"] == {"database": True, "bifrost": True, "valkey": True, "worker": True}
 
 
 def test_list_providers(app):

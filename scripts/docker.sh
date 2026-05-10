@@ -4,30 +4,46 @@
 set -euo pipefail
 
 ACTION="${1:-start}"
+SERVICES=("${@:2}")
+
+compose_with_optional_services() {
+    local action="$1"
+    shift
+
+    if [ "${#SERVICES[@]}" -gt 0 ]; then
+        docker compose "$action" "$@" "${SERVICES[@]}"
+    else
+        docker compose "$action" "$@"
+    fi
+}
 
 case "$ACTION" in
     build)
         echo "Building Docker stack..."
-        docker compose build
+        compose_with_optional_services build
         ;;
     start)
         echo "Starting Docker stack..."
-        docker compose up -d
+        compose_with_optional_services up -d
         ;;
     stop)
         echo "Stopping Docker stack..."
-        docker compose stop
+        compose_with_optional_services stop
         ;;
     down)
+        if [ "${#SERVICES[@]}" -gt 0 ]; then
+            echo "Service arguments are not supported for 'down'" >&2
+            exit 1
+        fi
         echo "Tearing down Docker stack..."
         docker compose down -v
         ;;
     restart)
         echo "Restarting Docker stack..."
-        docker compose restart
+        compose_with_optional_services restart
         ;;
     *)
-        echo "Usage: $0 {build|start|stop|down|restart}"
+        echo "Usage: $0 {build|start|stop|down|restart} [service ...]"
         exit 1
         ;;
 esac

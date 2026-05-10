@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -146,6 +148,47 @@ async def test_chat_completion_raises_invalid_response_for_missing_choices():
         await client.aclose()
 
     assert exc_info.value.code == "invalid_response"
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_streams_reasoning_and_content_deltas():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["stream"] is True
+        return httpx.Response(
+            200,
+            text="\n\n".join(
+                [
+                    'data: {"choices":[{"delta":{"reasoning_details":[{"index":0,"type":"text","text":"Let me think. "}]},"finish_reason":null}]}',
+                    'data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}',
+                    'data: {"choices":[{"delta":{"content":" world"},"finish_reason":null}]}',
+                    'data: [DONE]',
+                ]
+            ),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    deltas = []
+    client = await _build_client(handler)
+    try:
+        response = await client.chat_completion(
+            "openrouter",
+            "gpt-4o-mini",
+            [{"role": "user", "content": "hi"}],
+            None,
+            {"reasoning": {"effort": "high"}},
+            {},
+            on_delta=deltas.append,
+        )
+    finally:
+        await client.aclose()
+
+    assert [delta.reasoning for delta in deltas if delta.reasoning] == ["Let me think. "]
+    assert [delta.content for delta in deltas if delta.content] == ["Hello", " world"]
+    assert response.reasoning == "Let me think. "
+    assert response.content == "Hello world"
+    assert response.reasoning_details[0].text == "Let me think. "
 
 
 @pytest.mark.asyncio

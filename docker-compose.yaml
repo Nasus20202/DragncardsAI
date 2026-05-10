@@ -34,6 +34,8 @@ services:
     depends_on:
       agent-orchestrator-postgres:
         condition: service_healthy
+      agent-orchestrator-valkey:
+        condition: service_healthy
       bifrost:
         condition: service_healthy
       game-service:
@@ -48,8 +50,38 @@ services:
       HTTP_PORT: "8010"
       SKILL_ROOTS: /app/skills
       GAME_SERVICE_MCP_URL: http://game-service:8000/mcp
+      VALKEY_URL: redis://agent-orchestrator-valkey:6379/0
       ENABLED_PROVIDER_IDS: ${ENABLED_PROVIDER_IDS:-openrouter}
-      PROVIDER_MODELS_CACHE_TTL_SECONDS: ${PROVIDER_MODELS_CACHE_TTL_SECONDS:-60}
+      PROVIDER_MODELS_CACHE_TTL_SECONDS: ${PROVIDER_MODELS_CACHE_TTL_SECONDS:-600}
+    networks:
+      - dragncards-shared
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: services/dashboard/docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      agent-orchestrator:
+        condition: service_started
+      game-service:
+        condition: service_started
+      dragncards-frontend:
+        condition: service_started
+    ports:
+      - "3020:3000"
+    environment:
+      AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:8010
+      GAME_SERVICE_URL: http://game-service:8000
+      DRAGNCARDS_FRONTEND_URL: http://localhost:3000
+      DASHBOARD_APP_NAME: DragnCardsAI Dashboard
+      DASHBOARD_DEFAULT_PROVIDER_ID: openai
+      DASHBOARD_DEFAULT_MODEL_NAME: gpt-4o-mini
+      DASHBOARD_DEFAULT_GAME_PLUGIN: marvel-champions
+      DASHBOARD_DEFAULT_GAME_SERVICE_MCP_ENABLED: "true"
+      DASHBOARD_DEFAULT_GAME_SERVICE_MCP_NAME: game-service
+      DASHBOARD_DEFAULT_GAME_SERVICE_MCP_TRANSPORT: streamable-http
+      DASHBOARD_DEFAULT_GAME_SERVICE_MCP_URL: http://game-service:8000/mcp/
     networks:
       - dragncards-shared
 

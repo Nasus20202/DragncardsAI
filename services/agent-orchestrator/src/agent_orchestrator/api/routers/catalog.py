@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Request
 
 from agent_orchestrator.api.deps import get_settings, get_skill_registry
@@ -9,6 +11,44 @@ from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.schemas.catalog import ProviderResponse, SkillDefinitionResponse
 
 router = APIRouter(tags=["catalog"])
+
+
+async def _build_provider_response(
+    *,
+    bifrost_client,
+    provider_id: str,
+    model_prefix: str,
+) -> ProviderResponse:
+    try:
+        model_infos = await bifrost_client.list_models(provider_id)
+        models = [
+            model.id
+            for model in model_infos
+            if _matches_provider_model(provider_id, model.id, model_prefix)
+        ]
+        return ProviderResponse(
+            provider_id=provider_id,
+            model_prefix=model_prefix,
+            models=models,
+            available=True,
+            error=None,
+        )
+    except BifrostError as exc:
+        return ProviderResponse(
+            provider_id=provider_id,
+            model_prefix=model_prefix,
+            models=[],
+            available=False,
+            error=str(exc),
+        )
+    except Exception:
+        return ProviderResponse(
+            provider_id=provider_id,
+            model_prefix=model_prefix,
+            models=[],
+            available=False,
+            error="Failed to list models",
+        )
 
 
 def _matches_provider_model(provider_id: str, model_id: str, model_prefix: str) -> bool:
@@ -26,36 +66,18 @@ async def list_providers(
     request: Request,
     settings: Settings = Depends(get_settings),
 ) -> dict[str, list[ProviderResponse]]:
-    providers: list[ProviderResponse] = []
     bifrost_client = request.app.state.bifrost_client
-    for provider_id in settings.enabled_provider_ids:
-        model_prefix = settings.provider_prefixes[provider_id]
-        try:
-            model_infos = await bifrost_client.list_models(provider_id)
-            models = [
-                model.id
-                for model in model_infos
-                if _matches_provider_model(provider_id, model.id, model_prefix)
-            ]
-            available = True
-            error = None
-        except BifrostError as exc:
-            models = []
-            available = False
-            error = str(exc)
-        except Exception:
-            models = []
-            available = False
-            error = "Failed to list models"
-        providers.append(
-            ProviderResponse(
+    provider_ids = tuple(dict.fromkeys(settings.enabled_provider_ids))
+    providers = await asyncio.gather(
+        *(
+            _build_provider_response(
+                bifrost_client=bifrost_client,
                 provider_id=provider_id,
-                model_prefix=model_prefix,
-                models=models,
-                available=available,
-                error=error,
+                model_prefix=settings.provider_prefixes[provider_id],
             )
+            for provider_id in provider_ids
         )
+    )
     return {"providers": providers}
 
 

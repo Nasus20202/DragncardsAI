@@ -32,15 +32,16 @@ class Settings(BaseSettings):
     http_host: str = "0.0.0.0"
     http_port: int = 8010
     skill_roots_raw: str = Field(
-        default="skills",
+        default="../../skills,../../.opencode/skills",
         validation_alias=AliasChoices("skill_roots_raw", "SKILL_ROOTS"),
     )
     worker_poll_interval_seconds: float = 0.2
     worker_max_tool_rounds: int = 8
     default_job_max_attempts: int = 2
-    game_service_mcp_url: str = "http://localhost:8000/mcp"
+    game_service_mcp_url: str = "http://localhost:8000/mcp/"
+    valkey_url: str = "redis://localhost:8380/0"
     mcp_request_timeout_seconds: float = 30.0
-    provider_models_cache_ttl_seconds: float = 60.0
+    provider_models_cache_ttl_seconds: float = 600.0
     supported_provider_ids: tuple[str, ...] = REQUIRED_PROVIDER_IDS
     enabled_provider_ids_raw: str = Field(
         default=",".join(REQUIRED_PROVIDER_IDS),

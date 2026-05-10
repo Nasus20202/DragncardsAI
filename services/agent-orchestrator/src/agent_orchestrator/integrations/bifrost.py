@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import monotonic
-from typing import Any
+from inspect import isawaitable
+from typing import Any, Awaitable, Callable
 
 import httpx
 
@@ -23,10 +24,27 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
+class ReasoningDetail:
+    index: int
+    type: str | None = None
+    text: str = ""
+    signature: str | None = None
+
+
+@dataclass(frozen=True)
+class ChatDelta:
+    content: str = ""
+    reasoning: str = ""
+    reasoning_details: list[ReasoningDetail] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class ChatResponse:
     content: str
     tool_calls: list[ToolCall]
     raw: dict[str, Any]
+    reasoning: str = ""
+    reasoning_details: list[ReasoningDetail] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -124,6 +142,7 @@ class BifrostClient:
         tools: list[dict[str, Any]] | None,
         gateway_options: dict[str, Any],
         provider_options: dict[str, Any],
+        on_delta: Callable[[ChatDelta], Awaitable[None]] | None = None,
     ) -> ChatResponse:
         payload: dict[str, Any] = {
             "model": self._resolve_model(provider_id, model_name),
@@ -134,53 +153,17 @@ class BifrostClient:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        if on_delta is not None:
+            payload["stream"] = True
         headers = {}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
-        try:
-            response = await self._http_client.post(
-                f"{self._base_url}/openai/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-        except httpx.TimeoutException as exc:
-            raise BifrostError("timeout", "Bifrost request timed out", retryable=True) from exc
-        except httpx.HTTPError as exc:
-            raise BifrostError("network_error", "Bifrost request failed", retryable=True) from exc
+        if on_delta is None:
+            response = await self._post_chat_completion(payload, headers)
+            data = response.json()
+            return self._parse_chat_response(data)
 
-        if response.status_code >= 400:
-            message = self._extract_error_message(response)
-            raise BifrostError(
-                "gateway_error",
-                message,
-                retryable=response.status_code >= 500 or response.status_code == 429,
-            )
-
-        data = response.json()
-        try:
-            message = data["choices"][0]["message"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise BifrostError("invalid_response", "Bifrost returned an invalid response") from exc
-
-        tool_calls: list[ToolCall] = []
-        for tool_call in message.get("tool_calls") or []:
-            raw_arguments = tool_call.get("function", {}).get("arguments") or "{}"
-            try:
-                arguments = json.loads(raw_arguments)
-            except json.JSONDecodeError:
-                arguments = {"raw": raw_arguments}
-            tool_calls.append(
-                ToolCall(
-                    id=tool_call.get("id", "tool-call"),
-                    name=tool_call.get("function", {}).get("name", "unknown_tool"),
-                    arguments=arguments,
-                )
-            )
-        return ChatResponse(
-            content=self._normalize_content(message.get("content")),
-            tool_calls=tool_calls,
-            raw=data,
-        )
+        return await self._stream_chat_completion(payload, headers, on_delta)
 
     def _resolve_model(self, provider_id: str, model_name: str) -> str:
         if "/" in model_name:
@@ -202,6 +185,246 @@ class BifrostClient:
                     parts.append(str(item.get("text", "")))
             return "\n".join(part for part in parts if part)
         return str(content)
+
+    async def _post_chat_completion(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+    ) -> httpx.Response:
+        try:
+            response = await self._http_client.post(
+                f"{self._base_url}/openai/chat/completions",
+                json=payload,
+                headers=headers,
+            )
+        except httpx.TimeoutException as exc:
+            raise BifrostError("timeout", "Bifrost request timed out", retryable=True) from exc
+        except httpx.HTTPError as exc:
+            raise BifrostError("network_error", "Bifrost request failed", retryable=True) from exc
+
+        if response.status_code >= 400:
+            message = self._extract_error_message(response)
+            raise BifrostError(
+                "gateway_error",
+                message,
+                retryable=response.status_code >= 500 or response.status_code == 429,
+            )
+        return response
+
+    async def _stream_chat_completion(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        on_delta: Callable[[ChatDelta], Awaitable[None]],
+    ) -> ChatResponse:
+        reasoning_buffers: dict[int, dict[str, Any]] = {}
+        tool_call_buffers: dict[int, dict[str, Any]] = {}
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        raw_chunks: list[dict[str, Any]] = []
+
+        try:
+            async with self._http_client.stream(
+                "POST",
+                f"{self._base_url}/openai/chat/completions",
+                json=payload,
+                headers=headers,
+            ) as response:
+                if response.status_code >= 400:
+                    await response.aread()
+                    message = self._extract_error_message(response)
+                    raise BifrostError(
+                        "gateway_error",
+                        message,
+                        retryable=response.status_code >= 500 or response.status_code == 429,
+                    )
+
+                async for raw_event in self._iter_sse_data(response):
+                    if raw_event == "[DONE]":
+                        break
+                    chunk = json.loads(raw_event)
+                    raw_chunks.append(chunk)
+                    delta = self._extract_delta(chunk)
+                    content = self._normalize_content(delta.get("content"))
+                    reasoning = self._normalize_content(delta.get("reasoning"))
+                    reasoning_details = self._parse_reasoning_details(delta.get("reasoning_details") or [])
+                    tool_calls = delta.get("tool_calls") or []
+                    if not reasoning and reasoning_details:
+                        reasoning = "".join(detail.text for detail in reasoning_details if detail.text)
+
+                    if content:
+                        content_parts.append(content)
+                    if reasoning:
+                        reasoning_parts.append(reasoning)
+                    if reasoning_details:
+                        self._merge_reasoning_details(reasoning_buffers, reasoning_details)
+                    if tool_calls:
+                        self._merge_tool_call_deltas(tool_call_buffers, tool_calls)
+
+                    if content or reasoning or reasoning_details:
+                        callback_result = on_delta(
+                            ChatDelta(
+                                content=content,
+                                reasoning=reasoning,
+                                reasoning_details=reasoning_details,
+                            )
+                        )
+                        if isawaitable(callback_result):
+                            await callback_result
+        except json.JSONDecodeError as exc:
+            raise BifrostError("invalid_response", "Bifrost returned an invalid streamed response") from exc
+        except httpx.TimeoutException as exc:
+            raise BifrostError("timeout", "Bifrost request timed out", retryable=True) from exc
+        except httpx.HTTPError as exc:
+            raise BifrostError("network_error", "Bifrost request failed", retryable=True) from exc
+
+        return ChatResponse(
+            content="".join(content_parts),
+            tool_calls=self._finalize_streamed_tool_calls(tool_call_buffers),
+            raw={"chunks": raw_chunks},
+            reasoning="".join(reasoning_parts),
+            reasoning_details=self._finalize_reasoning_details(reasoning_buffers),
+        )
+
+    def _parse_chat_response(self, data: dict[str, Any]) -> ChatResponse:
+        try:
+            message = data["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise BifrostError("invalid_response", "Bifrost returned an invalid response") from exc
+
+        reasoning_details = self._parse_reasoning_details(message.get("reasoning_details") or [])
+        reasoning = self._normalize_content(message.get("reasoning"))
+        if not reasoning and reasoning_details:
+            reasoning = "".join(detail.text for detail in reasoning_details if detail.text)
+        return ChatResponse(
+            content=self._normalize_content(message.get("content")),
+            tool_calls=self._parse_tool_calls(message.get("tool_calls") or []),
+            raw=data,
+            reasoning=reasoning,
+            reasoning_details=reasoning_details,
+        )
+
+    def _parse_tool_calls(self, payload: list[Any]) -> list[ToolCall]:
+        tool_calls: list[ToolCall] = []
+        for tool_call in payload:
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function") or {}
+            raw_arguments = function.get("arguments") or "{}"
+            try:
+                arguments = json.loads(raw_arguments)
+            except json.JSONDecodeError:
+                arguments = {"raw": raw_arguments}
+            tool_calls.append(
+                ToolCall(
+                    id=str(tool_call.get("id", "tool-call")),
+                    name=str(function.get("name", "unknown_tool")),
+                    arguments=arguments,
+                )
+            )
+        return tool_calls
+
+    def _parse_reasoning_details(self, payload: list[Any]) -> list[ReasoningDetail]:
+        details: list[ReasoningDetail] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            details.append(
+                ReasoningDetail(
+                    index=int(item.get("index", len(details))),
+                    type=None if item.get("type") is None else str(item.get("type")),
+                    text=self._normalize_content(item.get("text")),
+                    signature=None if item.get("signature") is None else str(item.get("signature")),
+                )
+            )
+        return details
+
+    def _extract_delta(self, chunk: dict[str, Any]) -> dict[str, Any]:
+        try:
+            choices = chunk["choices"]
+            if not choices:
+                return {}
+            return choices[0].get("delta") or {}
+        except (KeyError, IndexError, TypeError):
+            return {}
+
+    async def _iter_sse_data(self, response: httpx.Response):
+        data_lines: list[str] = []
+        async for line in response.aiter_lines():
+            if not line:
+                if data_lines:
+                    yield "\n".join(data_lines)
+                    data_lines.clear()
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+        if data_lines:
+            yield "\n".join(data_lines)
+
+    def _merge_reasoning_details(
+        self,
+        buffers: dict[int, dict[str, Any]],
+        details: list[ReasoningDetail],
+    ) -> None:
+        for detail in details:
+            buffer = buffers.setdefault(
+                detail.index,
+                {"index": detail.index, "type": detail.type, "text_parts": [], "signature": None},
+            )
+            if detail.type is not None:
+                buffer["type"] = detail.type
+            if detail.text:
+                buffer["text_parts"].append(detail.text)
+            if detail.signature is not None:
+                buffer["signature"] = detail.signature
+
+    def _finalize_reasoning_details(self, buffers: dict[int, dict[str, Any]]) -> list[ReasoningDetail]:
+        return [
+            ReasoningDetail(
+                index=index,
+                type=buffer["type"],
+                text="".join(buffer["text_parts"]),
+                signature=buffer["signature"],
+            )
+            for index, buffer in sorted(buffers.items())
+        ]
+
+    def _merge_tool_call_deltas(
+        self,
+        buffers: dict[int, dict[str, Any]],
+        payload: list[Any],
+    ) -> None:
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            index = int(item.get("index", len(buffers)))
+            buffer = buffers.setdefault(index, {"id": "tool-call", "name": "", "arguments_parts": []})
+            if item.get("id") is not None:
+                buffer["id"] = str(item["id"])
+            function = item.get("function") or {}
+            if function.get("name") is not None:
+                buffer["name"] += str(function["name"])
+            if function.get("arguments") is not None:
+                buffer["arguments_parts"].append(str(function["arguments"]))
+
+    def _finalize_streamed_tool_calls(self, buffers: dict[int, dict[str, Any]]) -> list[ToolCall]:
+        tool_calls: list[ToolCall] = []
+        for _, buffer in sorted(buffers.items()):
+            raw_arguments = "".join(buffer["arguments_parts"]) or "{}"
+            try:
+                arguments = json.loads(raw_arguments)
+            except json.JSONDecodeError:
+                arguments = {"raw": raw_arguments}
+            tool_calls.append(
+                ToolCall(
+                    id=buffer["id"],
+                    name=buffer["name"] or "unknown_tool",
+                    arguments=arguments,
+                )
+            )
+        return tool_calls
 
     def _extract_error_message(self, response: httpx.Response) -> str:
         try:

@@ -8,6 +8,7 @@ import pytest
 from agent_orchestrator.integrations.bifrost import BifrostError, ChatResponse, ToolCall
 from agent_orchestrator.integrations.mcp.client import McpClientError, McpToolDefinition
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
+from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.runtime.worker import WorkerService
 from agent_orchestrator.config import Settings
@@ -28,10 +29,47 @@ class FakeBifrost:
     async def aclose(self) -> None:
         return None
 
-    async def chat_completion(self, provider_id, model_name, messages, tools, gateway_options, provider_options):
+    async def chat_completion(
+        self,
+        provider_id,
+        model_name,
+        messages,
+        tools,
+        gateway_options,
+        provider_options,
+        on_delta=None,
+    ):
         self.calls.append({"provider_id": provider_id, "model_name": model_name, "tools": tools})
         if self.error is not None:
             raise self.error
+        response = self.responses.pop(0)
+        if on_delta is not None and response.content:
+            await on_delta(SimpleNamespace(content=response.content, reasoning="", reasoning_details=[]))
+        return response
+
+
+class StreamingFakeBifrost(FakeBifrost):
+    async def chat_completion(
+        self,
+        provider_id,
+        model_name,
+        messages,
+        tools,
+        gateway_options,
+        provider_options,
+        on_delta=None,
+    ):
+        self.calls.append({"provider_id": provider_id, "model_name": model_name, "tools": tools})
+        if on_delta is not None:
+            from agent_orchestrator.integrations.bifrost import ChatDelta, ReasoningDetail
+
+            await on_delta(
+                ChatDelta(
+                    reasoning="thinking...",
+                    reasoning_details=[ReasoningDetail(index=0, type="text", text="thinking...")],
+                )
+            )
+            await on_delta(ChatDelta(content="partial answer"))
         return self.responses.pop(0)
 
 
@@ -124,6 +162,7 @@ async def test_worker_completes_prompt_with_tool(repository: Repository, skill_r
         settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
         repository=repository,
         bifrost_client=bifrost,
+        live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(mcp),
         skill_registry=skill_registry,
     )
@@ -152,6 +191,7 @@ async def test_worker_retries_gateway_errors(repository: Repository, skill_regis
         settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
         repository=repository,
         bifrost_client=FakeBifrost(error=BifrostError("gateway_error", "temporary", retryable=True)),
+        live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(FakeMcp()),
         skill_registry=skill_registry,
     )
@@ -176,6 +216,7 @@ async def test_worker_cancels_before_tool_call(repository: Repository, skill_reg
         settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
         repository=repository,
         bifrost_client=FakeBifrost(responses=[ChatResponse(content="done", tool_calls=[], raw={})]),
+        live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(mcp),
         skill_registry=skill_registry,
     )
@@ -192,6 +233,7 @@ def test_worker_formats_nested_execution_error(skill_registry: SkillRegistry):
         settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
         repository=SimpleNamespace(),
         bifrost_client=SimpleNamespace(),
+        live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=SimpleNamespace(),
         skill_registry=skill_registry,
     )
@@ -212,6 +254,7 @@ async def test_worker_fails_without_model_config(repository: Repository, skill_r
         settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
         repository=repository,
         bifrost_client=FakeBifrost(),
+        live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(FakeMcp()),
         skill_registry=skill_registry,
     )
@@ -238,6 +281,7 @@ async def test_worker_fails_on_unknown_tool_request(repository: Repository, skil
         bifrost_client=FakeBifrost(
             responses=[ChatResponse(content="", tool_calls=[ToolCall(id="tool-1", name="unknown_tool", arguments={})], raw={})]
         ),
+        live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(FakeMcp()),
         skill_registry=skill_registry,
     )
@@ -271,6 +315,7 @@ async def test_worker_fails_when_tool_round_limit_is_exceeded(repository: Reposi
                 )
             ]
         ),
+        live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(FakeMcp()),
         skill_registry=skill_registry,
     )
@@ -304,6 +349,7 @@ async def test_worker_fails_on_mcp_client_error(repository: Repository, skill_re
                 )
             ]
         ),
+        live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(ErrorMcp()),
         skill_registry=skill_registry,
     )
@@ -329,6 +375,7 @@ async def test_worker_marks_non_retryable_bifrost_error_as_failed(repository: Re
         settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
         repository=repository,
         bifrost_client=FakeBifrost(error=BifrostError("gateway_error", "fatal", retryable=False)),
+        live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(FakeMcp()),
         skill_registry=skill_registry,
     )
@@ -340,3 +387,40 @@ async def test_worker_marks_non_retryable_bifrost_error_as_failed(repository: Re
     assert stored.status == "failed"
     assert stored.error_code == "gateway_error"
     assert stored.error_message == "fatal"
+
+
+@pytest.mark.asyncio
+async def test_worker_emits_reasoning_events_when_reasoning_is_enabled(repository: Repository, skill_registry: SkillRegistry):
+    session = await repository.create_session("demo", {})
+    await repository.set_model_config(
+        session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={"reasoning": {"effort": "high"}},
+        provider_options={},
+    )
+    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    claimed = await repository.claim_next_job()
+    assert job is not None
+    assert claimed is not None
+
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=StreamingFakeBifrost(responses=[ChatResponse(content="partial answer", tool_calls=[], raw={})]),
+        live_event_bus=InMemoryLiveEventBus(),
+        mcp_tool_catalog=McpToolCatalog(FakeMcp()),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+
+    events = await repository.list_events(job.id)
+    # reasoning and model_output are now persisted to DB for durability
+    reasoning_events = [e for e in events if e.event_type == "reasoning"]
+    model_output_events = [e for e in events if e.event_type == "model_output"]
+    assert len(reasoning_events) == 1, "Expected one persisted reasoning event"
+    assert reasoning_events[0].payload_json["text"] == "thinking..."
+    assert len(model_output_events) == 1, "Expected one persisted model_output event"
+    # Streaming chunks should NOT be written individually to DB (no stream=True flag)
+    assert not any(e.payload_json.get("stream") is True for e in model_output_events)

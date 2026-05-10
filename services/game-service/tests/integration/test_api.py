@@ -91,6 +91,15 @@ def test_list_games_empty(sync_client):
     assert resp.json() == {"sessions": []}
 
 
+def test_list_card_providers(sync_client):
+    """GET /card-providers returns the available game plugin catalog."""
+    resp = sync_client.get("/card-providers")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "providers" in body
+    assert any(provider["provider"] == "marvel-champions" for provider in body["providers"])
+
+
 @pytest.mark.asyncio
 async def test_list_games_with_session(app, manager):
     """GET /games lists the active session."""
@@ -127,6 +136,7 @@ async def test_create_game(app, manager):
     assert session["plugin_name"] == "marvel-champions"
     assert "room_slug" in session
     assert "created_at" in session
+    assert "frontend_url" in session
     # Cleanup
     await manager.delete_session(session["session_id"])
 

@@ -79,7 +79,7 @@ def serialize_job(item) -> JobSummary:
         created_at=item.created_at,
         started_at=item.started_at,
         completed_at=item.completed_at,
-        latest_event_id=None if latest_event is None else latest_event.id,
+        latest_event_id=None if latest_event is None else str(latest_event.id),
         latest_event_type=None if latest_event is None else latest_event.event_type,
     )
 
@@ -97,7 +97,7 @@ def serialize_prompt_run(item) -> PromptRunSummary:
 
 def serialize_event(item) -> JobEventResponse:
     return JobEventResponse(
-        id=item.id,
+        id=str(item.id),
         event_type=item.event_type,
         payload=item.payload_json,
         created_at=item.created_at,
