@@ -12,6 +12,7 @@ from agent_orchestrator.schemas.jobs import JobSummary, SessionToolResponse
 class SessionCreateRequest(BaseModel):
     name: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    multi_turn_memory: bool = True
 
 
 class SessionUpdateRequest(BaseModel):
@@ -41,6 +42,7 @@ class SessionSummary(BaseModel):
     id: str
     name: str | None
     status: str
+    multi_turn_memory: bool
     metadata: dict[str, Any]
     created_at: datetime
     updated_at: datetime

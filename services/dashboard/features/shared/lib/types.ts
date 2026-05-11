@@ -182,6 +182,15 @@ export interface SessionDraft {
   customMcpsText: string;
 }
 
+export interface ContextMetadata {
+  tokens_used: number;
+  context_window_size: number;
+  usage_ratio: number;
+  compaction_count: number;
+  last_compacted_at: string | null;
+  multi_turn_memory: boolean;
+}
+
 export interface MergedOpenApiResult {
   document: Record<string, JsonValue>;
   errors: { service: string; message: string }[];

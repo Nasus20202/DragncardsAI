@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     mcp_request_timeout_seconds: float = 30.0
     provider_models_cache_ttl_seconds: float = 600.0
     supported_provider_ids: tuple[str, ...] = REQUIRED_PROVIDER_IDS
+    context_window_size: int = Field(
+        default=128000,
+        validation_alias=AliasChoices("context_window_size", "CONTEXT_WINDOW_SIZE"),
+    )
+    context_compaction_threshold: float = Field(
+        default=0.8,
+        validation_alias=AliasChoices("context_compaction_threshold", "CONTEXT_COMPACTION_THRESHOLD"),
+    )
     enabled_provider_ids_raw: str = Field(
         default=",".join(REQUIRED_PROVIDER_IDS),
         validation_alias=AliasChoices(

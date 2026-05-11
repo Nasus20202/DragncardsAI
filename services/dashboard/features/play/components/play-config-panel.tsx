@@ -228,7 +228,7 @@ export function PlayConfigPanel({
   }
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-l border-default-200/60 bg-background">
+    <aside className="flex w-96 shrink-0 flex-col border-l border-default-200/60 bg-background">
       {/* Header */}
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-default-200/60 px-4">
         <span className="text-xs font-semibold uppercase tracking-wider text-default-400">

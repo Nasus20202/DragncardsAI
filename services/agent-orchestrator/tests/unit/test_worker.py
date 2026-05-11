@@ -29,6 +29,9 @@ class FakeBifrost:
     async def aclose(self) -> None:
         return None
 
+    async def get_model_context_length(self, provider_id, model_name) -> int | None:
+        return None
+
     async def chat_completion(
         self,
         provider_id,

@@ -4,9 +4,11 @@ import { Spinner } from "@heroui/react";
 import {
   addMcp,
   addSkill,
+  compactSession,
   createGameSession,
   createSession,
   fetchDashboardConfig,
+  getContextMetadata,
   getJob,
   getSession,
   listAvailableSkills,
@@ -35,6 +37,7 @@ import { PlaySessionList } from "@/features/play/components/play-session-list";
 import { PlayTranscript } from "@/features/play/components/play-transcript";
 import {
   CustomMcpDraft,
+  ContextMetadata,
   DashboardConfig,
   JobDetail,
   JobEventResponse,
@@ -86,6 +89,7 @@ export function PlayWorkspace() {
   const [errorText, setErrorText] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [streamState, setStreamState] = useState<"idle" | "streaming">("idle");
+  const [contextMetadata, setContextMetadata] = useState<ContextMetadata | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   /**
    * Tracks the provider/model currently committed to the open session.
@@ -201,6 +205,24 @@ export function PlayWorkspace() {
     });
   }, []);
 
+  /** Load ALL jobs for a session and set them as the transcript. */
+  const loadAllJobs = useCallback(async (sessionId: string): Promise<JobDetail[]> => {
+    const summary = await listSessionJobs(sessionId);
+    const detailed = await Promise.all(summary.jobs.map((item) => getJob(item.id)));
+    const sorted = [...detailed].sort(compareJobsOldestFirst);
+    setJobs(sorted);
+    return sorted;
+  }, []);
+
+  const refreshContextMetadata = useCallback(async (sessionId: string) => {
+    try {
+      const metadata = await getContextMetadata(sessionId);
+      setContextMetadata(metadata);
+    } catch {
+      // Non-fatal: ignore metadata fetch errors
+    }
+  }, []);
+
   const startStreaming = useCallback(
     (jobId: string, afterId: string) => {
       stopStreaming();
@@ -215,6 +237,9 @@ export function PlayWorkspace() {
         appendStreamEvent(payload);
         if (["completion", "failure", "cancellation"].includes(payload.event_type)) {
           stopStreaming();
+          if (selectedSessionId) {
+            void refreshContextMetadata(selectedSessionId);
+          }
         }
       };
 
@@ -231,17 +256,8 @@ export function PlayWorkspace() {
         stopStreaming();
       };
     },
-    [appendStreamEvent, stopStreaming],
+    [appendStreamEvent, stopStreaming, selectedSessionId, refreshContextMetadata],
   );
-
-  /** Load ALL jobs for a session and set them as the transcript. */
-  const loadAllJobs = useCallback(async (sessionId: string): Promise<JobDetail[]> => {
-    const summary = await listSessionJobs(sessionId);
-    const detailed = await Promise.all(summary.jobs.map((item) => getJob(item.id)));
-    const sorted = [...detailed].sort(compareJobsOldestFirst);
-    setJobs(sorted);
-    return sorted;
-  }, []);
 
   useEffect(() => {
     async function load() {
@@ -295,6 +311,7 @@ export function PlayWorkspace() {
         };
 
         const allJobs = await loadAllJobs(currentSessionId);
+        void refreshContextMetadata(currentSessionId);
 
         // Resume streaming if the most-recent job is still running.
         // Start from 0 so the SSE endpoint replays all DB events first —
@@ -536,6 +553,23 @@ export function PlayWorkspace() {
     }
   }
 
+  async function handleCompact() {
+    if (!selectedSession) return;
+    setIsBusy(true);
+    setErrorText(null);
+    setStatusText("Compacting context...");
+    try {
+      const metadata = await compactSession(selectedSession.id);
+      setContextMetadata(metadata);
+      setStatusText("Context compacted");
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : "Compaction failed");
+      setStatusText("Compaction failed");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleSubmitPrompt() {
     if (!selectedSession || !prompt.trim()) {
       return;
@@ -604,9 +638,11 @@ export function PlayWorkspace() {
           settingsOpen={isSettingsOpen}
         />
         <PlayPromptBox
+          contextMetadata={contextMetadata}
           isBusy={isBusy}
           prompt={prompt}
           selectedSession={selectedSession}
+          onCompact={handleCompact}
           onPromptChange={setPrompt}
           onSubmit={handleSubmitPrompt}
         />

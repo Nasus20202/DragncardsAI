@@ -39,7 +39,7 @@ services:
       bifrost:
         condition: service_healthy
       game-service:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8010:8010"
     environment:

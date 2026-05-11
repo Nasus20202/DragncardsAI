@@ -23,4 +23,7 @@ ENV DRAGNCARDS_MC_PLUGIN_JSON_DIR=/app/data/plugin-json
 
 EXPOSE 8000
 
+HEALTHCHECK --interval=30s --timeout=10s --retries=5 \
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8000/health
+
 CMD ["game-service", "http"]

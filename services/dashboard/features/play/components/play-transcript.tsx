@@ -352,7 +352,7 @@ export function PlayTranscript({
         <div className="flex min-h-full flex-col">
           {/* Spacer pushes messages to the bottom when content is short */}
           <div className="flex-1" />
-          <div className="mx-auto w-full max-w-2xl px-4 py-6">
+          <div className="mx-auto w-full max-w-3xl px-4 py-6">
             {!selectedSession ? (
               <Empty message="Select or create a session to start." />
             ) : jobs.length === 0 ? (

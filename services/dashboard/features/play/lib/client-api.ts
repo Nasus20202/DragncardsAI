@@ -1,5 +1,6 @@
 import {
   CardProviderResponse,
+  ContextMetadata,
   DashboardConfig,
   GameSessionMetadata,
   JobDetail,
@@ -180,4 +181,18 @@ export async function createGameSession(pluginName: string): Promise<GameSession
     body: JSON.stringify({ plugin_name: pluginName }),
   });
   return (await readJson<{ session: GameSessionMetadata }>(response)).session;
+}
+
+export async function getContextMetadata(sessionId: string): Promise<ContextMetadata> {
+  const response = await fetch(`/api/proxy/orchestrator/sessions/${sessionId}/context`, {
+    cache: "no-store",
+  });
+  return readJson<ContextMetadata>(response);
+}
+
+export async function compactSession(sessionId: string): Promise<ContextMetadata> {
+  const response = await fetch(`/api/proxy/orchestrator/sessions/${sessionId}/compact`, {
+    method: "POST",
+  });
+  return readJson<ContextMetadata>(response);
 }
