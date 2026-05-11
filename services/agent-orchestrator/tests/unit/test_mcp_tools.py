@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_orchestrator.integrations.mcp.client import McpToolDefinition
+from agent_orchestrator.integrations.mcp.client import McpClientError, McpToolDefinition
 from agent_orchestrator.integrations.mcp.tools import (
     McpToolCatalog,
     normalize_mcp_server_url,
@@ -29,6 +29,14 @@ class FakeMcpClient:
     async def call_tool(self, server_url, tool_name, arguments, headers=None):
         self.calls.append(("call_tool", server_url, tool_name, arguments, headers))
         return {"is_error": False, "content": [{"type": "text", "text": "ok"}]}
+
+
+class FailingMcpClient(FakeMcpClient):
+    async def list_tools(self, server_url, headers=None):
+        self.calls.append(("list_tools", server_url, headers))
+        if "bad" in server_url:
+            raise McpClientError("connection failed")
+        return await super().list_tools(server_url, headers=headers)
 
 
 def test_normalize_mcp_server_url_only_for_streamable_http():
@@ -73,3 +81,27 @@ async def test_mcp_tool_catalog_builds_and_calls_tools():
         {"count": 1},
         {"Authorization": "Bearer token"},
     )
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_catalog_can_skip_unreachable_assignments_for_read_paths():
+    client = FailingMcpClient()
+    catalog = McpToolCatalog(client)
+    assignments = [
+        SimpleNamespace(
+            name="bad-service",
+            transport="streamable-http",
+            server_url="http://bad-service/mcp",
+            headers_json={},
+        ),
+        SimpleNamespace(
+            name="game-service",
+            transport="streamable-http",
+            server_url="http://game-service/mcp",
+            headers_json={},
+        ),
+    ]
+
+    tools = await catalog.list_session_tools(assignments, ignore_failures=True)
+
+    assert [tool.assignment_name for tool in tools] == ["game-service"]

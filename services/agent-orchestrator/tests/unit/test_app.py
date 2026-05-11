@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError, ChatResponse
-from agent_orchestrator.integrations.mcp.client import StreamableHttpMcpClient, McpToolDefinition
+from agent_orchestrator.integrations.mcp.client import McpClientError, StreamableHttpMcpClient, McpToolDefinition
 from agent_orchestrator.runtime.app import create_app
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
@@ -57,6 +57,11 @@ class FakeMcpClient(StreamableHttpMcpClient):
         ]
 
 
+class FailingMcpClient(FakeMcpClient):
+    async def list_tools(self, server_url, headers=None):
+        raise McpClientError(f"cannot connect to {server_url}")
+
+
 @pytest.fixture
 async def app(tmp_path: Path):
     app, engine = await build_test_app(tmp_path)
@@ -71,6 +76,7 @@ async def build_test_app(
     *,
     unavailable_provider_ids: set[str] | None = None,
     bifrost_client: BifrostClient | None = None,
+    mcp_client: StreamableHttpMcpClient | None = None,
 ):
     database_path = tmp_path / "unit.sqlite3"
     engine = create_engine(f"sqlite+aiosqlite:///{database_path}")
@@ -94,7 +100,7 @@ async def build_test_app(
         repository=repository,
         bifrost_client=bifrost_client or FakeBifrostClient(unavailable_provider_ids=unavailable_provider_ids),
         live_event_bus=InMemoryLiveEventBus(),
-        mcp_client=FakeMcpClient(),
+        mcp_client=mcp_client or FakeMcpClient(),
         skill_registry=SkillRegistry((skill_root,)),
     )
     return app, engine
@@ -194,11 +200,11 @@ def test_session_lifecycle_and_assignments(app):
             f"/sessions/{session_id}/mcps",
             json={
                 "name": "game-service",
-                "server_url": "http://localhost:8000/mcp",
+                "server_url": "http://localhost:4001/mcp",
             },
         )
         assert mcp_response.status_code == 201
-        assert mcp_response.json()["mcp"]["server_url"] == "http://localhost:8000/mcp/"
+        assert mcp_response.json()["mcp"]["server_url"] == "http://localhost:4001/mcp/"
 
         tools_response = client.get(f"/sessions/{session_id}/tools")
         assert tools_response.status_code == 200
@@ -246,7 +252,7 @@ def test_list_sessions_returns_pagination_metadata(app):
         )
         client.post(
             f"/sessions/{second_session_id}/mcps",
-            json={"name": "game-service", "server_url": "http://localhost:8000/mcp"},
+            json={"name": "game-service", "server_url": "http://localhost:4001/mcp"},
         )
         response = client.get("/sessions", params={"limit": 1, "offset": 1})
     assert response.status_code == 200
@@ -273,7 +279,7 @@ def test_list_sessions_includes_dashboard_summary_fields(app):
         )
         client.post(
             f"/sessions/{session_id}/mcps",
-            json={"name": "game-service", "server_url": "http://localhost:8000/mcp"},
+            json={"name": "game-service", "server_url": "http://localhost:4001/mcp"},
         )
         response = client.get("/sessions")
 
@@ -299,6 +305,52 @@ def test_job_status_endpoint_returns_summary(app):
         response = client.get(f"/jobs/{job_id}/status")
     assert response.status_code == 200
     assert response.json()["job"]["id"] == job_id
+
+
+@pytest.mark.asyncio
+async def test_job_detail_ignores_unreachable_mcp_assignments(tmp_path: Path):
+    app, engine = await build_test_app(tmp_path, mcp_client=FailingMcpClient())
+    try:
+        with TestClient(app) as client:
+            session_id = client.post("/sessions", json={"name": "demo"}).json()["session"]["id"]
+            client.put(
+                f"/sessions/{session_id}/model-config",
+                json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+            )
+            client.post(
+                f"/sessions/{session_id}/mcps",
+                json={"name": "game-service", "server_url": "http://localhost:4001/mcp"},
+            )
+            job_id = client.post(
+                f"/sessions/{session_id}/prompts",
+                json={"prompt": "hello"},
+            ).json()["job"]["id"]
+
+            response = client.get(f"/jobs/{job_id}")
+
+        assert response.status_code == 200
+        assert response.json()["job"]["available_tools"] == []
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_session_tools_ignores_unreachable_mcp_assignments(tmp_path: Path):
+    app, engine = await build_test_app(tmp_path, mcp_client=FailingMcpClient())
+    try:
+        with TestClient(app) as client:
+            session_id = client.post("/sessions", json={"name": "demo"}).json()["session"]["id"]
+            client.post(
+                f"/sessions/{session_id}/mcps",
+                json={"name": "game-service", "server_url": "http://localhost:4001/mcp"},
+            )
+
+            response = client.get(f"/sessions/{session_id}/tools")
+
+        assert response.status_code == 200
+        assert response.json()["tools"] == []
+    finally:
+        await engine.dispose()
 
 
 def test_rejects_unknown_provider(app):
@@ -354,7 +406,7 @@ async def test_remove_assignments_and_filter_events_with_after(app):
         )
         client.post(
             f"/sessions/{session_id}/mcps",
-            json={"name": "game-service", "server_url": "http://localhost:8000/mcp"},
+            json={"name": "game-service", "server_url": "http://localhost:4001/mcp"},
         )
 
         job_id = client.post(

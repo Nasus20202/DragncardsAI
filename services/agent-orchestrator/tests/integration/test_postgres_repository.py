@@ -16,7 +16,7 @@ from agent_orchestrator.storage.repository import Repository
 
 POSTGRES_URL = os.environ.get(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5433/agent_orchestrator",
+    "postgresql+asyncpg://postgres:postgres@localhost:5441/agent_orchestrator",
 )
 
 

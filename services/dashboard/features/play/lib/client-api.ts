@@ -2,7 +2,6 @@ import {
   CardProviderResponse,
   ContextMetadata,
   DashboardConfig,
-  GameSessionMetadata,
   JobDetail,
   JobSummary,
   JsonValue,
@@ -172,15 +171,6 @@ export async function submitPrompt(sessionId: string, prompt: string): Promise<J
 export async function getJob(jobId: string): Promise<JobDetail> {
   const response = await fetch(`/api/proxy/orchestrator/jobs/${jobId}`, { cache: "no-store" });
   return (await readJson<{ job: JobDetail }>(response)).job;
-}
-
-export async function createGameSession(pluginName: string): Promise<GameSessionMetadata> {
-  const response = await fetch("/api/proxy/game/games", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ plugin_name: pluginName }),
-  });
-  return (await readJson<{ session: GameSessionMetadata }>(response)).session;
 }
 
 export async function getContextMetadata(sessionId: string): Promise<ContextMetadata> {

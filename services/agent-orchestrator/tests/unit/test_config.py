@@ -43,4 +43,4 @@ def test_settings_parse_enabled_providers_from_env(monkeypatch: pytest.MonkeyPat
 
 def test_settings_default_valkey_url():
     settings = Settings()
-    assert settings.valkey_url == "redis://localhost:8380/0"
+    assert settings.valkey_url == "redis://localhost:6381/0"

@@ -93,7 +93,7 @@ async def _prepare_session(repo: Repository):
         session.id,
         name="game-service",
         transport="streamable-http",
-        server_url="http://localhost:8000/mcp",
+        server_url="http://localhost:4001/mcp",
         headers_json={},
     )
     return session
@@ -108,7 +108,13 @@ async def _make_completed_job(repo: Repository, session_id: str, tokens: int = 1
     return job.id
 
 
-def _make_worker(repo: Repository, bifrost: FakeBifrost, skill_registry: SkillRegistry, settings: Settings | None = None) -> WorkerService:
+def _make_worker(
+    repo: Repository,
+    bifrost: FakeBifrost,
+    skill_registry: SkillRegistry,
+    settings: Settings | None = None,
+    live_event_bus: InMemoryLiveEventBus | None = None,
+) -> WorkerService:
     mcp_catalog = McpToolCatalog(FakeMcp())  # type: ignore[arg-type]
     return WorkerService(
         settings=settings or Settings(
@@ -117,7 +123,7 @@ def _make_worker(repo: Repository, bifrost: FakeBifrost, skill_registry: SkillRe
         ),
         repository=repo,
         bifrost_client=bifrost,  # type: ignore[arg-type]
-        live_event_bus=InMemoryLiveEventBus(),
+        live_event_bus=live_event_bus or InMemoryLiveEventBus(),
         mcp_tool_catalog=mcp_catalog,
         skill_registry=skill_registry,
     )
@@ -156,6 +162,42 @@ async def test_auto_compact_fires_above_threshold(repository: Repository, skill_
     # After running, compaction record should exist
     records = await repository.count_compaction_records(session.id)
     assert records == 1
+
+
+@pytest.mark.asyncio
+async def test_auto_compact_publishes_live_compaction_event(repository: Repository, skill_registry: SkillRegistry):
+    session = await _prepare_session(repository)
+    await _make_completed_job(repository, session.id, tokens=110000)
+
+    live_event_bus = InMemoryLiveEventBus()
+    bifrost = FakeBifrost(
+        responses=[
+            ChatResponse(content="game summary here", tool_calls=[], raw={"usage": {"total_tokens": 30}}),
+            ChatResponse(content="done", tool_calls=[], raw={"usage": {"total_tokens": 10}}),
+        ]
+    )
+    worker = _make_worker(repository, bifrost, skill_registry, live_event_bus=live_event_bus)
+
+    current_job = await repository.enqueue_prompt_job(session.id, prompt="next turn", metadata_json={}, max_attempts=1)
+    assert current_job is not None
+
+    await worker._run_job(await repository.claim_next_job())  # type: ignore[arg-type]
+
+    subscriber = await live_event_bus.subscribe(current_job.id)
+    try:
+        seen_compaction = False
+        while True:
+            event = await subscriber.get(0.01)
+            if event is None:
+                break
+            if event.event_type == "compaction":
+                seen_compaction = True
+                assert event.payload_json["summary_text"] == "game summary here"
+                assert event.payload_json["tokens_used"] == 30
+                assert isinstance(event.payload_json.get("compaction_job_id"), str)
+        assert seen_compaction is True
+    finally:
+        await subscriber.aclose()
 
 
 @pytest.mark.asyncio

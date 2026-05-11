@@ -44,16 +44,27 @@ export function PlayPromptBox({
   );
 
   return (
-    <div className="shrink-0 border-t border-default-200/60 bg-background px-4 py-3">
-      <div className="flex items-start gap-3">
+    <div className="shrink-0 border-t border-default-200/60 bg-background px-3 py-3 sm:px-4">
+      <div className="flex flex-col gap-2 md:flex-row md:items-start md:gap-3">
         {/* Spacer left — mirrors the context widget width so input stays centered */}
-        <div className="w-64 shrink-0" />
+        <div className="hidden md:block md:w-64 md:shrink-0" />
+
+        {/* Context widget — stacked above the input on small screens, right-aligned on desktop */}
+        <div className="order-2 w-full md:order-3 md:w-64 md:shrink-0 md:self-end">
+          {contextMetadata && (
+            <ContextHealthWidget
+              contextMetadata={contextMetadata}
+              isBusy={isBusy}
+              onCompact={onCompact}
+            />
+          )}
+        </div>
 
         {/* Input centered */}
-        <div className="min-w-0 flex-1">
+        <div className="order-1 min-w-0 w-full flex-1 md:order-2">
           <div
             className={[
-              "mx-auto flex max-w-3xl items-end gap-2 rounded-xl border px-3 py-2 transition-colors",
+              "flex w-full flex-col gap-2 rounded-xl border px-3 py-3 transition-colors sm:flex-row sm:items-end sm:py-2 md:mx-auto md:max-w-3xl",
               "bg-default-50 dark:bg-white/3",
               disabled
                 ? "border-default-200 opacity-60"
@@ -71,7 +82,7 @@ export function PlayPromptBox({
                   ? "Select an active session to start."
                   : "Message the agent..."
               }
-              className="min-h-9 flex-1 resize-none bg-transparent text-base text-foreground placeholder-default-400 outline-none"
+              className="min-h-24 w-full flex-1 resize-none bg-transparent py-1 text-[17px] leading-6 text-foreground placeholder-default-400 outline-none sm:min-h-11 sm:py-0 sm:text-base sm:leading-normal"
               onChange={(e) => onPromptChange(e.target.value)}
               onKeyDown={handleKeyDown}
             />
@@ -81,7 +92,7 @@ export function PlayPromptBox({
               aria-label="Send message"
               disabled={!canSend}
               className={[
-                "mb-0.5 shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors",
+                "shrink-0 rounded-lg px-3 py-2 text-sm font-semibold transition-colors sm:mb-0.5 sm:px-3 sm:py-1.5",
                 canSend
                   ? "bg-foreground text-background hover:opacity-80"
                   : "cursor-not-allowed bg-default-200 text-default-400",
@@ -93,16 +104,6 @@ export function PlayPromptBox({
           </div>
         </div>
 
-        {/* Context widget — right, bottom-aligned with input */}
-        <div className="w-64 shrink-0 self-end">
-          {contextMetadata && (
-            <ContextHealthWidget
-              contextMetadata={contextMetadata}
-              isBusy={isBusy}
-              onCompact={onCompact}
-            />
-          )}
-        </div>
       </div>
     </div>
   );

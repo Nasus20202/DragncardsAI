@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     command: ["valkey-server", "--save", "", "--appendonly", "no"]
     ports:
-      - "8379:6379"
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
@@ -18,7 +18,7 @@ services:
     restart: unless-stopped
     command: ["valkey-server", "--save", "", "--appendonly", "no"]
     ports:
-      - "8380:6379"
+      - "6381:6379"
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
@@ -35,7 +35,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: agent_orchestrator
     ports:
-      - "5433:5432"
+      - "5441:5432"
     volumes:
       - agent-orchestrator-postgres-data:/var/lib/postgresql/18/docker
     healthcheck:
@@ -55,7 +55,7 @@ services:
     volumes:
       - ./services/bifrost/config.json:/app/data/config.json:ro
     ports:
-      - "8081:8080"
+      - "4003:8080"
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 10s

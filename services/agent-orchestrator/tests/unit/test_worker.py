@@ -132,7 +132,7 @@ async def _prepare_session(repo: Repository):
         session.id,
         name="game-service",
         transport="streamable-http",
-        server_url="http://localhost:8000/mcp",
+        server_url="http://localhost:4001/mcp",
         headers_json={},
     )
     return session
@@ -427,3 +427,83 @@ async def test_worker_emits_reasoning_events_when_reasoning_is_enabled(repositor
     assert len(model_output_events) == 1, "Expected one persisted model_output event"
     # Streaming chunks should NOT be written individually to DB (no stream=True flag)
     assert not any(e.payload_json.get("stream") is True for e in model_output_events)
+
+
+@pytest.mark.asyncio
+async def test_worker_live_stream_events_reference_snapshot_rows(repository: Repository, skill_registry: SkillRegistry):
+    session = await repository.create_session("demo", {})
+    await repository.set_model_config(
+        session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={"reasoning": {"effort": "high"}},
+        provider_options={},
+    )
+    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    claimed = await repository.claim_next_job()
+    assert job is not None
+    assert claimed is not None
+
+    class MultiChunkBifrost(FakeBifrost):
+        async def chat_completion(
+            self,
+            provider_id,
+            model_name,
+            messages,
+            tools,
+            gateway_options,
+            provider_options,
+            on_delta=None,
+        ):
+            self.calls.append({"provider_id": provider_id, "model_name": model_name, "tools": tools})
+            if on_delta is not None:
+                from agent_orchestrator.integrations.bifrost import ChatDelta, ReasoningDetail
+
+                await on_delta(
+                    ChatDelta(
+                        reasoning="thinking",
+                        reasoning_details=[ReasoningDetail(index=0, type="text", text="thinking")],
+                    )
+                )
+                await on_delta(ChatDelta(reasoning="...", reasoning_details=[]))
+                await on_delta(ChatDelta(content="partial "))
+                await on_delta(ChatDelta(content="answer"))
+            return ChatResponse(content="partial answer", tool_calls=[], raw={})
+
+    live_event_bus = InMemoryLiveEventBus()
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=MultiChunkBifrost(),
+        live_event_bus=live_event_bus,
+        mcp_tool_catalog=McpToolCatalog(FakeMcp()),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+
+    stored_events = await repository.list_events(job.id)
+    reasoning_event = next(e for e in stored_events if e.event_type == "reasoning")
+    model_output_event = next(e for e in stored_events if e.event_type == "model_output")
+
+    subscriber = await live_event_bus.subscribe(job.id)
+    try:
+        live_events = []
+        while True:
+            event = await subscriber.get(timeout_seconds=0.05)
+            if event is None:
+                break
+            live_events.append(event)
+    finally:
+        await subscriber.aclose()
+
+    reasoning_live = [event for event in live_events if event.event_type == "reasoning"]
+    model_output_live = [event for event in live_events if event.event_type == "model_output"]
+
+    assert [event.payload_json["text"] for event in reasoning_live] == ["thinking", "thinking..."]
+    assert all(event.payload_json["stream"] is True for event in reasoning_live)
+    assert all(event.payload_json["snapshot_event_id"] == str(reasoning_event.id) for event in reasoning_live)
+
+    assert [event.payload_json["text"] for event in model_output_live] == ["partial ", "partial answer"]
+    assert all(event.payload_json["stream"] is True for event in model_output_live)
+    assert all(event.payload_json["snapshot_event_id"] == str(model_output_event.id) for event in model_output_live)

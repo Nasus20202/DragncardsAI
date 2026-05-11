@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "4432:5432"
+      - "5440:5432"
     volumes:
       - dragncards-postgres-data:/var/lib/postgresql/18/docker
     healthcheck:

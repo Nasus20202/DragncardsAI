@@ -228,26 +228,33 @@ export function PlayConfigPanel({
   }
 
   return (
-    <aside className="flex w-96 shrink-0 flex-col border-l border-default-200/60 bg-background">
-      {/* Header */}
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-default-200/60 px-4">
-        <span className="text-xs font-semibold uppercase tracking-wider text-default-400">
-          Settings
-        </span>
-        <Button
-          aria-label="Close settings"
-          isIconOnly
-          size="sm"
-          variant="ghost"
-          onPress={onClose}
-        >
-          <span aria-hidden="true">✕</span>
-        </Button>
-      </div>
+    <>
+      <button
+        type="button"
+        aria-label="Close settings overlay"
+        className="fixed inset-0 z-20 bg-black/40 md:hidden"
+        onClick={onClose}
+      />
+      <aside className="fixed inset-y-0 right-0 z-30 flex w-full max-w-sm flex-col border-l border-default-200/60 bg-background shadow-2xl md:static md:z-auto md:w-96 md:max-w-none md:shrink-0 md:shadow-none">
+        {/* Header */}
+        <div className="flex h-10 shrink-0 items-center justify-between border-b border-default-200/60 px-4">
+          <span className="text-xs font-semibold uppercase tracking-wider text-default-400">
+            Settings
+          </span>
+          <Button
+            aria-label="Close settings"
+            isIconOnly
+            size="sm"
+            variant="ghost"
+            onPress={onClose}
+          >
+            <span aria-hidden="true">✕</span>
+          </Button>
+        </div>
 
-      {/* Scrollable body */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-        <div className="grid gap-4">
+        {/* Scrollable body */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          <div className="grid gap-4">
 
           <TextInputField
             id="cfg-name" label="Session name"
@@ -335,6 +342,16 @@ export function PlayConfigPanel({
 
           <Separator />
 
+          <SwitchField
+            id="cfg-default-game-service-mcp"
+            label="Default game-service MCP"
+            description="Attach the configured game-service MCP to this session."
+            checked={draft.enableDefaultGameServiceMcp}
+            onChange={(v) => set("enableDefaultGameServiceMcp", v)}
+          />
+
+          <Separator />
+
           <p className="text-xs font-semibold uppercase tracking-wider text-default-400">
             Advanced JSON
           </p>
@@ -357,28 +374,29 @@ export function PlayConfigPanel({
             onChange={(v) => set("customMcpsText", v)}
           />
 
+          </div>
         </div>
-      </div>
 
-      {/* Footer */}
-      <div className="flex shrink-0 justify-end gap-2 border-t border-default-200/60 px-4 py-3">
-        <Button
-          aria-label="Terminate session"
-          isDisabled={!canSave || isBusy}
-          variant="ghost"
-          onPress={onTerminate}
-        >
-          Terminate
-        </Button>
-        <Button
-          aria-label="Save configuration"
-          isDisabled={!canSave || isBusy}
-          variant="primary"
-          onPress={onSave}
-        >
-          Save
-        </Button>
-      </div>
-    </aside>
+        {/* Footer */}
+        <div className="flex shrink-0 justify-end gap-2 border-t border-default-200/60 px-4 py-3">
+          <Button
+            aria-label="Terminate session"
+            isDisabled={!canSave || isBusy}
+            variant="ghost"
+            onPress={onTerminate}
+          >
+            Terminate
+          </Button>
+          <Button
+            aria-label="Save configuration"
+            isDisabled={!canSave || isBusy}
+            variant="primary"
+            onPress={onSave}
+          >
+            Save
+          </Button>
+        </div>
+      </aside>
+    </>
   );
 }

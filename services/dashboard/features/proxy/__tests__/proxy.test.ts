@@ -9,12 +9,12 @@ import {
 describe("resolveProxyUrl", () => {
   it("maps orchestrator paths under the configured base url", () => {
     const url = resolveProxyUrl("orchestrator", ["sessions", "abc"], "?limit=10");
-    expect(String(url)).toBe("http://localhost:8010/sessions/abc?limit=10");
+    expect(String(url)).toBe("http://localhost:4002/sessions/abc?limit=10");
   });
 
   it("maps game service paths under the configured base url", () => {
     const url = resolveProxyUrl("game", ["games", "state"], "");
-    expect(String(url)).toBe("http://localhost:8000/games/state");
+    expect(String(url)).toBe("http://localhost:4001/games/state");
   });
 });
 

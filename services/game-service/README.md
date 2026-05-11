@@ -25,7 +25,7 @@ uv run game-service
 Default local URL:
 
 ```text
-http://localhost:8000
+http://localhost:4001
 ```
 
 ## What This Service Is For
@@ -146,7 +146,7 @@ When `game-service` runs in HTTP mode, MCP is mounted at:
 Example local MCP URL:
 
 ```text
-http://localhost:8000/mcp
+http://localhost:4001/mcp
 ```
 
 ## Typical Workflow

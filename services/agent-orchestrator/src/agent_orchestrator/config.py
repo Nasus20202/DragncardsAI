@@ -25,12 +25,12 @@ class Settings(BaseSettings):
     )
 
     database_url: str = (
-        "postgresql+asyncpg://postgres:postgres@localhost:5433/agent_orchestrator"
+        "postgresql+asyncpg://postgres:postgres@localhost:5441/agent_orchestrator"
     )
-    bifrost_url: str = "http://localhost:8081"
+    bifrost_url: str = "http://localhost:4003"
     bifrost_api_key: str = "dummy"
     http_host: str = "0.0.0.0"
-    http_port: int = 8010
+    http_port: int = 4002
     skill_roots_raw: str = Field(
         default="../../skills,../../.opencode/skills",
         validation_alias=AliasChoices("skill_roots_raw", "SKILL_ROOTS"),
@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     worker_poll_interval_seconds: float = 0.2
     worker_max_tool_rounds: int = 8
     default_job_max_attempts: int = 2
-    game_service_mcp_url: str = "http://localhost:8000/mcp/"
-    valkey_url: str = "redis://localhost:8380/0"
+    game_service_mcp_url: str = "http://localhost:4001/mcp/"
+    valkey_url: str = "redis://localhost:6381/0"
     mcp_request_timeout_seconds: float = 30.0
     provider_models_cache_ttl_seconds: float = 600.0
     supported_provider_ids: tuple[str, ...] = REQUIRED_PROVIDER_IDS

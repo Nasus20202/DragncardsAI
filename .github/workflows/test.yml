@@ -30,6 +30,18 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v8.1.0
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: latest
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: services/dashboard/pnpm-lock.yaml
+
       - name: Run unit tests
         run: scripts/test.sh unit
 
