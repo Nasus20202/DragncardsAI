@@ -99,7 +99,9 @@ def _build_provider_search_endpoint(provider_name: str):
                     f"Allowed filters: {allowed}"
                 ),
             )
-        raw_filters = {key: value for key, value in filters.items() if value is not None}
+        raw_filters = {
+            key: value for key, value in filters.items() if value is not None
+        }
         logger.info(
             "search_provider_cards: provider=%r filters=%r",
             provider_name,
@@ -107,10 +109,10 @@ def _build_provider_search_endpoint(provider_name: str):
         )
         return _search_cards_response(provider_name, raw_filters)
 
-    endpoint.__name__ = f"search_cards_{_provider_operation_suffix(provider_name)}_endpoint"
-    endpoint.__doc__ = (
-        f"Search the {provider['display_name']} card catalog using provider-defined filters."
+    endpoint.__name__ = (
+        f"search_cards_{_provider_operation_suffix(provider_name)}_endpoint"
     )
+    endpoint.__doc__ = f"Search the {provider['display_name']} card catalog using provider-defined filters."
     endpoint.__signature__ = Signature(
         parameters=[
             Parameter(

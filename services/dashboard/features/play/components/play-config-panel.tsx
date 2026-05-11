@@ -22,7 +22,13 @@ import {
 
 /* ── Reusable field wrappers ─────────────────────────────────────── */
 
-function FieldLabel({ id, children }: { id: string; children: React.ReactNode }) {
+function FieldLabel({
+  id,
+  children,
+}: {
+  id: string;
+  children: React.ReactNode;
+}) {
   return (
     <Label
       className="block text-xs font-semibold uppercase tracking-wider text-default-400"
@@ -34,9 +40,17 @@ function FieldLabel({ id, children }: { id: string; children: React.ReactNode })
 }
 
 function TextInputField({
-  id, label, placeholder, value, onChange,
+  id,
+  label,
+  placeholder,
+  value,
+  onChange,
 }: {
-  id: string; label: string; placeholder?: string; value: string; onChange: (v: string) => void;
+  id: string;
+  label: string;
+  placeholder?: string;
+  value: string;
+  onChange: (v: string) => void;
 }) {
   return (
     <div className="grid gap-1">
@@ -54,9 +68,19 @@ function TextInputField({
 }
 
 function TextareaField({
-  id, label, description, rows, value, onChange,
+  id,
+  label,
+  description,
+  rows,
+  value,
+  onChange,
 }: {
-  id: string; label: string; description?: string; rows: number; value: string; onChange: (v: string) => void;
+  id: string;
+  label: string;
+  description?: string;
+  rows: number;
+  value: string;
+  onChange: (v: string) => void;
 }) {
   return (
     <div className="grid gap-1">
@@ -76,10 +100,19 @@ function TextareaField({
 }
 
 function SelectField({
-  id, label, items, value, disabled, onChange,
+  id,
+  label,
+  items,
+  value,
+  disabled,
+  onChange,
 }: {
-  id: string; label: string; items: { value: string; label: string }[];
-  value: string; disabled?: boolean; onChange: (v: string) => void;
+  id: string;
+  label: string;
+  items: { value: string; label: string }[];
+  value: string;
+  disabled?: boolean;
+  onChange: (v: string) => void;
 }) {
   return (
     <div className="grid gap-1">
@@ -98,7 +131,11 @@ function SelectField({
         <Select.Popover>
           <ListBox aria-label={label}>
             {items.map((item) => (
-              <ListBoxItem key={item.value} id={item.value} textValue={item.label}>
+              <ListBoxItem
+                key={item.value}
+                id={item.value}
+                textValue={item.label}
+              >
                 {item.label}
               </ListBoxItem>
             ))}
@@ -110,13 +147,22 @@ function SelectField({
 }
 
 function ComboSelectField({
-  id, label, items, value, disabled, onChange,
+  id,
+  label,
+  items,
+  value,
+  disabled,
+  onChange,
 }: {
-  id: string; label: string; items: { value: string; label: string }[];
-  value: string; disabled?: boolean; onChange: (v: string) => void;
+  id: string;
+  label: string;
+  items: { value: string; label: string }[];
+  value: string;
+  disabled?: boolean;
+  onChange: (v: string) => void;
 }) {
   const [inputValue, setInputValue] = useState(
-    () => items.find((i) => i.value === value)?.label ?? value,
+    () => items.find((i) => i.value === value)?.label ?? value
   );
 
   useEffect(() => {
@@ -125,7 +171,9 @@ function ComboSelectField({
   }, [value, items]);
 
   const filtered = inputValue
-    ? items.filter((i) => i.label.toLowerCase().includes(inputValue.toLowerCase()))
+    ? items.filter((i) =>
+        i.label.toLowerCase().includes(inputValue.toLowerCase())
+      )
     : items;
 
   return (
@@ -162,7 +210,11 @@ function ComboSelectField({
         <ComboBox.Popover>
           <ListBox aria-label={label}>
             {filtered.map((item) => (
-              <ListBoxItem key={item.value} id={item.value} textValue={item.label}>
+              <ListBoxItem
+                key={item.value}
+                id={item.value}
+                textValue={item.label}
+              >
                 {item.label}
               </ListBoxItem>
             ))}
@@ -174,9 +226,16 @@ function ComboSelectField({
 }
 
 function SwitchField({
-  label, description, checked, onChange,
+  label,
+  description,
+  checked,
+  onChange,
 }: {
-  id?: string; label: string; description?: string; checked: boolean; onChange: (v: boolean) => void;
+  id?: string;
+  label: string;
+  description?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
 }) {
   return (
     <Switch
@@ -187,7 +246,9 @@ function SwitchField({
     >
       <Switch.Content className="flex flex-1 flex-col">
         <div className="text-sm text-foreground">{label}</div>
-        {description && <div className="text-xs text-default-400">{description}</div>}
+        {description && (
+          <div className="text-xs text-default-400">{description}</div>
+        )}
       </Switch.Content>
       <Switch.Control className="shrink-0">
         <Switch.Thumb />
@@ -213,12 +274,24 @@ interface Props {
 }
 
 export function PlayConfigPanel({
-  draft, providers, modelOptions, skills,
-  isBusy, canSave, isOpen, onDraftChange, onClose, onSave, onTerminate,
+  draft,
+  providers,
+  modelOptions,
+  skills,
+  isBusy,
+  canSave,
+  isOpen,
+  onDraftChange,
+  onClose,
+  onSave,
+  onTerminate,
 }: Props) {
   if (!isOpen) return null;
 
-  const providerItems = providers.map((p) => ({ value: p.provider_id, label: p.provider_id }));
+  const providerItems = providers.map((p) => ({
+    value: p.provider_id,
+    label: p.provider_id,
+  }));
   const modelItems = modelOptions.length
     ? modelOptions.map((m) => ({ value: m, label: m }))
     : [{ value: draft.modelName, label: draft.modelName }];
@@ -255,125 +328,146 @@ export function PlayConfigPanel({
         {/* Scrollable body */}
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
           <div className="grid gap-4">
+            <TextInputField
+              id="cfg-name"
+              label="Session name"
+              placeholder="e.g. Solo Marvel Champions"
+              value={draft.name}
+              onChange={(v) => set("name", v)}
+            />
 
-          <TextInputField
-            id="cfg-name" label="Session name"
-            placeholder="e.g. Solo Marvel Champions"
-            value={draft.name} onChange={(v) => set("name", v)}
-          />
+            <Separator />
 
-          <Separator />
+            <SelectField
+              id="cfg-provider"
+              label="Provider"
+              items={providerItems}
+              value={draft.providerId}
+              onChange={(v) => set("providerId", v)}
+            />
 
-          <SelectField
-            id="cfg-provider" label="Provider"
-            items={providerItems} value={draft.providerId}
-            onChange={(v) => set("providerId", v)}
-          />
+            <ComboSelectField
+              id="cfg-model"
+              label="Model"
+              items={modelItems}
+              value={draft.modelName}
+              disabled={modelOptions.length === 0}
+              onChange={(v) => set("modelName", v)}
+            />
 
-          <ComboSelectField
-            id="cfg-model" label="Model"
-            items={modelItems} value={draft.modelName}
-            disabled={modelOptions.length === 0}
-            onChange={(v) => set("modelName", v)}
-          />
+            <Separator />
 
-          <Separator />
+            <SwitchField
+              id="cfg-reasoning"
+              label="Reasoning stream"
+              description="Stream the model's chain-of-thought."
+              checked={draft.reasoning.enabled}
+              onChange={(v) =>
+                set("reasoning", { ...draft.reasoning, enabled: v })
+              }
+            />
 
-          <SwitchField
-            id="cfg-reasoning" label="Reasoning stream"
-            description="Stream the model's chain-of-thought."
-            checked={draft.reasoning.enabled}
-            onChange={(v) => set("reasoning", { ...draft.reasoning, enabled: v })}
-          />
+            {draft.reasoning.enabled && (
+              <>
+                <SelectField
+                  id="cfg-effort"
+                  label="Reasoning effort"
+                  items={[
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Medium" },
+                    { value: "high", label: "High" },
+                  ]}
+                  value={draft.reasoning.effort}
+                  onChange={(v) =>
+                    set("reasoning", {
+                      ...draft.reasoning,
+                      effort: v as "low" | "medium" | "high",
+                    })
+                  }
+                />
+                <TextInputField
+                  id="cfg-rtokens"
+                  label="Reasoning max tokens"
+                  placeholder="e.g. 4096"
+                  value={draft.reasoning.maxTokens}
+                  onChange={(v) =>
+                    set("reasoning", { ...draft.reasoning, maxTokens: v })
+                  }
+                />
+              </>
+            )}
 
-          {draft.reasoning.enabled && (
-            <>
-              <SelectField
-                id="cfg-effort" label="Reasoning effort"
-                items={[
-                  { value: "low", label: "Low" },
-                  { value: "medium", label: "Medium" },
-                  { value: "high", label: "High" },
-                ]}
-                value={draft.reasoning.effort}
-                onChange={(v) =>
-                  set("reasoning", { ...draft.reasoning, effort: v as "low" | "medium" | "high" })
-                }
-              />
-              <TextInputField
-                id="cfg-rtokens" label="Reasoning max tokens"
-                placeholder="e.g. 4096"
-                value={draft.reasoning.maxTokens}
-                onChange={(v) => set("reasoning", { ...draft.reasoning, maxTokens: v })}
-              />
-            </>
-          )}
+            <Separator />
 
-          <Separator />
-
-          {skills.length > 0 && (
-            <>
-              <Separator />
-              <div className="grid gap-2">
-                <p className="text-xs font-semibold uppercase tracking-wider text-default-400">
-                  Skills
-                </p>
-                <div className="grid gap-1 rounded-lg border border-default-200/60 px-3 py-2">
-                  {skills.map((sk) => (
-                    <SwitchField
-                      key={sk.name}
-                      id={`cfg-sk-${sk.name}`}
-                      label={sk.name}
-                      checked={draft.selectedSkills.includes(sk.name)}
-                      onChange={(checked) =>
-                        set(
-                          "selectedSkills",
-                          checked
-                            ? [...draft.selectedSkills, sk.name]
-                            : draft.selectedSkills.filter((s) => s !== sk.name),
-                        )
-                      }
-                    />
-                  ))}
+            {skills.length > 0 && (
+              <>
+                <Separator />
+                <div className="grid gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-default-400">
+                    Skills
+                  </p>
+                  <div className="grid gap-1 rounded-lg border border-default-200/60 px-3 py-2">
+                    {skills.map((sk) => (
+                      <SwitchField
+                        key={sk.name}
+                        id={`cfg-sk-${sk.name}`}
+                        label={sk.name}
+                        checked={draft.selectedSkills.includes(sk.name)}
+                        onChange={(checked) =>
+                          set(
+                            "selectedSkills",
+                            checked
+                              ? [...draft.selectedSkills, sk.name]
+                              : draft.selectedSkills.filter(
+                                  (s) => s !== sk.name
+                                )
+                          )
+                        }
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            </>
-          )}
+              </>
+            )}
 
-          <Separator />
+            <Separator />
 
-          <SwitchField
-            id="cfg-default-game-service-mcp"
-            label="Default game-service MCP"
-            description="Attach the configured game-service MCP to this session."
-            checked={draft.enableDefaultGameServiceMcp}
-            onChange={(v) => set("enableDefaultGameServiceMcp", v)}
-          />
+            <SwitchField
+              id="cfg-default-game-service-mcp"
+              label="Default game-service MCP"
+              description="Attach the configured game-service MCP to this session."
+              checked={draft.enableDefaultGameServiceMcp}
+              onChange={(v) => set("enableDefaultGameServiceMcp", v)}
+            />
 
-          <Separator />
+            <Separator />
 
-          <p className="text-xs font-semibold uppercase tracking-wider text-default-400">
-            Advanced JSON
-          </p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-default-400">
+              Advanced JSON
+            </p>
 
-          <TextareaField
-            id="cfg-gateway" label="Gateway options" rows={3}
-            value={draft.gatewayOptionsText}
-            onChange={(v) => set("gatewayOptionsText", v)}
-          />
-          <TextareaField
-            id="cfg-popts" label="Provider options" rows={3}
-            value={draft.providerOptionsText}
-            onChange={(v) => set("providerOptionsText", v)}
-          />
-          <TextareaField
-            id="cfg-mcps" label="Custom MCPs"
-            description="Array of {name, transport, server_url, headers}."
-            rows={4}
-            value={draft.customMcpsText}
-            onChange={(v) => set("customMcpsText", v)}
-          />
-
+            <TextareaField
+              id="cfg-gateway"
+              label="Gateway options"
+              rows={3}
+              value={draft.gatewayOptionsText}
+              onChange={(v) => set("gatewayOptionsText", v)}
+            />
+            <TextareaField
+              id="cfg-popts"
+              label="Provider options"
+              rows={3}
+              value={draft.providerOptionsText}
+              onChange={(v) => set("providerOptionsText", v)}
+            />
+            <TextareaField
+              id="cfg-mcps"
+              label="Custom MCPs"
+              description="Array of {name, transport, server_url, headers}."
+              rows={4}
+              value={draft.customMcpsText}
+              onChange={(v) => set("customMcpsText", v)}
+            />
           </div>
         </div>
 

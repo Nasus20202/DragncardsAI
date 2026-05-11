@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import yaml
 
 from agent_orchestrator.config import Settings
 
@@ -44,3 +45,20 @@ def test_settings_parse_enabled_providers_from_env(monkeypatch: pytest.MonkeyPat
 def test_settings_default_valkey_url():
     settings = Settings()
     assert settings.valkey_url == "redis://localhost:6381/0"
+
+
+def test_settings_parse_game_service_mcp_url_from_env(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("GAME_SERVICE_MCP_URL", "http://game-service:8000/mcp/")
+    settings = Settings()
+    assert settings.game_service_mcp_url == "http://game-service:8000/mcp/"
+
+
+def test_root_compose_allows_game_service_mcp_url_override():
+    with open("../../docker-compose.yaml", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle)
+
+    agent_orchestrator = payload["services"]["agent-orchestrator"]
+    assert (
+        agent_orchestrator["environment"]["GAME_SERVICE_MCP_URL"]
+        == "${GAME_SERVICE_MCP_URL:-http://game-service:8000/mcp}"
+    )

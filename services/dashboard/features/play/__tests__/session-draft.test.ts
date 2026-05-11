@@ -29,15 +29,19 @@ describe("session draft helpers", () => {
     expect(draft.providerId).toBe("openai");
     expect(draft.selectedSkills).toEqual(["demo-skill"]);
     expect(draft.enableDefaultGameServiceMcp).toBe(true);
-    expect(draft.reasoning).toEqual({ enabled: false, effort: "medium", maxTokens: "" });
+    expect(draft.reasoning).toEqual({
+      enabled: false,
+      effort: "medium",
+      maxTokens: "",
+    });
   });
 
   it("applies reasoning config to gateway options", () => {
     expect(
       applyReasoningToGatewayOptions(
         { temperature: 0.2 },
-        { enabled: true, effort: "high", maxTokens: "4096" },
-      ),
+        { enabled: true, effort: "high", maxTokens: "4096" }
+      )
     ).toEqual({
       temperature: 0.2,
       reasoning: { effort: "high", max_tokens: 4096 },
@@ -48,8 +52,8 @@ describe("session draft helpers", () => {
     expect(
       applyReasoningToGatewayOptions(
         { reasoning: { effort: "high", max_tokens: 4096 }, temperature: 0.2 },
-        { enabled: false, effort: "medium", maxTokens: "" },
-      ),
+        { enabled: false, effort: "medium", maxTokens: "" }
+      )
     ).toEqual({ temperature: 0.2 });
   });
 });

@@ -1,11 +1,16 @@
 """Compaction service: summarizes session history into a CompactionRecord."""
+
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_orchestrator.runtime.memory import build_message_history
-from agent_orchestrator.runtime.tokens import count_tokens_for_text, extract_tokens_from_response, estimate_tokens_for_messages
+from agent_orchestrator.runtime.tokens import (
+    count_tokens_for_text,
+    extract_tokens_from_response,
+    estimate_tokens_for_messages,
+)
 from agent_orchestrator.storage.models import CompactionRecord
 
 if TYPE_CHECKING:
@@ -77,7 +82,10 @@ async def perform_compaction(
 
     if existing_compaction:
         summarization_messages.append(
-            {"role": "system", "content": f"Previous summary:\n{existing_compaction.summary_text}"}
+            {
+                "role": "system",
+                "content": f"Previous summary:\n{existing_compaction.summary_text}",
+            }
         )
 
     # Add all prior job events as the history to compress
@@ -87,7 +95,9 @@ async def perform_compaction(
             history_text_parts.append(f"USER: {job.prompt_run.prompt}")
         for event in sorted(job.events, key=lambda e: e.id):
             if event.event_type == "model_output":
-                history_text_parts.append(f"ASSISTANT: {event.payload_json.get('text', '')}")
+                history_text_parts.append(
+                    f"ASSISTANT: {event.payload_json.get('text', '')}"
+                )
             elif event.event_type == "tool_call":
                 p = event.payload_json
                 history_text_parts.append(
@@ -104,7 +114,10 @@ async def perform_compaction(
 
     history_text = "\n".join(history_text_parts)
     summarization_messages.append(
-        {"role": "user", "content": f"Please summarize this game history:\n\n{history_text}"}
+        {
+            "role": "user",
+            "content": f"Please summarize this game history:\n\n{history_text}",
+        }
     )
 
     logger.info(

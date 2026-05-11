@@ -4,5 +4,7 @@ from agent_orchestrator.repositories.jobs import JobRepositoryMixin
 from agent_orchestrator.repositories.sessions import SessionRepositoryMixin
 
 
-class Repository(ContextRepositoryMixin, SessionRepositoryMixin, JobRepositoryMixin, RepositoryBase):
+class Repository(
+    ContextRepositoryMixin, SessionRepositoryMixin, JobRepositoryMixin, RepositoryBase
+):
     pass

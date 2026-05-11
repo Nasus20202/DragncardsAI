@@ -14,10 +14,31 @@ const sessions: SessionSummary[] = [
     created_at: "2026-05-11T00:00:00Z",
     updated_at: "2026-05-11T00:00:00Z",
     terminated_at: null,
-    model_config: { provider_id: "openai", model_name: "openrouter/openrouter/free", gateway_options: {}, provider_options: {}, updated_at: "2026-05-11T00:00:00Z" },
+    model_config: {
+      provider_id: "openai",
+      model_name: "openrouter/openrouter/free",
+      gateway_options: {},
+      provider_options: {},
+      updated_at: "2026-05-11T00:00:00Z",
+    },
     skills: [],
     mcps: [],
-    recent_job: { id: "job-1", prompt_run_id: "prompt-1", status: "running", attempts: 1, max_attempts: 1, error_code: null, error_message: null, result_text: null, cancellation_requested_at: null, created_at: "2026-05-11T00:00:00Z", started_at: null, completed_at: null, latest_event_id: null, latest_event_type: null },
+    recent_job: {
+      id: "job-1",
+      prompt_run_id: "prompt-1",
+      status: "running",
+      attempts: 1,
+      max_attempts: 1,
+      error_code: null,
+      error_message: null,
+      result_text: null,
+      cancellation_requested_at: null,
+      created_at: "2026-05-11T00:00:00Z",
+      started_at: null,
+      completed_at: null,
+      latest_event_id: null,
+      latest_event_type: null,
+    },
   },
   {
     id: "session-2",
@@ -46,11 +67,13 @@ describe("PlaySessionList", () => {
         onCreate={vi.fn()}
         onToggleCollapsed={vi.fn()}
         onSelect={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getByText("Sessions")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /session-1234567890123456789012345/i })).toHaveAttribute("aria-current", "true");
+    expect(
+      screen.getByRole("button", { name: /session-1234567890123456789012345/i })
+    ).toHaveAttribute("aria-current", "true");
     expect(screen.getByText(/free · active/i)).toBeInTheDocument();
     expect(screen.getByText("Untitled")).toBeInTheDocument();
     expect(screen.getByText(/No model · terminated/i)).toBeInTheDocument();
@@ -71,7 +94,7 @@ describe("PlaySessionList", () => {
         onCreate={onCreate}
         onToggleCollapsed={onToggleCollapsed}
         onSelect={onSelect}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByRole("button", { name: /new session/i }));
@@ -94,7 +117,7 @@ describe("PlaySessionList", () => {
         onCreate={vi.fn()}
         onToggleCollapsed={vi.fn()}
         onSelect={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getByRole("button", { name: /new session/i })).toBeDisabled();

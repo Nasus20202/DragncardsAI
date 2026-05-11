@@ -25,7 +25,9 @@ class StreamableHttpMcpClient:
     def __init__(self, timeout_seconds: float = 30.0):
         self._timeout_seconds = timeout_seconds
 
-    async def list_tools(self, server_url: str, headers: dict[str, str] | None = None) -> list[McpToolDefinition]:
+    async def list_tools(
+        self, server_url: str, headers: dict[str, str] | None = None
+    ) -> list[McpToolDefinition]:
         async with self._session(server_url, headers) as session:
             result = await session.list_tools()
         return [
@@ -73,7 +75,9 @@ class StreamableHttpMcpClient:
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     yield session
-        except Exception as exc:  # pragma: no cover - transport errors are surfaced to callers
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - transport errors are surfaced to callers
             raise McpClientError(str(exc)) from exc
         finally:
             await http_client.aclose()

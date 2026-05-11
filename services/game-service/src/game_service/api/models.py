@@ -291,8 +291,12 @@ class PluginTouchBarAction(BaseModel):
     id: str = Field(description="Plugin-defined touch bar action identifier")
     row: int = Field(description="Zero-based touch bar row index")
     order: int = Field(description="Zero-based order within the row")
-    action_type: str = Field(description="Plugin action type such as card, game, token, or engine")
-    label: str | None = Field(default=None, description="Plugin label for the touch bar action")
+    action_type: str = Field(
+        description="Plugin action type such as card, game, token, or engine"
+    )
+    label: str | None = Field(
+        default=None, description="Plugin label for the touch bar action"
+    )
     action_list: Any = Field(
         default=None,
         description="Named or inline action list triggered by the touch bar action, if any",
@@ -306,10 +310,13 @@ class PluginTouchBarAction(BaseModel):
 
 
 class PluginDefaultAction(BaseModel):
-    label: str | None = Field(default=None, description="Plugin label for the default action")
+    label: str | None = Field(
+        default=None, description="Plugin label for the default action"
+    )
     action_list: Any = Field(description="Named or inline default action list")
     condition: Any = Field(
-        default=None, description="Plugin condition that controls whether the action is available"
+        default=None,
+        description="Plugin condition that controls whether the action is available",
     )
     position: str | None = Field(
         default=None, description="Optional plugin UI position for the action"

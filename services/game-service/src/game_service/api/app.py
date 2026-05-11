@@ -23,6 +23,7 @@ from game_service.api.routers import (
     meta,
 )
 from game_service.logic.session_manager import SessionManager
+from game_service.telemetry import instrument_fastapi_app
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ def create_app(session_manager: SessionManager | None = None) -> FastAPI:
         app.state.session_manager = session_manager
 
     register_exception_handlers(app)
+    instrument_fastapi_app(app)
 
     app.include_router(meta.router)
     app.include_router(game_lifecycle.router)

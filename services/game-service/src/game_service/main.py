@@ -31,6 +31,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from game_service.telemetry import setup_telemetry
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -61,11 +62,16 @@ PLUGIN_REGISTRY: dict[str, dict] = {
 
 
 def build_session_manager():
-    from game_service.coordination.session_store import InMemorySessionStore, ValkeySessionStore
+    from game_service.coordination.session_store import (
+        InMemorySessionStore,
+        ValkeySessionStore,
+    )
     from game_service.logic.session_manager import SessionManager
 
     parsed = urlparse(VALKEY_URL)
-    use_in_memory = os.environ.get("GAME_SERVICE_USE_IN_MEMORY_SESSION_STORE", "").lower() in {
+    use_in_memory = os.environ.get(
+        "GAME_SERVICE_USE_IN_MEMORY_SESSION_STORE", ""
+    ).lower() in {
         "1",
         "true",
         "yes",
@@ -105,6 +111,7 @@ def run_http():
     from game_service.api.app import create_app
     from game_service.mcp.server import create_mcp_server
 
+    setup_telemetry()
     manager = build_session_manager()
     app = create_app(session_manager=manager)
     mcp = create_mcp_server(session_manager=manager, fastapi_app=app)
@@ -123,12 +130,17 @@ def run_http():
         try:
             await manager.restore_sessions()
         except OSError as exc:
-            if os.environ.get("GAME_SERVICE_USE_IN_MEMORY_SESSION_STORE", "").lower() in {
+            if os.environ.get(
+                "GAME_SERVICE_USE_IN_MEMORY_SESSION_STORE", ""
+            ).lower() in {
                 "1",
                 "true",
                 "yes",
             }:
-                logger.warning("Skipping session restore because local session store is unavailable: %s", exc)
+                logger.warning(
+                    "Skipping session restore because local session store is unavailable: %s",
+                    exc,
+                )
             else:
                 raise
 
@@ -146,6 +158,7 @@ def run_mcp():
     from game_service.api.app import create_app
     from game_service.mcp.server import create_mcp_server
 
+    setup_telemetry()
     manager = build_session_manager()
     app = create_app(session_manager=manager)
     mcp = create_mcp_server(session_manager=manager, fastapi_app=app)

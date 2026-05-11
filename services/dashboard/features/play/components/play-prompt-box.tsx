@@ -40,7 +40,7 @@ export function PlayPromptBox({
         if (canSend) onSubmit();
       }
     },
-    [canSend, onSubmit],
+    [canSend, onSubmit]
   );
 
   return (
@@ -103,7 +103,6 @@ export function PlayPromptBox({
             </button>
           </div>
         </div>
-
       </div>
     </div>
   );

@@ -11,7 +11,10 @@ from agent_orchestrator.storage.db import create_engine
 
 
 def test_split_statements_discards_empty_entries():
-    assert runner._split_statements(" ; SELECT 1;\n\nSELECT 2 ; ; ") == ["SELECT 1", "SELECT 2"]
+    assert runner._split_statements(" ; SELECT 1;\n\nSELECT 2 ; ; ") == [
+        "SELECT 1",
+        "SELECT 2",
+    ]
 
 
 def test_migration_applied_at_depends_on_dialect():
@@ -23,7 +26,9 @@ def test_migration_applied_at_depends_on_dialect():
     assert postgres_value.tzinfo is None
 
 
-def test_load_versioned_sql_prefers_dialect_and_falls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_load_versioned_sql_prefers_dialect_and_falls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     sql_dir = tmp_path / "sql"
     sql_dir.mkdir()
     (sql_dir / "0001_initial.sqlite.sql").write_text("sqlite version", encoding="utf-8")
@@ -34,12 +39,16 @@ def test_load_versioned_sql_prefers_dialect_and_falls_back(tmp_path: Path, monke
     assert runner._load_versioned_sql("0002_extra", "postgresql") == "generic version"
 
 
-def test_discover_migrations_reads_versions_from_sql_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_discover_migrations_reads_versions_from_sql_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     sql_dir = tmp_path / "sql"
     sql_dir.mkdir()
     (sql_dir / "0000_schema_migrations.sql").write_text("bootstrap", encoding="utf-8")
     (sql_dir / "0002_extra.sqlite.sql").write_text("sqlite version", encoding="utf-8")
-    (sql_dir / "0002_extra.postgresql.sql").write_text("postgres version", encoding="utf-8")
+    (sql_dir / "0002_extra.postgresql.sql").write_text(
+        "postgres version", encoding="utf-8"
+    )
     (sql_dir / "0001_initial.sql").write_text("generic version", encoding="utf-8")
     monkeypatch.setattr(runner, "SQL_DIR", sql_dir)
 
@@ -55,7 +64,11 @@ async def test_ensure_schema_is_idempotent(tmp_path: Path):
         await runner.ensure_schema(engine)
 
         async with engine.connect() as conn:
-            rows = (await conn.execute(text("SELECT version FROM schema_migrations ORDER BY version"))).all()
+            rows = (
+                await conn.execute(
+                    text("SELECT version FROM schema_migrations ORDER BY version")
+                )
+            ).all()
     finally:
         await engine.dispose()
 

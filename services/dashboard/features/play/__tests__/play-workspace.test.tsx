@@ -8,6 +8,7 @@ import type {
   DashboardConfig,
   JobDetail,
   ProviderResponse,
+  SessionDraft,
   SessionDetail,
   SessionSummary,
   SkillDefinitionResponse,
@@ -42,12 +43,28 @@ vi.mock("@heroui/react", () => ({
 }));
 
 vi.mock("@/features/play/components/play-session-list", () => ({
-  PlaySessionList: ({ selectedSessionId, sessions, onCreate, onSelect }: { selectedSessionId: string | null; sessions: SessionSummary[]; onCreate: () => void; onSelect: (id: string | null) => void }) => (
+  PlaySessionList: ({
+    selectedSessionId,
+    sessions,
+    onCreate,
+    onSelect,
+  }: {
+    selectedSessionId: string | null;
+    sessions: SessionSummary[];
+    onCreate: () => void;
+    onSelect: (id: string | null) => void;
+  }) => (
     <div>
-      <button type="button" onClick={onCreate}>Create session</button>
+      <button type="button" onClick={onCreate}>
+        Create session
+      </button>
       <div data-testid="selected-session-id">{selectedSessionId ?? "none"}</div>
       {sessions.map((session) => (
-        <button key={session.id} type="button" onClick={() => onSelect(session.id)}>
+        <button
+          key={session.id}
+          type="button"
+          onClick={() => onSelect(session.id)}
+        >
           {session.name}
         </button>
       ))}
@@ -56,31 +73,91 @@ vi.mock("@/features/play/components/play-session-list", () => ({
 }));
 
 vi.mock("@/features/play/components/play-transcript", () => ({
-  PlayTranscript: ({ jobs, statusText, errorText, streamState, selectedSession, onOpenSettings, settingsOpen }: { jobs: JobDetail[]; statusText: string; errorText: string | null; streamState: string; selectedSession: SessionDetail | null; onOpenSettings: () => void; settingsOpen: boolean }) => (
+  PlayTranscript: ({
+    jobs,
+    statusText,
+    errorText,
+    streamState,
+    selectedSession,
+    onOpenSettings,
+    settingsOpen,
+  }: {
+    jobs: JobDetail[];
+    statusText: string;
+    errorText: string | null;
+    streamState: string;
+    selectedSession: SessionDetail | null;
+    onOpenSettings: () => void;
+    settingsOpen: boolean;
+  }) => (
     <div>
       <div data-testid="status-text">{statusText}</div>
       <div data-testid="error-text">{errorText ?? ""}</div>
       <div data-testid="stream-state">{streamState}</div>
-      <div data-testid="selected-session-name">{selectedSession?.name ?? "none"}</div>
+      <div data-testid="selected-session-name">
+        {selectedSession?.name ?? "none"}
+      </div>
       <div data-testid="job-count">{jobs.length}</div>
-      <button type="button" onClick={onOpenSettings}>{settingsOpen ? "close settings" : "open settings"}</button>
+      <button type="button" onClick={onOpenSettings}>
+        {settingsOpen ? "close settings" : "open settings"}
+      </button>
     </div>
   ),
 }));
 
 vi.mock("@/features/play/components/play-prompt-box", () => ({
-  PlayPromptBox: ({ prompt, selectedSession, onPromptChange, onSubmit, onCompact }: { prompt: string; selectedSession: SessionDetail | null; onPromptChange: (value: string) => void; onSubmit: () => void; onCompact: () => void }) => (
+  PlayPromptBox: ({
+    prompt,
+    selectedSession,
+    onPromptChange,
+    onSubmit,
+    onCompact,
+  }: {
+    prompt: string;
+    selectedSession: SessionDetail | null;
+    onPromptChange: (value: string) => void;
+    onSubmit: () => void;
+    onCompact: () => void;
+  }) => (
     <div>
       <div data-testid="prompt-session">{selectedSession?.id ?? "none"}</div>
-      <input aria-label="Prompt input" value={prompt} onChange={(event) => onPromptChange(event.target.value)} />
-      <button type="button" onClick={onSubmit}>Submit prompt</button>
-      <button type="button" onClick={onCompact}>Compact context</button>
+      <input
+        aria-label="Prompt input"
+        value={prompt}
+        onChange={(event) => onPromptChange(event.target.value)}
+      />
+      <button type="button" onClick={onSubmit}>
+        Submit prompt
+      </button>
+      <button type="button" onClick={onCompact}>
+        Compact context
+      </button>
     </div>
   ),
 }));
 
 vi.mock("@/features/play/components/play-config-panel", () => ({
-  PlayConfigPanel: ({ draft, modelOptions, providers, skills, isOpen, onDraftChange, onSave, onTerminate, onClose }: { draft: { providerId: string; modelName: string; name: string }; modelOptions: string[]; providers: ProviderResponse[]; skills: SkillDefinitionResponse[]; isOpen: boolean; onDraftChange: (draft: { providerId: string; modelName: string; name: string; reasoning: { enabled: boolean; effort: "low" | "medium" | "high"; maxTokens: string }; gatewayOptionsText: string; providerOptionsText: string; selectedSkills: string[]; enableDefaultGameServiceMcp: boolean; customMcpsText: string }) => void; onSave: () => void; onTerminate: () => void; onClose: () => void }) => (
+  PlayConfigPanel: ({
+    draft,
+    modelOptions,
+    providers,
+    skills,
+    isOpen,
+    onDraftChange,
+    onSave,
+    onTerminate,
+    onClose,
+  }: {
+    draft: SessionDraft;
+    modelOptions: string[];
+    providers: ProviderResponse[];
+    skills: SkillDefinitionResponse[];
+    isOpen: boolean;
+    onDraftChange: (draft: SessionDraft) => void;
+    onSave: () => void;
+    onTerminate: () => void;
+    onClose: () => void;
+  }) => (
     <div>
       <div data-testid="config-open">{String(isOpen)}</div>
       <div data-testid="draft-provider">{draft.providerId}</div>
@@ -90,13 +167,25 @@ vi.mock("@/features/play/components/play-config-panel", () => ({
       <div data-testid="model-options">{modelOptions.join(",")}</div>
       <button
         type="button"
-        onClick={() => onDraftChange({ ...draft, providerId: "anthropic", modelName: "claude-3-5-haiku" })}
+        onClick={() =>
+          onDraftChange({
+            ...draft,
+            providerId: "anthropic",
+            modelName: "claude-3-5-haiku",
+          })
+        }
       >
         Change provider
       </button>
-      <button type="button" onClick={onSave}>Save configuration</button>
-      <button type="button" onClick={onTerminate}>Terminate session</button>
-      <button type="button" onClick={onClose}>Close panel</button>
+      <button type="button" onClick={onSave}>
+        Save configuration
+      </button>
+      <button type="button" onClick={onTerminate}>
+        Terminate session
+      </button>
+      <button type="button" onClick={onClose}>
+        Close panel
+      </button>
     </div>
   ),
 }));
@@ -108,15 +197,33 @@ const baseConfig: DashboardConfig = {
   defaultGameServiceMcpEnabled: true,
   defaultGameServiceMcpName: "game-service",
   defaultGameServiceMcpTransport: "streamable-http",
-  defaultGameServiceMcpUrl: "http://game-service/mcp",
+  defaultGameServiceMcpUrl: "http://game-service:8000/mcp/",
   defaultSkills: ["skill-a"],
   defaultCustomMcps: [],
 };
 
 const providers: ProviderResponse[] = [
-  { provider_id: "openai", model_prefix: "openai", models: ["gpt-4o-mini", "gpt-4o-mini"], available: true, error: null },
-  { provider_id: "anthropic", model_prefix: "anthropic", models: ["claude-3-5-haiku"], available: true, error: null },
-  { provider_id: "openai", model_prefix: "openai", models: ["gpt-4o-mini"], available: true, error: null },
+  {
+    provider_id: "openai",
+    model_prefix: "openai",
+    models: ["gpt-4o-mini", "gpt-4o-mini"],
+    available: true,
+    error: null,
+  },
+  {
+    provider_id: "anthropic",
+    model_prefix: "anthropic",
+    models: ["claude-3-5-haiku"],
+    available: true,
+    error: null,
+  },
+  {
+    provider_id: "openai",
+    model_prefix: "openai",
+    models: ["gpt-4o-mini"],
+    available: true,
+    error: null,
+  },
 ];
 
 const skills: SkillDefinitionResponse[] = [
@@ -253,12 +360,33 @@ describe("PlayWorkspace", () => {
     api.listAvailableSkills.mockResolvedValue(skills);
     api.listSessions.mockResolvedValue([sessionSummary]);
     api.getSession.mockResolvedValue(sessionDetail);
-    api.listSessionJobs.mockResolvedValue({ jobs: [{ ...job, events: undefined, prompt_run: undefined, outputs: undefined, available_tools: undefined }], page: { total: 1, limit: 50, offset: 0 } });
+    api.listSessionJobs.mockResolvedValue({
+      jobs: [
+        {
+          ...job,
+          events: undefined,
+          prompt_run: undefined,
+          outputs: undefined,
+          available_tools: undefined,
+        },
+      ],
+      page: { total: 1, limit: 50, offset: 0 },
+    });
     api.getJob.mockResolvedValue(job);
     api.getContextMetadata.mockResolvedValue(contextMetadata);
     api.setModelConfig.mockResolvedValue({ model_config: {} });
-    api.createSession.mockResolvedValue({ ...sessionDetail, id: "session-2", name: "Created" });
-    api.submitPrompt.mockResolvedValue({ ...job, events: undefined, prompt_run: undefined, outputs: undefined, available_tools: undefined });
+    api.createSession.mockResolvedValue({
+      ...sessionDetail,
+      id: "session-2",
+      name: "Created",
+    });
+    api.submitPrompt.mockResolvedValue({
+      ...job,
+      events: undefined,
+      prompt_run: undefined,
+      outputs: undefined,
+      available_tools: undefined,
+    });
     api.compactSession.mockResolvedValue(contextMetadata);
     api.updateSession.mockResolvedValue(sessionDetail);
     api.addSkill.mockResolvedValue({});
@@ -266,7 +394,10 @@ describe("PlayWorkspace", () => {
     api.listSessionMcps.mockResolvedValue([]);
     api.addMcp.mockResolvedValue({});
     api.removeMcp.mockResolvedValue(undefined);
-    api.terminateSession.mockResolvedValue({ ...sessionDetail, status: "terminated" });
+    api.terminateSession.mockResolvedValue({
+      ...sessionDetail,
+      status: "terminated",
+    });
   });
 
   it("loads config, restores saved session, and avoids syncing unchanged model config", async () => {
@@ -274,11 +405,21 @@ describe("PlayWorkspace", () => {
 
     render(<PlayWorkspace />);
 
-    await waitFor(() => expect(screen.getByTestId("selected-session-id")).toHaveTextContent("session-1"));
-    await waitFor(() => expect(screen.getByTestId("selected-session-name")).toHaveTextContent("Existing session"));
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-id")).toHaveTextContent(
+        "session-1"
+      )
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
+    );
     expect(screen.getByTestId("job-count")).toHaveTextContent("1");
     expect(screen.getByTestId("provider-count")).toHaveTextContent("2");
-    expect(screen.getByTestId("model-options")).toHaveTextContent("gpt-4o-mini");
+    expect(screen.getByTestId("model-options")).toHaveTextContent(
+      "gpt-4o-mini"
+    );
     expect(api.setModelConfig).not.toHaveBeenCalled();
   });
 
@@ -287,35 +428,52 @@ describe("PlayWorkspace", () => {
 
     render(<PlayWorkspace />);
 
-    await waitFor(() => expect(screen.getByTestId("config-open")).toHaveTextContent("false"));
+    await waitFor(() =>
+      expect(screen.getByTestId("config-open")).toHaveTextContent("false")
+    );
   });
 
   it("syncs model config when the draft provider changes", async () => {
     render(<PlayWorkspace />);
 
-    await waitFor(() => expect(screen.getByTestId("draft-provider")).toHaveTextContent("openai"));
+    await waitFor(() =>
+      expect(screen.getByTestId("draft-provider")).toHaveTextContent("openai")
+    );
     fireEvent.click(screen.getByRole("button", { name: /change provider/i }));
 
     await waitFor(() => {
-      expect(api.setModelConfig).toHaveBeenCalledWith("session-1", expect.objectContaining({
-        provider_id: "anthropic",
-        model_name: "claude-3-5-haiku",
-      }));
+      expect(api.setModelConfig).toHaveBeenCalledWith(
+        "session-1",
+        expect.objectContaining({
+          provider_id: "anthropic",
+          model_name: "claude-3-5-haiku",
+        })
+      );
     });
   });
 
   it("creates a session, selects it, and persists the selection", async () => {
     api.listSessions
       .mockResolvedValueOnce([sessionSummary])
-      .mockResolvedValueOnce([{ ...sessionSummary, id: "session-2", name: "Created" }]);
+      .mockResolvedValueOnce([
+        { ...sessionSummary, id: "session-2", name: "Created" },
+      ]);
 
     render(<PlayWorkspace />);
 
-    await waitFor(() => expect(screen.getByTestId("selected-session-id")).toHaveTextContent("session-1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-id")).toHaveTextContent(
+        "session-1"
+      )
+    );
     fireEvent.click(screen.getByRole("button", { name: /create session/i }));
 
     await waitFor(() => expect(api.createSession).toHaveBeenCalled());
-    await waitFor(() => expect(globalThis.localStorage.getItem("play:selectedSessionId")).toBe("session-2"));
+    await waitFor(() =>
+      expect(globalThis.localStorage.getItem("play:selectedSessionId")).toBe(
+        "session-2"
+      )
+    );
   });
 
   it("submits a prompt and refreshes the job list", async () => {
@@ -335,24 +493,44 @@ describe("PlayWorkspace", () => {
       latest_event_id: null,
       latest_event_type: null,
     });
-    api.getJob.mockResolvedValueOnce(job).mockResolvedValueOnce({ ...job, id: "job-2", status: "queued" });
+    api.getJob
+      .mockResolvedValueOnce(job)
+      .mockResolvedValueOnce({ ...job, id: "job-2", status: "queued" });
 
     render(<PlayWorkspace />);
 
-    await waitFor(() => expect(screen.getByTestId("prompt-session")).toHaveTextContent("session-1"));
-    fireEvent.change(screen.getByLabelText("Prompt input"), { target: { value: "Hello world" } });
+    await waitFor(() =>
+      expect(screen.getByTestId("prompt-session")).toHaveTextContent(
+        "session-1"
+      )
+    );
+    fireEvent.change(screen.getByLabelText("Prompt input"), {
+      target: { value: "Hello world" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /submit prompt/i }));
 
-    await waitFor(() => expect(api.submitPrompt).toHaveBeenCalledWith("session-1", "Hello world"));
+    await waitFor(() =>
+      expect(api.submitPrompt).toHaveBeenCalledWith("session-1", "Hello world")
+    );
+    expect(
+      screen.getByRole("status", { name: /streaming response/i })
+    ).toBeInTheDocument();
+    expect(screen.getByText("Streaming response...")).toBeInTheDocument();
   });
 
   it("compacts context and reloads jobs", async () => {
     render(<PlayWorkspace />);
 
-    await waitFor(() => expect(screen.getByTestId("prompt-session")).toHaveTextContent("session-1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("prompt-session")).toHaveTextContent(
+        "session-1"
+      )
+    );
     fireEvent.click(screen.getByRole("button", { name: /compact context/i }));
 
-    await waitFor(() => expect(api.compactSession).toHaveBeenCalledWith("session-1"));
+    await waitFor(() =>
+      expect(api.compactSession).toHaveBeenCalledWith("session-1")
+    );
     expect(api.listSessionJobs).toHaveBeenCalledWith("session-1");
   });
 });

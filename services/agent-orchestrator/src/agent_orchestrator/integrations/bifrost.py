@@ -102,9 +102,13 @@ class BifrostClient:
                 headers=headers,
             )
         except httpx.TimeoutException as exc:
-            raise BifrostError("timeout", "Bifrost model listing timed out", retryable=True) from exc
+            raise BifrostError(
+                "timeout", "Bifrost model listing timed out", retryable=True
+            ) from exc
         except httpx.HTTPError as exc:
-            raise BifrostError("network_error", "Bifrost model listing failed", retryable=True) from exc
+            raise BifrostError(
+                "network_error", "Bifrost model listing failed", retryable=True
+            ) from exc
 
         if response.status_code >= 400:
             raise BifrostError(
@@ -151,9 +155,13 @@ class BifrostClient:
                 headers=headers,
             )
         except httpx.TimeoutException as exc:
-            raise BifrostError("timeout", "Bifrost model listing timed out", retryable=True) from exc
+            raise BifrostError(
+                "timeout", "Bifrost model listing timed out", retryable=True
+            ) from exc
         except httpx.HTTPError as exc:
-            raise BifrostError("network_error", "Bifrost model listing failed", retryable=True) from exc
+            raise BifrostError(
+                "network_error", "Bifrost model listing failed", retryable=True
+            ) from exc
 
         if response.status_code >= 400:
             raise BifrostError(
@@ -186,7 +194,9 @@ class BifrostClient:
             )
         return result
 
-    async def get_model_context_length(self, provider_id: str, model_name: str) -> int | None:
+    async def get_model_context_length(
+        self, provider_id: str, model_name: str
+    ) -> int | None:
         """Return context_length for the given model from /v1/models, or None if unknown."""
         resolved = self._resolve_model(provider_id, model_name)
         try:
@@ -262,9 +272,13 @@ class BifrostClient:
                 headers=headers,
             )
         except httpx.TimeoutException as exc:
-            raise BifrostError("timeout", "Bifrost request timed out", retryable=True) from exc
+            raise BifrostError(
+                "timeout", "Bifrost request timed out", retryable=True
+            ) from exc
         except httpx.HTTPError as exc:
-            raise BifrostError("network_error", "Bifrost request failed", retryable=True) from exc
+            raise BifrostError(
+                "network_error", "Bifrost request failed", retryable=True
+            ) from exc
 
         if response.status_code >= 400:
             message = self._extract_error_message(response)
@@ -300,7 +314,8 @@ class BifrostClient:
                     raise BifrostError(
                         "gateway_error",
                         message,
-                        retryable=response.status_code >= 500 or response.status_code == 429,
+                        retryable=response.status_code >= 500
+                        or response.status_code == 429,
                     )
 
                 async for raw_event in self._iter_sse_data(response):
@@ -311,17 +326,23 @@ class BifrostClient:
                     delta = self._extract_delta(chunk)
                     content = self._normalize_content(delta.get("content"))
                     reasoning = self._normalize_content(delta.get("reasoning"))
-                    reasoning_details = self._parse_reasoning_details(delta.get("reasoning_details") or [])
+                    reasoning_details = self._parse_reasoning_details(
+                        delta.get("reasoning_details") or []
+                    )
                     tool_calls = delta.get("tool_calls") or []
                     if not reasoning and reasoning_details:
-                        reasoning = "".join(detail.text for detail in reasoning_details if detail.text)
+                        reasoning = "".join(
+                            detail.text for detail in reasoning_details if detail.text
+                        )
 
                     if content:
                         content_parts.append(content)
                     if reasoning:
                         reasoning_parts.append(reasoning)
                     if reasoning_details:
-                        self._merge_reasoning_details(reasoning_buffers, reasoning_details)
+                        self._merge_reasoning_details(
+                            reasoning_buffers, reasoning_details
+                        )
                     if tool_calls:
                         self._merge_tool_call_deltas(tool_call_buffers, tool_calls)
 
@@ -336,11 +357,17 @@ class BifrostClient:
                         if isawaitable(callback_result):
                             await callback_result
         except json.JSONDecodeError as exc:
-            raise BifrostError("invalid_response", "Bifrost returned an invalid streamed response") from exc
+            raise BifrostError(
+                "invalid_response", "Bifrost returned an invalid streamed response"
+            ) from exc
         except httpx.TimeoutException as exc:
-            raise BifrostError("timeout", "Bifrost request timed out", retryable=True) from exc
+            raise BifrostError(
+                "timeout", "Bifrost request timed out", retryable=True
+            ) from exc
         except httpx.HTTPError as exc:
-            raise BifrostError("network_error", "Bifrost request failed", retryable=True) from exc
+            raise BifrostError(
+                "network_error", "Bifrost request failed", retryable=True
+            ) from exc
 
         return ChatResponse(
             content="".join(content_parts),
@@ -354,12 +381,18 @@ class BifrostClient:
         try:
             message = data["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise BifrostError("invalid_response", "Bifrost returned an invalid response") from exc
+            raise BifrostError(
+                "invalid_response", "Bifrost returned an invalid response"
+            ) from exc
 
-        reasoning_details = self._parse_reasoning_details(message.get("reasoning_details") or [])
+        reasoning_details = self._parse_reasoning_details(
+            message.get("reasoning_details") or []
+        )
         reasoning = self._normalize_content(message.get("reasoning"))
         if not reasoning and reasoning_details:
-            reasoning = "".join(detail.text for detail in reasoning_details if detail.text)
+            reasoning = "".join(
+                detail.text for detail in reasoning_details if detail.text
+            )
         return ChatResponse(
             content=self._normalize_content(message.get("content")),
             tool_calls=self._parse_tool_calls(message.get("tool_calls") or []),
@@ -398,7 +431,11 @@ class BifrostClient:
                     index=int(item.get("index", len(details))),
                     type=None if item.get("type") is None else str(item.get("type")),
                     text=self._normalize_content(item.get("text")),
-                    signature=None if item.get("signature") is None else str(item.get("signature")),
+                    signature=(
+                        None
+                        if item.get("signature") is None
+                        else str(item.get("signature"))
+                    ),
                 )
             )
         return details
@@ -409,7 +446,7 @@ class BifrostClient:
             if not choices:
                 return {}
             return choices[0].get("delta") or {}
-        except (KeyError, IndexError, TypeError):
+        except KeyError, IndexError, TypeError:
             return {}
 
     async def _iter_sse_data(self, response: httpx.Response):
@@ -435,7 +472,12 @@ class BifrostClient:
         for detail in details:
             buffer = buffers.setdefault(
                 detail.index,
-                {"index": detail.index, "type": detail.type, "text_parts": [], "signature": None},
+                {
+                    "index": detail.index,
+                    "type": detail.type,
+                    "text_parts": [],
+                    "signature": None,
+                },
             )
             if detail.type is not None:
                 buffer["type"] = detail.type
@@ -444,7 +486,9 @@ class BifrostClient:
             if detail.signature is not None:
                 buffer["signature"] = detail.signature
 
-    def _finalize_reasoning_details(self, buffers: dict[int, dict[str, Any]]) -> list[ReasoningDetail]:
+    def _finalize_reasoning_details(
+        self, buffers: dict[int, dict[str, Any]]
+    ) -> list[ReasoningDetail]:
         return [
             ReasoningDetail(
                 index=index,
@@ -464,7 +508,9 @@ class BifrostClient:
             if not isinstance(item, dict):
                 continue
             index = int(item.get("index", len(buffers)))
-            buffer = buffers.setdefault(index, {"id": "tool-call", "name": "", "arguments_parts": []})
+            buffer = buffers.setdefault(
+                index, {"id": "tool-call", "name": "", "arguments_parts": []}
+            )
             if item.get("id") is not None:
                 buffer["id"] = str(item["id"])
             function = item.get("function") or {}
@@ -473,7 +519,9 @@ class BifrostClient:
             if function.get("arguments") is not None:
                 buffer["arguments_parts"].append(str(function["arguments"]))
 
-    def _finalize_streamed_tool_calls(self, buffers: dict[int, dict[str, Any]]) -> list[ToolCall]:
+    def _finalize_streamed_tool_calls(
+        self, buffers: dict[int, dict[str, Any]]
+    ) -> list[ToolCall]:
         tool_calls: list[ToolCall] = []
         for _, buffer in sorted(buffers.items()):
             raw_arguments = "".join(buffer["arguments_parts"]) or "{}"
@@ -497,5 +545,9 @@ class BifrostClient:
             return f"Bifrost returned HTTP {response.status_code}"
         detail = payload.get("error") or payload.get("message") or payload
         if isinstance(detail, dict):
-            detail = detail.get("message") or detail.get("detail") or "Bifrost request failed"
+            detail = (
+                detail.get("message")
+                or detail.get("detail")
+                or "Bifrost request failed"
+            )
         return str(detail)

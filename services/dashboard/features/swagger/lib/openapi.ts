@@ -30,13 +30,16 @@ function deepRewriteRefs(value: unknown, service: ServiceKey): JsonValue {
   }
 
   return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [key, deepRewriteRefs(item, service)]),
+    Object.entries(value).map(([key, item]) => [
+      key,
+      deepRewriteRefs(item, service),
+    ])
   ) as JsonValue;
 }
 
 function namespaceComponents(
   components: Record<string, unknown> | undefined,
-  service: ServiceKey,
+  service: ServiceKey
 ): Record<string, JsonValue> {
   if (!components) {
     return {};
@@ -54,21 +57,24 @@ function namespaceComponents(
           Object.entries(rawEntries).map(([name, definition]) => [
             `${service}_${name}`,
             deepRewriteRefs(definition, service),
-          ]),
+          ])
         ),
       ];
-    }),
+    })
   ) as Record<string, JsonValue>;
 }
 
-function namespaceDocument(document: Record<string, unknown>, service: ServiceKey) {
+function namespaceDocument(
+  document: Record<string, unknown>,
+  service: ServiceKey
+) {
   const prefixedPaths = Object.fromEntries(
-    Object.entries((document.paths as Record<string, unknown> | undefined) ?? {}).map(
-      ([path, pathItem]) => [
-        `${SERVICE_PREFIX[service]}${path}`,
-        deepRewriteRefs(pathItem, service),
-      ],
-    ),
+    Object.entries(
+      (document.paths as Record<string, unknown> | undefined) ?? {}
+    ).map(([path, pathItem]) => [
+      `${SERVICE_PREFIX[service]}${path}`,
+      deepRewriteRefs(pathItem, service),
+    ])
   );
 
   const tags = Array.isArray(document.tags)
@@ -95,7 +101,9 @@ function namespaceDocument(document: Record<string, unknown>, service: ServiceKe
       }
 
       if (Array.isArray(operation.tags)) {
-        operation.tags = operation.tags.map((tag) => `${service}:${String(tag)}`);
+        operation.tags = operation.tags.map(
+          (tag) => `${service}:${String(tag)}`
+        );
       }
       if (typeof operation.operationId === "string") {
         operation.operationId = `${service}_${operation.operationId}`;
@@ -106,18 +114,23 @@ function namespaceDocument(document: Record<string, unknown>, service: ServiceKe
   return {
     paths: prefixedPaths,
     tags,
-    components: namespaceComponents(document.components as Record<string, unknown> | undefined, service),
+    components: namespaceComponents(
+      document.components as Record<string, unknown> | undefined,
+      service
+    ),
   };
 }
 
 async function fetchOpenApiDocument(
   service: ServiceKey,
-  fetchImpl: typeof fetch,
+  fetchImpl: typeof fetch
 ): Promise<Record<string, unknown>> {
   const config = getServerConfig();
   const target = new URL(
-    service === "orchestrator" ? config.orchestratorOpenApiPath : config.gameServiceOpenApiPath,
-    service === "orchestrator" ? config.orchestratorUrl : config.gameServiceUrl,
+    service === "orchestrator"
+      ? config.orchestratorOpenApiPath
+      : config.gameServiceOpenApiPath,
+    service === "orchestrator" ? config.orchestratorUrl : config.gameServiceUrl
   );
   const response = await fetchImpl(target, {
     headers: { accept: "application/json" },
@@ -125,7 +138,9 @@ async function fetchOpenApiDocument(
   });
 
   if (!response.ok) {
-    throw new Error(`${service} OpenAPI request failed with status ${response.status}`);
+    throw new Error(
+      `${service} OpenAPI request failed with status ${response.status}`
+    );
   }
 
   const document = (await response.json()) as unknown;
@@ -137,7 +152,7 @@ async function fetchOpenApiDocument(
 }
 
 export async function buildMergedOpenApi(
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = fetch
 ): Promise<MergedOpenApiResult> {
   const errors: { service: string; message: string }[] = [];
   const merged: Record<string, unknown> = {
@@ -162,16 +177,25 @@ export async function buildMergedOpenApi(
         ...(merged.components as Record<string, unknown>),
         ...Object.fromEntries(
           Object.entries(namespaced.components).map(([section, value]) => {
-            const existing = (merged.components as Record<string, Record<string, unknown>>)[section] ?? {};
-            return [section, { ...existing, ...(value as Record<string, unknown>) }];
-          }),
+            const existing =
+              (merged.components as Record<string, Record<string, unknown>>)[
+                section
+              ] ?? {};
+            return [
+              section,
+              { ...existing, ...(value as Record<string, unknown>) },
+            ];
+          })
         ),
       });
       (merged.tags as JsonValue[]).push(...namespaced.tags);
     } catch (error) {
       errors.push({
         service,
-        message: error instanceof Error ? error.message : "Unknown OpenAPI merge error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unknown OpenAPI merge error",
       });
     }
   }

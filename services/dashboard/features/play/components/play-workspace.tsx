@@ -47,7 +47,14 @@ import {
   SessionSummary,
   SkillDefinitionResponse,
 } from "@/features/shared/lib/types";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 function dedupeProviders(providers: ProviderResponse[]) {
   const byId = new Map<string, ProviderResponse>();
@@ -70,8 +77,35 @@ function mergeJob(jobs: JobDetail[], updated: JobDetail): JobDetail[] {
   return [...jobs, updated].sort(compareJobsOldestFirst);
 }
 
-function sameEventPayload(left: JobEventResponse, right: JobEventResponse): boolean {
-  return left.event_type === right.event_type && JSON.stringify(left.payload) === JSON.stringify(right.payload);
+function sameEventPayload(
+  left: JobEventResponse,
+  right: JobEventResponse
+): boolean {
+  return (
+    left.event_type === right.event_type &&
+    JSON.stringify(left.payload) === JSON.stringify(right.payload)
+  );
+}
+
+function subscribeToMobileLayout(onStoreChange: () => void) {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+
+  const mediaQuery = window.matchMedia("(max-width: 767px)");
+  mediaQuery.addEventListener("change", onStoreChange);
+
+  return () => {
+    mediaQuery.removeEventListener("change", onStoreChange);
+  };
+}
+
+function getMobileLayoutSnapshot() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return window.matchMedia("(max-width: 767px)").matches;
 }
 
 export function PlayWorkspace() {
@@ -79,8 +113,12 @@ export function PlayWorkspace() {
   const [providers, setProviders] = useState<ProviderResponse[]>([]);
   const [skills, setSkills] = useState<SkillDefinitionResponse[]>([]);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [selectedSession, setSelectedSession] = useState<SessionDetail | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
+    null
+  );
+  const [selectedSession, setSelectedSession] = useState<SessionDetail | null>(
+    null
+  );
   const [draft, setDraft] = useState<SessionDraft | null>(null);
   /** All jobs for the selected session, sorted oldest-first. */
   const [jobs, setJobs] = useState<JobDetail[]>([]);
@@ -92,7 +130,8 @@ export function PlayWorkspace() {
   const [errorText, setErrorText] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [streamState, setStreamState] = useState<"idle" | "streaming">("idle");
-  const [contextMetadata, setContextMetadata] = useState<ContextMetadata | null>(null);
+  const [contextMetadata, setContextMetadata] =
+    useState<ContextMetadata | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   /**
@@ -101,31 +140,41 @@ export function PlayWorkspace() {
    * the difference between "user changed the picker" and "draft was rebuilt
    * from the session" without triggering a redundant setModelConfig call.
    */
-  const committedModelRef = useRef<{ providerId: string; modelName: string } | null>(null);
+  const committedModelRef = useRef<{
+    providerId: string;
+    modelName: string;
+  } | null>(null);
 
-  const uniqueProviders = useMemo(() => dedupeProviders(providers), [providers]);
+  const uniqueProviders = useMemo(
+    () => dedupeProviders(providers),
+    [providers]
+  );
   const selectedProvider = useMemo(
-    () => uniqueProviders.find((provider) => provider.provider_id === draft?.providerId) ?? null,
-    [draft?.providerId, uniqueProviders],
+    () =>
+      uniqueProviders.find(
+        (provider) => provider.provider_id === draft?.providerId
+      ) ?? null,
+    [draft?.providerId, uniqueProviders]
   );
   const modelOptions = useMemo(() => {
     const models = selectedProvider?.models ?? [];
-    return [...new Set(models)].sort((left, right) => left.localeCompare(right));
+    return [...new Set(models)].sort((left, right) =>
+      left.localeCompare(right)
+    );
   }, [selectedProvider]);
-  const [isSessionsCollapsed, setIsSessionsCollapsed] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(true);
-  const hasAppliedMobileLayoutRef = useRef(false);
-
-  useEffect(() => {
-    if (hasAppliedMobileLayoutRef.current || typeof window === "undefined") {
-      return;
-    }
-    hasAppliedMobileLayoutRef.current = true;
-    if (window.matchMedia("(max-width: 767px)").matches) {
-      setIsSessionsCollapsed(true);
-      setIsSettingsOpen(false);
-    }
-  }, []);
+  const isMobileLayout = useSyncExternalStore(
+    subscribeToMobileLayout,
+    getMobileLayoutSnapshot,
+    () => false
+  );
+  const [sessionsCollapsedOverride, setSessionsCollapsedOverride] = useState<
+    boolean | null
+  >(null);
+  const [settingsOpenOverride, setSettingsOpenOverride] = useState<
+    boolean | null
+  >(null);
+  const isSessionsCollapsed = sessionsCollapsedOverride ?? isMobileLayout;
+  const isSettingsOpen = settingsOpenOverride ?? !isMobileLayout;
 
   // Persist selected session across page reloads
   const persistSelectedSessionId = useCallback((id: string | null) => {
@@ -168,20 +217,27 @@ export function PlayWorkspace() {
       if (idx < 0) return current;
       const job = current[idx];
 
-      const isTerminal = ["completion", "failure", "cancellation"].includes(payload.event_type);
+      const isTerminal = ["completion", "failure", "cancellation"].includes(
+        payload.event_type
+      );
       let nextEvents: JobEventResponse[];
 
       // Live streaming chunks carry the full snapshot text plus the DB event id
       // they belong to. Upsert that snapshot so live updates and DB replay stay
       // idempotent even when they arrive in different orders.
       const isStreamChunk =
-        (payload.event_type === "model_output" || payload.event_type === "reasoning") &&
+        (payload.event_type === "model_output" ||
+          payload.event_type === "reasoning") &&
         payload.payload.stream === true;
       const snapshotEventId =
-        typeof payload.payload.snapshot_event_id === "string" ? payload.payload.snapshot_event_id : null;
+        typeof payload.payload.snapshot_event_id === "string"
+          ? payload.payload.snapshot_event_id
+          : null;
 
       if (isStreamChunk && snapshotEventId) {
-        const normalizedPayload: Record<string, JsonValue> = { ...payload.payload };
+        const normalizedPayload: Record<string, JsonValue> = {
+          ...payload.payload,
+        };
         delete normalizedPayload.stream;
         delete normalizedPayload.snapshot_event_id;
         const normalizedEvent: JobEventResponse = {
@@ -189,7 +245,9 @@ export function PlayWorkspace() {
           id: snapshotEventId,
           payload: normalizedPayload,
         };
-        const existingIdx = job.events.findIndex((event) => event.id === snapshotEventId);
+        const existingIdx = job.events.findIndex(
+          (event) => event.id === snapshotEventId
+        );
 
         if (existingIdx >= 0) {
           const existing = job.events[existingIdx];
@@ -203,11 +261,16 @@ export function PlayWorkspace() {
           nextEvents = [...job.events];
           nextEvents[existingIdx] = updated;
         } else {
-          nextEvents = [...job.events, normalizedEvent]
-            .sort((l, r) => new Date(l.created_at).getTime() - new Date(r.created_at).getTime());
+          nextEvents = [...job.events, normalizedEvent].sort(
+            (l, r) =>
+              new Date(l.created_at).getTime() -
+              new Date(r.created_at).getTime()
+          );
         }
       } else {
-        const existingIdx = job.events.findIndex((event) => event.id === payload.id);
+        const existingIdx = job.events.findIndex(
+          (event) => event.id === payload.id
+        );
         if (existingIdx >= 0) {
           const existing = job.events[existingIdx];
           if (sameEventPayload(existing, payload)) {
@@ -217,7 +280,9 @@ export function PlayWorkspace() {
           nextEvents[existingIdx] = payload;
         } else {
           nextEvents = [...job.events, payload].sort(
-            (l, r) => new Date(l.created_at).getTime() - new Date(r.created_at).getTime(),
+            (l, r) =>
+              new Date(l.created_at).getTime() -
+              new Date(r.created_at).getTime()
           );
         }
       }
@@ -235,7 +300,8 @@ export function PlayWorkspace() {
               : payload.event_type
           : job.status,
         outputs:
-          payload.event_type === "completion" && typeof payload.payload.text === "string"
+          payload.event_type === "completion" &&
+          typeof payload.payload.text === "string"
             ? [payload.payload.text, ...job.outputs].filter(Boolean)
             : job.outputs,
       };
@@ -246,13 +312,18 @@ export function PlayWorkspace() {
   }, []);
 
   /** Load ALL jobs for a session and set them as the transcript. */
-  const loadAllJobs = useCallback(async (sessionId: string): Promise<JobDetail[]> => {
-    const summary = await listSessionJobs(sessionId);
-    const detailed = await Promise.all(summary.jobs.map((item) => getJob(item.id)));
-    const sorted = [...detailed].sort(compareJobsOldestFirst);
-    setJobs(sorted);
-    return sorted;
-  }, []);
+  const loadAllJobs = useCallback(
+    async (sessionId: string): Promise<JobDetail[]> => {
+      const summary = await listSessionJobs(sessionId);
+      const detailed = await Promise.all(
+        summary.jobs.map((item) => getJob(item.id))
+      );
+      const sorted = [...detailed].sort(compareJobsOldestFirst);
+      setJobs(sorted);
+      return sorted;
+    },
+    []
+  );
 
   const refreshContextMetadata = useCallback(async (sessionId: string) => {
     try {
@@ -265,83 +336,101 @@ export function PlayWorkspace() {
 
   const startStreaming = useCallback(
     (jobId: string, afterId: string) => {
-      closeEventSource();
-      streamingJobIdRef.current = jobId;
-      setStreamingJobId(jobId);
-      const source = new EventSource(`/api/proxy/orchestrator/jobs/${jobId}/events/stream?after=${afterId}`);
-      eventSourceRef.current = source;
-      setStreamState("streaming");
+      const connect = (currentAfterId: string) => {
+        closeEventSource();
+        streamingJobIdRef.current = jobId;
+        setStreamingJobId(jobId);
+        const source = new EventSource(
+          `/api/proxy/orchestrator/jobs/${jobId}/events/stream?after=${currentAfterId}`
+        );
+        eventSourceRef.current = source;
+        setStreamState("streaming");
 
-      const handleEvent = (event: MessageEvent<string>) => {
-        const payload = JSON.parse(event.data) as JobEventResponse;
-        appendStreamEvent(payload);
-        if (payload.event_type === "compaction") {
-          if (selectedSessionId) {
-            void refreshContextMetadata(selectedSessionId);
+        const handleEvent = (event: MessageEvent<string>) => {
+          const payload = JSON.parse(event.data) as JobEventResponse;
+          appendStreamEvent(payload);
+          if (payload.event_type === "compaction") {
+            if (selectedSessionId) {
+              void refreshContextMetadata(selectedSessionId);
+            }
           }
-        }
-        if (["completion", "failure", "cancellation"].includes(payload.event_type)) {
-          stopStreaming();
-          if (selectedSessionId) {
-            void refreshContextMetadata(selectedSessionId);
+          if (
+            ["completion", "failure", "cancellation"].includes(
+              payload.event_type
+            )
+          ) {
+            stopStreaming();
+            if (selectedSessionId) {
+              void refreshContextMetadata(selectedSessionId);
+            }
           }
-        }
-      };
+        };
 
-      source.addEventListener("progress", handleEvent as EventListener);
-      source.addEventListener("reasoning", handleEvent as EventListener);
-      source.addEventListener("model_output", handleEvent as EventListener);
-      source.addEventListener("compaction", handleEvent as EventListener);
-      source.addEventListener("tool_call", handleEvent as EventListener);
-      source.addEventListener("tool_result", handleEvent as EventListener);
-      source.addEventListener("completion", handleEvent as EventListener);
-      source.addEventListener("failure", handleEvent as EventListener);
-      source.addEventListener("cancellation", handleEvent as EventListener);
-      source.onmessage = handleEvent;
-      source.onerror = () => {
-        source.close();
-        if (eventSourceRef.current === source) {
-          eventSourceRef.current = null;
-        }
-        clearReconnectTimer();
-        reconnectTimeoutRef.current = window.setTimeout(async () => {
-          if (streamingJobIdRef.current !== jobId) {
-            return;
+        source.addEventListener("progress", handleEvent as EventListener);
+        source.addEventListener("reasoning", handleEvent as EventListener);
+        source.addEventListener("model_output", handleEvent as EventListener);
+        source.addEventListener("compaction", handleEvent as EventListener);
+        source.addEventListener("tool_call", handleEvent as EventListener);
+        source.addEventListener("tool_result", handleEvent as EventListener);
+        source.addEventListener("completion", handleEvent as EventListener);
+        source.addEventListener("failure", handleEvent as EventListener);
+        source.addEventListener("cancellation", handleEvent as EventListener);
+        source.onmessage = handleEvent;
+        source.onerror = () => {
+          source.close();
+          if (eventSourceRef.current === source) {
+            eventSourceRef.current = null;
           }
-          try {
-            const refreshedJob = await getJob(jobId);
-            setJobs((current) => mergeJob(current, refreshedJob));
+          clearReconnectTimer();
+          reconnectTimeoutRef.current = window.setTimeout(async () => {
             if (streamingJobIdRef.current !== jobId) {
               return;
             }
-            if (["queued", "running"].includes(refreshedJob.status)) {
-              startStreaming(jobId, refreshedJob.latest_event_id ?? "0");
-            } else {
-              stopStreaming();
-              if (selectedSessionId) {
-                void refreshContextMetadata(selectedSessionId);
+            try {
+              const refreshedJob = await getJob(jobId);
+              setJobs((current) => mergeJob(current, refreshedJob));
+              if (streamingJobIdRef.current !== jobId) {
+                return;
+              }
+              if (["queued", "running"].includes(refreshedJob.status)) {
+                connect(refreshedJob.latest_event_id ?? "0");
+              } else {
+                stopStreaming();
+                if (selectedSessionId) {
+                  void refreshContextMetadata(selectedSessionId);
+                }
+              }
+            } catch {
+              if (streamingJobIdRef.current === jobId) {
+                connect("0");
               }
             }
-          } catch {
-            if (streamingJobIdRef.current === jobId) {
-              startStreaming(jobId, "0");
-            }
-          }
-        }, 1000);
+          }, 1000);
+        };
       };
+
+      connect(afterId);
     },
-    [appendStreamEvent, clearReconnectTimer, closeEventSource, stopStreaming, selectedSessionId, refreshContextMetadata],
+    [
+      appendStreamEvent,
+      clearReconnectTimer,
+      closeEventSource,
+      stopStreaming,
+      selectedSessionId,
+      refreshContextMetadata,
+    ]
   );
 
   useEffect(() => {
     async function load() {
       try {
-        const [nextConfig, nextProviders, nextSkills, nextSessions] = await Promise.all([
-          fetchDashboardConfig(),
-          listProviders(),
-          listAvailableSkills(),
-          listSessions(),
-        ]);
+        const [nextConfig, nextProviders, nextSkills, nextSessions] =
+          await Promise.all([
+            fetchDashboardConfig(),
+            listProviders(),
+            listAvailableSkills(),
+            listSessions(),
+          ]);
         setConfig(nextConfig);
         setProviders(nextProviders);
         setSkills(nextSkills);
@@ -351,11 +440,15 @@ export function PlayWorkspace() {
         if (nextSessions.length > 0) {
           const savedId = localStorage.getItem("play:selectedSessionId");
           const restoredId =
-            savedId && nextSessions.some((s) => s.id === savedId) ? savedId : nextSessions[0].id;
+            savedId && nextSessions.some((s) => s.id === savedId)
+              ? savedId
+              : nextSessions[0].id;
           setSelectedSessionId(restoredId);
         }
       } catch (error) {
-        setErrorText(error instanceof Error ? error.message : "Failed to load dashboard");
+        setErrorText(
+          error instanceof Error ? error.message : "Failed to load dashboard"
+        );
         setStatusText("Configuration error");
       }
     }
@@ -400,7 +493,9 @@ export function PlayWorkspace() {
         setStatusText("Ready");
         setErrorText(null);
       } catch (error) {
-        setErrorText(error instanceof Error ? error.message : "Failed to load session");
+        setErrorText(
+          error instanceof Error ? error.message : "Failed to load session"
+        );
         setStatusText("Session load failed");
       }
     }
@@ -410,20 +505,29 @@ export function PlayWorkspace() {
     return () => {
       stopStreaming();
     };
-  }, [config, loadAllJobs, selectedSessionId, startStreaming, stopStreaming]);
+  }, [
+    config,
+    loadAllJobs,
+    refreshContextMetadata,
+    selectedSessionId,
+    startStreaming,
+    stopStreaming,
+  ]);
 
   // When the provider changes, ensure the selected model is valid for the new provider.
   // If not, auto-switch to the first allowed model.
   useEffect(() => {
     if (!selectedProvider || !draft) return;
-    const allowedModels = [...new Set(selectedProvider.models)].sort((a, b) => a.localeCompare(b));
+    const allowedModels = [...new Set(selectedProvider.models)].sort((a, b) =>
+      a.localeCompare(b)
+    );
     if (allowedModels.length > 0 && !allowedModels.includes(draft.modelName)) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setDraft((current) =>
-        current ? { ...current, modelName: allowedModels[0] } : current,
+        current ? { ...current, modelName: allowedModels[0] } : current
       );
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.providerId, selectedProvider]);
 
   // When the draft's provider or model changes and differs from what the session
@@ -440,14 +544,25 @@ export function PlayWorkspace() {
     ) {
       return;
     }
-    committedModelRef.current = { providerId: draft.providerId, modelName: draft.modelName };
+    committedModelRef.current = {
+      providerId: draft.providerId,
+      modelName: draft.modelName,
+    };
     void setModelConfig(selectedSession.id, {
       provider_id: draft.providerId,
       model_name: draft.modelName,
-      gateway_options: (selectedSession.model_config?.gateway_options as Record<string, JsonValue>) ?? {},
-      provider_options: (selectedSession.model_config?.provider_options as Record<string, JsonValue>) ?? {},
+      gateway_options:
+        (selectedSession.model_config?.gateway_options as Record<
+          string,
+          JsonValue
+        >) ?? {},
+      provider_options:
+        (selectedSession.model_config?.provider_options as Record<
+          string,
+          JsonValue
+        >) ?? {},
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.providerId, draft?.modelName, selectedSession]);
 
   async function refreshSessions(preserveSelected = true) {
@@ -468,19 +583,31 @@ export function PlayWorkspace() {
     setStatusText("Creating session...");
 
     try {
-      const defaultName = new Date().toLocaleString("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).replace(",", "");
+      const defaultName = new Date()
+        .toLocaleString("en-CA", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        })
+        .replace(",", "");
       // Always use today's date for new sessions; the user can rename via Settings after creation.
       const created = await createSession(defaultName);
       const gatewayOptions = applyReasoningToGatewayOptions(
         parseJsonObject(draft.gatewayOptionsText, "Gateway options"),
-        draft.reasoning,
+        draft.reasoning
       );
 
       await setModelConfig(created.id, {
         provider_id: draft.providerId,
         model_name: draft.modelName,
         gateway_options: gatewayOptions,
-        provider_options: parseJsonObject(draft.providerOptionsText, "Provider options"),
+        provider_options: parseJsonObject(
+          draft.providerOptionsText,
+          "Provider options"
+        ),
       });
 
       for (const skillName of draft.selectedSkills) {
@@ -504,7 +631,9 @@ export function PlayWorkspace() {
       persistSelectedSessionId(created.id);
       setStatusText("Session created");
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to create session");
+      setErrorText(
+        error instanceof Error ? error.message : "Failed to create session"
+      );
       setStatusText("Create failed");
     } finally {
       setIsBusy(false);
@@ -523,13 +652,28 @@ export function PlayWorkspace() {
     try {
       const gatewayOptions = applyReasoningToGatewayOptions(
         parseJsonObject(draft.gatewayOptionsText, "Gateway options"),
-        draft.reasoning,
+        draft.reasoning
       );
-      const providerOptions = parseJsonObject(draft.providerOptionsText, "Provider options");
+      const providerOptions = parseJsonObject(
+        draft.providerOptionsText,
+        "Provider options"
+      );
       const customMcps = parseCustomMcps(draft.customMcpsText);
 
       await updateSession(selectedSession.id, {
-        name: draft.name.trim() || selectedSession.name || new Date().toLocaleString("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).replace(",", ""),
+        name:
+          draft.name.trim() ||
+          selectedSession.name ||
+          new Date()
+            .toLocaleString("en-CA", {
+              year: "numeric",
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            })
+            .replace(",", ""),
         metadata: selectedSession.metadata,
       });
       await setModelConfig(selectedSession.id, {
@@ -546,7 +690,11 @@ export function PlayWorkspace() {
         }
       }
       for (const skillName of selectedSkillNames) {
-        if (!selectedSession.skills.some((skill) => skill.skill_name === skillName)) {
+        if (
+          !selectedSession.skills.some(
+            (skill) => skill.skill_name === skillName
+          )
+        ) {
           await addSkill(selectedSession.id, skillName);
         }
       }
@@ -580,12 +728,17 @@ export function PlayWorkspace() {
       setSelectedSession(refreshed);
       const savedDraft = buildDraftFromSession(config, refreshed);
       setDraft(savedDraft);
-      committedModelRef.current = { providerId: savedDraft.providerId, modelName: savedDraft.modelName };
+      committedModelRef.current = {
+        providerId: savedDraft.providerId,
+        modelName: savedDraft.modelName,
+      };
       await refreshSessions();
       await loadAllJobs(selectedSession.id);
       setStatusText("Configuration saved");
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to save session");
+      setErrorText(
+        error instanceof Error ? error.message : "Failed to save session"
+      );
       setStatusText("Save failed");
     } finally {
       setIsBusy(false);
@@ -608,7 +761,9 @@ export function PlayWorkspace() {
       setSelectedSession(refreshed);
       setStatusText("Session terminated");
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Failed to terminate session");
+      setErrorText(
+        error instanceof Error ? error.message : "Failed to terminate session"
+      );
       setStatusText("Terminate failed");
     } finally {
       setIsBusy(false);
@@ -626,7 +781,9 @@ export function PlayWorkspace() {
       await loadAllJobs(selectedSession.id);
       setStatusText("Context compacted");
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Compaction failed");
+      setErrorText(
+        error instanceof Error ? error.message : "Compaction failed"
+      );
       setStatusText("Compaction failed");
     } finally {
       setIsBusy(false);
@@ -652,7 +809,9 @@ export function PlayWorkspace() {
       await refreshSessions();
       setStatusText("Prompt submitted");
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : "Prompt submission failed");
+      setErrorText(
+        error instanceof Error ? error.message : "Prompt submission failed"
+      );
       setStatusText("Prompt failed");
     } finally {
       setIsBusy(false);
@@ -668,7 +827,22 @@ export function PlayWorkspace() {
   }
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="relative flex h-full overflow-hidden">
+      {streamState === "streaming" ? (
+        <div
+          aria-live="polite"
+          aria-label="Streaming response"
+          className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center px-4"
+          role="status"
+        >
+          <div className="flex items-center gap-3 rounded-full border border-default-200/60 bg-background/90 px-4 py-2 shadow-lg backdrop-blur-sm">
+            <Spinner size="sm" />
+            <span className="text-sm text-default-500">
+              Streaming response...
+            </span>
+          </div>
+        </div>
+      ) : null}
       {/* Left — session sidebar */}
       <aside
         className={`flex shrink-0 flex-col border-r border-default-200/60 bg-background transition-all duration-200 ${
@@ -682,7 +856,11 @@ export function PlayWorkspace() {
           selectedSessionId={selectedSessionId}
           sessions={sessions}
           onCreate={handleCreateSession}
-          onToggleCollapsed={() => setIsSessionsCollapsed((c) => !c)}
+          onToggleCollapsed={() =>
+            setSessionsCollapsedOverride(
+              (current) => !(current ?? isMobileLayout)
+            )
+          }
           onSelect={persistSelectedSessionId}
         />
       </aside>
@@ -697,7 +875,9 @@ export function PlayWorkspace() {
           selectedSession={selectedSession}
           statusText={statusText}
           streamState={streamState}
-          onOpenSettings={() => setIsSettingsOpen((o) => !o)}
+          onOpenSettings={() =>
+            setSettingsOpenOverride((current) => !(current ?? !isMobileLayout))
+          }
           settingsOpen={isSettingsOpen}
         />
         <PlayPromptBox
@@ -720,7 +900,7 @@ export function PlayWorkspace() {
         modelOptions={modelOptions}
         providers={uniqueProviders}
         skills={skills}
-        onClose={() => setIsSettingsOpen(false)}
+        onClose={() => setSettingsOpenOverride(false)}
         onDraftChange={setDraft}
         onSave={handleSaveConfiguration}
         onTerminate={handleTerminateSession}

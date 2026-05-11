@@ -7,6 +7,7 @@ import uvicorn
 
 from agent_orchestrator.runtime.app import create_app
 from agent_orchestrator.config import Settings
+from agent_orchestrator.telemetry import setup_telemetry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
+    setup_telemetry()
     settings = Settings()
     logger.info(
         "Starting agent-orchestrator on %s:%s",

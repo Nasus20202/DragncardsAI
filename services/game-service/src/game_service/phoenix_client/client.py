@@ -162,7 +162,7 @@ class PhoenixClient:
         )
         try:
             await self._push_and_await(msg, reply_ref=ref, timeout=5.0)
-        except (asyncio.TimeoutError, PhoenixChannelError):
+        except asyncio.TimeoutError, PhoenixChannelError:
             pass  # Best-effort leave
         logger.debug("Left channel %s", topic)
 
@@ -205,7 +205,7 @@ class PhoenixClient:
                     self._dispatch(msg)
                 except Exception as exc:
                     logger.warning("Error decoding message %r: %s", raw, exc)
-        except (ConnectionClosed, asyncio.CancelledError):
+        except ConnectionClosed, asyncio.CancelledError:
             pass
         except Exception as exc:
             logger.error("recv_loop error: %s", exc)

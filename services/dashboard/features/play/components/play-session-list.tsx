@@ -2,10 +2,14 @@ import { SessionSummary } from "@/features/shared/lib/types";
 
 function dotColor(status: string | null | undefined) {
   switch (status) {
-    case "completed": return "bg-success";
-    case "running":   return "bg-warning animate-pulse";
-    case "failed":    return "bg-danger";
-    default:          return "bg-default-300";
+    case "completed":
+      return "bg-success";
+    case "running":
+      return "bg-warning animate-pulse";
+    case "failed":
+      return "bg-danger";
+    default:
+      return "bg-default-300";
   }
 }
 
@@ -51,7 +55,9 @@ export function PlaySessionList({
             Sessions
           </span>
         )}
-        <div className={`flex items-center gap-1 ${isCollapsed ? "w-full justify-center" : ""}`}>
+        <div
+          className={`flex items-center gap-1 ${isCollapsed ? "w-full justify-center" : ""}`}
+        >
           <button
             aria-label="New session"
             disabled={isBusy || !canCreate}
@@ -90,7 +96,9 @@ export function PlaySessionList({
               type="button"
               className={[
                 "w-full text-left transition-colors",
-                isCollapsed ? "flex justify-center px-2 py-3" : "flex items-center gap-2.5 px-3 py-2.5",
+                isCollapsed
+                  ? "flex justify-center px-2 py-3"
+                  : "flex items-center gap-2.5 px-3 py-2.5",
                 active
                   ? "bg-default-100 text-foreground"
                   : "text-default-600 hover:bg-default-100/60 hover:text-foreground",

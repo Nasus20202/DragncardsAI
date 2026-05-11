@@ -1,6 +1,10 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { JobEventResponse, JobDetail, SessionDetail } from "@/features/shared/lib/types";
+import {
+  JobEventResponse,
+  JobDetail,
+  SessionDetail,
+} from "@/features/shared/lib/types";
 import { useEffect, useRef, useState } from "react";
 
 /* ── Aggregated view types ───────────────────────────────────────── */
@@ -32,7 +36,10 @@ function compactionText(event: JobEventResponse): string {
  *  - model_output → all chunks merged into one string
  *  - everything else → kept as-is
  */
-function aggregateEvents(events: JobEventResponse[], isCompactionJob: boolean): AggEvent[] {
+function aggregateEvents(
+  events: JobEventResponse[],
+  isCompactionJob: boolean
+): AggEvent[] {
   let reasoningText = "";
   let modelText = "";
   const result: AggEvent[] = [];
@@ -57,7 +64,8 @@ function aggregateEvents(events: JobEventResponse[], isCompactionJob: boolean): 
 
       case "completion": {
         flushReasoning();
-        const completionText = typeof ev.payload.text === "string" ? ev.payload.text : "";
+        const completionText =
+          typeof ev.payload.text === "string" ? ev.payload.text : "";
         if (completionText) {
           modelText = completionText;
         }
@@ -65,7 +73,8 @@ function aggregateEvents(events: JobEventResponse[], isCompactionJob: boolean): 
       }
 
       case "reasoning":
-        reasoningText += typeof ev.payload.text === "string" ? ev.payload.text : "";
+        reasoningText +=
+          typeof ev.payload.text === "string" ? ev.payload.text : "";
         break;
 
       case "model_output":
@@ -164,13 +173,23 @@ function ReasoningBlock({
       >
         <div className="flex items-center gap-2">
           {isStreaming && !hasOutput ? (
-            <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-warning" />
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-warning"
+            />
           ) : (
-            <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-warning/60" />
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-warning/60"
+            />
           )}
-          <span className="text-xs font-medium text-default-500">Reasoning</span>
+          <span className="text-xs font-medium text-default-500">
+            Reasoning
+          </span>
         </div>
-        <span aria-hidden="true" className="text-xs text-default-400">{open ? "▴" : "▾"}</span>
+        <span aria-hidden="true" className="text-xs text-default-400">
+          {open ? "▴" : "▾"}
+        </span>
       </button>
       {open && (
         <div className="border-t border-default-200/60 px-3 py-2.5">
@@ -196,10 +215,17 @@ function CompactionBlock({ text }: { text: string }) {
         onClick={() => setOpen((p) => !p)}
       >
         <div className="flex items-center gap-2">
-          <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-warning/60" />
-          <span className="text-xs font-medium text-default-500">Context compaction</span>
+          <span
+            aria-hidden="true"
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-warning/60"
+          />
+          <span className="text-xs font-medium text-default-500">
+            Context compaction
+          </span>
         </div>
-        <span aria-hidden="true" className="text-xs text-default-400">{open ? "▴" : "▾"}</span>
+        <span aria-hidden="true" className="text-xs text-default-400">
+          {open ? "▴" : "▾"}
+        </span>
       </button>
       {open && (
         <div className="border-t border-default-200/60 px-3 py-2.5">
@@ -218,7 +244,9 @@ function ModelOutputBlock({ text }: { text: string }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{ script: () => null }}
-      >{text}</ReactMarkdown>
+      >
+        {text}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -252,10 +280,15 @@ function CollapsibleEventBlock({
         onClick={() => setOpen((p) => !p)}
       >
         <div className="flex items-center gap-2">
-          <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+          <span
+            aria-hidden="true"
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`}
+          />
           <span className="text-xs font-medium text-default-500">{label}</span>
         </div>
-        <span aria-hidden="true" className="text-xs text-default-400">{open ? "▴" : "▾"}</span>
+        <span aria-hidden="true" className="text-xs text-default-400">
+          {open ? "▴" : "▾"}
+        </span>
       </button>
       {open && (
         <div className="border-t border-default-200/60 px-3 py-2.5">
@@ -279,7 +312,13 @@ function AggEventRow({
 }) {
   switch (agg.kind) {
     case "reasoning":
-      return <ReasoningBlock text={agg.text} isStreaming={isStreaming} hasOutput={hasOutput} />;
+      return (
+        <ReasoningBlock
+          text={agg.text}
+          isStreaming={isStreaming}
+          hasOutput={hasOutput}
+        />
+      );
     case "model_output":
       return <ModelOutputBlock text={agg.text} />;
     case "tool_call":
@@ -317,7 +356,13 @@ function AggEventRow({
 }
 
 /* ── One prompt + its events ─────────────────────────────────────── */
-function JobThread({ job, isStreaming }: { job: JobDetail; isStreaming: boolean }) {
+function JobThread({
+  job,
+  isStreaming,
+}: {
+  job: JobDetail;
+  isStreaming: boolean;
+}) {
   const isCompactionJob = job.prompt_run.prompt === "[COMPACTION]";
   const aggEvents = aggregateEvents(job.events, isCompactionJob);
   const isWaiting = job.events.length === 0;
@@ -336,13 +381,21 @@ function JobThread({ job, isStreaming }: { job: JobDetail; isStreaming: boolean 
       {/* Agent response */}
       {isWaiting ? (
         <div className="flex items-center gap-2 text-xs text-default-400">
-          <span aria-hidden="true" className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-default-400" />
+          <span
+            aria-hidden="true"
+            className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-default-400"
+          />
           Waiting for response…
         </div>
       ) : (
         <div className="space-y-2">
           {aggEvents.map((agg, i) => (
-            <AggEventRow key={i} agg={agg} isStreaming={isStreaming} hasOutput={hasOutput} />
+            <AggEventRow
+              key={i}
+              agg={agg}
+              isStreaming={isStreaming}
+              hasOutput={hasOutput}
+            />
           ))}
         </div>
       )}
@@ -393,15 +446,24 @@ export function PlayTranscript({
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-default-200/60 px-4">
         <div className="flex items-center gap-2">
           {streamState === "streaming" && (
-            <span aria-hidden="true" className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
+            <span
+              aria-hidden="true"
+              className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success"
+            />
           )}
           <span className="text-xs text-default-400">
-            {streamState === "streaming" ? "Streaming…" : isBusy ? "Working…" : statusText}
+            {streamState === "streaming"
+              ? "Streaming…"
+              : isBusy
+                ? "Working…"
+                : statusText}
           </span>
         </div>
         <button
           type="button"
-          aria-label={settingsOpen ? "Close session settings" : "Open session settings"}
+          aria-label={
+            settingsOpen ? "Close session settings" : "Open session settings"
+          }
           className="rounded px-2.5 py-1 text-xs text-default-500 transition-colors hover:bg-default-100 hover:text-foreground"
           onClick={onOpenSettings}
         >
@@ -411,7 +473,10 @@ export function PlayTranscript({
 
       {/* Error banner */}
       {errorText && (
-        <div role="alert" className="mx-4 mt-3 shrink-0 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+        <div
+          role="alert"
+          className="mx-4 mt-3 shrink-0 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
+        >
           {errorText}
         </div>
       )}

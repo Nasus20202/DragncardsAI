@@ -1,4 +1,19 @@
 services:
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.27.1
+    restart: unless-stopped
+    ports:
+      - "3004:3000"
+      - "4317:4317"
+      - "4318:4318"
+    healthcheck:
+      test: ["CMD", "sh", "-lc", "test -f /tmp/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - dragncards-shared
+
   game-service-valkey:
     image: valkey/valkey:9.0.4-alpine
     restart: unless-stopped
@@ -49,9 +64,14 @@ services:
   bifrost:
     image: maximhq/bifrost:v1.5.0
     restart: unless-stopped
+    depends_on:
+      otel-lgtm:
+        condition: service_healthy
     env_file:
       - path: services/bifrost/.env
         required: false
+    environment:
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.namespace=dragncardsai
     volumes:
       - ./services/bifrost/config.json:/app/data/config.json:ro
     ports:

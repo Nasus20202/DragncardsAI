@@ -22,7 +22,10 @@ class FakeMcpClient:
             McpToolDefinition(
                 name="next step",
                 description="Advance the game",
-                input_schema={"type": "object", "properties": {"count": {"type": "integer"}}},
+                input_schema={
+                    "type": "object",
+                    "properties": {"count": {"type": "integer"}},
+                },
             )
         ]
 
@@ -38,10 +41,24 @@ class FailingMcpClient(FakeMcpClient):
             raise McpClientError("connection failed")
         return await super().list_tools(server_url, headers=headers)
 
+    async def call_tool(self, server_url, tool_name, arguments, headers=None):
+        self.calls.append(("call_tool", server_url, tool_name, arguments, headers))
+        if "bad" in server_url:
+            raise McpClientError("connection failed")
+        return await super().call_tool(
+            server_url, tool_name, arguments, headers=headers
+        )
+
 
 def test_normalize_mcp_server_url_only_for_streamable_http():
-    assert normalize_mcp_server_url("http://game-service/mcp", "streamable-http") == "http://game-service/mcp/"
-    assert normalize_mcp_server_url("http://game-service/mcp", "sse") == "http://game-service/mcp"
+    assert (
+        normalize_mcp_server_url("http://game-service/mcp", "streamable-http")
+        == "http://game-service/mcp/"
+    )
+    assert (
+        normalize_mcp_server_url("http://game-service/mcp", "sse")
+        == "http://game-service/mcp"
+    )
 
 
 def test_safe_tool_name_replaces_unsupported_characters():
@@ -63,8 +80,13 @@ async def test_mcp_tool_catalog_builds_and_calls_tools():
 
     assert tools[0].exposed_name == "game-service_next_step"
     assert tools[0].server_url == "http://game-service/mcp/"
-    assert catalog.as_openai_tools(tools)[0]["function"]["name"] == "game-service_next_step"
-    assert catalog.as_mapping(tools)["game-service_next_step"].actual_name == "next step"
+    assert (
+        catalog.as_openai_tools(tools)[0]["function"]["name"]
+        == "game-service_next_step"
+    )
+    assert (
+        catalog.as_mapping(tools)["game-service_next_step"].actual_name == "next step"
+    )
 
     result = await catalog.call_tool(tools[0], {"count": 1})
 
@@ -105,3 +127,113 @@ async def test_mcp_tool_catalog_can_skip_unreachable_assignments_for_read_paths(
     tools = await catalog.list_session_tools(assignments, ignore_failures=True)
 
     assert [tool.assignment_name for tool in tools] == ["game-service"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_catalog_can_return_error_result_for_unreachable_tool_call():
+    client = FailingMcpClient()
+    catalog = McpToolCatalog(client)
+    tool = SimpleNamespace(
+        exposed_name="bad-service_next_step",
+        actual_name="next_step",
+        assignment_name="bad-service",
+        server_url="http://bad-service/mcp/",
+        headers={},
+    )
+
+    result = await catalog.call_tool(tool, {}, ignore_failures=True)
+
+    assert result == {
+        "is_error": True,
+        "content": [
+            {"type": "text", "text": "MCP tool call failed: connection failed"}
+        ],
+    }
+
+
+def test_as_openai_tools_sanitizes_discriminated_union_schema():
+    catalog = McpToolCatalog(FakeMcpClient())
+    tools = catalog.as_openai_tools(
+        [
+            SimpleNamespace(
+                exposed_name="game-service_execute_action",
+                actual_name="execute_action",
+                description="Execute a game action",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "action": {
+                            "title": "Action",
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"const": "next_step", "type": "string"}
+                                    },
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {
+                                            "const": "draw_card",
+                                            "type": "string",
+                                        },
+                                        "count": {"type": "integer"},
+                                    },
+                                },
+                            ],
+                            "discriminator": {
+                                "propertyName": "type",
+                                "mapping": {
+                                    "next_step": "#/components/schemas/NextStepAction",
+                                    "draw_card": "#/components/schemas/DrawCardAction",
+                                },
+                            },
+                        },
+                    },
+                    "required": ["session_id", "action"],
+                },
+            )
+        ]
+    )
+
+    parameters = tools[0]["function"]["parameters"]
+    assert parameters["type"] == "object"
+    assert parameters["required"] == ["session_id", "action"]
+    assert parameters["properties"]["action"]["type"] == "object"
+    assert parameters["properties"]["action"]["properties"]["type"] == {
+        "type": "string",
+        "enum": ["draw_card", "next_step"],
+    }
+    assert "anyOf" not in parameters["properties"]["action"]
+    assert "discriminator" not in parameters["properties"]["action"]
+    assert parameters["properties"]["action"]["additionalProperties"] is True
+
+
+def test_as_openai_tools_collapse_nullable_union_fields():
+    catalog = McpToolCatalog(FakeMcpClient())
+    tools = catalog.as_openai_tools(
+        [
+            SimpleNamespace(
+                exposed_name="demo_tool",
+                actual_name="demo_tool",
+                description="Demo tool",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "player_n": {
+                            "anyOf": [{"type": "string"}, {"type": "null"}],
+                            "description": "Optional player identifier",
+                        }
+                    },
+                },
+            )
+        ]
+    )
+
+    player_schema = tools[0]["function"]["parameters"]["properties"]["player_n"]
+    assert player_schema == {
+        "description": "Optional player identifier",
+        "type": "string",
+    }

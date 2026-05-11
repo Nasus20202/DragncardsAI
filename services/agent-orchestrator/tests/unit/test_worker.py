@@ -42,12 +42,18 @@ class FakeBifrost:
         provider_options,
         on_delta=None,
     ):
-        self.calls.append({"provider_id": provider_id, "model_name": model_name, "tools": tools})
+        self.calls.append(
+            {"provider_id": provider_id, "model_name": model_name, "tools": tools}
+        )
         if self.error is not None:
             raise self.error
         response = self.responses.pop(0)
         if on_delta is not None and response.content:
-            await on_delta(SimpleNamespace(content=response.content, reasoning="", reasoning_details=[]))
+            await on_delta(
+                SimpleNamespace(
+                    content=response.content, reasoning="", reasoning_details=[]
+                )
+            )
         return response
 
 
@@ -62,14 +68,21 @@ class StreamingFakeBifrost(FakeBifrost):
         provider_options,
         on_delta=None,
     ):
-        self.calls.append({"provider_id": provider_id, "model_name": model_name, "tools": tools})
+        self.calls.append(
+            {"provider_id": provider_id, "model_name": model_name, "tools": tools}
+        )
         if on_delta is not None:
-            from agent_orchestrator.integrations.bifrost import ChatDelta, ReasoningDetail
+            from agent_orchestrator.integrations.bifrost import (
+                ChatDelta,
+                ReasoningDetail,
+            )
 
             await on_delta(
                 ChatDelta(
                     reasoning="thinking...",
-                    reasoning_details=[ReasoningDetail(index=0, type="text", text="thinking...")],
+                    reasoning_details=[
+                        ReasoningDetail(index=0, type="text", text="thinking...")
+                    ],
                 )
             )
             await on_delta(ChatDelta(content="partial answer"))
@@ -90,13 +103,20 @@ class FakeMcp:
         ]
 
     async def call_tool(self, server_url, tool_name, arguments, headers=None):
-        self.calls.append({"server_url": server_url, "tool_name": tool_name, "arguments": arguments})
+        self.calls.append(
+            {"server_url": server_url, "tool_name": tool_name, "arguments": arguments}
+        )
         return {"is_error": False, "content": [{"type": "text", "text": "done"}]}
 
 
 class ErrorMcp(FakeMcp):
     async def call_tool(self, server_url, tool_name, arguments, headers=None):
         raise McpClientError("tool transport failed")
+
+
+class ListErrorMcp(FakeMcp):
+    async def list_tools(self, server_url, headers=None):
+        raise McpClientError("tool discovery failed")
 
 
 @pytest.fixture
@@ -143,9 +163,13 @@ async def _prepare_session_without_model(repo: Repository):
 
 
 @pytest.mark.asyncio
-async def test_worker_completes_prompt_with_tool(repository: Repository, skill_registry: SkillRegistry):
+async def test_worker_completes_prompt_with_tool(
+    repository: Repository, skill_registry: SkillRegistry
+):
     session = await _prepare_session(repository)
-    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
     assert job is not None
     claimed = await repository.claim_next_job()
     assert claimed is not None
@@ -154,7 +178,9 @@ async def test_worker_completes_prompt_with_tool(repository: Repository, skill_r
         responses=[
             ChatResponse(
                 content="",
-                tool_calls=[ToolCall(id="tool-1", name="game-service_next_step", arguments={})],
+                tool_calls=[
+                    ToolCall(id="tool-1", name="game-service_next_step", arguments={})
+                ],
                 raw={},
             ),
             ChatResponse(content="finished", tool_calls=[], raw={}),
@@ -183,9 +209,13 @@ async def test_worker_completes_prompt_with_tool(repository: Repository, skill_r
 
 
 @pytest.mark.asyncio
-async def test_worker_retries_gateway_errors(repository: Repository, skill_registry: SkillRegistry):
+async def test_worker_retries_gateway_errors(
+    repository: Repository, skill_registry: SkillRegistry
+):
     session = await _prepare_session(repository)
-    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=2)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=2
+    )
     assert job is not None
     claimed = await repository.claim_next_job()
     assert claimed is not None
@@ -193,7 +223,9 @@ async def test_worker_retries_gateway_errors(repository: Repository, skill_regis
     worker = WorkerService(
         settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
         repository=repository,
-        bifrost_client=FakeBifrost(error=BifrostError("gateway_error", "temporary", retryable=True)),
+        bifrost_client=FakeBifrost(
+            error=BifrostError("gateway_error", "temporary", retryable=True)
+        ),
         live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(FakeMcp()),
         skill_registry=skill_registry,
@@ -206,9 +238,13 @@ async def test_worker_retries_gateway_errors(repository: Repository, skill_regis
 
 
 @pytest.mark.asyncio
-async def test_worker_cancels_before_tool_call(repository: Repository, skill_registry: SkillRegistry):
+async def test_worker_cancels_before_tool_call(
+    repository: Repository, skill_registry: SkillRegistry
+):
     session = await _prepare_session(repository)
-    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
     assert job is not None
     claimed = await repository.claim_next_job()
     assert claimed is not None
@@ -218,7 +254,9 @@ async def test_worker_cancels_before_tool_call(repository: Repository, skill_reg
     worker = WorkerService(
         settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
         repository=repository,
-        bifrost_client=FakeBifrost(responses=[ChatResponse(content="done", tool_calls=[], raw={})]),
+        bifrost_client=FakeBifrost(
+            responses=[ChatResponse(content="done", tool_calls=[], raw={})]
+        ),
         live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(mcp),
         skill_registry=skill_registry,
@@ -241,14 +279,23 @@ def test_worker_formats_nested_execution_error(skill_registry: SkillRegistry):
         skill_registry=skill_registry,
     )
 
-    error = ExceptionGroup("wrapper", [RuntimeError("Redirect response '307 Temporary Redirect'")])
-    assert worker._format_execution_error(error) == "Redirect response '307 Temporary Redirect'"
+    error = ExceptionGroup(
+        "wrapper", [RuntimeError("Redirect response '307 Temporary Redirect'")]
+    )
+    assert (
+        worker._format_execution_error(error)
+        == "Redirect response '307 Temporary Redirect'"
+    )
 
 
 @pytest.mark.asyncio
-async def test_worker_fails_without_model_config(repository: Repository, skill_registry: SkillRegistry):
+async def test_worker_fails_without_model_config(
+    repository: Repository, skill_registry: SkillRegistry
+):
     session = await _prepare_session_without_model(repository)
-    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
     claimed = await repository.claim_next_job()
     assert job is not None
     assert claimed is not None
@@ -271,9 +318,13 @@ async def test_worker_fails_without_model_config(repository: Repository, skill_r
 
 
 @pytest.mark.asyncio
-async def test_worker_fails_on_unknown_tool_request(repository: Repository, skill_registry: SkillRegistry):
+async def test_worker_fails_on_unknown_tool_request(
+    repository: Repository, skill_registry: SkillRegistry
+):
     session = await _prepare_session(repository)
-    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
     claimed = await repository.claim_next_job()
     assert job is not None
     assert claimed is not None
@@ -282,7 +333,15 @@ async def test_worker_fails_on_unknown_tool_request(repository: Repository, skil
         settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
         repository=repository,
         bifrost_client=FakeBifrost(
-            responses=[ChatResponse(content="", tool_calls=[ToolCall(id="tool-1", name="unknown_tool", arguments={})], raw={})]
+            responses=[
+                ChatResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="tool-1", name="unknown_tool", arguments={})
+                    ],
+                    raw={},
+                )
+            ]
         ),
         live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(FakeMcp()),
@@ -299,21 +358,31 @@ async def test_worker_fails_on_unknown_tool_request(repository: Repository, skil
 
 
 @pytest.mark.asyncio
-async def test_worker_fails_when_tool_round_limit_is_exceeded(repository: Repository, skill_registry: SkillRegistry):
+async def test_worker_fails_when_tool_round_limit_is_exceeded(
+    repository: Repository, skill_registry: SkillRegistry
+):
     session = await _prepare_session(repository)
-    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
     claimed = await repository.claim_next_job()
     assert job is not None
     assert claimed is not None
 
     worker = WorkerService(
-        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0]), worker_max_tool_rounds=1),
+        settings=Settings(
+            SKILL_ROOTS=str(skill_registry._roots[0]), worker_max_tool_rounds=1
+        ),
         repository=repository,
         bifrost_client=FakeBifrost(
             responses=[
                 ChatResponse(
                     content="",
-                    tool_calls=[ToolCall(id="tool-1", name="game-service_next_step", arguments={})],
+                    tool_calls=[
+                        ToolCall(
+                            id="tool-1", name="game-service_next_step", arguments={}
+                        )
+                    ],
                     raw={},
                 )
             ]
@@ -333,9 +402,13 @@ async def test_worker_fails_when_tool_round_limit_is_exceeded(repository: Reposi
 
 
 @pytest.mark.asyncio
-async def test_worker_fails_on_mcp_client_error(repository: Repository, skill_registry: SkillRegistry):
+async def test_worker_continues_when_mcp_tool_call_fails(
+    repository: Repository, skill_registry: SkillRegistry
+):
     session = await _prepare_session(repository)
-    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
     claimed = await repository.claim_next_job()
     assert job is not None
     assert claimed is not None
@@ -347,9 +420,14 @@ async def test_worker_fails_on_mcp_client_error(repository: Repository, skill_re
             responses=[
                 ChatResponse(
                     content="",
-                    tool_calls=[ToolCall(id="tool-1", name="game-service_next_step", arguments={})],
+                    tool_calls=[
+                        ToolCall(
+                            id="tool-1", name="game-service_next_step", arguments={}
+                        )
+                    ],
                     raw={},
-                )
+                ),
+                ChatResponse(content="finished", tool_calls=[], raw={}),
             ]
         ),
         live_event_bus=InMemoryLiveEventBus(),
@@ -361,15 +439,57 @@ async def test_worker_fails_on_mcp_client_error(repository: Repository, skill_re
 
     stored = await repository.get_job(job.id)
     assert stored is not None
-    assert stored.status == "failed"
-    assert stored.error_code == "execution_error"
-    assert stored.error_message == "tool transport failed"
+    assert stored.status == "completed"
+    assert stored.result_text == "finished"
+    events = await repository.list_events(job.id)
+    tool_result = next(event for event in events if event.event_type == "tool_result")
+    assert tool_result.payload_json["is_error"] is True
+    assert tool_result.payload_json["result"]["content"][0]["text"] == (
+        "MCP tool call failed: tool transport failed"
+    )
 
 
 @pytest.mark.asyncio
-async def test_worker_marks_non_retryable_bifrost_error_as_failed(repository: Repository, skill_registry: SkillRegistry):
+async def test_worker_continues_when_mcp_tool_discovery_fails(
+    repository: Repository, skill_registry: SkillRegistry
+):
     session = await _prepare_session(repository)
-    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=2)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
+    claimed = await repository.claim_next_job()
+    assert job is not None
+    assert claimed is not None
+
+    bifrost = FakeBifrost(
+        responses=[ChatResponse(content="finished", tool_calls=[], raw={})]
+    )
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=bifrost,
+        live_event_bus=InMemoryLiveEventBus(),
+        mcp_tool_catalog=McpToolCatalog(ListErrorMcp()),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "completed"
+    assert stored.result_text == "finished"
+    assert bifrost.calls[0]["tools"] == []
+
+
+@pytest.mark.asyncio
+async def test_worker_marks_non_retryable_bifrost_error_as_failed(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    session = await _prepare_session(repository)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=2
+    )
     claimed = await repository.claim_next_job()
     assert job is not None
     assert claimed is not None
@@ -377,7 +497,9 @@ async def test_worker_marks_non_retryable_bifrost_error_as_failed(repository: Re
     worker = WorkerService(
         settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
         repository=repository,
-        bifrost_client=FakeBifrost(error=BifrostError("gateway_error", "fatal", retryable=False)),
+        bifrost_client=FakeBifrost(
+            error=BifrostError("gateway_error", "fatal", retryable=False)
+        ),
         live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(FakeMcp()),
         skill_registry=skill_registry,
@@ -393,7 +515,9 @@ async def test_worker_marks_non_retryable_bifrost_error_as_failed(repository: Re
 
 
 @pytest.mark.asyncio
-async def test_worker_emits_reasoning_events_when_reasoning_is_enabled(repository: Repository, skill_registry: SkillRegistry):
+async def test_worker_emits_reasoning_events_when_reasoning_is_enabled(
+    repository: Repository, skill_registry: SkillRegistry
+):
     session = await repository.create_session("demo", {})
     await repository.set_model_config(
         session.id,
@@ -402,7 +526,9 @@ async def test_worker_emits_reasoning_events_when_reasoning_is_enabled(repositor
         gateway_options={"reasoning": {"effort": "high"}},
         provider_options={},
     )
-    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
     claimed = await repository.claim_next_job()
     assert job is not None
     assert claimed is not None
@@ -410,7 +536,9 @@ async def test_worker_emits_reasoning_events_when_reasoning_is_enabled(repositor
     worker = WorkerService(
         settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
         repository=repository,
-        bifrost_client=StreamingFakeBifrost(responses=[ChatResponse(content="partial answer", tool_calls=[], raw={})]),
+        bifrost_client=StreamingFakeBifrost(
+            responses=[ChatResponse(content="partial answer", tool_calls=[], raw={})]
+        ),
         live_event_bus=InMemoryLiveEventBus(),
         mcp_tool_catalog=McpToolCatalog(FakeMcp()),
         skill_registry=skill_registry,
@@ -430,7 +558,9 @@ async def test_worker_emits_reasoning_events_when_reasoning_is_enabled(repositor
 
 
 @pytest.mark.asyncio
-async def test_worker_live_stream_events_reference_snapshot_rows(repository: Repository, skill_registry: SkillRegistry):
+async def test_worker_live_stream_events_reference_snapshot_rows(
+    repository: Repository, skill_registry: SkillRegistry
+):
     session = await repository.create_session("demo", {})
     await repository.set_model_config(
         session.id,
@@ -439,7 +569,9 @@ async def test_worker_live_stream_events_reference_snapshot_rows(repository: Rep
         gateway_options={"reasoning": {"effort": "high"}},
         provider_options={},
     )
-    job = await repository.enqueue_prompt_job(session.id, prompt="play", metadata_json={}, max_attempts=1)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
     claimed = await repository.claim_next_job()
     assert job is not None
     assert claimed is not None
@@ -455,14 +587,21 @@ async def test_worker_live_stream_events_reference_snapshot_rows(repository: Rep
             provider_options,
             on_delta=None,
         ):
-            self.calls.append({"provider_id": provider_id, "model_name": model_name, "tools": tools})
+            self.calls.append(
+                {"provider_id": provider_id, "model_name": model_name, "tools": tools}
+            )
             if on_delta is not None:
-                from agent_orchestrator.integrations.bifrost import ChatDelta, ReasoningDetail
+                from agent_orchestrator.integrations.bifrost import (
+                    ChatDelta,
+                    ReasoningDetail,
+                )
 
                 await on_delta(
                     ChatDelta(
                         reasoning="thinking",
-                        reasoning_details=[ReasoningDetail(index=0, type="text", text="thinking")],
+                        reasoning_details=[
+                            ReasoningDetail(index=0, type="text", text="thinking")
+                        ],
                     )
                 )
                 await on_delta(ChatDelta(reasoning="...", reasoning_details=[]))
@@ -484,7 +623,9 @@ async def test_worker_live_stream_events_reference_snapshot_rows(repository: Rep
 
     stored_events = await repository.list_events(job.id)
     reasoning_event = next(e for e in stored_events if e.event_type == "reasoning")
-    model_output_event = next(e for e in stored_events if e.event_type == "model_output")
+    model_output_event = next(
+        e for e in stored_events if e.event_type == "model_output"
+    )
 
     subscriber = await live_event_bus.subscribe(job.id)
     try:
@@ -498,12 +639,26 @@ async def test_worker_live_stream_events_reference_snapshot_rows(repository: Rep
         await subscriber.aclose()
 
     reasoning_live = [event for event in live_events if event.event_type == "reasoning"]
-    model_output_live = [event for event in live_events if event.event_type == "model_output"]
+    model_output_live = [
+        event for event in live_events if event.event_type == "model_output"
+    ]
 
-    assert [event.payload_json["text"] for event in reasoning_live] == ["thinking", "thinking..."]
+    assert [event.payload_json["text"] for event in reasoning_live] == [
+        "thinking",
+        "thinking...",
+    ]
     assert all(event.payload_json["stream"] is True for event in reasoning_live)
-    assert all(event.payload_json["snapshot_event_id"] == str(reasoning_event.id) for event in reasoning_live)
+    assert all(
+        event.payload_json["snapshot_event_id"] == str(reasoning_event.id)
+        for event in reasoning_live
+    )
 
-    assert [event.payload_json["text"] for event in model_output_live] == ["partial ", "partial answer"]
+    assert [event.payload_json["text"] for event in model_output_live] == [
+        "partial ",
+        "partial answer",
+    ]
     assert all(event.payload_json["stream"] is True for event in model_output_live)
-    assert all(event.payload_json["snapshot_event_id"] == str(model_output_event.id) for event in model_output_live)
+    assert all(
+        event.payload_json["snapshot_event_id"] == str(model_output_event.id)
+        for event in model_output_live
+    )

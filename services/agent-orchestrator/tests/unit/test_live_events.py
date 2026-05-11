@@ -1,4 +1,5 @@
 """Unit tests for InMemoryLiveEventBus — replay buffer and subscriber cleanup."""
+
 from __future__ import annotations
 
 import asyncio

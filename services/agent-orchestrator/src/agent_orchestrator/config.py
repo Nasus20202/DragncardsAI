@@ -6,7 +6,6 @@ from pathlib import Path
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 REQUIRED_PROVIDER_IDS = (
     "github-copilot",
     "nvidia",
@@ -49,7 +48,9 @@ class Settings(BaseSettings):
     )
     context_compaction_threshold: float = Field(
         default=0.8,
-        validation_alias=AliasChoices("context_compaction_threshold", "CONTEXT_COMPACTION_THRESHOLD"),
+        validation_alias=AliasChoices(
+            "context_compaction_threshold", "CONTEXT_COMPACTION_THRESHOLD"
+        ),
     )
     enabled_provider_ids_raw: str = Field(
         default=",".join(REQUIRED_PROVIDER_IDS),

@@ -1,4 +1,5 @@
 """Unit tests for multi-turn message history builder."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,7 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent_orchestrator.runtime.memory import _reconstruct_job_messages, build_message_history
+from agent_orchestrator.runtime.memory import (
+    _reconstruct_job_messages,
+    build_message_history,
+)
 from agent_orchestrator.storage.db import create_engine, create_session_factory
 from agent_orchestrator.storage.migrations import ensure_schema
 from agent_orchestrator.storage.repository import Repository
@@ -36,8 +40,12 @@ async def _make_session(repo: Repository, multi_turn_memory: bool = True):
     return session
 
 
-async def _complete_job(repo: Repository, session_id: str, prompt: str, output: str) -> str:
-    job = await repo.enqueue_prompt_job(session_id, prompt=prompt, metadata_json={}, max_attempts=1)
+async def _complete_job(
+    repo: Repository, session_id: str, prompt: str, output: str
+) -> str:
+    job = await repo.enqueue_prompt_job(
+        session_id, prompt=prompt, metadata_json={}, max_attempts=1
+    )
     assert job is not None
     claimed = await repo.claim_next_job()
     assert claimed is not None
@@ -87,8 +95,12 @@ async def test_build_message_history_with_prior_jobs(repository: Repository):
 async def test_build_message_history_with_compaction_checkpoint(repository: Repository):
     session = await _make_session(repository)
 
-    job1_id = await _complete_job(repository, session.id, "job1 prompt", "job1 response")
-    job2_id = await _complete_job(repository, session.id, "job2 prompt", "job2 response")
+    job1_id = await _complete_job(
+        repository, session.id, "job1 prompt", "job1 response"
+    )
+    job2_id = await _complete_job(
+        repository, session.id, "job2 prompt", "job2 response"
+    )
 
     # Create a compaction record covering up to job1
     await repository.create_compaction_record(
@@ -148,7 +160,12 @@ def test_reconstruct_job_messages_with_tool_calls():
     completion_event.event_type = "completion"
     completion_event.payload_json = {"text": "Done"}
 
-    mock_job.events = [model_event, tool_call_event, tool_result_event, completion_event]
+    mock_job.events = [
+        model_event,
+        tool_call_event,
+        tool_result_event,
+        completion_event,
+    ]
 
     messages = _reconstruct_job_messages(mock_job)
 

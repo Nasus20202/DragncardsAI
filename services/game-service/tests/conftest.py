@@ -16,6 +16,7 @@ import os
 import httpx
 import pytest
 
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
 _DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:4000")
 _backend_available: bool | None = None

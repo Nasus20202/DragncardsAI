@@ -5,8 +5,16 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError, ChatResponse
-from agent_orchestrator.integrations.mcp.client import McpClientError, StreamableHttpMcpClient, McpToolDefinition
+from agent_orchestrator.integrations.bifrost import (
+    BifrostClient,
+    BifrostError,
+    ChatResponse,
+)
+from agent_orchestrator.integrations.mcp.client import (
+    McpClientError,
+    StreamableHttpMcpClient,
+    McpToolDefinition,
+)
 from agent_orchestrator.runtime.app import create_app
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
@@ -35,7 +43,15 @@ class FakeBifrostClient(BifrostClient):
             "gemini": ["gemini-2.0-flash"],
         }
         return [
-            type("ModelInfo", (), {"id": model_id, "name": model_id, "supported_methods": ["chat_completion"]})()
+            type(
+                "ModelInfo",
+                (),
+                {
+                    "id": model_id,
+                    "name": model_id,
+                    "supported_methods": ["chat_completion"],
+                },
+            )()
             for model_id in data.get(provider_id, [])
         ]
 
@@ -98,7 +114,8 @@ async def build_test_app(
             ENABLED_PROVIDER_IDS="openai,gemini",
         ),
         repository=repository,
-        bifrost_client=bifrost_client or FakeBifrostClient(unavailable_provider_ids=unavailable_provider_ids),
+        bifrost_client=bifrost_client
+        or FakeBifrostClient(unavailable_provider_ids=unavailable_provider_ids),
         live_event_bus=InMemoryLiveEventBus(),
         mcp_client=mcp_client or FakeMcpClient(),
         skill_registry=SkillRegistry((skill_root,)),
@@ -119,7 +136,12 @@ def test_ready_reports_dependencies(app):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ready"
-    assert body["checks"] == {"database": True, "bifrost": True, "valkey": True, "worker": True}
+    assert body["checks"] == {
+        "database": True,
+        "bifrost": True,
+        "valkey": True,
+        "worker": True,
+    }
 
 
 def test_list_providers(app):
@@ -141,15 +163,33 @@ async def test_list_providers_filters_models_to_requested_provider(tmp_path: Pat
     class MixedModelBifrostClient(FakeBifrostClient):
         async def list_models(self, provider_id: str):
             if provider_id == "openai":
-                model_ids = ["gpt-4o-mini", "openai/gpt-4.1-mini", "openrouter/google/gemini-2.5-pro"]
+                model_ids = [
+                    "gpt-4o-mini",
+                    "openai/gpt-4.1-mini",
+                    "openrouter/google/gemini-2.5-pro",
+                ]
             else:
-                model_ids = ["gemini/gemini-2.0-flash", "openrouter/openai/gpt-4o-mini", "gpt-4o-mini"]
+                model_ids = [
+                    "gemini/gemini-2.0-flash",
+                    "openrouter/openai/gpt-4o-mini",
+                    "gpt-4o-mini",
+                ]
             return [
-                type("ModelInfo", (), {"id": model_id, "name": model_id, "supported_methods": ["chat_completion"]})()
+                type(
+                    "ModelInfo",
+                    (),
+                    {
+                        "id": model_id,
+                        "name": model_id,
+                        "supported_methods": ["chat_completion"],
+                    },
+                )()
                 for model_id in model_ids
             ]
 
-    app, engine = await build_test_app(tmp_path, bifrost_client=MixedModelBifrostClient())
+    app, engine = await build_test_app(
+        tmp_path, bifrost_client=MixedModelBifrostClient()
+    )
     try:
         with TestClient(app) as client:
             response = client.get("/providers")
@@ -240,8 +280,12 @@ def test_session_lifecycle_and_assignments(app):
 
 def test_list_sessions_returns_pagination_metadata(app):
     with TestClient(app) as client:
-        first_session_id = client.post("/sessions", json={"name": "a"}).json()["session"]["id"]
-        second_session_id = client.post("/sessions", json={"name": "b"}).json()["session"]["id"]
+        first_session_id = client.post("/sessions", json={"name": "a"}).json()[
+            "session"
+        ]["id"]
+        second_session_id = client.post("/sessions", json={"name": "b"}).json()[
+            "session"
+        ]["id"]
         client.put(
             f"/sessions/{first_session_id}/model-config",
             json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
@@ -268,7 +312,9 @@ def test_list_sessions_returns_pagination_metadata(app):
 
 def test_list_sessions_includes_dashboard_summary_fields(app):
     with TestClient(app) as client:
-        session_id = client.post("/sessions", json={"name": "demo"}).json()["session"]["id"]
+        session_id = client.post("/sessions", json={"name": "demo"}).json()["session"][
+            "id"
+        ]
         client.put(
             f"/sessions/{session_id}/model-config",
             json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
@@ -293,7 +339,9 @@ def test_list_sessions_includes_dashboard_summary_fields(app):
 
 def test_job_status_endpoint_returns_summary(app):
     with TestClient(app) as client:
-        session_id = client.post("/sessions", json={"name": "demo"}).json()["session"]["id"]
+        session_id = client.post("/sessions", json={"name": "demo"}).json()["session"][
+            "id"
+        ]
         client.put(
             f"/sessions/{session_id}/model-config",
             json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
@@ -312,14 +360,19 @@ async def test_job_detail_ignores_unreachable_mcp_assignments(tmp_path: Path):
     app, engine = await build_test_app(tmp_path, mcp_client=FailingMcpClient())
     try:
         with TestClient(app) as client:
-            session_id = client.post("/sessions", json={"name": "demo"}).json()["session"]["id"]
+            session_id = client.post("/sessions", json={"name": "demo"}).json()[
+                "session"
+            ]["id"]
             client.put(
                 f"/sessions/{session_id}/model-config",
                 json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
             )
             client.post(
                 f"/sessions/{session_id}/mcps",
-                json={"name": "game-service", "server_url": "http://localhost:4001/mcp"},
+                json={
+                    "name": "game-service",
+                    "server_url": "http://localhost:4001/mcp",
+                },
             )
             job_id = client.post(
                 f"/sessions/{session_id}/prompts",
@@ -339,10 +392,15 @@ async def test_session_tools_ignores_unreachable_mcp_assignments(tmp_path: Path)
     app, engine = await build_test_app(tmp_path, mcp_client=FailingMcpClient())
     try:
         with TestClient(app) as client:
-            session_id = client.post("/sessions", json={"name": "demo"}).json()["session"]["id"]
+            session_id = client.post("/sessions", json={"name": "demo"}).json()[
+                "session"
+            ]["id"]
             client.post(
                 f"/sessions/{session_id}/mcps",
-                json={"name": "game-service", "server_url": "http://localhost:4001/mcp"},
+                json={
+                    "name": "game-service",
+                    "server_url": "http://localhost:4001/mcp",
+                },
             )
 
             response = client.get(f"/sessions/{session_id}/tools")
@@ -386,10 +444,15 @@ def test_rejects_unknown_skill(app):
 def test_missing_resources_return_404(app):
     with TestClient(app) as client:
         assert client.get("/sessions/missing").status_code == 404
-        assert client.patch("/sessions/missing", json={"name": "demo"}).status_code == 404
+        assert (
+            client.patch("/sessions/missing", json={"name": "demo"}).status_code == 404
+        )
         assert client.post("/sessions/missing/terminate").status_code == 404
         assert client.get("/sessions/missing/jobs").status_code == 404
-        assert client.post("/sessions/missing/prompts", json={"prompt": "hi"}).status_code == 404
+        assert (
+            client.post("/sessions/missing/prompts", json={"prompt": "hi"}).status_code
+            == 404
+        )
         assert client.get("/jobs/missing").status_code == 404
         assert client.get("/jobs/missing/status").status_code == 404
         assert client.post("/jobs/missing/cancel").status_code == 404
@@ -399,7 +462,9 @@ def test_missing_resources_return_404(app):
 @pytest.mark.asyncio
 async def test_remove_assignments_and_filter_events_with_after(app):
     with TestClient(app) as client:
-        session_id = client.post("/sessions", json={"name": "demo"}).json()["session"]["id"]
+        session_id = client.post("/sessions", json={"name": "demo"}).json()["session"][
+            "id"
+        ]
         client.put(
             f"/sessions/{session_id}/model-config",
             json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
@@ -414,8 +479,12 @@ async def test_remove_assignments_and_filter_events_with_after(app):
             json={"prompt": "hello"},
         ).json()["job"]["id"]
 
-        await app.state.repository.append_event(job_id, session_id, "model_output", {"text": "hello"})
-        await app.state.repository.append_event(job_id, session_id, "completion", {"text": "done"})
+        await app.state.repository.append_event(
+            job_id, session_id, "model_output", {"text": "hello"}
+        )
+        await app.state.repository.append_event(
+            job_id, session_id, "completion", {"text": "done"}
+        )
 
         events = client.get(f"/jobs/{job_id}/events").json()["events"]
         assert len(events) >= 2
@@ -427,7 +496,19 @@ async def test_remove_assignments_and_filter_events_with_after(app):
         assert all(event["id"] > events[0]["id"] for event in later_events)
 
         client.post(f"/sessions/{session_id}/skills", json={"skill_name": "demo-skill"})
-        assert client.delete(f"/sessions/{session_id}/skills/demo-skill").status_code == 204
-        assert client.delete(f"/sessions/{session_id}/mcps/game-service").status_code == 204
-        assert client.delete(f"/sessions/{session_id}/skills/demo-skill").status_code == 404
-        assert client.delete(f"/sessions/{session_id}/mcps/game-service").status_code == 404
+        assert (
+            client.delete(f"/sessions/{session_id}/skills/demo-skill").status_code
+            == 204
+        )
+        assert (
+            client.delete(f"/sessions/{session_id}/mcps/game-service").status_code
+            == 204
+        )
+        assert (
+            client.delete(f"/sessions/{session_id}/skills/demo-skill").status_code
+            == 404
+        )
+        assert (
+            client.delete(f"/sessions/{session_id}/mcps/game-service").status_code
+            == 404
+        )

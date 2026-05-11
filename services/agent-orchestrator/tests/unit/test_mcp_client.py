@@ -18,7 +18,10 @@ def test_serialize_content_handles_supported_shapes():
     client = StreamableHttpMcpClient(timeout_seconds=12.5)
 
     assert client._serialize_content(Dumpable("ok")) == {"type": "text", "text": "ok"}
-    assert client._serialize_content({"type": "text", "text": "raw"}) == {"type": "text", "text": "raw"}
+    assert client._serialize_content({"type": "text", "text": "raw"}) == {
+        "type": "text",
+        "text": "raw",
+    }
     assert client._serialize_content([1, 2]) == {"type": "text", "text": "[1, 2]"}
 
 

@@ -21,7 +21,11 @@ export function SwaggerWorkspace() {
         }
         setPayload((await response.json()) as OpenApiPayload);
       } catch (nextError) {
-        setError(nextError instanceof Error ? nextError.message : "Failed to load OpenAPI");
+        setError(
+          nextError instanceof Error
+            ? nextError.message
+            : "Failed to load OpenAPI"
+        );
       }
     }
 
@@ -29,7 +33,9 @@ export function SwaggerWorkspace() {
   }, []);
 
   if (error) {
-    return <Card className="p-4 text-danger-600 dark:text-danger-300">{error}</Card>;
+    return (
+      <Card className="p-4 text-danger-600 dark:text-danger-300">{error}</Card>
+    );
   }
 
   if (!payload) {
@@ -50,7 +56,8 @@ export function SwaggerWorkspace() {
           <div>
             <h2 className="text-lg font-semibold">Swagger playground</h2>
             <p className="text-sm text-default-500">
-              Merged OpenAPI for DragncardsAI, executed through dashboard proxy routes.
+              Merged OpenAPI for DragncardsAI, executed through dashboard proxy
+              routes.
             </p>
           </div>
           <Chip color="accent" variant="soft">
@@ -73,7 +80,11 @@ export function SwaggerWorkspace() {
 
       <Card className="min-h-0 flex-1 overflow-hidden p-0 shadow-none">
         <div className="flex h-full min-h-[calc(100vh-12rem)] flex-col bg-white">
-          <iframe className="h-full w-full border-0 bg-white" src="/swagger/embed" title="Swagger UI" />
+          <iframe
+            className="h-full w-full border-0 bg-white"
+            src="/swagger/embed"
+            title="Swagger UI"
+          />
         </div>
       </Card>
     </div>

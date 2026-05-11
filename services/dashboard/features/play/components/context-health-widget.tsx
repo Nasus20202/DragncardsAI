@@ -56,8 +56,14 @@ export function ContextHealthWidget({
     return null;
   }
 
-  const { tokens_used, context_window_size, usage_ratio, compaction_count, last_compacted_at, multi_turn_memory } =
-    contextMetadata;
+  const {
+    tokens_used,
+    context_window_size,
+    usage_ratio,
+    compaction_count,
+    last_compacted_at,
+    multi_turn_memory,
+  } = contextMetadata;
 
   const memoryOff = !multi_turn_memory;
   const pct = Math.round(usage_ratio * 100);
@@ -69,7 +75,9 @@ export function ContextHealthWidget({
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium text-default-700">Context</span>
         {memoryOff ? (
-          <span className="rounded bg-default-200 px-1.5 py-0.5 text-default-500">Memory off</span>
+          <span className="rounded bg-default-200 px-1.5 py-0.5 text-default-500">
+            Memory off
+          </span>
         ) : (
           <Button
             size="sm"
@@ -84,7 +92,9 @@ export function ContextHealthWidget({
       </div>
 
       {memoryOff ? (
-        <p className="text-default-500">Multi-turn memory is disabled for this session.</p>
+        <p className="text-default-500">
+          Multi-turn memory is disabled for this session.
+        </p>
       ) : (
         <>
           <div className="h-2 w-full overflow-hidden rounded-full bg-default-200/80">
@@ -102,13 +112,16 @@ export function ContextHealthWidget({
           </div>
           <div className="flex justify-between text-default-500">
             <span>
-              {formatTokens(tokens_used)} / {formatTokens(context_window_size)} tokens ({pct}%)
+              {formatTokens(tokens_used)} / {formatTokens(context_window_size)}{" "}
+              tokens ({pct}%)
             </span>
             <span>
               {compaction_count} compaction{compaction_count !== 1 ? "s" : ""}
             </span>
           </div>
-          <div className="text-default-400">Last compacted: {formatDate(last_compacted_at)}</div>
+          <div className="text-default-400">
+            Last compacted: {formatDate(last_compacted_at)}
+          </div>
         </>
       )}
     </div>

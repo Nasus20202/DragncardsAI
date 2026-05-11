@@ -1,4 +1,5 @@
 """Unit tests for token counting utilities."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -13,7 +14,9 @@ from agent_orchestrator.runtime.tokens import (
 
 
 def test_extract_tokens_from_response_total_tokens():
-    raw = {"usage": {"total_tokens": 512, "prompt_tokens": 300, "completion_tokens": 212}}
+    raw = {
+        "usage": {"total_tokens": 512, "prompt_tokens": 300, "completion_tokens": 212}
+    }
     assert extract_tokens_from_response(raw) == 512
 
 
@@ -46,7 +49,10 @@ def test_estimate_tokens_for_messages_with_tool_calls():
                 {
                     "id": "tc1",
                     "type": "function",
-                    "function": {"name": "draw_card", "arguments": '{"player": "player1"}'},
+                    "function": {
+                        "name": "draw_card",
+                        "arguments": '{"player": "player1"}',
+                    },
                 }
             ],
         }

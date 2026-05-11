@@ -33,7 +33,9 @@ _DEFAULT_PLUGIN_JSON_DIR = os.path.join(
     "dragncards-mc-plugin",
     "json",
 )
-PLUGIN_JSON_DIR = os.environ.get("DRAGNCARDS_MC_PLUGIN_JSON_DIR", _DEFAULT_PLUGIN_JSON_DIR)
+PLUGIN_JSON_DIR = os.environ.get(
+    "DRAGNCARDS_MC_PLUGIN_JSON_DIR", _DEFAULT_PLUGIN_JSON_DIR
+)
 
 
 def _load_plugin_json(filename: str) -> dict[str, Any]:

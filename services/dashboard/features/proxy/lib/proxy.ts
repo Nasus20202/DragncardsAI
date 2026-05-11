@@ -18,11 +18,14 @@ export function getServiceLabel(service: ServiceKey): string {
 export function resolveProxyUrl(
   service: ServiceKey,
   pathSegments: string[],
-  search: string,
+  search: string
 ): URL {
   const config = getServerConfig();
-  const baseUrl = service === "orchestrator" ? config.orchestratorUrl : config.gameServiceUrl;
-  const normalizedPath = pathSegments.map((segment) => encodeURIComponent(segment)).join("/");
+  const baseUrl =
+    service === "orchestrator" ? config.orchestratorUrl : config.gameServiceUrl;
+  const normalizedPath = pathSegments
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
   const target = new URL(baseUrl);
   const basePath = target.pathname.replace(/\/$/, "");
 
@@ -50,7 +53,11 @@ export function filterProxyResponseHeaders(headers: Headers): Headers {
 
   headers.forEach((value, key) => {
     const lowerKey = key.toLowerCase();
-    if (["content-encoding", "content-length", "transfer-encoding"].includes(lowerKey)) {
+    if (
+      ["content-encoding", "content-length", "transfer-encoding"].includes(
+        lowerKey
+      )
+    ) {
       return;
     }
     filtered.set(key, value);

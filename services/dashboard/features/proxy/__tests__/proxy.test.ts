@@ -5,10 +5,15 @@ import {
   filterProxyResponseHeaders,
   resolveProxyUrl,
 } from "@/features/proxy/lib/proxy";
+import { withServerSpan } from "@/features/observability/lib/server-tracing";
 
 describe("resolveProxyUrl", () => {
   it("maps orchestrator paths under the configured base url", () => {
-    const url = resolveProxyUrl("orchestrator", ["sessions", "abc"], "?limit=10");
+    const url = resolveProxyUrl(
+      "orchestrator",
+      ["sessions", "abc"],
+      "?limit=10"
+    );
     expect(String(url)).toBe("http://localhost:4002/sessions/abc?limit=10");
   });
 
@@ -47,5 +52,17 @@ describe("proxy header filtering", () => {
     expect(filtered.has("content-encoding")).toBe(false);
     expect(filtered.has("transfer-encoding")).toBe(false);
     expect(filtered.has("content-length")).toBe(false);
+  });
+});
+
+describe("withServerSpan", () => {
+  it("returns the wrapped result", async () => {
+    const result = await withServerSpan(
+      "dashboard.test",
+      { "test.enabled": true },
+      async () => "ok"
+    );
+
+    expect(result).toBe("ok");
   });
 });

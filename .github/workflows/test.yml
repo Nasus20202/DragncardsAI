@@ -42,6 +42,13 @@ jobs:
           cache: pnpm
           cache-dependency-path: services/dashboard/pnpm-lock.yaml
 
+      - name: Install dashboard dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: services/dashboard
+
+      - name: Run lint and format validation
+        run: scripts/lint.sh
+
       - name: Run unit tests
         run: scripts/test.sh unit
 

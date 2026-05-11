@@ -32,8 +32,10 @@ from game_service.phoenix_client.client import (
     PhoenixClient,
     PhxMessage,
 )
+from game_service.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 
 
 @dataclass
@@ -102,81 +104,92 @@ class GameSession:
             )
 
     async def _request_fresh_state(self, timeout: float) -> Any:
-        await self.channel.push("request_state", {}, timeout=timeout)
-        new_state = await self.channel.wait_for_state_update(timeout=timeout)
-        self._check_state_flags()
-        async with self._state_lock:
-            self._state = new_state
-            self._state_stale = False
-        return new_state
+        with tracer.start_as_current_span("game_session.request_state"):
+            await self.channel.push("request_state", {}, timeout=timeout)
+            new_state = await self.channel.wait_for_state_update(timeout=timeout)
+            self._check_state_flags()
+            async with self._state_lock:
+                self._state = new_state
+                self._state_stale = False
+            return new_state
 
     async def get_state(self) -> Any:
-        self._check_state_flags()
-        async with self._state_lock:
-            if self._state is not None and not self._state_stale:
-                return self._state
-
-            stale = self._state_stale
-
-        logger.info(
-            "get_state: session_id=%s fetching fresh state (stale=%s)",
-            self.session_id,
-            stale,
-        )
-        try:
-            await self._request_fresh_state(timeout=10.0)
-        except (PhoenixChannelError, asyncio.TimeoutError) as exc:
-            logger.error("get_state: session_id=%s failed: %s", self.session_id, exc)
-            raise SessionError(f"Could not fetch game state: {exc}") from exc
-
-        self._check_state_flags()
-        async with self._state_lock:
-            return self._state
-
-    async def execute_action(self, action: GameAction, timeout: float = 15.0) -> Any:
-        self._check_state_flags()
-        payload = translate_action(action)
-        logger.info(
-            "execute_action: session_id=%s payload=%r", self.session_id, payload
-        )
-        try:
-            await self.channel.push("game_action", payload, timeout=timeout)
-            await self.channel.wait_for_event(
-                "state_update", "current_state", timeout=timeout
-            )
+        with tracer.start_as_current_span("game_session.get_state"):
             self._check_state_flags()
-            new_state = await self._request_fresh_state(timeout=timeout)
+            async with self._state_lock:
+                if self._state is not None and not self._state_stale:
+                    return self._state
+
+                stale = self._state_stale
+
             logger.info(
-                "execute_action: session_id=%s -> state updated", self.session_id
-            )
-            return new_state
-        except PhoenixChannelError as exc:
-            logger.error(
-                "execute_action: session_id=%s rejected: %s", self.session_id, exc
-            )
-            raise SessionError(f"Action rejected by DragnCards: {exc}") from exc
-        except asyncio.TimeoutError as exc:
-            logger.warning(
-                "execute_action: session_id=%s timed out, attempting state refresh",
+                "get_state: session_id=%s fetching fresh state (stale=%s)",
                 self.session_id,
+                stale,
             )
             try:
-                recovery_timeout = min(timeout, 5.0)
-                new_state = await self._request_fresh_state(timeout=recovery_timeout)
+                await self._request_fresh_state(timeout=10.0)
+            except (PhoenixChannelError, asyncio.TimeoutError) as exc:
+                logger.error(
+                    "get_state: session_id=%s failed: %s", self.session_id, exc
+                )
+                raise SessionError(f"Could not fetch game state: {exc}") from exc
+
+            self._check_state_flags()
+            async with self._state_lock:
+                return self._state
+
+    async def execute_action(self, action: GameAction, timeout: float = 15.0) -> Any:
+        action_name = type(action).__name__
+        with tracer.start_as_current_span(
+            "game_session.execute_action",
+            attributes={"game.action.name": action_name},
+        ):
+            self._check_state_flags()
+            payload = translate_action(action)
+            logger.info(
+                "execute_action: session_id=%s payload=%r", self.session_id, payload
+            )
+            try:
+                await self.channel.push("game_action", payload, timeout=timeout)
+                await self.channel.wait_for_event(
+                    "state_update", "current_state", timeout=timeout
+                )
+                self._check_state_flags()
+                new_state = await self._request_fresh_state(timeout=timeout)
                 logger.info(
-                    "execute_action: session_id=%s recovered via request_state",
-                    self.session_id,
+                    "execute_action: session_id=%s -> state updated", self.session_id
                 )
                 return new_state
-            except (PhoenixChannelError, asyncio.TimeoutError) as recovery_exc:
+            except PhoenixChannelError as exc:
                 logger.error(
-                    "execute_action: session_id=%s recovery failed: %s",
-                    self.session_id,
-                    recovery_exc,
+                    "execute_action: session_id=%s rejected: %s", self.session_id, exc
                 )
-            raise SessionError(
-                "Timed out waiting for state update after action"
-            ) from exc
+                raise SessionError(f"Action rejected by DragnCards: {exc}") from exc
+            except asyncio.TimeoutError as exc:
+                logger.warning(
+                    "execute_action: session_id=%s timed out, attempting state refresh",
+                    self.session_id,
+                )
+                try:
+                    recovery_timeout = min(timeout, 5.0)
+                    new_state = await self._request_fresh_state(
+                        timeout=recovery_timeout
+                    )
+                    logger.info(
+                        "execute_action: session_id=%s recovered via request_state",
+                        self.session_id,
+                    )
+                    return new_state
+                except (PhoenixChannelError, asyncio.TimeoutError) as recovery_exc:
+                    logger.error(
+                        "execute_action: session_id=%s recovery failed: %s",
+                        self.session_id,
+                        recovery_exc,
+                    )
+                raise SessionError(
+                    "Timed out waiting for state update after action"
+                ) from exc
 
     async def export_state(self) -> GameStateSnapshot:
         state = await self.get_state()

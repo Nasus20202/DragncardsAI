@@ -5,6 +5,21 @@
     "enforce_auth_on_inference": false,
     "drop_excess_requests": false
   },
+  "plugins": [
+    {
+      "enabled": true,
+      "name": "otel",
+      "config": {
+        "service_name": "bifrost",
+        "collector_url": "http://otel-lgtm:4318/v1/traces",
+        "trace_type": "genai_extension",
+        "protocol": "http",
+        "metrics_enabled": true,
+        "metrics_endpoint": "http://otel-lgtm:4318/v1/metrics",
+        "metrics_push_interval": 15
+      }
+    }
+  ],
   "providers": {
     "openai": {
       "keys": [

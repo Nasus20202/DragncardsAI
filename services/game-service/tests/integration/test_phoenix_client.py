@@ -101,5 +101,5 @@ async def test_join_nonexistent_channel_raises(connected_client):
             connected_client.join("nonexistent:topic"),
             timeout=5.0,
         )
-    except (PhoenixChannelError, asyncio.TimeoutError):
+    except PhoenixChannelError, asyncio.TimeoutError:
         pass  # Expected — either server rejected or no reply

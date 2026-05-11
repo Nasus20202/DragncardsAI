@@ -16,7 +16,6 @@ from game_service.api.app import create_app
 from game_service.catalog.service import supported_plugins
 from game_service.mcp.server import create_mcp_server
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -168,6 +167,7 @@ async def test_snapshot_endpoints_not_exposed_as_tools():
 # ---------------------------------------------------------------------------
 # Resources: list
 # ---------------------------------------------------------------------------
+
 
 async def test_list_resources_empty_when_no_sessions():
     """No MCP resources should be exposed."""

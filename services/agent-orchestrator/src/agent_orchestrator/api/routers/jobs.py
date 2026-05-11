@@ -6,11 +6,24 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from agent_orchestrator.api.deps import get_mcp_tool_catalog, get_repository, require_job
-from agent_orchestrator.api.serializers import serialize_event, serialize_job, serialize_job_detail
+from agent_orchestrator.api.deps import (
+    get_mcp_tool_catalog,
+    get_repository,
+    require_job,
+)
+from agent_orchestrator.api.serializers import (
+    serialize_event,
+    serialize_job,
+    serialize_job_detail,
+)
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.runtime.live_events import LiveJobEvent
-from agent_orchestrator.schemas.jobs import JobDetail, JobEventResponse, JobSummary, PromptRequest
+from agent_orchestrator.schemas.jobs import (
+    JobDetail,
+    JobEventResponse,
+    JobSummary,
+    PromptRequest,
+)
 from agent_orchestrator.storage.repository import Repository
 
 router = APIRouter(tags=["jobs"])
@@ -37,10 +50,13 @@ async def submit_prompt(
             session_id,
             prompt=body.prompt,
             metadata_json=body.metadata,
-            max_attempts=body.max_attempts or request.app.state.settings.default_job_max_attempts,
+            max_attempts=body.max_attempts
+            or request.app.state.settings.default_job_max_attempts,
         )
     except ValueError:
-        raise HTTPException(status_code=400, detail="Terminated sessions cannot accept prompts")
+        raise HTTPException(
+            status_code=400, detail="Terminated sessions cannot accept prompts"
+        )
     if item is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"job": serialize_job(item)}
@@ -54,7 +70,9 @@ async def get_job(
     item=Depends(require_job),
 ) -> dict[str, JobDetail]:
     events = await repo.list_events(job_id, after_id=0, limit=200)
-    tools = await tool_catalog.list_session_tools(item.session.mcp_assignments, ignore_failures=True)
+    tools = await tool_catalog.list_session_tools(
+        item.session.mcp_assignments, ignore_failures=True
+    )
     return {"job": serialize_job_detail(item, events, tools)}
 
 
@@ -64,7 +82,9 @@ async def get_job_status(item=Depends(require_job)) -> dict[str, JobSummary]:
 
 
 @router.post("/jobs/{job_id}/cancel")
-async def cancel_job(job_id: str, repo: Repository = Depends(get_repository)) -> dict[str, JobSummary]:
+async def cancel_job(
+    job_id: str, repo: Repository = Depends(get_repository)
+) -> dict[str, JobSummary]:
     item = await repo.request_cancel(job_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -119,13 +139,16 @@ async def stream_job_events(
                 if job.status in {"completed", "failed", "cancelled"} and not events:
                     return
 
-                live_event = await live_subscriber.get(request.app.state.settings.worker_poll_interval_seconds)
+                live_event = await live_subscriber.get(
+                    request.app.state.settings.worker_poll_interval_seconds
+                )
                 if live_event is None:
                     continue
 
                 payload = _serialize_live_event(live_event).model_dump(mode="json")
                 yield (
-                    f"event: {live_event.event_type}\n" f"data: {json.dumps(payload)}\n\n"
+                    f"event: {live_event.event_type}\n"
+                    f"data: {json.dumps(payload)}\n\n"
                 )
         except asyncio.CancelledError:
             return

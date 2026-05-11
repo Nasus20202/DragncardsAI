@@ -19,7 +19,9 @@ function normalizeMcpServerUrl(serverUrl: string, transport: string): string {
   return serverUrl;
 }
 
-function isRecord(value: JsonValue | undefined): value is Record<string, JsonValue> {
+function isRecord(
+  value: JsonValue | undefined
+): value is Record<string, JsonValue> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -31,7 +33,9 @@ function buildDefaultReasoningDraft(): ReasoningDraft {
   };
 }
 
-function extractReasoningDraft(options: Record<string, JsonValue>): ReasoningDraft {
+function extractReasoningDraft(
+  options: Record<string, JsonValue>
+): ReasoningDraft {
   const raw = options.reasoning;
   if (!isRecord(raw)) {
     return buildDefaultReasoningDraft();
@@ -45,13 +49,16 @@ function extractReasoningDraft(options: Record<string, JsonValue>): ReasoningDra
       effort === "low" || effort === "medium" || effort === "high"
         ? effort
         : "medium",
-    maxTokens: typeof maxTokens === "number" && Number.isFinite(maxTokens) ? String(maxTokens) : "",
+    maxTokens:
+      typeof maxTokens === "number" && Number.isFinite(maxTokens)
+        ? String(maxTokens)
+        : "",
   };
 }
 
 export function applyReasoningToGatewayOptions(
   gatewayOptions: Record<string, JsonValue>,
-  reasoning: ReasoningDraft,
+  reasoning: ReasoningDraft
 ): Record<string, JsonValue> {
   const nextOptions: Record<string, JsonValue> = { ...gatewayOptions };
   if (!reasoning.enabled) {
@@ -75,7 +82,16 @@ export function applyReasoningToGatewayOptions(
 }
 
 export function createDefaultDraft(config: DashboardConfig): SessionDraft {
-  const today = new Date().toLocaleString("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).replace(",", "");
+  const today = new Date()
+    .toLocaleString("en-CA", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
+    .replace(",", "");
   return {
     name: today,
     providerId: config.defaultProviderId,
@@ -91,19 +107,20 @@ export function createDefaultDraft(config: DashboardConfig): SessionDraft {
 
 export function buildDraftFromSession(
   config: DashboardConfig,
-  session: SessionDetail,
+  session: SessionDetail
 ): SessionDraft {
   const normalizedDefaultMcpUrl = normalizeMcpServerUrl(
     config.defaultGameServiceMcpUrl,
-    config.defaultGameServiceMcpTransport,
+    config.defaultGameServiceMcpTransport
   );
   const defaultDraft = createDefaultDraft(config);
   const customMcps = session.mcps.filter(
     (mcp) =>
       !(
         mcp.name === config.defaultGameServiceMcpName &&
-        normalizeMcpServerUrl(mcp.server_url, mcp.transport) === normalizedDefaultMcpUrl
-      ),
+        normalizeMcpServerUrl(mcp.server_url, mcp.transport) ===
+          normalizedDefaultMcpUrl
+      )
   );
 
   return {
@@ -111,14 +128,21 @@ export function buildDraftFromSession(
     name: session.name ?? "",
     providerId: session.model_config?.provider_id ?? defaultDraft.providerId,
     modelName: session.model_config?.model_name ?? defaultDraft.modelName,
-    reasoning: extractReasoningDraft(session.model_config?.gateway_options ?? {}),
-    gatewayOptionsText: safeJsonStringify(session.model_config?.gateway_options ?? {}),
-    providerOptionsText: safeJsonStringify(session.model_config?.provider_options ?? {}),
+    reasoning: extractReasoningDraft(
+      session.model_config?.gateway_options ?? {}
+    ),
+    gatewayOptionsText: safeJsonStringify(
+      session.model_config?.gateway_options ?? {}
+    ),
+    providerOptionsText: safeJsonStringify(
+      session.model_config?.provider_options ?? {}
+    ),
     selectedSkills: session.skills.map((skill) => skill.skill_name),
     enableDefaultGameServiceMcp: session.mcps.some(
       (mcp) =>
         mcp.name === config.defaultGameServiceMcpName &&
-        normalizeMcpServerUrl(mcp.server_url, mcp.transport) === normalizedDefaultMcpUrl,
+        normalizeMcpServerUrl(mcp.server_url, mcp.transport) ===
+          normalizedDefaultMcpUrl
     ),
     customMcpsText: safeJsonStringify(
       customMcps.map((mcp) => ({
@@ -126,12 +150,15 @@ export function buildDraftFromSession(
         transport: mcp.transport,
         server_url: mcp.server_url,
         headers: mcp.headers as Record<string, string>,
-      })),
+      }))
     ),
   };
 }
 
-export function parseJsonObject(text: string, label: string): Record<string, JsonValue> {
+export function parseJsonObject(
+  text: string,
+  label: string
+): Record<string, JsonValue> {
   try {
     const parsed = JSON.parse(text) as unknown;
     if (!isRecord(parsed as JsonValue)) {

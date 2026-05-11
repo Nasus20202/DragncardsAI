@@ -1,4 +1,5 @@
 """Repository methods for context management (compaction records, replay queries)."""
+
 from __future__ import annotations
 
 import json
@@ -45,7 +46,9 @@ class ContextRepositoryMixin:
     # CompactionRecord CRUD
     # ------------------------------------------------------------------
 
-    async def get_latest_compaction_record(self, session_id: str) -> CompactionRecord | None:
+    async def get_latest_compaction_record(
+        self, session_id: str
+    ) -> CompactionRecord | None:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(CompactionRecord)
@@ -224,17 +227,23 @@ class ContextRepositoryMixin:
             )
             return result.scalar()
 
-    async def get_context_metadata(self, session_id: str, context_window_size: int) -> dict:
+    async def get_context_metadata(
+        self, session_id: str, context_window_size: int
+    ) -> dict:
         """Return context health metadata for a session."""
         compaction = await self.get_latest_compaction_record(session_id)
         after_job_id = compaction.covers_up_to_job_id if compaction else None
-        tokens_used = await self.get_tokens_used_since_compaction(session_id, after_job_id=after_job_id)
+        tokens_used = await self.get_tokens_used_since_compaction(
+            session_id, after_job_id=after_job_id
+        )
         # Include the compaction summary itself in the token count — the summary
         # message is injected at the top of every subsequent context window.
         if compaction:
             tokens_used += compaction.tokens_used
         compaction_count = await self.count_compaction_records(session_id)
-        usage_ratio = tokens_used / context_window_size if context_window_size > 0 else 0.0
+        usage_ratio = (
+            tokens_used / context_window_size if context_window_size > 0 else 0.0
+        )
 
         async with self._session_factory() as db_session:
             session_obj = await db_session.get(AgentSession, session_id)

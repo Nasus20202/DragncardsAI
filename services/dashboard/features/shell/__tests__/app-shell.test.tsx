@@ -10,8 +10,18 @@ const themeState = vi.hoisted(() => ({
 }));
 
 vi.mock("next/link", () => ({
-  default: ({ href, children, className }: { href: string; children: React.ReactNode; className?: string }) => (
-    <a href={href} className={className}>{children}</a>
+  default: ({
+    href,
+    children,
+    className,
+  }: {
+    href: string;
+    children: React.ReactNode;
+    className?: string;
+  }) => (
+    <a href={href} className={className}>
+      {children}
+    </a>
   ),
 }));
 
@@ -19,7 +29,7 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/swagger",
 }));
 
-vi.mock("next-themes", () => ({
+vi.mock("@/features/shell/components/providers", () => ({
   useTheme: () => themeState,
 }));
 
@@ -28,14 +38,21 @@ describe("AppShell", () => {
     render(
       <AppShell appName="Dashboard">
         <div>Child content</div>
-      </AppShell>,
+      </AppShell>
     );
 
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/play");
-    expect(screen.getByRole("link", { name: "Swagger" }).className).toContain("bg-default-100");
+    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute(
+      "href",
+      "/play"
+    );
+    expect(screen.getByRole("link", { name: "Swagger" }).className).toContain(
+      "bg-default-100"
+    );
     expect(screen.getByText("Child content")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /toggle colour theme/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /toggle colour theme/i })
+    );
     expect(themeState.setTheme).toHaveBeenCalledWith("light");
   });
 });

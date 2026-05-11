@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 import pytest
 
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
 _DATABASE_URL = os.environ.get(
     "DATABASE_URL",
@@ -35,7 +36,9 @@ def _check_postgres() -> bool:
 
 
 def pytest_collection_modifyitems(config, items):
-    skip_postgres = pytest.mark.skip(reason=f"PostgreSQL not reachable for {_DATABASE_URL}")
+    skip_postgres = pytest.mark.skip(
+        reason=f"PostgreSQL not reachable for {_DATABASE_URL}"
+    )
     for item in items:
         if item.get_closest_marker("postgres") and not _check_postgres():
             item.add_marker(skip_postgres)

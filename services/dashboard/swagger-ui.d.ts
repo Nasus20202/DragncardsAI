@@ -11,5 +11,7 @@ declare module "swagger-ui" {
     tryItOutEnabled?: boolean;
   }
 
-  export default function SwaggerUI(options: SwaggerUiOptions): SwaggerUiInstance;
+  export default function SwaggerUI(
+    options: SwaggerUiOptions
+  ): SwaggerUiInstance;
 }

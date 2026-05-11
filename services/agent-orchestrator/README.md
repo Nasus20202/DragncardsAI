@@ -30,6 +30,7 @@ http://localhost:4002
 ## What This Service Is For
 
 Use `agent-orchestrator` when you need to:
+
 - create persistent agent sessions
 - choose which provider/model an agent should use
 - list supported providers
@@ -56,10 +57,10 @@ This file is only for agent-orchestrator runtime settings.
 For direct local runs from `services/agent-orchestrator`, set skill roots back to the repo-level skill directories:
 
 ```text
-SKILL_ROOTS=../../skills,../../.opencode/skills
+SKILL_ROOTS=../../skills
 ```
 
-For Docker Compose, this file is optional. If it does not exist, Compose uses the defaults declared in `docker-compose.yaml`, which keeps CI and pipeline parsing from failing on missing local-only env files.
+For Docker Compose, this file is optional. If it does not exist, agent-orchestrator uses its built-in application defaults, which keeps CI and pipeline parsing from failing on missing local-only env files.
 
 ### 1. Bifrost knows how to talk to providers
 
@@ -94,6 +95,7 @@ ENABLED_PROVIDER_IDS=mistral,nvidia
 ```
 
 Only providers in that list are:
+
 - returned by `GET /providers`
 - accepted by `PUT /sessions/{session_id}/model-config`
 
@@ -120,6 +122,7 @@ Set it to `0` to disable caching.
 The exact response depends on `ENABLED_PROVIDER_IDS`.
 
 If a provider returns `available: false`, check that:
+
 - the provider is present in `ENABLED_PROVIDER_IDS`
 - the matching API key or base URL is set in `services/bifrost/.env`
 - `bifrost` has been restarted after the env change
@@ -160,6 +163,7 @@ Use these to create, inspect, update, and terminate agent sessions.
 - `POST /sessions/{session_id}/terminate`
 
 `GET /sessions` supports:
+
 - `status`
 - `limit`
 - `offset`
@@ -205,13 +209,16 @@ agent-orchestrator requests streamed chat completions from Bifrost for prompt ex
 Transient chunk events are fanned out across replicas through the dedicated orchestrator Valkey instance and then exposed on the job SSE endpoint.
 
 When reasoning is enabled:
+
 - live `reasoning` chunks are sent over the SSE job stream and are not persisted to PostgreSQL
 
 Always:
+
 - live streamed `model_output` chunks are sent over the SSE job stream and are not persisted to PostgreSQL
 - final completion state, tool events, failures, cancellations, and the completed output remain persisted
 
 In the dashboard UI, the session settings drawer now includes first-class controls for:
+
 - enabling reasoning stream
 - choosing reasoning effort
 - setting reasoning max tokens
@@ -252,6 +259,7 @@ Typical `game-service` MCP assignment:
 ```
 
 For local host clients talking to Dockerized services:
+
 - use `http://localhost:4002` for requests into `agent-orchestrator`
 - use `http://game-service:8000/mcp/` inside MCP assignments that will be used by the `agent-orchestrator` container
 
@@ -276,6 +284,7 @@ Use these to inspect the outcome of a prompt or stop it.
 - `GET /sessions/{session_id}/jobs`
 
 `GET /jobs/{job_id}` includes:
+
 - `latest_event_id`
 - `latest_event_type`
 - `available_tools`
@@ -283,6 +292,7 @@ Use these to inspect the outcome of a prompt or stop it.
 - `outputs`
 
 `GET /sessions/{session_id}/jobs` supports:
+
 - `status`
 - `limit`
 - `offset`
@@ -304,6 +314,7 @@ Use these for polling or frontend streaming.
   Stream events as Server-Sent Events.
 
 Event types include:
+
 - `progress`
 - `reasoning`
 - `model_output`
@@ -339,6 +350,7 @@ Event types include:
 ## Dependencies
 
 The service expects:
+
 - dedicated orchestrator PostgreSQL
 - dedicated orchestrator Valkey for transient cross-replica streaming events
 - Bifrost

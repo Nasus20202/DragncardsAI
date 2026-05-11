@@ -1,4 +1,5 @@
 """Token counting utilities for context window tracking."""
+
 from __future__ import annotations
 
 import json
@@ -17,7 +18,9 @@ def extract_tokens_from_response(raw: dict[str, Any]) -> int | None:
     """
     usage = raw.get("usage")
     if isinstance(usage, dict):
-        total = usage.get("total_tokens") or usage.get("output_tokens", 0) + usage.get("input_tokens", 0)
+        total = usage.get("total_tokens") or usage.get("output_tokens", 0) + usage.get(
+            "input_tokens", 0
+        )
         if total:
             return int(total)
     return None
@@ -31,6 +34,7 @@ def estimate_tokens_for_messages(messages: list[dict[str, Any]]) -> int:
     """
     try:
         import tiktoken
+
         enc = tiktoken.get_encoding(_FALLBACK_ENCODING)
         total = 0
         for message in messages:
@@ -50,7 +54,9 @@ def estimate_tokens_for_messages(messages: list[dict[str, Any]]) -> int:
                 total += len(enc.encode(fn.get("arguments", "")))
         return total
     except Exception as exc:
-        logger.warning("tiktoken estimation failed (%s), using character heuristic", exc)
+        logger.warning(
+            "tiktoken estimation failed (%s), using character heuristic", exc
+        )
         # Final fallback: ~4 chars per token
         text = json.dumps(messages)
         return max(1, len(text) // 4)
@@ -60,8 +66,11 @@ def count_tokens_for_text(text: str) -> int:
     """Estimate token count for a plain text string."""
     try:
         import tiktoken
+
         enc = tiktoken.get_encoding(_FALLBACK_ENCODING)
         return len(enc.encode(text))
     except Exception as exc:
-        logger.warning("tiktoken estimation failed (%s), using character heuristic", exc)
+        logger.warning(
+            "tiktoken estimation failed (%s), using character heuristic", exc
+        )
         return max(1, len(text) // 4)

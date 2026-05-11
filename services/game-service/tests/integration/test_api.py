@@ -97,7 +97,9 @@ def test_list_card_providers(sync_client):
     assert resp.status_code == 200
     body = resp.json()
     assert "providers" in body
-    assert any(provider["provider"] == "marvel-champions" for provider in body["providers"])
+    assert any(
+        provider["provider"] == "marvel-champions" for provider in body["providers"]
+    )
 
 
 @pytest.mark.asyncio
@@ -150,6 +152,48 @@ async def test_create_game_unknown_plugin(app):
         resp = await client.post("/games", json={"plugin_name": "nonexistent-plugin"})
     assert resp.status_code == 400
     assert "not found" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_attach_game_shares_room_state(app, manager):
+    """POST /games/attach joins an existing room and sees shared state."""
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        create_resp = await client.post(
+            "/games", json={"plugin_name": "marvel-champions"}
+        )
+        assert create_resp.status_code == 201
+        primary_session_id = create_resp.json()["session"]["session_id"]
+        room_slug = create_resp.json()["session"]["room_slug"]
+
+        attached_session_id = None
+        try:
+            attach_resp = await client.post(
+                "/games/attach",
+                json={
+                    "plugin_name": "marvel-champions",
+                    "room_slug": room_slug,
+                },
+            )
+            assert attach_resp.status_code == 201
+            attached_session_id = attach_resp.json()["session"]["session_id"]
+            assert attached_session_id != primary_session_id
+
+            action_resp = await client.post(
+                f"/games/{primary_session_id}/actions",
+                json={"type": "next_step"},
+            )
+            assert action_resp.status_code == 200
+            expected_step_id = action_resp.json()["state"]["game"]["stepId"]
+
+            state_resp = await client.get(f"/games/{attached_session_id}/state")
+            assert state_resp.status_code == 200
+            assert state_resp.json()["state"]["game"]["stepId"] == expected_step_id
+        finally:
+            if attached_session_id is not None:
+                await manager.delete_session(attached_session_id)
+            await manager.delete_session(primary_session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +310,59 @@ async def test_mcp_does_not_expose_snapshot_tools(mcp):
     names = {tool.name for tool in tools}
     assert "export_game_state_snapshot" not in names
     assert "load_game_state_snapshot" not in names
+
+
+def test_list_actions_catalog(sync_client):
+    """GET /actions returns typed actions and curated raw ops."""
+    resp = sync_client.get("/actions")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert any(action["type"] == "next_step" for action in body["actions"])
+    assert any("SAVE_GAME" in op["example"] for op in body["raw_ops"])
+
+
+@pytest.mark.asyncio
+async def test_get_session_actions_includes_plugin_metadata(app, manager):
+    """GET /games/{id}/actions returns plugin-specific metadata."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(f"/games/{session.session_id}/actions")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["session_id"] == session.session_id
+        assert body["plugin_name"] == "marvel-champions"
+        assert isinstance(body["load_groups"], list)
+        assert body["load_groups"]
+        assert "named_action_lists" in body["plugin_metadata"]
+        assert "player_count_layouts" in body["plugin_metadata"]
+        assert any(action["type"] == "next_step" for action in body["actions"])
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+def test_search_cards_by_name(sync_client):
+    """GET /cards/{provider} returns matching cards for valid filters."""
+    resp = sync_client.get("/cards/marvel-champions", params={"name": "spider"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] > 0
+    assert any("spider" in card["name"].lower() for card in body["cards"])
+
+
+def test_search_cards_rejects_unknown_filter(sync_client):
+    """GET /cards/{provider} rejects unsupported filters with HTTP 400."""
+    resp = sync_client.get("/cards/marvel-champions", params={"bogus": "x"})
+    assert resp.status_code == 400
+    assert "Unsupported filter" in resp.json()["detail"]
+
+
+def test_search_cards_rejects_invalid_filter_value(sync_client):
+    """GET /cards/{provider} rejects invalid filter values with HTTP 422."""
+    resp = sync_client.get("/cards/marvel-champions", params={"limit": 0})
+    assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
