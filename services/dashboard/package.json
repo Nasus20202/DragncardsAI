@@ -18,7 +18,7 @@
     "@opentelemetry/api-logs": "^0.217.0",
     "@opentelemetry/instrumentation": "^0.217.0",
     "@opentelemetry/sdk-logs": "^0.217.0",
-    "@vercel/otel": "^1.13.0",
+    "@vercel/otel": "^2.0.0",
     "@heroui/react": "3.0.4",
     "@heroui/styles": "3.0.4",
     "next": "16.2.6",
