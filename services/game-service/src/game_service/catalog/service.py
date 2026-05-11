@@ -96,9 +96,7 @@ def _coerce_boolean(name: str, value: Any) -> bool:
         return True
     if normalized in {"0", "false", "no", "off"}:
         return False
-    raise CardFilterValueError(
-        f"Invalid boolean value for filter {name!r}: {value!r}"
-    )
+    raise CardFilterValueError(f"Invalid boolean value for filter {name!r}: {value!r}")
 
 
 def _coerce_integer(name: str, value: Any, spec: ProviderMetadata) -> int:

@@ -2,10 +2,17 @@
 
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
-import { useTheme } from "next-themes";
-import { PropsWithChildren, useEffect, useState } from "react";
+import { PropsWithChildren } from "react";
 
-function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+import { useTheme } from "@/features/shell/components/providers";
+
+function NavLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
   const active = pathname === href;
   return (
@@ -23,11 +30,11 @@ function NavLink({ href, children }: { href: string; children: React.ReactNode }
   );
 }
 
-export function AppShell({ appName, children }: PropsWithChildren<{ appName: string }>) {
+export function AppShell({
+  appName,
+  children,
+}: PropsWithChildren<{ appName: string }>) {
   const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setMounted(true); }, []);
   const isDark = resolvedTheme === "dark";
 
   return (
@@ -36,7 +43,10 @@ export function AppShell({ appName, children }: PropsWithChildren<{ appName: str
       {/* ── Header ─────────────────────────────────────────────── */}
       <header className="flex h-11 shrink-0 items-center justify-between border-b border-default-200/60 px-4">
         <div className="flex items-center gap-4">
-          <NextLink href="/play" className="text-sm font-semibold tracking-tight text-foreground/80 hover:text-foreground">
+          <NextLink
+            href="/play"
+            className="text-sm font-semibold tracking-tight text-foreground/80 hover:text-foreground"
+          >
             {appName}
           </NextLink>
           <nav className="flex items-center gap-1">
@@ -45,14 +55,14 @@ export function AppShell({ appName, children }: PropsWithChildren<{ appName: str
           </nav>
         </div>
 
-        {/* Theme toggle — hidden until mounted to avoid hydration mismatch */}
+        {/* Theme toggle stays empty until the theme resolves to avoid hydration mismatch */}
         <button
           aria-label="Toggle colour theme"
           type="button"
           className="flex h-8 w-8 items-center justify-center rounded text-default-500 transition-colors hover:bg-default-100 hover:text-foreground"
           onClick={() => setTheme(isDark ? "light" : "dark")}
         >
-          {mounted ? (isDark ? "☀" : "☾") : null}
+          {resolvedTheme ? (isDark ? "☀" : "☾") : null}
         </button>
       </header>
 

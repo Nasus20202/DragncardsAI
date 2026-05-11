@@ -13,12 +13,17 @@ from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient
 from agent_orchestrator.integrations.mcp.client import StreamableHttpMcpClient
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
-from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus, LiveEventBus, ValkeyLiveEventBus
+from agent_orchestrator.runtime.live_events import (
+    InMemoryLiveEventBus,
+    LiveEventBus,
+    ValkeyLiveEventBus,
+)
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.runtime.worker import WorkerService
 from agent_orchestrator.storage.db import create_engine, create_session_factory
 from agent_orchestrator.storage.migrations import ensure_schema
 from agent_orchestrator.storage.repository import Repository
+from agent_orchestrator.telemetry import instrument_fastapi_app, shutdown_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +47,9 @@ def create_app(
         worker_task = None
 
         if repository is None:
-            logger.info("Initializing repository with database %s", settings.database_url)
+            logger.info(
+                "Initializing repository with database %s", settings.database_url
+            )
             created_engine = create_engine(settings.database_url)
             await ensure_schema(created_engine)
             session_factory = create_session_factory(created_engine)
@@ -65,7 +72,9 @@ def create_app(
             app.state.bifrost_client = bifrost_client
 
         if live_event_bus is None:
-            logger.info("Initializing Valkey live event bus for %s", settings.valkey_url)
+            logger.info(
+                "Initializing Valkey live event bus for %s", settings.valkey_url
+            )
             created_live_event_bus = ValkeyLiveEventBus(settings.valkey_url)
             app.state.live_event_bus = created_live_event_bus
         else:
@@ -74,7 +83,9 @@ def create_app(
 
         app.state.settings = settings
         app.state.skill_registry = skill_registry or SkillRegistry(settings.skill_roots)
-        logger.info("Skill roots: %s", ", ".join(str(root) for root in settings.skill_roots))
+        logger.info(
+            "Skill roots: %s", ", ".join(str(root) for root in settings.skill_roots)
+        )
         app.state.mcp_client = mcp_client or StreamableHttpMcpClient(
             timeout_seconds=settings.mcp_request_timeout_seconds,
         )
@@ -107,6 +118,7 @@ def create_app(
                 await created_live_event_bus.aclose()
             if created_engine is not None:
                 await created_engine.dispose()
+            shutdown_telemetry()
 
     app = FastAPI(
         title="Agent Orchestrator",
@@ -114,6 +126,7 @@ def create_app(
         description="Background-job harness for LLM-driven DragnCards agents.",
         lifespan=lifespan,
     )
+    instrument_fastapi_app(app)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

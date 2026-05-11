@@ -10,7 +10,11 @@ export const metadata: Metadata = {
   description: "Playground dashboard for agent-orchestrator and game-service.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const config = getPublicConfig();
 
   return (

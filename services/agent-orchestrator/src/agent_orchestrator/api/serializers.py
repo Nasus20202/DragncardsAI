@@ -27,7 +27,11 @@ def serialize_session_summary(item) -> SessionSummary:
         created_at=item.created_at,
         updated_at=item.updated_at,
         terminated_at=item.terminated_at,
-        session_model_config=None if item.model_config is None else serialize_model_config(item.model_config),
+        session_model_config=(
+            None
+            if item.model_config is None
+            else serialize_model_config(item.model_config)
+        ),
         skills=[serialize_skill(skill) for skill in item.skill_assignments],
         mcps=[serialize_mcp(mcp) for mcp in item.mcp_assignments],
         recent_job=None if not recent_jobs else serialize_job(recent_jobs[0]),
@@ -66,7 +70,11 @@ def serialize_mcp(item) -> McpAssignmentResponse:
 
 
 def serialize_job(item) -> JobSummary:
-    latest_event = max(item.events, key=lambda event: event.id) if getattr(item, "events", None) else None
+    latest_event = (
+        max(item.events, key=lambda event: event.id)
+        if getattr(item, "events", None)
+        else None
+    )
     return JobSummary(
         id=item.id,
         prompt_run_id=item.prompt_run_id,

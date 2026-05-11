@@ -9,17 +9,24 @@ services:
       dockerfile: services/game-service/docker/Dockerfile
     restart: unless-stopped
     depends_on:
-      - dragncards-backend
+      dragncards-backend:
+        condition: service_started
+      otel-lgtm:
+        condition: service_healthy
     ports:
       - "4001:8000"
     environment:
-      DRAGNCARDS_HTTP_URL: http://dragncards-backend:4000
-      DRAGNCARDS_WS_URL: ws://dragncards-backend:4000/socket
-      VALKEY_URL: redis://game-service-valkey:6379/0
-      BOT_EMAIL: dev_user@example.com
-      BOT_PASSWORD: password
-      HTTP_HOST: 0.0.0.0
-      HTTP_PORT: "8000"
+      DRAGNCARDS_HTTP_URL: ${DRAGNCARDS_HTTP_URL:-http://dragncards-backend:4000}
+      DRAGNCARDS_WS_URL: ${DRAGNCARDS_WS_URL:-ws://dragncards-backend:4000/socket}
+      VALKEY_URL: ${GAME_SERVICE_VALKEY_URL:-redis://game-service-valkey:6379/0}
+      BOT_EMAIL: ${BOT_EMAIL:-dev_user@example.com}
+      BOT_PASSWORD: ${BOT_PASSWORD:-password}
+      HTTP_HOST: ${GAME_SERVICE_HTTP_HOST:-0.0.0.0}
+      HTTP_PORT: ${GAME_SERVICE_HTTP_PORT:-8000}
+      OTEL_SERVICE_NAME: ${GAME_SERVICE_OTEL_SERVICE_NAME:-game-service}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${GAME_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-lgtm:4318}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${GAME_SERVICE_OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_RESOURCE_ATTRIBUTES: ${GAME_SERVICE_OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=local,service.namespace=dragncardsai}
     networks:
       - dragncards-shared
 
@@ -40,19 +47,23 @@ services:
         condition: service_healthy
       game-service:
         condition: service_healthy
+      otel-lgtm:
+        condition: service_healthy
     ports:
       - "4002:8010"
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@agent-orchestrator-postgres:5432/agent_orchestrator
-      BIFROST_URL: http://bifrost:8080
-      BIFROST_API_KEY: dummy
-      HTTP_HOST: 0.0.0.0
-      HTTP_PORT: "8010"
-      SKILL_ROOTS: /app/skills
-      GAME_SERVICE_MCP_URL: http://game-service:8000/mcp
-      VALKEY_URL: redis://agent-orchestrator-valkey:6379/0
-      ENABLED_PROVIDER_IDS: ${ENABLED_PROVIDER_IDS:-openrouter}
-      PROVIDER_MODELS_CACHE_TTL_SECONDS: ${PROVIDER_MODELS_CACHE_TTL_SECONDS:-600}
+      DATABASE_URL: ${AGENT_ORCHESTRATOR_DATABASE_URL:-postgresql+asyncpg://postgres:postgres@agent-orchestrator-postgres:5432/agent_orchestrator}
+      BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
+      BIFROST_API_KEY: ${BIFROST_API_KEY:-dummy}
+      HTTP_HOST: ${AGENT_ORCHESTRATOR_HTTP_HOST:-0.0.0.0}
+      HTTP_PORT: ${AGENT_ORCHESTRATOR_HTTP_PORT:-8010}
+      SKILL_ROOTS: ${SKILL_ROOTS:-/app/skills}
+      GAME_SERVICE_MCP_URL: ${GAME_SERVICE_MCP_URL:-http://game-service:8000/mcp}
+      VALKEY_URL: ${AGENT_ORCHESTRATOR_VALKEY_URL:-redis://agent-orchestrator-valkey:6379/0}
+      OTEL_SERVICE_NAME: ${AGENT_ORCHESTRATOR_OTEL_SERVICE_NAME:-agent-orchestrator}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${AGENT_ORCHESTRATOR_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-lgtm:4318}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${AGENT_ORCHESTRATOR_OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_RESOURCE_ATTRIBUTES: ${AGENT_ORCHESTRATOR_OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=local,service.namespace=dragncardsai}
     networks:
       - dragncards-shared
 
@@ -68,18 +79,24 @@ services:
         condition: service_started
       dragncards-frontend:
         condition: service_started
+      otel-lgtm:
+        condition: service_healthy
     ports:
       - "3001:3000"
     environment:
-      AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:8010
-      GAME_SERVICE_URL: http://game-service:8000
-      APP_NAME: DragnCardsAI Dashboard
-      DEFAULT_PROVIDER_ID: openai
-      DEFAULT_MODEL_NAME: gpt-4o-mini
-      DEFAULT_GAME_SERVICE_MCP_ENABLED: "true"
-      DEFAULT_GAME_SERVICE_MCP_NAME: game-service
-      DEFAULT_GAME_SERVICE_MCP_TRANSPORT: streamable-http
-      DEFAULT_GAME_SERVICE_MCP_URL: http://game-service:8000/mcp/
+      AGENT_ORCHESTRATOR_URL: ${AGENT_ORCHESTRATOR_URL:-http://agent-orchestrator:8010}
+      GAME_SERVICE_URL: ${GAME_SERVICE_URL:-http://game-service:8000}
+      APP_NAME: ${APP_NAME:-DragnCardsAI Dashboard}
+      DEFAULT_PROVIDER_ID: ${DEFAULT_PROVIDER_ID:-openai}
+      DEFAULT_MODEL_NAME: ${DEFAULT_MODEL_NAME:-gpt-4o-mini}
+      DEFAULT_GAME_SERVICE_MCP_ENABLED: ${DEFAULT_GAME_SERVICE_MCP_ENABLED:-true}
+      DEFAULT_GAME_SERVICE_MCP_NAME: ${DEFAULT_GAME_SERVICE_MCP_NAME:-game-service}
+      DEFAULT_GAME_SERVICE_MCP_TRANSPORT: ${DEFAULT_GAME_SERVICE_MCP_TRANSPORT:-streamable-http}
+      DEFAULT_GAME_SERVICE_MCP_URL: ${DEFAULT_GAME_SERVICE_MCP_URL:-http://game-service:8000/mcp/}
+      OTEL_SERVICE_NAME: ${DASHBOARD_OTEL_SERVICE_NAME:-dashboard}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${DASHBOARD_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-lgtm:4318}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${DASHBOARD_OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_RESOURCE_ATTRIBUTES: ${DASHBOARD_OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=local,service.namespace=dragncardsai}
     networks:
       - dragncards-shared
 

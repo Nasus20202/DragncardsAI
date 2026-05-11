@@ -18,7 +18,6 @@ import pytest
 
 from game_service.phoenix_client.client import Channel, PhoenixClient, PhxMessage
 
-
 # ---------------------------------------------------------------------------
 # PhxMessage encode / decode
 # ---------------------------------------------------------------------------

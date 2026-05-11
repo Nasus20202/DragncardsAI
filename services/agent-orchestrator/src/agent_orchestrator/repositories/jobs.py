@@ -5,7 +5,14 @@ from typing import Any
 from sqlalchemy import func, select
 
 from agent_orchestrator.repositories.base import utc_now
-from agent_orchestrator.storage.models import AgentSession, Job, JobAttempt, JobEvent, JobOutput, PromptRun
+from agent_orchestrator.storage.models import (
+    AgentSession,
+    Job,
+    JobAttempt,
+    JobEvent,
+    JobOutput,
+    PromptRun,
+)
 
 
 class JobRepositoryMixin:
@@ -60,10 +67,14 @@ class JobRepositoryMixin:
             job.started_at = utc_now()
             job.updated_at = utc_now()
             job.attempts += 1
-            prompt_run = await self._get_prompt_run_for_update(session, job.prompt_run_id)
+            prompt_run = await self._get_prompt_run_for_update(
+                session, job.prompt_run_id
+            )
             prompt_run.status = "running"
             prompt_run.updated_at = utc_now()
-            session.add(JobAttempt(job_id=job.id, attempt_number=job.attempts, status="running"))
+            session.add(
+                JobAttempt(job_id=job.id, attempt_number=job.attempts, status="running")
+            )
             job_id = job.id
         loaded = await self.get_job(job_id)
         assert loaded is not None
@@ -79,7 +90,11 @@ class JobRepositoryMixin:
     ) -> tuple[list[Job], int]:
         async with self._session_factory() as session:
             query = self._job_query().where(Job.session_id == session_id)
-            count_query = select(func.count()).select_from(Job).where(Job.session_id == session_id)
+            count_query = (
+                select(func.count())
+                .select_from(Job)
+                .where(Job.session_id == session_id)
+            )
             if status is not None:
                 query = query.where(Job.status == status)
                 count_query = count_query.where(Job.status == status)
@@ -104,7 +119,9 @@ class JobRepositoryMixin:
             if job.status == "queued":
                 job.status = "cancelled"
                 job.completed_at = now
-                prompt_run = await self._get_prompt_run_for_update(session, job.prompt_run_id)
+                prompt_run = await self._get_prompt_run_for_update(
+                    session, job.prompt_run_id
+                )
                 prompt_run.status = "cancelled"
                 prompt_run.updated_at = now
             job.updated_at = now
@@ -136,7 +153,9 @@ class JobRepositoryMixin:
             if item is not None:
                 item.payload_json = payload_json
 
-    async def list_events(self, job_id: str, *, after_id: int = 0, limit: int = 100) -> list[JobEvent]:
+    async def list_events(
+        self, job_id: str, *, after_id: int = 0, limit: int = 100
+    ) -> list[JobEvent]:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(JobEvent)
@@ -160,7 +179,9 @@ class JobRepositoryMixin:
             job.result_text = result_text
             job.completed_at = now
             job.updated_at = now
-            prompt_run = await self._get_prompt_run_for_update(session, job.prompt_run_id)
+            prompt_run = await self._get_prompt_run_for_update(
+                session, job.prompt_run_id
+            )
             prompt_run.status = "completed"
             prompt_run.updated_at = now
             attempts = await self._get_attempts_for_update(session, job_id)
@@ -183,9 +204,15 @@ class JobRepositoryMixin:
             job = await session.get(Job, job_id)
             if job is None:
                 return None
-            prompt_run = await self._get_prompt_run_for_update(session, job.prompt_run_id)
+            prompt_run = await self._get_prompt_run_for_update(
+                session, job.prompt_run_id
+            )
             now = utc_now()
-            should_retry = retryable and job.attempts < job.max_attempts and job.cancellation_requested_at is None
+            should_retry = (
+                retryable
+                and job.attempts < job.max_attempts
+                and job.cancellation_requested_at is None
+            )
             job.error_code = error_code
             job.error_message = error_message
             job.updated_at = now
@@ -211,7 +238,9 @@ class JobRepositoryMixin:
             job = await session.get(Job, job_id)
             if job is None:
                 return None
-            prompt_run = await self._get_prompt_run_for_update(session, job.prompt_run_id)
+            prompt_run = await self._get_prompt_run_for_update(
+                session, job.prompt_run_id
+            )
             now = utc_now()
             job.status = "cancelled"
             job.error_code = "cancelled"

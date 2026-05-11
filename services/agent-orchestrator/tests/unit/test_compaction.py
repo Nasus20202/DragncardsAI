@@ -1,4 +1,5 @@
 """Unit tests for CompactionRecord repository and compaction service."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,8 +24,12 @@ async def repository(tmp_path: Path):
         await engine.dispose()
 
 
-async def _make_completed_job(repo: Repository, session_id: str, prompt: str, output: str) -> str:
-    job = await repo.enqueue_prompt_job(session_id, prompt=prompt, metadata_json={}, max_attempts=1)
+async def _make_completed_job(
+    repo: Repository, session_id: str, prompt: str, output: str
+) -> str:
+    job = await repo.enqueue_prompt_job(
+        session_id, prompt=prompt, metadata_json={}, max_attempts=1
+    )
     assert job is not None
     await repo.claim_next_job()
     await repo.append_event(job.id, session_id, "model_output", {"text": output})
@@ -62,8 +67,11 @@ async def test_create_compaction_record(repository: Repository):
 async def test_raw_job_events_preserved_after_compaction(repository: Repository):
     session = await repository.create_session("test", {})
     await repository.set_model_config(
-        session.id, provider_id="openai", model_name="gpt-4o-mini",
-        gateway_options={}, provider_options={},
+        session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
     )
     job_id = await _make_completed_job(repository, session.id, "turn 1", "response 1")
 
@@ -90,8 +98,11 @@ async def test_raw_job_events_preserved_after_compaction(repository: Repository)
 async def test_get_latest_compaction_record_returns_most_recent(repository: Repository):
     session = await repository.create_session("test", {})
     await repository.set_model_config(
-        session.id, provider_id="openai", model_name="gpt-4o-mini",
-        gateway_options={}, provider_options={},
+        session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
     )
     job1_id = await _make_completed_job(repository, session.id, "p1", "r1")
     job2_id = await _make_completed_job(repository, session.id, "p2", "r2")
@@ -113,8 +124,11 @@ async def test_get_latest_compaction_record_returns_most_recent(repository: Repo
 async def test_count_compaction_records(repository: Repository):
     session = await repository.create_session("test", {})
     await repository.set_model_config(
-        session.id, provider_id="openai", model_name="gpt-4o-mini",
-        gateway_options={}, provider_options={},
+        session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
     )
     assert await repository.count_compaction_records(session.id) == 0
 

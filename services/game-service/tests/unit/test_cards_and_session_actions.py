@@ -126,9 +126,17 @@ def test_search_cards_unknown_plugin_returns_empty_list():
 def test_list_card_providers_exposes_filters():
     providers = list_card_providers()
     assert len(providers) >= 1
-    marvel = next(provider for provider in providers if provider["provider"] == "marvel-champions")
+    marvel = next(
+        provider for provider in providers if provider["provider"] == "marvel-champions"
+    )
     filter_names = {item["name"] for item in marvel["filters"]}
-    assert filter_names >= {"name", "type_code", "classification", "official_only", "limit"}
+    assert filter_names >= {
+        "name",
+        "type_code",
+        "classification",
+        "official_only",
+        "limit",
+    }
 
 
 def test_registered_provider_uses_explicit_interface():
@@ -150,7 +158,10 @@ def test_get_plugin_action_catalog_exposes_marvel_metadata():
     assert any(item.id == "toggleExhaust" for item in catalog.named_action_lists)
     assert any(item.scope == "game" and item.key == "D" for item in catalog.hotkeys)
     assert any(item.id == "drawCard" for item in catalog.touch_bar)
-    assert any(item.label == "2" and item.layout_id == "standard2Player" for item in catalog.player_count_layouts)
+    assert any(
+        item.label == "2" and item.layout_id == "standard2Player"
+        for item in catalog.player_count_layouts
+    )
 
 
 def test_get_load_groups_unknown_plugin_returns_empty_list():
@@ -191,7 +202,8 @@ def test_search_cards_preserves_printing_level_metadata():
 async def test_search_provider_cards_200():
     async with _make_client() as client:
         resp = await client.get(
-            "/cards/marvel-champions", params={"name": "Spider-Man", "type_code": "hero"}
+            "/cards/marvel-champions",
+            params={"name": "Spider-Man", "type_code": "hero"},
         )
     assert resp.status_code == 200
     data = resp.json()
@@ -203,7 +215,9 @@ async def test_search_provider_cards_200():
 
 async def test_search_provider_cards_each_has_database_id():
     async with _make_client() as client:
-        resp = await client.get("/cards/marvel-champions", params={"name": "Black Panther"})
+        resp = await client.get(
+            "/cards/marvel-champions", params={"name": "Black Panther"}
+        )
     assert resp.status_code == 200
     for card in resp.json()["cards"]:
         assert "database_id" in card
@@ -212,7 +226,9 @@ async def test_search_provider_cards_each_has_database_id():
 
 async def test_search_provider_cards_exposes_expanded_fields():
     async with _make_client() as client:
-        resp = await client.get("/cards/marvel-champions", params={"name": "Black Panther"})
+        resp = await client.get(
+            "/cards/marvel-champions", params={"name": "Black Panther"}
+        )
     assert resp.status_code == 200
     card = resp.json()["cards"][0]
     assert "attributes" in card
@@ -268,7 +284,13 @@ async def test_cards_openapi_lists_provider_specific_filters():
     assert resp.status_code == 200
     operation = resp.json()["paths"]["/cards/marvel-champions"]["get"]
     param_names = {param["name"] for param in operation["parameters"]}
-    assert param_names == {"name", "type_code", "classification", "official_only", "limit"}
+    assert param_names == {
+        "name",
+        "type_code",
+        "classification",
+        "official_only",
+        "limit",
+    }
 
 
 async def test_no_generic_provider_path_in_openapi():
@@ -357,9 +379,14 @@ async def test_get_session_actions_plugin_metadata_for_marvel():
         resp = await client.get(f"/games/{SESSION_ID}/actions")
     metadata = resp.json()["plugin_metadata"]
     assert any(item["id"] == "toggleExhaust" for item in metadata["named_action_lists"])
-    assert any(item["scope"] == "game" and item["key"] == "D" for item in metadata["hotkeys"])
+    assert any(
+        item["scope"] == "game" and item["key"] == "D" for item in metadata["hotkeys"]
+    )
     assert any(item["id"] == "drawCard" for item in metadata["touch_bar"])
-    assert any(item["layout_id"] == "standard2Player" for item in metadata["player_count_layouts"])
+    assert any(
+        item["layout_id"] == "standard2Player"
+        for item in metadata["player_count_layouts"]
+    )
     assert "playerNDeck" in metadata["load_groups"]
 
 

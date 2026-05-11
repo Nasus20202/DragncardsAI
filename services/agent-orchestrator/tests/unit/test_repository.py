@@ -63,13 +63,19 @@ async def test_session_repository_handles_missing_records(repository: Repository
 
 
 @pytest.mark.asyncio
-async def test_session_repository_updates_existing_assignments_and_filters(repository: Repository):
+async def test_session_repository_updates_existing_assignments_and_filters(
+    repository: Repository,
+):
     active_session = await _create_session_with_model(repository, "active")
     terminated_session = await _create_session_with_model(repository, "terminated")
     await repository.terminate_session(terminated_session.id)
 
-    first_skill = await repository.add_skill_assignment(active_session.id, "demo", "/tmp/first")
-    second_skill = await repository.add_skill_assignment(active_session.id, "demo", "/tmp/second")
+    first_skill = await repository.add_skill_assignment(
+        active_session.id, "demo", "/tmp/first"
+    )
+    second_skill = await repository.add_skill_assignment(
+        active_session.id, "demo", "/tmp/second"
+    )
     assert first_skill is not None
     assert second_skill is not None
     assert second_skill.id == first_skill.id
@@ -97,10 +103,18 @@ async def test_session_repository_updates_existing_assignments_and_filters(repos
     assert second_mcp.transport == "sse"
     assert second_mcp.server_url == "http://game-service/sse"
     assert second_mcp.headers_json == {"Authorization": "Bearer token"}
-    assert await repository.remove_mcp_assignment(active_session.id, "game-service") is True
-    assert await repository.remove_mcp_assignment(active_session.id, "game-service") is False
+    assert (
+        await repository.remove_mcp_assignment(active_session.id, "game-service")
+        is True
+    )
+    assert (
+        await repository.remove_mcp_assignment(active_session.id, "game-service")
+        is False
+    )
 
-    sessions, total = await repository.list_sessions(status="terminated", limit=10, offset=0)
+    sessions, total = await repository.list_sessions(
+        status="terminated", limit=10, offset=0
+    )
     assert total == 1
     assert [item.id for item in sessions] == [terminated_session.id]
 
@@ -108,14 +122,20 @@ async def test_session_repository_updates_existing_assignments_and_filters(repos
 @pytest.mark.asyncio
 async def test_job_repository_claims_oldest_and_filters_results(repository: Repository):
     session = await _create_session_with_model(repository)
-    first_job = await repository.enqueue_prompt_job(session.id, prompt="first", metadata_json={}, max_attempts=1)
-    second_job = await repository.enqueue_prompt_job(session.id, prompt="second", metadata_json={}, max_attempts=1)
+    first_job = await repository.enqueue_prompt_job(
+        session.id, prompt="first", metadata_json={}, max_attempts=1
+    )
+    second_job = await repository.enqueue_prompt_job(
+        session.id, prompt="second", metadata_json={}, max_attempts=1
+    )
 
     claimed = await repository.claim_next_job()
     assert claimed is not None
     assert claimed.id == first_job.id
 
-    await repository.append_event(first_job.id, session.id, "model_output", {"text": "hello"})
+    await repository.append_event(
+        first_job.id, session.id, "model_output", {"text": "hello"}
+    )
     await repository.mark_job_completed(first_job.id, "done")
 
     second_claimed = await repository.claim_next_job()
@@ -153,7 +173,9 @@ async def test_job_repository_claims_oldest_and_filters_results(repository: Repo
 @pytest.mark.asyncio
 async def test_job_repository_cancel_and_failure_branches(repository: Repository):
     session = await _create_session_with_model(repository)
-    job = await repository.enqueue_prompt_job(session.id, prompt="cancel later", metadata_json={}, max_attempts=2)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="cancel later", metadata_json={}, max_attempts=2
+    )
     claimed = await repository.claim_next_job()
 
     cancelled = await repository.request_cancel(job.id)
@@ -187,7 +209,9 @@ async def test_enqueue_prompt_job_rejects_terminated_sessions(repository: Reposi
     await repository.terminate_session(session.id)
 
     with pytest.raises(ValueError):
-        await repository.enqueue_prompt_job(session.id, prompt="hello", metadata_json={}, max_attempts=1)
+        await repository.enqueue_prompt_job(
+            session.id, prompt="hello", metadata_json={}, max_attempts=1
+        )
 
     assert await repository.claim_next_job() is None
 
@@ -208,12 +232,16 @@ async def test_session_multi_turn_memory_can_be_disabled(repository: Repository)
 async def test_update_multi_turn_memory(repository: Repository):
     session = await repository.create_session("demo", {})
     assert session.multi_turn_memory is True
-    updated = await repository.update_multi_turn_memory(session.id, multi_turn_memory=False)
+    updated = await repository.update_multi_turn_memory(
+        session.id, multi_turn_memory=False
+    )
     assert updated is not None
     assert updated.multi_turn_memory is False
 
 
 @pytest.mark.asyncio
 async def test_update_multi_turn_memory_missing_session(repository: Repository):
-    result = await repository.update_multi_turn_memory("missing", multi_turn_memory=False)
+    result = await repository.update_multi_turn_memory(
+        "missing", multi_turn_memory=False
+    )
     assert result is None

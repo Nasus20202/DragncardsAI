@@ -1,4 +1,5 @@
 """Unit tests for context management API endpoints (compact and context metadata)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,7 +9,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_orchestrator.integrations.bifrost import BifrostClient, ChatResponse
-from agent_orchestrator.integrations.mcp.client import StreamableHttpMcpClient, McpToolDefinition
+from agent_orchestrator.integrations.mcp.client import (
+    StreamableHttpMcpClient,
+    McpToolDefinition,
+)
 from agent_orchestrator.runtime.app import create_app
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
@@ -31,7 +35,9 @@ class FakeBifrostClient(BifrostClient):
     async def list_models(self, provider_id: str):
         return []
 
-    async def get_model_context_length(self, provider_id: str, model_name: str) -> int | None:
+    async def get_model_context_length(
+        self, provider_id: str, model_name: str
+    ) -> int | None:
         return None
 
     async def chat_completion(self, *args, **kwargs) -> ChatResponse:
@@ -94,8 +100,12 @@ async def _make_session_with_model(repo: Repository) -> str:
     return session.id
 
 
-async def _make_completed_job(repo: Repository, session_id: str, prompt: str = "hi", output: str = "ok") -> str:
-    job = await repo.enqueue_prompt_job(session_id, prompt=prompt, metadata_json={}, max_attempts=1)
+async def _make_completed_job(
+    repo: Repository, session_id: str, prompt: str = "hi", output: str = "ok"
+) -> str:
+    job = await repo.enqueue_prompt_job(
+        session_id, prompt=prompt, metadata_json={}, max_attempts=1
+    )
     await repo.claim_next_job()
     await repo.append_event(job.id, session_id, "model_output", {"text": output})
     await repo.update_job_tokens_used(job.id, 100)

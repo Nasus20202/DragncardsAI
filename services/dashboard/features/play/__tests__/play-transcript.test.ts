@@ -64,7 +64,9 @@ describe("PlayTranscript", () => {
       {
         id: "2",
         event_type: "completion",
-        payload: { text: 'I do not have any information about "logenz" in my knowledge base.' },
+        payload: {
+          text: 'I do not have any information about "logenz" in my knowledge base.',
+        },
         created_at: "2026-05-11T00:00:02Z",
       },
     ]);
@@ -80,10 +82,16 @@ describe("PlayTranscript", () => {
         errorText: null,
         onOpenSettings: () => {},
         settingsOpen: false,
-      }),
+      })
     );
 
-    expect(screen.getByText('I do not have any information about "logenz" in my knowledge base.')).toBeDefined();
-    expect(screen.queryByText('I do not have any information about "')).toBeNull();
+    expect(
+      screen.getByText(
+        'I do not have any information about "logenz" in my knowledge base.'
+      )
+    ).toBeDefined();
+    expect(
+      screen.queryByText('I do not have any information about "')
+    ).toBeNull();
   });
 });

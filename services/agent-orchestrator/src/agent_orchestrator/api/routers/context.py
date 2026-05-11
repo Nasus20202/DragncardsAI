@@ -1,4 +1,5 @@
 """Context management endpoints: manual compaction and context metadata."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -51,7 +52,9 @@ async def compact_session(
 
     model_config = session.model_config
     if model_config is None:
-        raise HTTPException(status_code=422, detail="Session has no model configuration")
+        raise HTTPException(
+            status_code=422, detail="Session has no model configuration"
+        )
 
     try:
         await perform_compaction(
@@ -63,7 +66,9 @@ async def compact_session(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    context_window_size = await _resolve_context_window(session, settings, bifrost_client)
+    context_window_size = await _resolve_context_window(
+        session, settings, bifrost_client
+    )
     metadata = await repo.get_context_metadata(session_id, context_window_size)
     return ContextMetadataResponse(**metadata)
 
@@ -77,6 +82,8 @@ async def get_context_metadata(
     settings: Settings = Depends(get_settings),
 ) -> ContextMetadataResponse:
     """Return current context health metadata for a session."""
-    context_window_size = await _resolve_context_window(session, settings, bifrost_client)
+    context_window_size = await _resolve_context_window(
+        session, settings, bifrost_client
+    )
     metadata = await repo.get_context_metadata(session_id, context_window_size)
     return ContextMetadataResponse(**metadata)

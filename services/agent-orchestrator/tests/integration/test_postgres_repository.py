@@ -13,7 +13,6 @@ from agent_orchestrator.storage.db import create_engine, create_session_factory
 from agent_orchestrator.storage.migrations import ensure_schema
 from agent_orchestrator.storage.repository import Repository
 
-
 POSTGRES_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql+asyncpg://postgres:postgres@localhost:5441/agent_orchestrator",
@@ -21,33 +20,43 @@ POSTGRES_URL = os.environ.get(
 
 
 def _database_url(database_name: str) -> str:
-    return make_url(POSTGRES_URL).set(database=database_name).render_as_string(hide_password=False)
+    return (
+        make_url(POSTGRES_URL)
+        .set(database=database_name)
+        .render_as_string(hide_password=False)
+    )
 
 
 async def _create_database(database_name: str) -> None:
-    admin_engine = create_async_engine(_database_url("postgres"), isolation_level="AUTOCOMMIT")
+    admin_engine = create_async_engine(
+        _database_url("postgres"), isolation_level="AUTOCOMMIT"
+    )
     try:
         async with admin_engine.connect() as conn:
-            await conn.execute(text(f'CREATE DATABASE "{quote(database_name, safe="_")}"'))
+            await conn.execute(
+                text(f'CREATE DATABASE "{quote(database_name, safe="_")}"')
+            )
     finally:
         await admin_engine.dispose()
 
 
 async def _drop_database(database_name: str) -> None:
-    admin_engine = create_async_engine(_database_url("postgres"), isolation_level="AUTOCOMMIT")
+    admin_engine = create_async_engine(
+        _database_url("postgres"), isolation_level="AUTOCOMMIT"
+    )
     try:
         async with admin_engine.connect() as conn:
             await conn.execute(
-                text(
-                    """
+                text("""
                     SELECT pg_terminate_backend(pid)
                     FROM pg_stat_activity
                     WHERE datname = :database_name AND pid <> pg_backend_pid()
-                    """
-                ),
+                    """),
                 {"database_name": database_name},
             )
-            await conn.execute(text(f'DROP DATABASE IF EXISTS "{quote(database_name, safe="_")}"'))
+            await conn.execute(
+                text(f'DROP DATABASE IF EXISTS "{quote(database_name, safe="_")}"')
+            )
     finally:
         await admin_engine.dispose()
 
@@ -71,8 +80,12 @@ async def postgres_repository():
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_postgres_session_persistence_and_job_ordering(postgres_repository: Repository):
-    session = await postgres_repository.create_session(f"session-{uuid4()}", {"purpose": "test"})
+async def test_postgres_session_persistence_and_job_ordering(
+    postgres_repository: Repository,
+):
+    session = await postgres_repository.create_session(
+        f"session-{uuid4()}", {"purpose": "test"}
+    )
     await postgres_repository.set_model_config(
         session.id,
         provider_id="openai",
@@ -91,7 +104,9 @@ async def test_postgres_session_persistence_and_job_ordering(postgres_repository
 
     claimed = await postgres_repository.claim_next_job()
     assert claimed is not None
-    await postgres_repository.append_event(claimed.id, session.id, "model_output", {"text": "hello"})
+    await postgres_repository.append_event(
+        claimed.id, session.id, "model_output", {"text": "hello"}
+    )
     await postgres_repository.mark_job_completed(claimed.id, "done")
 
     reloaded = await postgres_repository.get_job(job.id)

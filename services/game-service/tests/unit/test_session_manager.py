@@ -26,7 +26,6 @@ from game_service.logic.exceptions import (
 from game_service.logic.session import GameSession
 from game_service.phoenix_client.client import Channel, PhoenixClient, PhxMessage
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -102,7 +101,9 @@ async def test_get_state_raises_state_unavailable_error():
 async def test_get_state_fetches_fresh_state_without_deadlocking():
     session = _make_session()
     session.channel.push = AsyncMock(return_value={})
-    session.channel.wait_for_state_update = AsyncMock(return_value={"game": {"ok": True}})
+    session.channel.wait_for_state_update = AsyncMock(
+        return_value={"game": {"ok": True}}
+    )
 
     state = await asyncio.wait_for(session.get_state(), timeout=1.0)
 
@@ -135,7 +136,9 @@ async def test_execute_action_recovers_with_request_state_after_timeout():
     session = _make_session()
     session.channel.push = AsyncMock(side_effect=[{}, {"game": {"ok": True}}])
     session.channel.wait_for_event = AsyncMock(side_effect=asyncio.TimeoutError)
-    session.channel.wait_for_state_update = AsyncMock(return_value={"game": {"ok": True}})
+    session.channel.wait_for_state_update = AsyncMock(
+        return_value={"game": {"ok": True}}
+    )
 
     state = await session.execute_action(NextStepAction())
 
@@ -153,7 +156,9 @@ async def test_execute_action_timeout_raises_when_recovery_also_times_out():
     session.channel.wait_for_event = AsyncMock(side_effect=asyncio.TimeoutError)
     session.channel.wait_for_state_update = AsyncMock(side_effect=asyncio.TimeoutError)
 
-    with pytest.raises(SessionError, match="Timed out waiting for state update after action"):
+    with pytest.raises(
+        SessionError, match="Timed out waiting for state update after action"
+    ):
         await session.execute_action(NextStepAction())
 
 
@@ -171,7 +176,9 @@ async def test_export_state_returns_snapshot_document():
 async def test_load_state_pushes_set_game_and_refreshes_state():
     session = _make_session()
     session.channel.push = AsyncMock(side_effect=[{}, {"game": {"roundNumber": 4}}])
-    session.channel.wait_for_event = AsyncMock(return_value=MagicMock(event="state_update"))
+    session.channel.wait_for_event = AsyncMock(
+        return_value=MagicMock(event="state_update")
+    )
     session.channel.wait_for_state_update = AsyncMock(
         return_value={"game": {"roundNumber": 4}}
     )
@@ -207,7 +214,9 @@ async def test_load_state_rejects_wrong_plugin():
 async def test_load_state_rejects_unsupported_schema_version():
     session = _make_session()
 
-    with pytest.raises(SnapshotValidationError, match="Unsupported snapshot schema version"):
+    with pytest.raises(
+        SnapshotValidationError, match="Unsupported snapshot schema version"
+    ):
         await session.load_state(
             {
                 "schema_version": 999,

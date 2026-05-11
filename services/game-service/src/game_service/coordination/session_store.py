@@ -13,6 +13,10 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
+from game_service.telemetry import get_tracer
+
+tracer = get_tracer(__name__)
+
 
 class SessionStore(Protocol):
     async def list_sessions(self) -> list[dict[str, Any]]: ...
@@ -58,14 +62,24 @@ class _RespConnection:
     port: int
 
     async def execute(self, *parts: object) -> Any:
-        reader, writer = await asyncio.open_connection(self.host, self.port)
-        try:
-            writer.write(_encode_resp_array([str(part) for part in parts]))
-            await writer.drain()
-            return await _read_resp(reader)
-        finally:
-            writer.close()
-            await writer.wait_closed()
+        command = str(parts[0]).upper() if parts else "UNKNOWN"
+        with tracer.start_as_current_span(
+            "valkey.session_store.execute",
+            attributes={
+                "db.system": "redis",
+                "db.operation.name": command,
+                "server.address": self.host,
+                "server.port": self.port,
+            },
+        ):
+            reader, writer = await asyncio.open_connection(self.host, self.port)
+            try:
+                writer.write(_encode_resp_array([str(part) for part in parts]))
+                await writer.drain()
+                return await _read_resp(reader)
+            finally:
+                writer.close()
+                await writer.wait_closed()
 
 
 def _encode_resp_array(parts: list[str]) -> bytes:
@@ -139,7 +153,9 @@ class ValkeySessionStore:
         return json.loads(raw) if raw is not None else None
 
     async def put_session(self, record: dict[str, Any]) -> None:
-        await self._conn.execute("SET", self._key(record["session_id"]), json.dumps(record))
+        await self._conn.execute(
+            "SET", self._key(record["session_id"]), json.dumps(record)
+        )
 
     async def delete_session(self, session_id: str) -> None:
         await self._conn.execute("DEL", self._key(session_id))

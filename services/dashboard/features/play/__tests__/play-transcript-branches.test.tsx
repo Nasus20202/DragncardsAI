@@ -3,7 +3,11 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 import { PlayTranscript } from "@/features/play/components/play-transcript";
-import { JobDetail, JobEventResponse, SessionDetail } from "@/features/shared/lib/types";
+import {
+  JobDetail,
+  JobEventResponse,
+  SessionDetail,
+} from "@/features/shared/lib/types";
 
 HTMLElement.prototype.scrollIntoView = vi.fn();
 
@@ -65,10 +69,12 @@ describe("PlayTranscript branches", () => {
         errorText={null}
         onOpenSettings={vi.fn()}
         settingsOpen={false}
-      />,
+      />
     );
 
-    expect(screen.getByText("Select or create a session to start.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Select or create a session to start.")
+    ).toBeInTheDocument();
 
     rerender(
       <PlayTranscript
@@ -81,24 +87,63 @@ describe("PlayTranscript branches", () => {
         errorText="Boom"
         onOpenSettings={vi.fn()}
         settingsOpen={true}
-      />,
+      />
     );
 
     expect(screen.getByText("Streaming…")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Boom");
-    expect(screen.getByText("No messages yet. Type a prompt below.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /close session settings/i })).toBeInTheDocument();
+    expect(
+      screen.getByText("No messages yet. Type a prompt below.")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /close session settings/i })
+    ).toBeInTheDocument();
   });
 
   it("aggregates reasoning, tool events, compaction, failure, and cancellation", () => {
     const job = makeJob([
-      { id: "1", event_type: "reasoning", payload: { text: "Think 1. " }, created_at: "2026-05-11T00:00:01Z" },
-      { id: "2", event_type: "reasoning", payload: { text: "Think 2." }, created_at: "2026-05-11T00:00:02Z" },
-      { id: "3", event_type: "tool_call", payload: { exposed_tool_name: "search", text: "call" }, created_at: "2026-05-11T00:00:03Z" },
-      { id: "4", event_type: "tool_result", payload: { exposed_tool_name: "search", summary_text: "result" }, created_at: "2026-05-11T00:00:04Z" },
-      { id: "5", event_type: "compaction", payload: { summary_text: "compacted" }, created_at: "2026-05-11T00:00:05Z" },
-      { id: "6", event_type: "failure", payload: { message: "failed badly" }, created_at: "2026-05-11T00:00:06Z" },
-      { id: "7", event_type: "cancellation", payload: {}, created_at: "2026-05-11T00:00:07Z" },
+      {
+        id: "1",
+        event_type: "reasoning",
+        payload: { text: "Think 1. " },
+        created_at: "2026-05-11T00:00:01Z",
+      },
+      {
+        id: "2",
+        event_type: "reasoning",
+        payload: { text: "Think 2." },
+        created_at: "2026-05-11T00:00:02Z",
+      },
+      {
+        id: "3",
+        event_type: "tool_call",
+        payload: { exposed_tool_name: "search", text: "call" },
+        created_at: "2026-05-11T00:00:03Z",
+      },
+      {
+        id: "4",
+        event_type: "tool_result",
+        payload: { exposed_tool_name: "search", summary_text: "result" },
+        created_at: "2026-05-11T00:00:04Z",
+      },
+      {
+        id: "5",
+        event_type: "compaction",
+        payload: { summary_text: "compacted" },
+        created_at: "2026-05-11T00:00:05Z",
+      },
+      {
+        id: "6",
+        event_type: "failure",
+        payload: { message: "failed badly" },
+        created_at: "2026-05-11T00:00:06Z",
+      },
+      {
+        id: "7",
+        event_type: "cancellation",
+        payload: {},
+        created_at: "2026-05-11T00:00:07Z",
+      },
     ]);
 
     render(
@@ -112,7 +157,7 @@ describe("PlayTranscript branches", () => {
         errorText={null}
         onOpenSettings={vi.fn()}
         settingsOpen={false}
-      />,
+      />
     );
 
     expect(screen.getByText("Prompt")).toBeInTheDocument();
@@ -123,17 +168,29 @@ describe("PlayTranscript branches", () => {
     expect(screen.getByText("failed badly")).toBeInTheDocument();
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /expand tool call: search/i }));
-    fireEvent.click(screen.getByRole("button", { name: /expand tool result: search/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /expand tool call: search/i })
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /expand tool result: search/i })
+    );
 
     expect(screen.getByText("call")).toBeInTheDocument();
     expect(screen.getByText("result")).toBeInTheDocument();
   });
 
   it("treats compaction payload on model output as a compaction block", () => {
-    const job = makeJob([
-      { id: "1", event_type: "model_output", payload: { text: "summary", compaction: true }, created_at: "2026-05-11T00:00:01Z" },
-    ], "[COMPACTION]");
+    const job = makeJob(
+      [
+        {
+          id: "1",
+          event_type: "model_output",
+          payload: { text: "summary", compaction: true },
+          created_at: "2026-05-11T00:00:01Z",
+        },
+      ],
+      "[COMPACTION]"
+    );
 
     render(
       <PlayTranscript
@@ -146,7 +203,7 @@ describe("PlayTranscript branches", () => {
         errorText={null}
         onOpenSettings={vi.fn()}
         settingsOpen={false}
-      />,
+      />
     );
 
     expect(screen.getByText("Context compaction")).toBeInTheDocument();
@@ -158,7 +215,12 @@ describe("PlayTranscript branches", () => {
       <PlayTranscript
         jobs={[
           makeJob([
-            { id: "1", event_type: "reasoning", payload: { text: "hidden later" }, created_at: "2026-05-11T00:00:01Z" },
+            {
+              id: "1",
+              event_type: "reasoning",
+              payload: { text: "hidden later" },
+              created_at: "2026-05-11T00:00:01Z",
+            },
           ]),
         ]}
         streamingJobId={"job-1"}
@@ -169,18 +231,30 @@ describe("PlayTranscript branches", () => {
         errorText={null}
         onOpenSettings={vi.fn()}
         settingsOpen={false}
-      />,
+      />
     );
 
-    expect(screen.getByRole("button", { name: /collapse reasoning/i })).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("button", { name: /collapse reasoning/i })
+    ).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("hidden later")).toBeInTheDocument();
 
     rerender(
       <PlayTranscript
         jobs={[
           makeJob([
-            { id: "1", event_type: "reasoning", payload: { text: "hidden later" }, created_at: "2026-05-11T00:00:01Z" },
-            { id: "2", event_type: "model_output", payload: { text: "final text" }, created_at: "2026-05-11T00:00:02Z" },
+            {
+              id: "1",
+              event_type: "reasoning",
+              payload: { text: "hidden later" },
+              created_at: "2026-05-11T00:00:01Z",
+            },
+            {
+              id: "2",
+              event_type: "model_output",
+              payload: { text: "final text" },
+              created_at: "2026-05-11T00:00:02Z",
+            },
           ]),
         ]}
         streamingJobId={"job-1"}
@@ -191,7 +265,7 @@ describe("PlayTranscript branches", () => {
         errorText={null}
         onOpenSettings={vi.fn()}
         settingsOpen={false}
-      />,
+      />
     );
 
     const toggle = screen.getByRole("button", { name: /expand reasoning/i });

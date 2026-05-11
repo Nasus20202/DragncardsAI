@@ -7,7 +7,9 @@ import { ContextMetadata, SessionDetail } from "@/features/shared/lib/types";
 
 vi.mock("@/features/play/components/context-health-widget", () => ({
   ContextHealthWidget: ({ onCompact }: { onCompact: () => void }) => (
-    <button type="button" onClick={onCompact}>Compact context</button>
+    <button type="button" onClick={onCompact}>
+      Compact context
+    </button>
   ),
 }));
 
@@ -46,12 +48,16 @@ describe("PlayPromptBox", () => {
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
         onCompact={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getByLabelText("Message")).toBeDisabled();
-    expect(screen.getByPlaceholderText("Select an active session to start.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /send message/i })).toBeDisabled();
+    expect(
+      screen.getByPlaceholderText("Select an active session to start.")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /send message/i })
+    ).toBeDisabled();
   });
 
   it("submits on Enter but not Shift+Enter", () => {
@@ -66,7 +72,7 @@ describe("PlayPromptBox", () => {
         onPromptChange={vi.fn()}
         onSubmit={onSubmit}
         onCompact={vi.fn()}
-      />,
+      />
     );
 
     const input = screen.getByLabelText("Message");
@@ -88,7 +94,7 @@ describe("PlayPromptBox", () => {
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
         onCompact={onCompact}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByRole("button", { name: /compact context/i }));
@@ -105,9 +111,11 @@ describe("PlayPromptBox", () => {
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
         onCompact={vi.fn()}
-      />,
+      />
     );
 
-    expect(screen.getByRole("button", { name: /send message/i })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /send message/i })
+    ).toBeDisabled();
   });
 });

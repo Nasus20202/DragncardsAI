@@ -138,7 +138,9 @@ async def test_load_snapshot_validation_error_returns_400():
     from game_service.logic.session_manager import SnapshotValidationError
 
     session = _mock_session()
-    session.load_state = AsyncMock(side_effect=SnapshotValidationError("plugin mismatch"))
+    session.load_state = AsyncMock(
+        side_effect=SnapshotValidationError("plugin mismatch")
+    )
     async with _make_client(_mock_manager(session)) as client:
         resp = await client.put(
             f"/games/{SESSION_ID}/snapshot",

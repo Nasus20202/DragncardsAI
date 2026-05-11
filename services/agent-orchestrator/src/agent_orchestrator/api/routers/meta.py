@@ -4,7 +4,10 @@ from fastapi import APIRouter, Depends, Request
 
 from agent_orchestrator.api.deps import get_repository, get_settings
 from agent_orchestrator.config import Settings
-from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus, ValkeyLiveEventBus
+from agent_orchestrator.runtime.live_events import (
+    InMemoryLiveEventBus,
+    ValkeyLiveEventBus,
+)
 from agent_orchestrator.storage.db import ping_database
 from agent_orchestrator.storage.repository import Repository
 

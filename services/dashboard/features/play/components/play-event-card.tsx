@@ -4,28 +4,31 @@ import { JobEventResponse } from "@/features/shared/lib/types";
 import { useState } from "react";
 
 const LABELS: Record<string, string> = {
-  model_output:  "Assistant",
-  reasoning:     "Reasoning",
-  progress:      "Progress",
-  tool_call:     "Tool call",
-  compaction:    "Context compaction",
-  tool_result:   "Tool result",
-  completion:    "Done",
-  failure:       "Error",
-  cancellation:  "Cancelled",
+  model_output: "Assistant",
+  reasoning: "Reasoning",
+  progress: "Progress",
+  tool_call: "Tool call",
+  compaction: "Context compaction",
+  tool_result: "Tool result",
+  completion: "Done",
+  failure: "Error",
+  cancellation: "Cancelled",
 };
 
 function bodyText(event: JobEventResponse): string {
   const p = event.payload;
-  if (typeof p.text === "string")    return p.text;
+  if (typeof p.text === "string") return p.text;
   if (typeof p.summary_text === "string") return p.summary_text;
   if (typeof p.message === "string") return p.message;
-  if (typeof p.status === "string")  return p.status;
+  if (typeof p.status === "string") return p.status;
   return JSON.stringify(p, null, 2);
 }
 
 function hhmm(iso: string) {
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 /* ── Individual event renderers ──────────────────────────────────── */
@@ -49,24 +52,24 @@ function ErrorMessage({ text, time }: { text: string; time: string }) {
 }
 
 function CancelledNote({ time }: { time: string }) {
-  return (
-    <p className="text-xs italic text-default-400">
-      Cancelled at {time}
-    </p>
-  );
+  return <p className="text-xs italic text-default-400">Cancelled at {time}</p>;
 }
 
 function CollapsibleCard({ event }: { event: JobEventResponse }) {
   const [open, setOpen] = useState(false);
   const label = LABELS[event.event_type] ?? event.event_type;
-  const time  = hhmm(event.created_at);
+  const time = hhmm(event.created_at);
 
   const dotClass =
-    event.event_type === "reasoning"  ? "bg-warning" :
-    event.event_type === "progress"   ? "bg-accent"  :
-    event.event_type === "compaction" ? "bg-secondary" :
-    event.event_type === "tool_call"  ? "bg-default-400" :
-    "bg-default-300";
+    event.event_type === "reasoning"
+      ? "bg-warning"
+      : event.event_type === "progress"
+        ? "bg-accent"
+        : event.event_type === "compaction"
+          ? "bg-secondary"
+          : event.event_type === "tool_call"
+            ? "bg-default-400"
+            : "bg-default-300";
 
   return (
     <div className="overflow-hidden rounded-lg border border-default-200/60 bg-default-50/40 dark:bg-white/3">
@@ -78,7 +81,10 @@ function CollapsibleCard({ event }: { event: JobEventResponse }) {
         onClick={() => setOpen((p) => !p)}
       >
         <div className="flex items-center gap-2">
-          <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+          <span
+            aria-hidden="true"
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`}
+          />
           <span className="text-xs font-medium text-default-500">{label}</span>
         </div>
         <div className="flex items-center gap-2 text-xs text-default-400">

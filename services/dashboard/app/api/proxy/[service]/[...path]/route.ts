@@ -3,7 +3,9 @@ import {
   filterProxyResponseHeaders,
   isServiceKey,
   resolveProxyUrl,
+  type ServiceKey,
 } from "@/features/proxy/lib/proxy";
+import { withServerSpan } from "@/features/observability/lib/server-tracing";
 
 type RouteContext = {
   params: Promise<{
@@ -16,29 +18,46 @@ async function proxyRequest(request: Request, context: RouteContext) {
   const { service, path } = await context.params;
 
   if (!isServiceKey(service)) {
-    return Response.json({ detail: `Unknown proxy service ${service}` }, { status: 404 });
+    return Response.json(
+      { detail: `Unknown proxy service ${service}` },
+      { status: 404 }
+    );
   }
 
-  const incomingUrl = new URL(request.url);
-  const targetUrl = resolveProxyUrl(service, path, incomingUrl.search);
-  const body =
-    request.method === "GET" || request.method === "HEAD"
-      ? undefined
-      : await request.arrayBuffer();
+  const serviceKey: ServiceKey = service;
 
-  const upstreamResponse = await fetch(targetUrl, {
-    method: request.method,
-    headers: filterProxyRequestHeaders(request.headers),
-    body,
-    cache: "no-store",
-    redirect: "manual",
-  });
+  async function proxyUpstream() {
+    const incomingUrl = new URL(request.url);
+    const targetUrl = resolveProxyUrl(serviceKey, path, incomingUrl.search);
+    const body =
+      request.method === "GET" || request.method === "HEAD"
+        ? undefined
+        : await request.arrayBuffer();
 
-  return new Response(upstreamResponse.body, {
-    status: upstreamResponse.status,
-    statusText: upstreamResponse.statusText,
-    headers: filterProxyResponseHeaders(upstreamResponse.headers),
-  });
+    const upstreamResponse = await fetch(targetUrl, {
+      method: request.method,
+      headers: filterProxyRequestHeaders(request.headers),
+      body,
+      cache: "no-store",
+      redirect: "manual",
+    });
+
+    return new Response(upstreamResponse.body, {
+      status: upstreamResponse.status,
+      statusText: upstreamResponse.statusText,
+      headers: filterProxyResponseHeaders(upstreamResponse.headers),
+    });
+  }
+
+  return withServerSpan(
+    "dashboard.proxy_request",
+    {
+      "proxy.service": serviceKey,
+      "http.request.method": request.method,
+      "proxy.path": path.join("/"),
+    },
+    proxyUpstream
+  );
 }
 
 export async function GET(request: Request, context: RouteContext) {

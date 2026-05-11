@@ -4,7 +4,6 @@ from typing import Any
 
 from agent_orchestrator.runtime.skills import SkillRegistry
 
-
 BASE_SYSTEM_PROMPT_PARTS = (
     "You are an agent orchestrator for DragnCardsAI.",
     "Use available MCP tools when they are necessary to answer or act.",

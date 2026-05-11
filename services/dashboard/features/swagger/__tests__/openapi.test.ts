@@ -19,7 +19,9 @@ describe("buildMergedOpenApi", () => {
                     "200": {
                       content: {
                         "application/json": {
-                          schema: { $ref: "#/components/schemas/SessionListResponse" },
+                          schema: {
+                            $ref: "#/components/schemas/SessionListResponse",
+                          },
                         },
                       },
                     },
@@ -35,7 +37,7 @@ describe("buildMergedOpenApi", () => {
                 },
               },
             },
-          }),
+          })
         );
       }
 
@@ -58,7 +60,7 @@ describe("buildMergedOpenApi", () => {
               },
             },
           },
-        }),
+        })
       );
     });
 
@@ -80,8 +82,13 @@ describe("buildMergedOpenApi", () => {
       },
     });
 
-    const components = document.components as Record<string, Record<string, unknown>>;
-    expect(components.schemas).toHaveProperty("orchestrator_SessionListResponse");
+    const components = document.components as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(components.schemas).toHaveProperty(
+      "orchestrator_SessionListResponse"
+    );
     expect(components.schemas).toHaveProperty("game_SessionListResponse");
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -99,7 +106,9 @@ describe("buildMergedOpenApi", () => {
     const fetchImpl = vi.fn(async (input: string | URL) => {
       const url = String(input);
       if (url.includes("4002")) {
-        return new Response(JSON.stringify({ openapi: "3.1.0", paths: {}, components: {} }));
+        return new Response(
+          JSON.stringify({ openapi: "3.1.0", paths: {}, components: {} })
+        );
       }
 
       return new Response("boom", { status: 502 });

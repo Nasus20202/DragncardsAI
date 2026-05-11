@@ -10,7 +10,10 @@ from itertools import count
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
+from agent_orchestrator.telemetry import get_tracer
+
 logger = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 
 
 @dataclass(frozen=True)
@@ -28,7 +31,9 @@ class LiveEventSubscriber(Protocol):
 
 
 class LiveEventBus(Protocol):
-    async def publish(self, job_id: str, event_type: str, payload_json: dict[str, Any]) -> LiveJobEvent: ...
+    async def publish(
+        self, job_id: str, event_type: str, payload_json: dict[str, Any]
+    ) -> LiveJobEvent: ...
 
     async def subscribe(self, job_id: str) -> LiveEventSubscriber: ...
 
@@ -36,7 +41,12 @@ class LiveEventBus(Protocol):
 
 
 class InMemoryLiveEventSubscriber:
-    def __init__(self, job_id: str, queue: asyncio.Queue[LiveJobEvent], bus: "InMemoryLiveEventBus"):
+    def __init__(
+        self,
+        job_id: str,
+        queue: asyncio.Queue[LiveJobEvent],
+        bus: "InMemoryLiveEventBus",
+    ):
         self._job_id = job_id
         self._queue = queue
         self._bus = bus
@@ -54,10 +64,16 @@ class InMemoryLiveEventSubscriber:
 class InMemoryLiveEventBus:
     def __init__(self, replay_buffer_size: int = 512):
         self._next_id = count(start=1_000_000_000)
-        self._subscribers: dict[str, set[asyncio.Queue[LiveJobEvent]]] = defaultdict(set)
-        self._replay: dict[str, deque[LiveJobEvent]] = defaultdict(lambda: deque(maxlen=replay_buffer_size))
+        self._subscribers: dict[str, set[asyncio.Queue[LiveJobEvent]]] = defaultdict(
+            set
+        )
+        self._replay: dict[str, deque[LiveJobEvent]] = defaultdict(
+            lambda: deque(maxlen=replay_buffer_size)
+        )
 
-    async def publish(self, job_id: str, event_type: str, payload_json: dict[str, Any]) -> LiveJobEvent:
+    async def publish(
+        self, job_id: str, event_type: str, payload_json: dict[str, Any]
+    ) -> LiveJobEvent:
         event = LiveJobEvent(
             id=str(next(self._next_id)),
             event_type=event_type,
@@ -140,18 +156,30 @@ class _RespConnection:
         self._port = port
 
     async def execute(self, *parts: object) -> Any:
-        reader, writer = await asyncio.open_connection(self._host, self._port)
-        try:
-            writer.write(_encode_resp_array([str(part) for part in parts]))
-            await writer.drain()
-            return await _read_resp(reader)
-        finally:
-            writer.close()
-            await writer.wait_closed()
+        command = str(parts[0]).upper() if parts else "UNKNOWN"
+        with tracer.start_as_current_span(
+            "valkey.live_events.execute",
+            attributes={
+                "db.system": "redis",
+                "db.operation.name": command,
+                "server.address": self._host,
+                "server.port": self._port,
+            },
+        ):
+            reader, writer = await asyncio.open_connection(self._host, self._port)
+            try:
+                writer.write(_encode_resp_array([str(part) for part in parts]))
+                await writer.drain()
+                return await _read_resp(reader)
+            finally:
+                writer.close()
+                await writer.wait_closed()
 
 
 class ValkeyLiveEventSubscriber:
-    def __init__(self, connection: _RespConnection, stream_key: str, last_id: str = "0-0"):
+    def __init__(
+        self, connection: _RespConnection, stream_key: str, last_id: str = "0-0"
+    ):
         self._conn = connection
         self._stream_key = stream_key
         self._last_id = last_id
@@ -173,7 +201,9 @@ class ValkeyLiveEventSubscriber:
         _, entries = response[0]
         entry_id, fields = entries[0]
         self._last_id = entry_id
-        payload = {fields[index]: fields[index + 1] for index in range(0, len(fields), 2)}
+        payload = {
+            fields[index]: fields[index + 1] for index in range(0, len(fields), 2)
+        }
         raw_payload = json.loads(payload["payload_json"])
         return LiveJobEvent(
             id=entry_id,
@@ -215,7 +245,9 @@ class ValkeyLiveEventBus:
     def _stream_key(self, job_id: str) -> str:
         return f"{self._stream_prefix}{job_id}"
 
-    async def publish(self, job_id: str, event_type: str, payload_json: dict[str, Any]) -> LiveJobEvent:
+    async def publish(
+        self, job_id: str, event_type: str, payload_json: dict[str, Any]
+    ) -> LiveJobEvent:
         created_at = datetime.now(timezone.utc)
         stream_key = self._stream_key(job_id)
         event_id = await self._conn.execute(

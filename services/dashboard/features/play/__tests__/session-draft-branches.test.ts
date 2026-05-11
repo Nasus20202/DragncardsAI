@@ -35,10 +35,33 @@ const session: SessionDetail = {
     provider_options: { temperature: 0.2 },
     updated_at: "2026-05-11T00:00:00Z",
   },
-  skills: [{ id: "skill-1", skill_name: "custom-skill", skill_path: "/skills/custom", created_at: "2026-05-11T00:00:00Z" }],
+  skills: [
+    {
+      id: "skill-1",
+      skill_name: "custom-skill",
+      skill_path: "/skills/custom",
+      created_at: "2026-05-11T00:00:00Z",
+    },
+  ],
   mcps: [
-    { id: "mcp-1", name: "game-service", transport: "streamable-http", server_url: "http://game-service:8000/mcp/", headers: {}, created_at: "2026-05-11T00:00:00Z", updated_at: "2026-05-11T00:00:00Z" },
-    { id: "mcp-2", name: "custom", transport: "stdio", server_url: "http://custom", headers: { authorization: "Bearer token" }, created_at: "2026-05-11T00:00:00Z", updated_at: "2026-05-11T00:00:00Z" },
+    {
+      id: "mcp-1",
+      name: "game-service",
+      transport: "streamable-http",
+      server_url: "http://game-service:8000/mcp/",
+      headers: {},
+      created_at: "2026-05-11T00:00:00Z",
+      updated_at: "2026-05-11T00:00:00Z",
+    },
+    {
+      id: "mcp-2",
+      name: "custom",
+      transport: "stdio",
+      server_url: "http://custom",
+      headers: { authorization: "Bearer token" },
+      created_at: "2026-05-11T00:00:00Z",
+      updated_at: "2026-05-11T00:00:00Z",
+    },
   ],
   recent_job: null,
   recent_jobs: [],
@@ -51,7 +74,11 @@ describe("session draft helper branches", () => {
     expect(draft.name).toBe("Saved session");
     expect(draft.providerId).toBe("anthropic");
     expect(draft.modelName).toBe("claude-3-5-haiku");
-    expect(draft.reasoning).toEqual({ enabled: true, effort: "high", maxTokens: "512" });
+    expect(draft.reasoning).toEqual({
+      enabled: true,
+      effort: "high",
+      maxTokens: "512",
+    });
     expect(draft.selectedSkills).toEqual(["custom-skill"]);
     expect(draft.enableDefaultGameServiceMcp).toBe(true);
     expect(draft.customMcpsText).toContain("custom");
@@ -64,7 +91,7 @@ describe("session draft helper branches", () => {
         ...config,
         defaultGameServiceMcpUrl: "http://game-service:8000/mcp",
       },
-      session,
+      session
     );
 
     expect(draft.enableDefaultGameServiceMcp).toBe(true);
@@ -72,25 +99,43 @@ describe("session draft helper branches", () => {
   });
 
   it("rejects invalid json object input", () => {
-    expect(() => parseJsonObject("[]", "Gateway options")).toThrow("Gateway options must be a JSON object");
-    expect(() => parseJsonObject("{", "Gateway options")).toThrow("Gateway options must be valid JSON");
+    expect(() => parseJsonObject("[]", "Gateway options")).toThrow(
+      "Gateway options must be a JSON object"
+    );
+    expect(() => parseJsonObject("{", "Gateway options")).toThrow(
+      "Gateway options must be valid JSON"
+    );
   });
 
   it("parses and validates custom MCP json", () => {
-    expect(parseCustomMcps('[{"name":"demo","transport":"stdio","server_url":"http://demo"}]')).toEqual([
+    expect(
+      parseCustomMcps(
+        '[{"name":"demo","transport":"stdio","server_url":"http://demo"}]'
+      )
+    ).toEqual([
       { name: "demo", transport: "stdio", server_url: "http://demo" },
     ]);
-    expect(() => parseCustomMcps("{}")).toThrow("Custom MCPs must be a JSON array");
-    expect(() => parseCustomMcps("{" )).toThrow("Custom MCPs must be valid JSON");
+    expect(() => parseCustomMcps("{}")).toThrow(
+      "Custom MCPs must be a JSON array"
+    );
+    expect(() => parseCustomMcps("{")).toThrow(
+      "Custom MCPs must be valid JSON"
+    );
   });
 
   it("rejects invalid reasoning max tokens", () => {
     expect(() =>
-      applyReasoningToGatewayOptions({}, { enabled: true, effort: "medium", maxTokens: "0" }),
+      applyReasoningToGatewayOptions(
+        {},
+        { enabled: true, effort: "medium", maxTokens: "0" }
+      )
     ).toThrow("Reasoning max tokens must be a positive integer");
 
     expect(() =>
-      applyReasoningToGatewayOptions({}, { enabled: true, effort: "medium", maxTokens: "3.5" }),
+      applyReasoningToGatewayOptions(
+        {},
+        { enabled: true, effort: "medium", maxTokens: "3.5" }
+      )
     ).toThrow("Reasoning max tokens must be a positive integer");
   });
 });

@@ -6,7 +6,6 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-
 SQL_DIR = Path(__file__).with_name("sql")
 
 

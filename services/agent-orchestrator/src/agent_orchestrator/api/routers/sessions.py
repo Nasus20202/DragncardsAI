@@ -19,7 +19,10 @@ from agent_orchestrator.api.serializers import (
     serialize_tool_definition,
 )
 from agent_orchestrator.config import Settings
-from agent_orchestrator.integrations.mcp.tools import McpToolCatalog, normalize_mcp_server_url
+from agent_orchestrator.integrations.mcp.tools import (
+    McpToolCatalog,
+    normalize_mcp_server_url,
+)
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.schemas.common import PageInfo
 from agent_orchestrator.schemas.jobs import SessionJobsResponse, SessionToolResponse
@@ -48,7 +51,9 @@ async def list_sessions(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> SessionListResponse:
-    sessions, total = await repo.list_sessions(status=status, limit=limit, offset=offset)
+    sessions, total = await repo.list_sessions(
+        status=status, limit=limit, offset=offset
+    )
     return SessionListResponse(
         sessions=[serialize_session_summary(item) for item in sessions],
         page=PageInfo(limit=limit, offset=offset, total=total),
@@ -60,7 +65,9 @@ async def create_session(
     body: SessionCreateRequest,
     repo: Repository = Depends(get_repository),
 ) -> dict[str, SessionDetail]:
-    item = await repo.create_session(body.name, body.metadata, multi_turn_memory=body.multi_turn_memory)
+    item = await repo.create_session(
+        body.name, body.metadata, multi_turn_memory=body.multi_turn_memory
+    )
     return {"session": serialize_session_detail(item)}
 
 
@@ -74,7 +81,9 @@ async def list_session_jobs(
     item=Depends(require_session),
 ) -> SessionJobsResponse:
     del item
-    jobs, total = await repo.list_session_jobs(session_id, status=status, limit=limit, offset=offset)
+    jobs, total = await repo.list_session_jobs(
+        session_id, status=status, limit=limit, offset=offset
+    )
     return SessionJobsResponse(
         jobs=[serialize_job(job) for job in jobs],
         page=PageInfo(limit=limit, offset=offset, total=total),
@@ -92,7 +101,9 @@ async def update_session(
     body: SessionUpdateRequest,
     repo: Repository = Depends(get_repository),
 ) -> dict[str, SessionDetail]:
-    item = await repo.update_session(session_id, name=body.name, metadata_json=body.metadata)
+    item = await repo.update_session(
+        session_id, name=body.name, metadata_json=body.metadata
+    )
     if item is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"session": serialize_session_detail(item)}
@@ -131,7 +142,9 @@ async def set_model_config(
 
 
 @router.get("/sessions/{session_id}/skills")
-async def list_skills(item=Depends(require_session)) -> dict[str, list[SkillAssignmentResponse]]:
+async def list_skills(
+    item=Depends(require_session),
+) -> dict[str, list[SkillAssignmentResponse]]:
     return {"skills": [serialize_skill(skill) for skill in item.skill_assignments]}
 
 
@@ -145,7 +158,9 @@ async def assign_skill(
     definition = registry.resolve(body.skill_name)
     if definition is None:
         raise HTTPException(status_code=400, detail="Unknown skill")
-    item = await repo.add_skill_assignment(session_id, body.skill_name, str(definition.path))
+    item = await repo.add_skill_assignment(
+        session_id, body.skill_name, str(definition.path)
+    )
     if item is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"skill": serialize_skill(item)}
@@ -163,7 +178,9 @@ async def remove_skill(
 
 
 @router.get("/sessions/{session_id}/mcps")
-async def list_mcps(item=Depends(require_session)) -> dict[str, list[McpAssignmentResponse]]:
+async def list_mcps(
+    item=Depends(require_session),
+) -> dict[str, list[McpAssignmentResponse]]:
     return {"mcps": [serialize_mcp(mcp) for mcp in item.mcp_assignments]}
 
 
@@ -191,8 +208,12 @@ async def list_session_tools(
     tool_catalog: McpToolCatalog = Depends(get_mcp_tool_catalog),
     item=Depends(require_session),
 ) -> SessionToolsResponse:
-    tools = await tool_catalog.list_session_tools(item.mcp_assignments, ignore_failures=True)
-    return SessionToolsResponse(tools=[serialize_tool_definition(tool) for tool in tools])
+    tools = await tool_catalog.list_session_tools(
+        item.mcp_assignments, ignore_failures=True
+    )
+    return SessionToolsResponse(
+        tools=[serialize_tool_definition(tool) for tool in tools]
+    )
 
 
 @router.delete("/sessions/{session_id}/mcps/{assignment_name}", status_code=204)

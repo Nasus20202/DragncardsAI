@@ -36,11 +36,17 @@ class RepositoryBase:
             selectinload(Job.session).selectinload(AgentSession.mcp_assignments),
         )
 
-    async def _get_attempts_for_update(self, session: AsyncSession, job_id: str) -> list[JobAttempt]:
-        result = await session.execute(select(JobAttempt).where(JobAttempt.job_id == job_id))
+    async def _get_attempts_for_update(
+        self, session: AsyncSession, job_id: str
+    ) -> list[JobAttempt]:
+        result = await session.execute(
+            select(JobAttempt).where(JobAttempt.job_id == job_id)
+        )
         return list(result.scalars())
 
-    async def _get_prompt_run_for_update(self, session: AsyncSession, prompt_run_id: str) -> PromptRun:
+    async def _get_prompt_run_for_update(
+        self, session: AsyncSession, prompt_run_id: str
+    ) -> PromptRun:
         prompt_run = await session.get(PromptRun, prompt_run_id)
         assert prompt_run is not None
         return prompt_run

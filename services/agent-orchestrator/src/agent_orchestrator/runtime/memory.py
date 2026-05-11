@@ -3,6 +3,7 @@
 Reconstructs the LLM messages list from prior job events for a session,
 respecting any CompactionRecord checkpoint.
 """
+
 from __future__ import annotations
 
 import json
@@ -52,7 +53,9 @@ async def build_message_history(
             compaction.id,
         )
     else:
-        logger.debug("Replaying %d prior jobs (no compaction checkpoint)", len(prior_jobs))
+        logger.debug(
+            "Replaying %d prior jobs (no compaction checkpoint)", len(prior_jobs)
+        )
 
     for job in prior_jobs:
         job_messages = _reconstruct_job_messages(job)
@@ -92,7 +95,11 @@ def _reconstruct_job_messages(job: Any) -> list[dict[str, Any]]:
         elif event.event_type == "tool_call":
             if current_assistant is None:
                 # Shouldn't happen, but handle gracefully
-                current_assistant = {"role": "assistant", "content": "", "tool_calls": []}
+                current_assistant = {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [],
+                }
             payload = event.payload_json
             current_assistant["tool_calls"].append(
                 {

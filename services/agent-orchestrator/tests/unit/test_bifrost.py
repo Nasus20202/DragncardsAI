@@ -9,18 +9,27 @@ from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError
 
 
 async def _build_client(handler, *, api_key: str = "") -> BifrostClient:
-    client = BifrostClient("http://bifrost", api_key, {"openai": "openai", "openrouter": "openrouter"})
+    client = BifrostClient(
+        "http://bifrost", api_key, {"openai": "openai", "openrouter": "openrouter"}
+    )
     await client._http_client.aclose()
     client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     return client
 
 
 def test_resolve_model_uses_provider_prefixes():
-    client = BifrostClient("http://bifrost", "", {"openai": "openai", "openrouter": "openrouter"})
+    client = BifrostClient(
+        "http://bifrost", "", {"openai": "openai", "openrouter": "openrouter"}
+    )
 
     assert client._resolve_model("openai", "gpt-4o-mini") == "gpt-4o-mini"
-    assert client._resolve_model("openrouter", "gpt-4o-mini") == "openrouter/gpt-4o-mini"
-    assert client._resolve_model("openrouter", "custom/provider-model") == "custom/provider-model"
+    assert (
+        client._resolve_model("openrouter", "gpt-4o-mini") == "openrouter/gpt-4o-mini"
+    )
+    assert (
+        client._resolve_model("openrouter", "custom/provider-model")
+        == "custom/provider-model"
+    )
 
 
 def test_normalize_content_supports_openai_shapes():
@@ -28,11 +37,16 @@ def test_normalize_content_supports_openai_shapes():
 
     assert client._normalize_content(None) == ""
     assert client._normalize_content("hello") == "hello"
-    assert client._normalize_content([
-        {"type": "text", "text": "alpha"},
-        {"type": "ignored", "text": "beta"},
-        {"type": "text", "text": "gamma"},
-    ]) == "alpha\ngamma"
+    assert (
+        client._normalize_content(
+            [
+                {"type": "text", "text": "alpha"},
+                {"type": "ignored", "text": "beta"},
+                {"type": "text", "text": "gamma"},
+            ]
+        )
+        == "alpha\ngamma"
+    )
     assert client._normalize_content(123) == "123"
 
 
@@ -57,7 +71,11 @@ async def test_list_models_parses_response_payload():
             200,
             json={
                 "data": [
-                    {"id": "openrouter/gpt-4o-mini", "name": "GPT-4o mini", "supported_methods": ["chat_completion"]},
+                    {
+                        "id": "openrouter/gpt-4o-mini",
+                        "name": "GPT-4o mini",
+                        "supported_methods": ["chat_completion"],
+                    },
                     {"id": "openrouter/o3-mini", "supported_methods": []},
                     "ignored",
                 ]
@@ -71,14 +89,19 @@ async def test_list_models_parses_response_payload():
     finally:
         await client.aclose()
 
-    assert [model.id for model in models] == ["openrouter/gpt-4o-mini", "openrouter/o3-mini"]
+    assert [model.id for model in models] == [
+        "openrouter/gpt-4o-mini",
+        "openrouter/o3-mini",
+    ]
     assert models[0].name == "GPT-4o mini"
 
 
 @pytest.mark.asyncio
 async def test_list_models_raises_gateway_error_for_http_failure():
     async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(502, json={"error": {"message": "provider down"}}, request=request)
+        return httpx.Response(
+            502, json={"error": {"message": "provider down"}}, request=request
+        )
 
     client = await _build_client(handler)
     try:
@@ -107,7 +130,10 @@ async def test_chat_completion_parses_tool_calls():
                             "tool_calls": [
                                 {
                                     "id": "call-1",
-                                    "function": {"name": "demo_tool", "arguments": '{"count": 2}'},
+                                    "function": {
+                                        "name": "demo_tool",
+                                        "arguments": '{"count": 2}',
+                                    },
                                 }
                             ],
                         }
@@ -162,7 +188,7 @@ async def test_chat_completion_streams_reasoning_and_content_deltas():
                     'data: {"choices":[{"delta":{"reasoning_details":[{"index":0,"type":"text","text":"Let me think. "}]},"finish_reason":null}]}',
                     'data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}',
                     'data: {"choices":[{"delta":{"content":" world"},"finish_reason":null}]}',
-                    'data: [DONE]',
+                    "data: [DONE]",
                 ]
             ),
             headers={"content-type": "text/event-stream"},
@@ -184,7 +210,9 @@ async def test_chat_completion_streams_reasoning_and_content_deltas():
     finally:
         await client.aclose()
 
-    assert [delta.reasoning for delta in deltas if delta.reasoning] == ["Let me think. "]
+    assert [delta.reasoning for delta in deltas if delta.reasoning] == [
+        "Let me think. "
+    ]
     assert [delta.content for delta in deltas if delta.content] == ["Hello", " world"]
     assert response.reasoning == "Let me think. "
     assert response.content == "Hello world"
@@ -200,7 +228,11 @@ async def test_list_models_uses_in_memory_cache_within_ttl():
         call_count += 1
         return httpx.Response(
             200,
-            json={"data": [{"id": f"openrouter/model-{call_count}", "supported_methods": []}]},
+            json={
+                "data": [
+                    {"id": f"openrouter/model-{call_count}", "supported_methods": []}
+                ]
+            },
             request=request,
         )
 
@@ -226,7 +258,11 @@ async def test_list_models_refreshes_cache_after_ttl_expiry():
         call_count += 1
         return httpx.Response(
             200,
-            json={"data": [{"id": f"openrouter/model-{call_count}", "supported_methods": []}]},
+            json={
+                "data": [
+                    {"id": f"openrouter/model-{call_count}", "supported_methods": []}
+                ]
+            },
             request=request,
         )
 
