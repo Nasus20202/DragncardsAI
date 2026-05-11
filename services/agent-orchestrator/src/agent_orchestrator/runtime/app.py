@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from agent_orchestrator.api.routers import catalog, jobs, meta, sessions
+from agent_orchestrator.api.routers import catalog, context, jobs, meta, sessions
 from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient
 from agent_orchestrator.integrations.mcp.client import StreamableHttpMcpClient
@@ -129,5 +129,6 @@ def create_app(
     app.include_router(catalog.router)
     app.include_router(sessions.router)
     app.include_router(jobs.router)
+    app.include_router(context.router)
 
     return app

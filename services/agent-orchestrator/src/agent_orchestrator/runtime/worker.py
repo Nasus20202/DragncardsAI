@@ -10,9 +10,12 @@ from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError
 from agent_orchestrator.integrations.mcp.client import McpClientError
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
+from agent_orchestrator.runtime.compaction import perform_compaction
 from agent_orchestrator.runtime.live_events import LiveEventBus
+from agent_orchestrator.runtime.memory import build_message_history
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.runtime.system_prompts import build_system_prompt
+from agent_orchestrator.runtime.tokens import estimate_tokens_for_messages, extract_tokens_from_response
 from agent_orchestrator.storage.models import Job
 from agent_orchestrator.storage.repository import Repository
 
@@ -92,12 +95,21 @@ class WorkerService:
             tool_definitions = await self._mcp_tool_catalog.list_session_tools(full_job.session.mcp_assignments)
             tools = self._mcp_tool_catalog.as_openai_tools(tool_definitions)
             tool_mapping = self._mcp_tool_catalog.as_mapping(tool_definitions)
+
+            # Auto-compaction check before building history
+            if session.multi_turn_memory:
+                await self._maybe_auto_compact(job.id, session.id)
+
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt_run.prompt},
             ]
+            if session.multi_turn_memory:
+                prior = await build_message_history(self._repository, session.id, job.id)
+                messages.extend(prior)
+            messages.append({"role": "user", "content": prompt_run.prompt})
             await self._repository.append_event(job.id, session.id, "progress", {"status": "running"})
 
+            accumulated_job_tokens = 0
             reasoning_enabled = self._reasoning_enabled(model_config.gateway_options, model_config.provider_options)
             logger.info(
                 "Job %s configured with %s tool(s), reasoning_enabled=%s",
@@ -204,6 +216,16 @@ class WorkerService:
                         job.id, session.id, "model_output", {"text": "".join(accumulated_output)}
                     )
 
+                # Track token usage from this LLM round
+                round_tokens = extract_tokens_from_response(response.raw)
+                if round_tokens is None:
+                    logger.warning(
+                        "Job %s: LLM response missing usage field, estimating tokens via tiktoken",
+                        job.id,
+                    )
+                    round_tokens = estimate_tokens_for_messages(messages)
+                accumulated_job_tokens += round_tokens
+
                 if not response.tool_calls:
                     logger.info("Job %s completed without further tool calls", job.id)
                     await self._repository.append_event(
@@ -212,6 +234,7 @@ class WorkerService:
                         "completion",
                         {"text": response.content},
                     )
+                    await self._repository.update_job_tokens_used(job.id, accumulated_job_tokens)
                     await self._repository.mark_job_completed(job.id, response.content)
                     return
 
@@ -283,6 +306,7 @@ class WorkerService:
                         }
                     )
 
+            await self._repository.update_job_tokens_used(job.id, accumulated_job_tokens)
             raise RuntimeError("tool round limit exceeded")
         except BifrostError as exc:
             logger.warning(
@@ -319,6 +343,47 @@ class WorkerService:
                 error_message=error_message,
                 retryable=False,
             )
+
+    async def _maybe_auto_compact(self, job_id: str, session_id: str) -> None:
+        """Auto-compact context if estimated usage ratio exceeds threshold."""
+        # Fetch model config first so we can resolve the correct context window size
+        full_job = await self._repository.get_job(job_id)
+        if full_job is None or full_job.session.model_config is None:
+            logger.warning("Job %s: cannot auto-compact — missing model config", job_id)
+            return
+
+        model_name = full_job.session.model_config.model_name
+        context_length = await self._bifrost_client.get_model_context_length(
+            full_job.session.model_config.provider_id, model_name
+        )
+        context_window_size = context_length or self._settings.context_window_size
+
+        compaction = await self._repository.get_latest_compaction_record(session_id)
+        after_job_id = compaction.covers_up_to_job_id if compaction else None
+        tokens_used = await self._repository.get_tokens_used_since_compaction(
+            session_id, after_job_id=after_job_id
+        )
+        threshold = self._settings.context_compaction_threshold
+        ratio = tokens_used / context_window_size if context_window_size > 0 else 0.0
+
+        if ratio < threshold:
+            return
+
+        logger.info(
+            "Job %s: usage ratio %.3f exceeds threshold %.3f — auto-compacting session %s",
+            job_id,
+            ratio,
+            threshold,
+            session_id,
+        )
+
+        await perform_compaction(
+            repository=self._repository,
+            bifrost_client=self._bifrost_client,
+            session_id=session_id,
+            model_config=full_job.session.model_config,
+            current_job_id=job_id,
+        )
 
     def _format_execution_error(self, exc: Exception) -> str:
         if isinstance(exc, BaseExceptionGroup):

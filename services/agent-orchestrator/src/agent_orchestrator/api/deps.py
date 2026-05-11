@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import HTTPException, Request
 
 from agent_orchestrator.config import Settings
+from agent_orchestrator.integrations.bifrost import BifrostClient
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.repository import Repository
@@ -14,6 +15,10 @@ def get_repository(request: Request) -> Repository:
 
 def get_settings(request: Request) -> Settings:
     return request.app.state.settings
+
+
+def get_bifrost_client(request: Request) -> BifrostClient:
+    return request.app.state.bifrost_client
 
 
 def get_skill_registry(request: Request) -> SkillRegistry:

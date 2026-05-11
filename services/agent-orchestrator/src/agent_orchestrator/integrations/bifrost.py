@@ -52,6 +52,7 @@ class ModelInfo:
     id: str
     name: str | None
     supported_methods: list[str]
+    context_length: int | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,7 @@ class BifrostClient:
         self._provider_prefixes = provider_prefixes
         self._models_cache_ttl_seconds = models_cache_ttl_seconds
         self._models_cache: dict[str, CachedModelListing] = {}
+        self._all_models_cache: CachedModelListing | None = None
         self._http_client = httpx.AsyncClient(timeout=60.0)
 
     async def aclose(self) -> None:
@@ -133,6 +135,68 @@ class BifrostClient:
                 models=result,
             )
         return result
+
+    async def _fetch_all_models(self) -> list[ModelInfo]:
+        """Fetch the rich /v1/models listing (includes context_length per model)."""
+        cached = self._all_models_cache
+        if cached is not None and cached.expires_at > monotonic():
+            return cached.models
+
+        headers = {}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        try:
+            response = await self._http_client.get(
+                f"{self._base_url}/v1/models",
+                headers=headers,
+            )
+        except httpx.TimeoutException as exc:
+            raise BifrostError("timeout", "Bifrost model listing timed out", retryable=True) from exc
+        except httpx.HTTPError as exc:
+            raise BifrostError("network_error", "Bifrost model listing failed", retryable=True) from exc
+
+        if response.status_code >= 400:
+            raise BifrostError(
+                "gateway_error",
+                self._extract_error_message(response),
+                retryable=response.status_code >= 500 or response.status_code == 429,
+            )
+
+        payload = response.json()
+        items = payload.get("data") or payload.get("models") or []
+        result: list[ModelInfo] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            model_id = item.get("id")
+            if not model_id:
+                continue
+            result.append(
+                ModelInfo(
+                    id=str(model_id),
+                    name=item.get("name"),
+                    supported_methods=list(item.get("supported_methods") or []),
+                    context_length=item.get("context_length"),
+                )
+            )
+        if self._models_cache_ttl_seconds > 0:
+            self._all_models_cache = CachedModelListing(
+                expires_at=monotonic() + self._models_cache_ttl_seconds,
+                models=result,
+            )
+        return result
+
+    async def get_model_context_length(self, provider_id: str, model_name: str) -> int | None:
+        """Return context_length for the given model from /v1/models, or None if unknown."""
+        resolved = self._resolve_model(provider_id, model_name)
+        try:
+            all_models = await self._fetch_all_models()
+        except BifrostError:
+            return None
+        for m in all_models:
+            if m.id == resolved:
+                return m.context_length
+        return None
 
     async def chat_completion(
         self,

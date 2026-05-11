@@ -17,4 +17,7 @@ ENV AGENT_ORCHESTRATOR_SKILL_ROOTS=/app/skills
 
 EXPOSE 8010
 
+HEALTHCHECK --interval=30s --timeout=10s --retries=5 \
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8010/health
+
 CMD ["agent-orchestrator"]

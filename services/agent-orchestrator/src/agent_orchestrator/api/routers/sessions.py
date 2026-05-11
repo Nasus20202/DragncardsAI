@@ -60,7 +60,7 @@ async def create_session(
     body: SessionCreateRequest,
     repo: Repository = Depends(get_repository),
 ) -> dict[str, SessionDetail]:
-    item = await repo.create_session(body.name, body.metadata)
+    item = await repo.create_session(body.name, body.metadata, multi_turn_memory=body.multi_turn_memory)
     return {"session": serialize_session_detail(item)}
 
 

@@ -190,3 +190,30 @@ async def test_enqueue_prompt_job_rejects_terminated_sessions(repository: Reposi
         await repository.enqueue_prompt_job(session.id, prompt="hello", metadata_json={}, max_attempts=1)
 
     assert await repository.claim_next_job() is None
+
+
+@pytest.mark.asyncio
+async def test_session_multi_turn_memory_defaults_true(repository: Repository):
+    session = await repository.create_session("demo", {})
+    assert session.multi_turn_memory is True
+
+
+@pytest.mark.asyncio
+async def test_session_multi_turn_memory_can_be_disabled(repository: Repository):
+    session = await repository.create_session("demo", {}, multi_turn_memory=False)
+    assert session.multi_turn_memory is False
+
+
+@pytest.mark.asyncio
+async def test_update_multi_turn_memory(repository: Repository):
+    session = await repository.create_session("demo", {})
+    assert session.multi_turn_memory is True
+    updated = await repository.update_multi_turn_memory(session.id, multi_turn_memory=False)
+    assert updated is not None
+    assert updated.multi_turn_memory is False
+
+
+@pytest.mark.asyncio
+async def test_update_multi_turn_memory_missing_session(repository: Repository):
+    result = await repository.update_multi_turn_memory("missing", multi_turn_memory=False)
+    assert result is None

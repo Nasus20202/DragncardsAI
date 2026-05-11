@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 
@@ -50,6 +50,7 @@ class AgentSession(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="active")
+    multi_turn_memory: Mapped[bool] = mapped_column(Boolean, default=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now, onupdate=utc_now)
@@ -132,6 +133,7 @@ class Job(Base):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tokens_used: Mapped[int] = mapped_column(Integer, default=0)
     cancellation_requested_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
     started_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
@@ -182,3 +184,16 @@ class JobOutput(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
 
     job: Mapped[Job] = relationship(back_populates="outputs")
+
+
+class CompactionRecord(Base):
+    __tablename__ = "compaction_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    session_id: Mapped[str] = mapped_column(ForeignKey("agent_sessions.id", ondelete="CASCADE"), index=True)
+    summary_text: Mapped[str] = mapped_column(Text)
+    covers_up_to_job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"))
+    tokens_used: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
+
+    session: Mapped[AgentSession] = relationship()

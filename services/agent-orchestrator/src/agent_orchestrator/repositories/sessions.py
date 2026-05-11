@@ -14,9 +14,9 @@ from agent_orchestrator.storage.models import (
 
 
 class SessionRepositoryMixin:
-    async def create_session(self, name: str | None, metadata_json: dict[str, Any] | None) -> AgentSession:
+    async def create_session(self, name: str | None, metadata_json: dict[str, Any] | None, *, multi_turn_memory: bool = True) -> AgentSession:
         async with self._session_factory() as session, session.begin():
-            item = AgentSession(name=name, metadata_json=metadata_json or {})
+            item = AgentSession(name=name, metadata_json=metadata_json or {}, multi_turn_memory=multi_turn_memory)
             session.add(item)
             await session.flush()
             session_id = item.id
@@ -63,6 +63,15 @@ class SessionRepositoryMixin:
                 item.name = name
             if metadata_json is not None:
                 item.metadata_json = metadata_json
+            item.updated_at = utc_now()
+        return await self.get_session(session_id)
+
+    async def update_multi_turn_memory(self, session_id: str, *, multi_turn_memory: bool) -> AgentSession | None:
+        async with self._session_factory() as session, session.begin():
+            item = await session.get(AgentSession, session_id)
+            if item is None:
+                return None
+            item.multi_turn_memory = multi_turn_memory
             item.updated_at = utc_now()
         return await self.get_session(session_id)
 

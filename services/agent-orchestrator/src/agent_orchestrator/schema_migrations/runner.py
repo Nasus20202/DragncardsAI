@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 
-MIGRATIONS = ("0001_initial",)
+MIGRATIONS = ("0001_initial", "0002_context_management")
 SQL_DIR = Path(__file__).with_name("sql")
 
 
