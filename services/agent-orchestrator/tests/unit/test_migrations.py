@@ -34,6 +34,18 @@ def test_load_versioned_sql_prefers_dialect_and_falls_back(tmp_path: Path, monke
     assert runner._load_versioned_sql("0002_extra", "postgresql") == "generic version"
 
 
+def test_discover_migrations_reads_versions_from_sql_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+    (sql_dir / "0000_schema_migrations.sql").write_text("bootstrap", encoding="utf-8")
+    (sql_dir / "0002_extra.sqlite.sql").write_text("sqlite version", encoding="utf-8")
+    (sql_dir / "0002_extra.postgresql.sql").write_text("postgres version", encoding="utf-8")
+    (sql_dir / "0001_initial.sql").write_text("generic version", encoding="utf-8")
+    monkeypatch.setattr(runner, "SQL_DIR", sql_dir)
+
+    assert runner._discover_migrations() == ("0001_initial", "0002_extra")
+
+
 @pytest.mark.asyncio
 async def test_ensure_schema_is_idempotent(tmp_path: Path):
     database_path = tmp_path / "migrations.sqlite3"

@@ -8,20 +8,31 @@ import { useEffect, useRef, useState } from "react";
 type AggEvent =
   | { kind: "reasoning"; text: string }
   | { kind: "model_output"; text: string }
+  | { kind: "compaction"; text: string }
   | { kind: "tool_call"; event: JobEventResponse }
   | { kind: "tool_result"; event: JobEventResponse }
   | { kind: "failure"; event: JobEventResponse }
   | { kind: "cancellation"; event: JobEventResponse };
 
+function compactionText(event: JobEventResponse): string {
+  if (typeof event.payload.summary_text === "string") {
+    return event.payload.summary_text;
+  }
+  if (typeof event.payload.text === "string") {
+    return event.payload.text;
+  }
+  return JSON.stringify(event.payload, null, 2);
+}
+
 /**
  * Collapse raw events into a display list:
  *  - progress (queued/running) → dropped entirely
- *  - completion → dropped (model_output carries the text)
+ *  - completion → final assistant text, replacing any partial streamed output
  *  - reasoning → all chunks merged into one string
  *  - model_output → all chunks merged into one string
  *  - everything else → kept as-is
  */
-function aggregateEvents(events: JobEventResponse[]): AggEvent[] {
+function aggregateEvents(events: JobEventResponse[], isCompactionJob: boolean): AggEvent[] {
   let reasoningText = "";
   let modelText = "";
   const result: AggEvent[] = [];
@@ -42,14 +53,28 @@ function aggregateEvents(events: JobEventResponse[]): AggEvent[] {
   for (const ev of events) {
     switch (ev.event_type) {
       case "progress":
-      case "completion":
         break;
+
+      case "completion": {
+        flushReasoning();
+        const completionText = typeof ev.payload.text === "string" ? ev.payload.text : "";
+        if (completionText) {
+          modelText = completionText;
+        }
+        break;
+      }
 
       case "reasoning":
         reasoningText += typeof ev.payload.text === "string" ? ev.payload.text : "";
         break;
 
       case "model_output":
+        if (isCompactionJob || eventHasCompactionPayload(ev)) {
+          flushReasoning();
+          flushModel();
+          result.push({ kind: "compaction", text: compactionText(ev) });
+          break;
+        }
         flushReasoning();
         modelText += typeof ev.payload.text === "string" ? ev.payload.text : "";
         break;
@@ -58,6 +83,12 @@ function aggregateEvents(events: JobEventResponse[]): AggEvent[] {
         flushReasoning();
         flushModel();
         result.push({ kind: "tool_call", event: ev });
+        break;
+
+      case "compaction":
+        flushReasoning();
+        flushModel();
+        result.push({ kind: "compaction", text: compactionText(ev) });
         break;
 
       case "tool_result":
@@ -89,6 +120,10 @@ function aggregateEvents(events: JobEventResponse[]): AggEvent[] {
   flushReasoning();
   flushModel();
   return result;
+}
+
+function eventHasCompactionPayload(event: JobEventResponse): boolean {
+  return event.payload.compaction === true;
 }
 
 /* ── Sub-renderers ───────────────────────────────────────────────── */
@@ -148,6 +183,35 @@ function ReasoningBlock({
   );
 }
 
+function CompactionBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-default-200/60 bg-default-50/40 dark:bg-white/3">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={open ? "Collapse compaction" : "Expand compaction"}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-default-100/60"
+        onClick={() => setOpen((p) => !p)}
+      >
+        <div className="flex items-center gap-2">
+          <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-warning/60" />
+          <span className="text-xs font-medium text-default-500">Context compaction</span>
+        </div>
+        <span aria-hidden="true" className="text-xs text-default-400">{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div className="border-t border-default-200/60 px-3 py-2.5">
+          <pre className="overflow-x-auto whitespace-pre-wrap text-xs leading-relaxed text-default-600 dark:text-default-300">
+            {text}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ModelOutputBlock({ text }: { text: string }) {
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none text-base leading-relaxed text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
@@ -173,6 +237,7 @@ function CollapsibleEventBlock({
   function bodyText(): string {
     const p = event.payload;
     if (typeof p.text === "string") return p.text;
+    if (typeof p.summary_text === "string") return p.summary_text;
     if (typeof p.message === "string") return p.message;
     return JSON.stringify(p, null, 2);
   }
@@ -225,6 +290,8 @@ function AggEventRow({
           event={agg.event}
         />
       );
+    case "compaction":
+      return <CompactionBlock text={agg.text} />;
     case "tool_result":
       return (
         <CollapsibleEventBlock
@@ -251,18 +318,20 @@ function AggEventRow({
 
 /* ── One prompt + its events ─────────────────────────────────────── */
 function JobThread({ job, isStreaming }: { job: JobDetail; isStreaming: boolean }) {
-  const aggEvents = aggregateEvents(job.events);
+  const isCompactionJob = job.prompt_run.prompt === "[COMPACTION]";
+  const aggEvents = aggregateEvents(job.events, isCompactionJob);
   const isWaiting = job.events.length === 0;
   const hasOutput = aggEvents.some((e) => e.kind === "model_output");
 
   return (
     <div className="mb-8 space-y-3">
-      {/* User bubble — right-aligned */}
-      <div className="flex justify-end">
-        <div className="max-w-[78%] rounded-2xl rounded-tr-sm bg-default-100 px-4 py-2.5 text-base leading-relaxed text-foreground dark:bg-white/6">
-          {job.prompt_run.prompt}
+      {!isCompactionJob && (
+        <div className="flex justify-end">
+          <div className="max-w-[78%] rounded-2xl rounded-tr-sm bg-default-100 px-4 py-2.5 text-base leading-relaxed text-foreground dark:bg-white/6">
+            {job.prompt_run.prompt}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Agent response */}
       {isWaiting ? (

@@ -5,7 +5,6 @@ import {
   addMcp,
   addSkill,
   compactSession,
-  createGameSession,
   createSession,
   fetchDashboardConfig,
   getContextMetadata,
@@ -71,6 +70,10 @@ function mergeJob(jobs: JobDetail[], updated: JobDetail): JobDetail[] {
   return [...jobs, updated].sort(compareJobsOldestFirst);
 }
 
+function sameEventPayload(left: JobEventResponse, right: JobEventResponse): boolean {
+  return left.event_type === right.event_type && JSON.stringify(left.payload) === JSON.stringify(right.payload);
+}
+
 export function PlayWorkspace() {
   const [config, setConfig] = useState<DashboardConfig | null>(null);
   const [providers, setProviders] = useState<ProviderResponse[]>([]);
@@ -91,6 +94,7 @@ export function PlayWorkspace() {
   const [streamState, setStreamState] = useState<"idle" | "streaming">("idle");
   const [contextMetadata, setContextMetadata] = useState<ContextMetadata | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
   /**
    * Tracks the provider/model currently committed to the open session.
    * Updated whenever a session loads so that the auto-sync effect can tell
@@ -110,6 +114,18 @@ export function PlayWorkspace() {
   }, [selectedProvider]);
   const [isSessionsCollapsed, setIsSessionsCollapsed] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(true);
+  const hasAppliedMobileLayoutRef = useRef(false);
+
+  useEffect(() => {
+    if (hasAppliedMobileLayoutRef.current || typeof window === "undefined") {
+      return;
+    }
+    hasAppliedMobileLayoutRef.current = true;
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      setIsSessionsCollapsed(true);
+      setIsSettingsOpen(false);
+    }
+  }, []);
 
   // Persist selected session across page reloads
   const persistSelectedSessionId = useCallback((id: string | null) => {
@@ -121,15 +137,27 @@ export function PlayWorkspace() {
     }
   }, []);
 
-  const stopStreaming = useCallback(() => {
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimeoutRef.current !== null) {
+      window.clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+  }, []);
+
+  const closeEventSource = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
+    clearReconnectTimer();
+  }, [clearReconnectTimer]);
+
+  const stopStreaming = useCallback(() => {
+    closeEventSource();
     streamingJobIdRef.current = null;
     setStreamingJobId(null);
     setStreamState("idle");
-  }, []);
+  }, [closeEventSource]);
 
   const appendStreamEvent = useCallback((payload: JobEventResponse) => {
     const jobId = streamingJobIdRef.current;
@@ -140,46 +168,58 @@ export function PlayWorkspace() {
       if (idx < 0) return current;
       const job = current[idx];
 
-      // Exact duplicate — skip
-      if (job.events.some((e) => e.id === payload.id)) return current;
-
       const isTerminal = ["completion", "failure", "cancellation"].includes(payload.event_type);
       let nextEvents: JobEventResponse[];
 
-      // Live streaming chunks (model_output/reasoning with stream=true) update the
-      // existing snapshot row in-place rather than appending a new event.
-      // This avoids doubling text when the DB snapshot is already loaded.
+      // Live streaming chunks carry the full snapshot text plus the DB event id
+      // they belong to. Upsert that snapshot so live updates and DB replay stay
+      // idempotent even when they arrive in different orders.
       const isStreamChunk =
         (payload.event_type === "model_output" || payload.event_type === "reasoning") &&
         payload.payload.stream === true;
+      const snapshotEventId =
+        typeof payload.payload.snapshot_event_id === "string" ? payload.payload.snapshot_event_id : null;
 
-      if (isStreamChunk) {
-        const snapshotIdx = [...job.events].reverse().findIndex(
-          (e) => e.event_type === payload.event_type,
-        );
-        const realIdx = snapshotIdx >= 0 ? job.events.length - 1 - snapshotIdx : -1;
-        if (realIdx >= 0) {
-          // Append chunk text onto the snapshot event
-          const snapshot = job.events[realIdx];
-          const prevText = typeof snapshot.payload.text === "string" ? snapshot.payload.text : "";
-          const newText = typeof payload.payload.text === "string" ? payload.payload.text : "";
-          const updated: JobEventResponse = {
-            ...snapshot,
-            payload: { ...snapshot.payload, text: prevText + newText },
+      if (isStreamChunk && snapshotEventId) {
+        const normalizedPayload: Record<string, JsonValue> = { ...payload.payload };
+        delete normalizedPayload.stream;
+        delete normalizedPayload.snapshot_event_id;
+        const normalizedEvent: JobEventResponse = {
+          ...payload,
+          id: snapshotEventId,
+          payload: normalizedPayload,
+        };
+        const existingIdx = job.events.findIndex((event) => event.id === snapshotEventId);
+
+        if (existingIdx >= 0) {
+          const existing = job.events[existingIdx];
+          const updated = {
+            ...normalizedEvent,
+            created_at: existing.created_at,
           };
+          if (sameEventPayload(existing, updated)) {
+            return current;
+          }
           nextEvents = [...job.events];
-          nextEvents[realIdx] = updated;
+          nextEvents[existingIdx] = updated;
         } else {
-          // No snapshot yet — treat as a new non-stream event
-          const newPayload: Record<string, JsonValue> = { ...payload.payload };
-          delete newPayload.stream;
-          nextEvents = [...job.events, { ...payload, payload: newPayload }]
+          nextEvents = [...job.events, normalizedEvent]
             .sort((l, r) => new Date(l.created_at).getTime() - new Date(r.created_at).getTime());
         }
       } else {
-        nextEvents = [...job.events, payload].sort(
-          (l, r) => new Date(l.created_at).getTime() - new Date(r.created_at).getTime(),
-        );
+        const existingIdx = job.events.findIndex((event) => event.id === payload.id);
+        if (existingIdx >= 0) {
+          const existing = job.events[existingIdx];
+          if (sameEventPayload(existing, payload)) {
+            return current;
+          }
+          nextEvents = [...job.events];
+          nextEvents[existingIdx] = payload;
+        } else {
+          nextEvents = [...job.events, payload].sort(
+            (l, r) => new Date(l.created_at).getTime() - new Date(r.created_at).getTime(),
+          );
+        }
       }
 
       const updatedJob: JobDetail = {
@@ -225,7 +265,7 @@ export function PlayWorkspace() {
 
   const startStreaming = useCallback(
     (jobId: string, afterId: string) => {
-      stopStreaming();
+      closeEventSource();
       streamingJobIdRef.current = jobId;
       setStreamingJobId(jobId);
       const source = new EventSource(`/api/proxy/orchestrator/jobs/${jobId}/events/stream?after=${afterId}`);
@@ -235,6 +275,11 @@ export function PlayWorkspace() {
       const handleEvent = (event: MessageEvent<string>) => {
         const payload = JSON.parse(event.data) as JobEventResponse;
         appendStreamEvent(payload);
+        if (payload.event_type === "compaction") {
+          if (selectedSessionId) {
+            void refreshContextMetadata(selectedSessionId);
+          }
+        }
         if (["completion", "failure", "cancellation"].includes(payload.event_type)) {
           stopStreaming();
           if (selectedSessionId) {
@@ -246,6 +291,7 @@ export function PlayWorkspace() {
       source.addEventListener("progress", handleEvent as EventListener);
       source.addEventListener("reasoning", handleEvent as EventListener);
       source.addEventListener("model_output", handleEvent as EventListener);
+      source.addEventListener("compaction", handleEvent as EventListener);
       source.addEventListener("tool_call", handleEvent as EventListener);
       source.addEventListener("tool_result", handleEvent as EventListener);
       source.addEventListener("completion", handleEvent as EventListener);
@@ -253,10 +299,38 @@ export function PlayWorkspace() {
       source.addEventListener("cancellation", handleEvent as EventListener);
       source.onmessage = handleEvent;
       source.onerror = () => {
-        stopStreaming();
+        source.close();
+        if (eventSourceRef.current === source) {
+          eventSourceRef.current = null;
+        }
+        clearReconnectTimer();
+        reconnectTimeoutRef.current = window.setTimeout(async () => {
+          if (streamingJobIdRef.current !== jobId) {
+            return;
+          }
+          try {
+            const refreshedJob = await getJob(jobId);
+            setJobs((current) => mergeJob(current, refreshedJob));
+            if (streamingJobIdRef.current !== jobId) {
+              return;
+            }
+            if (["queued", "running"].includes(refreshedJob.status)) {
+              startStreaming(jobId, refreshedJob.latest_event_id ?? "0");
+            } else {
+              stopStreaming();
+              if (selectedSessionId) {
+                void refreshContextMetadata(selectedSessionId);
+              }
+            }
+          } catch {
+            if (streamingJobIdRef.current === jobId) {
+              startStreaming(jobId, "0");
+            }
+          }
+        }, 1000);
       };
     },
-    [appendStreamEvent, stopStreaming, selectedSessionId, refreshContextMetadata],
+    [appendStreamEvent, clearReconnectTimer, closeEventSource, stopStreaming, selectedSessionId, refreshContextMetadata],
   );
 
   useEffect(() => {
@@ -426,18 +500,6 @@ export function PlayWorkspace() {
         await addMcp(created.id, mcp);
       }
 
-      if (draft.createGameSession) {
-        const gameSession = await createGameSession(draft.gamePluginName);
-        await updateSession(created.id, {
-          metadata: {
-            game_session: {
-              ...gameSession,
-              frontend_url: `${config.dragncardsFrontendUrl.replace(/\/$/, "")}/room/${gameSession.room_slug}`,
-            },
-          },
-        });
-      }
-
       await refreshSessions(false);
       persistSelectedSessionId(created.id);
       setStatusText("Session created");
@@ -561,6 +623,7 @@ export function PlayWorkspace() {
     try {
       const metadata = await compactSession(selectedSession.id);
       setContextMetadata(metadata);
+      await loadAllJobs(selectedSession.id);
       setStatusText("Context compacted");
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : "Compaction failed");

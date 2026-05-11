@@ -166,7 +166,12 @@ class WorkerService:
                         await self._live_event_bus.publish(
                             job.id,
                             "reasoning",
-                            {"text": delta.reasoning, "details": details},
+                            {
+                                "text": full,
+                                "details": details,
+                                "stream": True,
+                                "snapshot_event_id": str(reasoning_event_id),
+                            },
                         )
 
                     if delta.content:
@@ -185,7 +190,11 @@ class WorkerService:
                         await self._live_event_bus.publish(
                             job.id,
                             "model_output",
-                            {"text": delta.content, "stream": True},
+                            {
+                                "text": full,
+                                "stream": True,
+                                "snapshot_event_id": str(output_event_id),
+                            },
                         )
 
                 response = await self._bifrost_client.chat_completion(
@@ -383,6 +392,7 @@ class WorkerService:
             session_id=session_id,
             model_config=full_job.session.model_config,
             current_job_id=job_id,
+            live_event_bus=self._live_event_bus,
         )
 
     def _format_execution_error(self, exc: Exception) -> str:

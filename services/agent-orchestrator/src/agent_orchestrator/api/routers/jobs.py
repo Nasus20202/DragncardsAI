@@ -54,7 +54,7 @@ async def get_job(
     item=Depends(require_job),
 ) -> dict[str, JobDetail]:
     events = await repo.list_events(job_id, after_id=0, limit=200)
-    tools = await tool_catalog.list_session_tools(item.session.mcp_assignments)
+    tools = await tool_catalog.list_session_tools(item.session.mcp_assignments, ignore_failures=True)
     return {"job": serialize_job_detail(item, events, tools)}
 
 
@@ -132,4 +132,11 @@ async def stream_job_events(
         finally:
             await live_subscriber.aclose()
 
-    return StreamingResponse(event_source(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

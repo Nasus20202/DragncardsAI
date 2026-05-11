@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
 
-from agent_orchestrator.integrations.mcp.client import StreamableHttpMcpClient
+from agent_orchestrator.integrations.mcp.client import McpClientError, StreamableHttpMcpClient
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -33,14 +37,30 @@ class McpToolCatalog:
     def __init__(self, mcp_client: StreamableHttpMcpClient):
         self._mcp_client = mcp_client
 
-    async def list_session_tools(self, assignments: list[Any]) -> list[SessionToolDefinition]:
+    async def list_session_tools(
+        self,
+        assignments: list[Any],
+        *,
+        ignore_failures: bool = False,
+    ) -> list[SessionToolDefinition]:
         tools: list[SessionToolDefinition] = []
         for assignment in assignments:
             normalized_url = normalize_mcp_server_url(assignment.server_url, assignment.transport)
-            tool_definitions = await self._mcp_client.list_tools(
-                normalized_url,
-                headers=assignment.headers_json,
-            )
+            try:
+                tool_definitions = await self._mcp_client.list_tools(
+                    normalized_url,
+                    headers=assignment.headers_json,
+                )
+            except McpClientError:
+                if not ignore_failures:
+                    raise
+                logger.warning(
+                    "Skipping unreachable MCP assignment %s at %s during tool discovery",
+                    assignment.name,
+                    normalized_url,
+                    exc_info=True,
+                )
+                continue
             for definition in tool_definitions:
                 tools.append(
                     SessionToolDefinition(

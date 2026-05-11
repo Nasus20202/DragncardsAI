@@ -8,6 +8,7 @@ const LABELS: Record<string, string> = {
   reasoning:     "Reasoning",
   progress:      "Progress",
   tool_call:     "Tool call",
+  compaction:    "Context compaction",
   tool_result:   "Tool result",
   completion:    "Done",
   failure:       "Error",
@@ -17,6 +18,7 @@ const LABELS: Record<string, string> = {
 function bodyText(event: JobEventResponse): string {
   const p = event.payload;
   if (typeof p.text === "string")    return p.text;
+  if (typeof p.summary_text === "string") return p.summary_text;
   if (typeof p.message === "string") return p.message;
   if (typeof p.status === "string")  return p.status;
   return JSON.stringify(p, null, 2);
@@ -62,6 +64,7 @@ function CollapsibleCard({ event }: { event: JobEventResponse }) {
   const dotClass =
     event.event_type === "reasoning"  ? "bg-warning" :
     event.event_type === "progress"   ? "bg-accent"  :
+    event.event_type === "compaction" ? "bg-secondary" :
     event.event_type === "tool_call"  ? "bg-default-400" :
     "bg-default-300";
 
@@ -116,6 +119,7 @@ export function PlayEventCard({ event }: { event: JobEventResponse }) {
 
     case "reasoning":
     case "progress":
+    case "compaction":
     case "tool_call":
     case "tool_result":
       return <CollapsibleCard event={event} />;

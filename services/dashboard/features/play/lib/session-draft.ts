@@ -1,7 +1,6 @@
 import {
   CustomMcpDraft,
   DashboardConfig,
-  GameSessionMetadata,
   JsonValue,
   ReasoningDraft,
   SessionDetail,
@@ -10,6 +9,14 @@ import {
 
 function safeJsonStringify(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function normalizeMcpServerUrl(serverUrl: string, transport: string): string {
+  if (transport === "streamable-http" && !serverUrl.endsWith("/")) {
+    return `${serverUrl}/`;
+  }
+
+  return serverUrl;
 }
 
 function isRecord(value: JsonValue | undefined): value is Record<string, JsonValue> {
@@ -77,8 +84,6 @@ export function createDefaultDraft(config: DashboardConfig): SessionDraft {
     gatewayOptionsText: safeJsonStringify({}),
     providerOptionsText: safeJsonStringify({}),
     selectedSkills: config.defaultSkills,
-    createGameSession: true,
-    gamePluginName: config.defaultGamePlugin,
     enableDefaultGameServiceMcp: config.defaultGameServiceMcpEnabled,
     customMcpsText: safeJsonStringify(config.defaultCustomMcps),
   };
@@ -88,12 +93,16 @@ export function buildDraftFromSession(
   config: DashboardConfig,
   session: SessionDetail,
 ): SessionDraft {
+  const normalizedDefaultMcpUrl = normalizeMcpServerUrl(
+    config.defaultGameServiceMcpUrl,
+    config.defaultGameServiceMcpTransport,
+  );
   const defaultDraft = createDefaultDraft(config);
   const customMcps = session.mcps.filter(
     (mcp) =>
       !(
         mcp.name === config.defaultGameServiceMcpName &&
-        mcp.server_url === config.defaultGameServiceMcpUrl
+        normalizeMcpServerUrl(mcp.server_url, mcp.transport) === normalizedDefaultMcpUrl
       ),
   );
 
@@ -109,7 +118,7 @@ export function buildDraftFromSession(
     enableDefaultGameServiceMcp: session.mcps.some(
       (mcp) =>
         mcp.name === config.defaultGameServiceMcpName &&
-        mcp.server_url === config.defaultGameServiceMcpUrl,
+        normalizeMcpServerUrl(mcp.server_url, mcp.transport) === normalizedDefaultMcpUrl,
     ),
     customMcpsText: safeJsonStringify(
       customMcps.map((mcp) => ({
@@ -119,8 +128,6 @@ export function buildDraftFromSession(
         headers: mcp.headers as Record<string, string>,
       })),
     ),
-    gamePluginName: extractGameSession(session.metadata)?.plugin_name ?? defaultDraft.gamePluginName,
-    createGameSession: Boolean(extractGameSession(session.metadata)),
   };
 }
 
@@ -152,49 +159,4 @@ export function parseCustomMcps(text: string): CustomMcpDraft[] {
     }
     throw new Error("Custom MCPs must be valid JSON");
   }
-}
-
-export function extractGameSession(
-  metadata: Record<string, JsonValue>,
-): GameSessionMetadata | null {
-  const raw = metadata.game_session;
-  if (!isRecord(raw)) {
-    return null;
-  }
-
-  if (
-    typeof raw.session_id !== "string" ||
-    typeof raw.plugin_name !== "string" ||
-    typeof raw.plugin_id !== "number" ||
-    typeof raw.room_slug !== "string" ||
-    typeof raw.created_at !== "string"
-  ) {
-    return null;
-  }
-
-  return {
-    session_id: raw.session_id,
-    plugin_name: raw.plugin_name,
-    plugin_id: raw.plugin_id,
-    room_slug: raw.room_slug,
-    created_at: raw.created_at,
-    frontend_url:
-      typeof raw.frontend_url === "string" ? raw.frontend_url : null,
-  };
-}
-
-export function buildDragnCardsRoomUrl(
-  dragncardsFrontendUrl: string,
-  metadata: Record<string, JsonValue>,
-): string | null {
-  const gameSession = extractGameSession(metadata);
-  if (!gameSession) {
-    return null;
-  }
-  if (gameSession.frontend_url) {
-    return gameSession.frontend_url;
-  }
-
-  const baseUrl = dragncardsFrontendUrl.replace(/\/$/, "");
-  return `${baseUrl}/room/${gameSession.room_slug}`;
 }

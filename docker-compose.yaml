@@ -11,7 +11,7 @@ services:
     depends_on:
       - dragncards-backend
     ports:
-      - "8000:8000"
+      - "4001:8000"
     environment:
       DRAGNCARDS_HTTP_URL: http://dragncards-backend:4000
       DRAGNCARDS_WS_URL: ws://dragncards-backend:4000/socket
@@ -41,7 +41,7 @@ services:
       game-service:
         condition: service_healthy
     ports:
-      - "8010:8010"
+      - "4002:8010"
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@agent-orchestrator-postgres:5432/agent_orchestrator
       BIFROST_URL: http://bifrost:8080
@@ -69,19 +69,17 @@ services:
       dragncards-frontend:
         condition: service_started
     ports:
-      - "3020:3000"
+      - "3001:3000"
     environment:
       AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:8010
       GAME_SERVICE_URL: http://game-service:8000
-      DRAGNCARDS_FRONTEND_URL: http://localhost:3000
-      DASHBOARD_APP_NAME: DragnCardsAI Dashboard
-      DASHBOARD_DEFAULT_PROVIDER_ID: openai
-      DASHBOARD_DEFAULT_MODEL_NAME: gpt-4o-mini
-      DASHBOARD_DEFAULT_GAME_PLUGIN: marvel-champions
-      DASHBOARD_DEFAULT_GAME_SERVICE_MCP_ENABLED: "true"
-      DASHBOARD_DEFAULT_GAME_SERVICE_MCP_NAME: game-service
-      DASHBOARD_DEFAULT_GAME_SERVICE_MCP_TRANSPORT: streamable-http
-      DASHBOARD_DEFAULT_GAME_SERVICE_MCP_URL: http://game-service:8000/mcp/
+      APP_NAME: DragnCardsAI Dashboard
+      DEFAULT_PROVIDER_ID: openai
+      DEFAULT_MODEL_NAME: gpt-4o-mini
+      DEFAULT_GAME_SERVICE_MCP_ENABLED: "true"
+      DEFAULT_GAME_SERVICE_MCP_NAME: game-service
+      DEFAULT_GAME_SERVICE_MCP_TRANSPORT: streamable-http
+      DEFAULT_GAME_SERVICE_MCP_URL: http://game-service:8000/mcp/
     networks:
       - dragncards-shared
 

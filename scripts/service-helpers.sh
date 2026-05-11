@@ -148,7 +148,7 @@ service_start_command() {
             printf 'cd "%s/services/agent-orchestrator" && exec uv run%s agent-orchestrator' "$root_dir" "$env_args"
             ;;
         dashboard)
-            printf 'cd "%s/services/dashboard" && exec pnpm dev --hostname 0.0.0.0 --port 3020' "$root_dir"
+            printf 'cd "%s/services/dashboard" && exec pnpm dev --hostname 0.0.0.0 --port 3001' "$root_dir"
             ;;
         *)
             return 1
@@ -162,13 +162,13 @@ service_http_port() {
 
     case "$service" in
         game-service)
-            printf '%s' '8000'
+            printf '%s' '4001'
             ;;
         agent-orchestrator)
-            printf '%s' '8010'
+            printf '%s' '4002'
             ;;
         dashboard)
-            printf '%s' '3020'
+            printf '%s' '3001'
             ;;
         *)
             return 1

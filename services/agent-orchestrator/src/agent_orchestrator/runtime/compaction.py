@@ -10,6 +10,7 @@ from agent_orchestrator.storage.models import CompactionRecord
 
 if TYPE_CHECKING:
     from agent_orchestrator.integrations.bifrost import BifrostClient
+    from agent_orchestrator.runtime.live_events import LiveEventBus
     from agent_orchestrator.storage.models import SessionModelConfig
     from agent_orchestrator.storage.repository import Repository
 
@@ -43,6 +44,7 @@ async def perform_compaction(
     session_id: str,
     model_config: SessionModelConfig,
     current_job_id: str | None = None,
+    live_event_bus: LiveEventBus | None = None,
 ) -> CompactionRecord:
     """Summarize the session's message history and persist a CompactionRecord.
 
@@ -134,11 +136,23 @@ async def perform_compaction(
     )
 
     # Persist the summary as a visible chat event in the session transcript
-    await repository.create_compaction_job(
+    compaction_job_id = await repository.create_compaction_job(
         session_id,
         summary_text=summary_text,
         tokens_used=summary_tokens,
     )
+
+    if live_event_bus is not None and current_job_id is not None:
+        await live_event_bus.publish(
+            current_job_id,
+            "compaction",
+            {
+                "summary_text": summary_text,
+                "tokens_used": summary_tokens,
+                "covers_up_to_job_id": covers_up_to_job_id,
+                "compaction_job_id": compaction_job_id,
+            },
+        )
 
     logger.info(
         "Compaction complete for session %s: record %s, summary_tokens=%d",

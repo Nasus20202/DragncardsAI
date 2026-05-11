@@ -191,7 +191,7 @@ async def list_session_tools(
     tool_catalog: McpToolCatalog = Depends(get_mcp_tool_catalog),
     item=Depends(require_session),
 ) -> SessionToolsResponse:
-    tools = await tool_catalog.list_session_tools(item.mcp_assignments)
+    tools = await tool_catalog.list_session_tools(item.mcp_assignments, ignore_failures=True)
     return SessionToolsResponse(tools=[serialize_tool_definition(tool) for tool in tools])
 
 

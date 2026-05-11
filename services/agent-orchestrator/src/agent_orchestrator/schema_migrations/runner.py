@@ -7,8 +7,19 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 
-MIGRATIONS = ("0001_initial", "0002_context_management")
 SQL_DIR = Path(__file__).with_name("sql")
+
+
+def _discover_migrations() -> tuple[str, ...]:
+    versions = {
+        sql_file.name.split(".", 1)[0]
+        for sql_file in SQL_DIR.glob("*.sql")
+        if sql_file.name != "0000_schema_migrations.sql"
+    }
+    return tuple(sorted(versions))
+
+
+MIGRATIONS = _discover_migrations()
 
 
 async def ensure_schema(engine: AsyncEngine) -> None:

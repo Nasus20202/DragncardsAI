@@ -24,7 +24,7 @@ uv run agent-orchestrator
 Default local URL:
 
 ```text
-http://localhost:8010
+http://localhost:4002
 ```
 
 ## What This Service Is For
@@ -246,13 +246,13 @@ Typical `game-service` MCP assignment:
 {
   "name": "game-service",
   "transport": "streamable-http",
-  "server_url": "http://localhost:8000/mcp/",
+  "server_url": "http://localhost:4001/mcp/",
   "headers": {}
 }
 ```
 
 For local host clients talking to Dockerized services:
-- use `http://localhost:8010` for requests into `agent-orchestrator`
+- use `http://localhost:4002` for requests into `agent-orchestrator`
 - use `http://game-service:8000/mcp/` inside MCP assignments that will be used by the `agent-orchestrator` container
 
 `POST /sessions/{session_id}/mcps` normalizes `streamable-http` MCP URLs to include the trailing slash automatically.
@@ -348,7 +348,7 @@ The service expects:
 Set the Valkey connection with:
 
 ```text
-VALKEY_URL=redis://localhost:8380/0
+VALKEY_URL=redis://localhost:6381/0
 ```
 
 In Docker Compose, agent-orchestrator uses the dedicated `agent-orchestrator-valkey` service.

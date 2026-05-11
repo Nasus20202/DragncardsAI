@@ -132,21 +132,10 @@ export interface SessionJobsResponse {
   page: PageInfo;
 }
 
-export interface GameSessionMetadata {
-  session_id: string;
-  plugin_name: string;
-  plugin_id: number;
-  room_slug: string;
-  created_at: string;
-  frontend_url?: string | null;
-}
-
 export interface DashboardConfig {
   appName: string;
-  dragncardsFrontendUrl: string;
   defaultProviderId: string;
   defaultModelName: string;
-  defaultGamePlugin: string;
   defaultGameServiceMcpEnabled: boolean;
   defaultGameServiceMcpName: string;
   defaultGameServiceMcpTransport: string;
@@ -176,8 +165,6 @@ export interface SessionDraft {
   gatewayOptionsText: string;
   providerOptionsText: string;
   selectedSkills: string[];
-  createGameSession: boolean;
-  gamePluginName: string;
   enableDefaultGameServiceMcp: boolean;
   customMcpsText: string;
 }

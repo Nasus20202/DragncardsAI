@@ -15,7 +15,7 @@ Environment variables:
   BOT_EMAIL             default: dev@example.com
   BOT_PASSWORD          default: dev_password
   HTTP_HOST             default: 0.0.0.0
-  HTTP_PORT             default: 8000
+  HTTP_PORT             default: 4001
 """
 
 from __future__ import annotations
@@ -40,9 +40,9 @@ DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:40
 DRAGNCARDS_WS_URL = os.environ.get("DRAGNCARDS_WS_URL", "ws://localhost:4000/socket")
 BOT_EMAIL = os.environ.get("BOT_EMAIL", "dev@example.com")
 BOT_PASSWORD = os.environ.get("BOT_PASSWORD", "dev_password")
-VALKEY_URL = os.environ.get("VALKEY_URL", "redis://localhost:8379/0")
+VALKEY_URL = os.environ.get("VALKEY_URL", "redis://localhost:6380/0")
 HTTP_HOST = os.environ.get("HTTP_HOST", "0.0.0.0")
-HTTP_PORT = int(os.environ.get("HTTP_PORT", "8000"))
+HTTP_PORT = int(os.environ.get("HTTP_PORT", "4001"))
 
 # Plugin registry — maps plugin name to DragnCards plugin metadata.
 # Extend this dict to support additional plugins.

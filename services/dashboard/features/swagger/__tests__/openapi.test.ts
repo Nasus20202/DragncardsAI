@@ -6,7 +6,7 @@ describe("buildMergedOpenApi", () => {
   it("prefixes paths, component refs, tags, and operation ids per service", async () => {
     const fetchImpl = vi.fn(async (input: string | URL) => {
       const url = String(input);
-      if (url.includes("8010")) {
+      if (url.includes("4002")) {
         return new Response(
           JSON.stringify({
             openapi: "3.1.0",
@@ -98,7 +98,7 @@ describe("buildMergedOpenApi", () => {
   it("collects errors and keeps available specs", async () => {
     const fetchImpl = vi.fn(async (input: string | URL) => {
       const url = String(input);
-      if (url.includes("8010")) {
+      if (url.includes("4002")) {
         return new Response(JSON.stringify({ openapi: "3.1.0", paths: {}, components: {} }));
       }
 
