@@ -71,6 +71,9 @@ def test_infra_compose_declares_bifrost_and_dedicated_postgres():
     payload = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
     services = payload["services"]
     assert services["otel-lgtm"]["image"] == "grafana/otel-lgtm:0.27.1"
+    assert services["otel-lgtm"]["volumes"] == [
+        "./services/otel/loki-config.yaml:/otel-lgtm/loki-config.yaml:ro"
+    ]
     assert services["otel-lgtm"]["ports"] == ["3004:3000", "4317:4317", "4318:4318"]
     assert services["otel-lgtm"]["healthcheck"]["test"] == [
         "CMD",

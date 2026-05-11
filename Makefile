@@ -1,5 +1,5 @@
 
-.PHONY: help lint lint-fix test test-unit test-integration build up down \
+.PHONY: help lint lint-fix test test-unit test-integration build up down down-clean \
 	infra-up infra-down infra-restart \
 	run run-game-service run-agent-orchestrator run-dashboard
 
@@ -13,6 +13,7 @@ help:
 		"make build              # build docker images" \
 		"make up                 # start docker stack" \
 		"make down               # stop docker stack" \
+		"make down-clean         # stop stack and remove volumes" \
 		"make infra-up           # start infrastructure services only" \
 		"make infra-down         # stop infrastructure services only" \
 		"make infra-restart      # restart infrastructure services only" \
@@ -44,6 +45,9 @@ up:
 
 down:
 	./scripts/docker.sh down
+
+down-clean:
+	./scripts/docker.sh down-clean
 
 infra-up:
 	./scripts/docker-infrastructure.sh start

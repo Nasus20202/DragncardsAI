@@ -36,6 +36,14 @@ case "$ACTION" in
             exit 1
         fi
         echo "Tearing down Docker stack..."
+        docker compose down
+        ;;
+    down-clean)
+        if [ "${#SERVICES[@]}" -gt 0 ]; then
+            echo "Service arguments are not supported for 'down-clean'" >&2
+            exit 1
+        fi
+        echo "Tearing down Docker stack and removing volumes..."
         docker compose down -v
         ;;
     restart)
@@ -43,7 +51,7 @@ case "$ACTION" in
         compose_with_optional_services restart
         ;;
     *)
-        echo "Usage: $0 {build|start|stop|down|restart} [service ...]"
+        echo "Usage: $0 {build|start|stop|down|down-clean|restart} [service ...]"
         exit 1
         ;;
 esac

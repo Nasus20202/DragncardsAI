@@ -1,5 +1,7 @@
 import { registerOTel } from "@vercel/otel";
 
+import { createLogRecordProcessors } from "./features/observability/lib/server-logging";
+
 function splitCsv(raw: string | undefined): string[] {
   if (!raw) {
     return [];
@@ -16,8 +18,11 @@ export function register() {
     return;
   }
 
+  const logRecordProcessors = createLogRecordProcessors();
+
   registerOTel({
     serviceName: process.env.OTEL_SERVICE_NAME ?? "dashboard",
+    ...(logRecordProcessors.length > 0 ? { logRecordProcessors } : {}),
     instrumentationConfig: {
       fetch: {
         propagateContextUrls: splitCsv(
