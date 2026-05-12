@@ -64,7 +64,7 @@ services:
       - dragncards-shared
 
   bifrost:
-    image: maximhq/bifrost:v1.5.0
+    image: maximhq/bifrost:v1.5.1
     restart: unless-stopped
     depends_on:
       otel-lgtm:
