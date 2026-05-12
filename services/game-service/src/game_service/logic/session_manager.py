@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -18,6 +19,7 @@ from game_service.dragncards.http_client import create_room, get_auth_token, get
 from game_service.logic.exceptions import (  # noqa: F401
     BadGameStateError,
     SessionError,
+    SessionLockedError,
     SessionNotFoundError,
     SnapshotValidationError,
     StateUnavailableError,
@@ -224,6 +226,37 @@ class SessionManager:
                 raise SessionNotFoundError(f"Session {session_id!r} not found")
             session = await self._restore_session(record)
         return session
+
+    @asynccontextmanager
+    async def session_operation_lock(
+        self,
+        session_id: str,
+        *,
+        wait_timeout: float = 5.0,
+        lease_ttl: float = 30.0,
+    ):
+        owner_token = str(uuid.uuid4())
+        acquired = await self._session_store.acquire_session_lock(
+            session_id=session_id,
+            owner_token=owner_token,
+            lease_ttl=lease_ttl,
+            wait_timeout=wait_timeout,
+        )
+        if not acquired:
+            raise SessionLockedError(
+                f"Session {session_id!r} is busy; could not acquire operation lock within {wait_timeout:.1f}s"
+            )
+        try:
+            yield
+        finally:
+            try:
+                await self._session_store.release_session_lock(session_id, owner_token)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to release operation lock for session %s: %s",
+                    session_id,
+                    exc,
+                )
 
     async def _remove_session(self, session_id: str) -> None:
         async with self._lock:

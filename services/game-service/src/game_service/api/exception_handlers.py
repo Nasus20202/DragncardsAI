@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from game_service.logic.session_manager import (
     BadGameStateError,
     SessionError,
+    SessionLockedError,
     SessionNotFoundError,
     StateUnavailableError,
 )
@@ -27,6 +28,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(StateUnavailableError)
     async def state_unavailable_handler(request, exc: StateUnavailableError):
         return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    @app.exception_handler(SessionLockedError)
+    async def session_locked_handler(request, exc: SessionLockedError):
+        return JSONResponse(status_code=423, content={"detail": str(exc)})
 
     # SessionError is the base class — must be registered last so the more
     # specific subclass handlers above take priority.

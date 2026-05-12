@@ -27,11 +27,26 @@ class SessionStore(Protocol):
 
     async def delete_session(self, session_id: str) -> None: ...
 
+    async def acquire_session_lock(
+        self,
+        session_id: str,
+        owner_token: str,
+        *,
+        lease_ttl: float = 30.0,
+        wait_timeout: float = 5.0,
+        retry_interval: float = 0.05,
+    ) -> bool: ...
+
+    async def release_session_lock(self, session_id: str, owner_token: str) -> None: ...
+
 
 class InMemorySessionStore:
     def __init__(self) -> None:
         self._records: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
+        self._session_locks: dict[str, asyncio.Lock] = {}
+        self._session_lock_tokens: dict[str, str] = {}
+        self._session_locks_guard = asyncio.Lock()
 
     async def list_sessions(self) -> list[dict[str, Any]]:
         async with self._lock:
@@ -50,6 +65,43 @@ class InMemorySessionStore:
     async def delete_session(self, session_id: str) -> None:
         async with self._lock:
             self._records.pop(session_id, None)
+
+    async def _get_session_lock(self, session_id: str) -> asyncio.Lock:
+        async with self._session_locks_guard:
+            lock = self._session_locks.get(session_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._session_locks[session_id] = lock
+            return lock
+
+    async def acquire_session_lock(
+        self,
+        session_id: str,
+        owner_token: str,
+        *,
+        lease_ttl: float = 30.0,
+        wait_timeout: float = 5.0,
+        retry_interval: float = 0.05,
+    ) -> bool:
+        del lease_ttl, retry_interval
+        lock = await self._get_session_lock(session_id)
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=wait_timeout)
+        except asyncio.TimeoutError:
+            return False
+        async with self._session_locks_guard:
+            self._session_lock_tokens[session_id] = owner_token
+        return True
+
+    async def release_session_lock(self, session_id: str, owner_token: str) -> None:
+        async with self._session_locks_guard:
+            token = self._session_lock_tokens.get(session_id)
+            lock = self._session_locks.get(session_id)
+            if token != owner_token or lock is None:
+                return
+            self._session_lock_tokens.pop(session_id, None)
+            if lock.locked():
+                lock.release()
 
 
 class _RespError(RuntimeError):
@@ -123,17 +175,26 @@ async def _read_resp(reader: asyncio.StreamReader) -> Any:
 
 
 class ValkeySessionStore:
-    def __init__(self, url: str, key_prefix: str = "game-service:session:") -> None:
+    def __init__(
+        self,
+        url: str,
+        key_prefix: str = "game-service:session:",
+        lock_prefix: str = "game-service:session-lock:",
+    ) -> None:
         parsed = urlparse(url)
         if parsed.scheme not in {"redis", "valkey"}:
             raise ValueError(f"Unsupported Valkey URL scheme: {parsed.scheme!r}")
         self._host = parsed.hostname or "localhost"
         self._port = parsed.port or 6379
         self._prefix = key_prefix
+        self._lock_prefix = lock_prefix
         self._conn = _RespConnection(self._host, self._port)
 
     def _key(self, session_id: str) -> str:
         return f"{self._prefix}{session_id}"
+
+    def _lock_key(self, session_id: str) -> str:
+        return f"{self._lock_prefix}{session_id}"
 
     async def list_sessions(self) -> list[dict[str, Any]]:
         keys = await self._conn.execute("KEYS", f"{self._prefix}*")
@@ -159,3 +220,35 @@ class ValkeySessionStore:
 
     async def delete_session(self, session_id: str) -> None:
         await self._conn.execute("DEL", self._key(session_id))
+
+    async def acquire_session_lock(
+        self,
+        session_id: str,
+        owner_token: str,
+        *,
+        lease_ttl: float = 30.0,
+        wait_timeout: float = 5.0,
+        retry_interval: float = 0.05,
+    ) -> bool:
+        key = self._lock_key(session_id)
+        deadline = asyncio.get_running_loop().time() + wait_timeout
+        ttl_ms = max(int(lease_ttl * 1000), 1)
+        while True:
+            result = await self._conn.execute(
+                "SET", key, owner_token, "NX", "PX", str(ttl_ms)
+            )
+            if result == "OK":
+                return True
+            if asyncio.get_running_loop().time() >= deadline:
+                return False
+            await asyncio.sleep(retry_interval)
+
+    async def release_session_lock(self, session_id: str, owner_token: str) -> None:
+        key = self._lock_key(session_id)
+        await self._conn.execute(
+            "EVAL",
+            "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+            "1",
+            key,
+            owner_token,
+        )

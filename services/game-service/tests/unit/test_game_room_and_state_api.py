@@ -6,6 +6,7 @@ so no real DragnCards backend is required.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -14,6 +15,7 @@ import pytest
 from game_service.api.app import create_app
 from game_service.logic.session_manager import (
     BadGameStateError,
+    SessionLockedError,
     SessionNotFoundError,
     StateUnavailableError,
 )
@@ -66,6 +68,13 @@ def _mock_manager(session=None) -> MagicMock:
     manager.get_session = get_session
     manager.delete_session = AsyncMock()
     manager.list_sessions = MagicMock(return_value=[])
+
+    @asynccontextmanager
+    async def session_operation_lock(session_id: str, **kwargs):
+        del session_id, kwargs
+        yield
+
+    manager.session_operation_lock = session_operation_lock
     return manager
 
 
@@ -323,3 +332,19 @@ async def test_bad_game_state_on_reset_returns_409():
     async with _make_client(_mock_manager(session)) as client:
         resp = await client.post(f"/games/{SESSION_ID}/reset", json={})
     assert resp.status_code == 409
+
+
+async def test_session_locked_error_returns_423():
+    session = _mock_session()
+    manager = _mock_manager(session)
+
+    @asynccontextmanager
+    async def locked(session_id: str, **kwargs):
+        del session_id, kwargs
+        raise SessionLockedError("busy")
+        yield
+
+    manager.session_operation_lock = locked
+    async with _make_client(manager) as client:
+        resp = await client.post(f"/games/{SESSION_ID}/actions", json={"type": "next_step"})
+    assert resp.status_code == 423

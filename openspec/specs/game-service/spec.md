@@ -176,6 +176,17 @@ The Game Service SHALL run both the HTTP API (FastAPI) and MCP server in the sam
 - **WHEN** the Game Service starts
 - **THEN** it SHALL initialize both the FastAPI HTTP server and the MCP server, and verify connectivity to the DragnCards backend
 
+### Requirement: Cross-replica session operation serialization
+The Game Service SHALL serialize state-changing and state-refreshing operations per session using the coordination store so concurrent requests across replicas cannot interleave on the same DragnCards room channel.
+
+#### Scenario: Replica B receives a request while Replica A is already operating on the same session
+- **WHEN** Replica A holds the session operation lock and Replica B receives another operation for the same `session_id`
+- **THEN** Replica B SHALL wait up to a bounded timeout to acquire the lock, and SHALL return an explicit "session busy" error if the lock is not acquired
+
+#### Scenario: Two concurrent operations target different sessions
+- **WHEN** requests execute simultaneously for different `session_id` values
+- **THEN** the Game Service SHALL allow both operations to proceed in parallel
+
 ### Requirement: Room control operations
 The Game Service SHALL support room control operations (reset, seat assignment, spectator toggle, close room, send alert, save replay, set player count) via DragnCards room channel events.
 

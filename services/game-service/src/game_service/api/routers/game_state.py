@@ -26,8 +26,9 @@ async def get_game_state(
     manager: SessionManager = Depends(get_manager),
 ):
     logger.info("get_game_state: session_id=%s", session_id)
-    session = await manager.get_session(session_id)
-    state = await session.get_state()
+    async with manager.session_operation_lock(session_id):
+        session = await manager.get_session(session_id)
+        state = await session.get_state()
     logger.debug(
         "get_game_state: session_id=%s -> state keys=%s",
         session_id,
@@ -47,8 +48,9 @@ async def export_game_state_snapshot(
     manager: SessionManager = Depends(get_manager),
 ):
     logger.info("export_game_state_snapshot: session_id=%s", session_id)
-    session = await manager.get_session(session_id)
-    return await session.export_state()
+    async with manager.session_operation_lock(session_id):
+        session = await manager.get_session(session_id)
+        return await session.export_state()
 
 
 @router.put(
@@ -68,6 +70,7 @@ async def load_game_state_snapshot(
         snapshot.plugin_name,
         snapshot.schema_version,
     )
-    session = await manager.get_session(session_id)
-    state = await session.load_state(snapshot)
+    async with manager.session_operation_lock(session_id):
+        session = await manager.get_session(session_id)
+        state = await session.load_state(snapshot)
     return GameStateResponse(session_id=session_id, state=state)
