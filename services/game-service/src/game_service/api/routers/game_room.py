@@ -42,10 +42,11 @@ async def reset_game(
         body.save,
         body.reload_plugin,
     )
-    session = await manager.get_session(session_id)
-    new_state = await session.reset_game(
-        save=body.save, reload_plugin=body.reload_plugin
-    )
+    async with manager.session_operation_lock(session_id):
+        session = await manager.get_session(session_id)
+        new_state = await session.reset_game(
+            save=body.save, reload_plugin=body.reload_plugin
+        )
     logger.info("reset_game: session_id=%s -> success", session_id)
     return ResetGameResponse(session_id=session_id, state=new_state)
 
@@ -67,8 +68,9 @@ async def set_seat(
         body.player_index,
         body.user_id,
     )
-    session = await manager.get_session(session_id)
-    await session.set_seat(player_index=body.player_index, user_id=body.user_id)
+    async with manager.session_operation_lock(session_id):
+        session = await manager.get_session(session_id)
+        await session.set_seat(player_index=body.player_index, user_id=body.user_id)
 
 
 @router.post(
@@ -88,8 +90,9 @@ async def set_spectator(
         body.user_id,
         body.spectating,
     )
-    session = await manager.get_session(session_id)
-    await session.set_spectator(user_id=body.user_id, spectating=body.spectating)
+    async with manager.session_operation_lock(session_id):
+        session = await manager.get_session(session_id)
+        await session.set_spectator(user_id=body.user_id, spectating=body.spectating)
 
 
 @router.post(
@@ -104,8 +107,9 @@ async def send_alert(
     manager: SessionManager = Depends(get_manager),
 ):
     logger.info("send_alert: session_id=%s message=%r", session_id, body.message)
-    session = await manager.get_session(session_id)
-    await session.send_alert(body.message)
+    async with manager.session_operation_lock(session_id):
+        session = await manager.get_session(session_id)
+        await session.send_alert(body.message)
 
 
 @router.post(
@@ -119,8 +123,9 @@ async def save_replay(
     manager: SessionManager = Depends(get_manager),
 ):
     logger.info("save_replay: session_id=%s", session_id)
-    session = await manager.get_session(session_id)
-    await session.save_replay()
+    async with manager.session_operation_lock(session_id):
+        session = await manager.get_session(session_id)
+        await session.save_replay()
 
 
 @router.post(
@@ -140,10 +145,11 @@ async def set_player_count(
         body.num_players,
         body.layout_id,
     )
-    session = await manager.get_session(session_id)
-    new_state = await session.set_player_count(
-        num_players=body.num_players, layout_id=body.layout_id
-    )
+    async with manager.session_operation_lock(session_id):
+        session = await manager.get_session(session_id)
+        new_state = await session.set_player_count(
+            num_players=body.num_players, layout_id=body.layout_id
+        )
     logger.info("set_player_count: session_id=%s -> success", session_id)
     return SetPlayerCountResponse(session_id=session_id, state=new_state)
 

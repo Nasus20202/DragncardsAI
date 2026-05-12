@@ -95,10 +95,11 @@ async def delete_game(
     manager: SessionManager = Depends(get_manager),
 ):
     logger.info("delete_game: session_id=%s close_room=%s", session_id, close_room)
-    if close_room:
-        session = await manager.get_session(session_id)
-        await session.close_room()
-    else:
-        await manager.delete_session(session_id)
+    async with manager.session_operation_lock(session_id):
+        if close_room:
+            session = await manager.get_session(session_id)
+            await session.close_room()
+        else:
+            await manager.delete_session(session_id)
     logger.info("delete_game: session_id=%s -> deleted", session_id)
     return DeleteGameResponse(session_id=session_id)

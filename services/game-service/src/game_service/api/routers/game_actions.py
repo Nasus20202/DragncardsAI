@@ -37,8 +37,9 @@ async def execute_action(
         session_id,
         action,
     )
-    session = await manager.get_session(session_id)
-    new_state = await session.execute_action(action)
+    async with manager.session_operation_lock(session_id):
+        session = await manager.get_session(session_id)
+        new_state = await session.execute_action(action)
     logger.info("execute_action: session_id=%s -> success", session_id)
     return ExecuteActionResponse(session_id=session_id, state=new_state)
 

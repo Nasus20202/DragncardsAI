@@ -27,3 +27,7 @@ class StateUnavailableError(SessionError):
 
 class SnapshotValidationError(SessionError):
     """Raised when a snapshot document is invalid for the target session."""
+
+
+class SessionLockedError(SessionError):
+    """Raised when a session operation lock cannot be acquired in time."""
