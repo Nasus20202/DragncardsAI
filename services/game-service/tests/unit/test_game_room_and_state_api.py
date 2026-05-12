@@ -351,5 +351,7 @@ async def test_session_locked_error_returns_423():
 
     manager.session_operation_lock = locked
     async with _make_client(manager) as client:
-        resp = await client.post(f"/games/{SESSION_ID}/actions", json={"type": "next_step"})
+        resp = await client.post(
+            f"/games/{SESSION_ID}/actions", json={"type": "next_step"}
+        )
     assert resp.status_code == 423
