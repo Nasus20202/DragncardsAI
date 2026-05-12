@@ -4,6 +4,7 @@ include:
 
 services:
   game-service:
+    image: dragncardsai-game-service
     build:
       context: .
       dockerfile: services/game-service/docker/Dockerfile
@@ -31,6 +32,7 @@ services:
       - dragncards-shared
 
   agent-orchestrator:
+    image: dragncardsai-agent-orchestrator
     build:
       context: .
       dockerfile: services/agent-orchestrator/docker/Dockerfile
@@ -68,6 +70,7 @@ services:
       - dragncards-shared
 
   dashboard:
+    image: dragncardsai-dashboard
     build:
       context: .
       dockerfile: services/dashboard/docker/Dockerfile

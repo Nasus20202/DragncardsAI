@@ -62,7 +62,7 @@ jobs:
             *.output=type=docker
 
       - name: Start Docker stack
-        run: scripts/docker.sh start
+        run: docker compose up --no-build -d
 
       - name: Wait for backend
         run: |
