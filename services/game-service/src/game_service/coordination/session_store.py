@@ -236,17 +236,20 @@ class ValkeySessionStore:
         retry_interval: float = 0.05,
     ) -> bool:
         key = self._lock_key(session_id)
-        deadline = asyncio.get_running_loop().time() + wait_timeout
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait_timeout
         ttl_ms = max(int(lease_ttl * 1000), 1)
-        while True:
+        remaining = wait_timeout
+        while remaining >= 0:
             result = await self._conn.execute(
                 "SET", key, owner_token, "NX", "PX", str(ttl_ms)
             )
             if result == "OK":
                 return True
-            if asyncio.get_running_loop().time() >= deadline:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
                 return False
-            await asyncio.sleep(retry_interval)
+            await asyncio.sleep(min(retry_interval, remaining))
 
     async def release_session_lock(self, session_id: str, owner_token: str) -> None:
         key = self._lock_key(session_id)

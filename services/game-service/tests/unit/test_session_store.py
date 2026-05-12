@@ -24,8 +24,8 @@ async def test_in_memory_session_lock_ignores_wrong_owner_release():
     assert await store.acquire_session_lock("s1", "owner-a", wait_timeout=0.1)
     await store.release_session_lock("s1", "owner-b")
 
-    blocked = await store.acquire_session_lock("s1", "owner-c", wait_timeout=0.05)
-    assert not blocked
+    acquired = await store.acquire_session_lock("s1", "owner-c", wait_timeout=0.05)
+    assert not acquired
 
     await store.release_session_lock("s1", "owner-a")
     assert await store.acquire_session_lock("s1", "owner-c", wait_timeout=0.1)
