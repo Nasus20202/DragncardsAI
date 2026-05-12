@@ -248,7 +248,12 @@ def test_session_lifecycle_and_assignments(app):
 
         tools_response = client.get(f"/sessions/{session_id}/tools")
         assert tools_response.status_code == 200
-        assert tools_response.json()["tools"][0]["name"] == "game-service_next_step"
+        tool_names = [tool["name"] for tool in tools_response.json()["tools"]]
+        assert "load_skill" in tool_names
+        assert "load_skill_reference" in tool_names
+        assert "spawn_subagent" in tool_names
+        assert "wait_for_subagent" in tool_names
+        assert "game-service_next_step" in tool_names
 
         jobs_response = client.get(f"/sessions/{session_id}/jobs")
         assert jobs_response.status_code == 200
@@ -258,7 +263,9 @@ def test_session_lifecycle_and_assignments(app):
         available_skills_response = client.get("/skills")
         assert available_skills_response.status_code == 200
         assert available_skills_response.json()["skills"][0]["name"] == "demo-skill"
-        assert "content_markdown" in available_skills_response.json()["skills"][0]
+        assert "description" in available_skills_response.json()["skills"][0]
+        assert "metadata" in available_skills_response.json()["skills"][0]
+        assert "content_markdown" not in available_skills_response.json()["skills"][0]
 
         detail_response = client.get(f"/sessions/{session_id}")
         assert detail_response.status_code == 200
@@ -382,7 +389,13 @@ async def test_job_detail_ignores_unreachable_mcp_assignments(tmp_path: Path):
             response = client.get(f"/jobs/{job_id}")
 
         assert response.status_code == 200
-        assert response.json()["job"]["available_tools"] == []
+        tool_names = [
+            tool["name"] for tool in response.json()["job"]["available_tools"]
+        ]
+        assert "load_skill" in tool_names
+        assert "load_skill_reference" in tool_names
+        assert "spawn_subagent" in tool_names
+        assert "wait_for_subagent" in tool_names
     finally:
         await engine.dispose()
 
@@ -406,7 +419,13 @@ async def test_session_tools_ignores_unreachable_mcp_assignments(tmp_path: Path)
             response = client.get(f"/sessions/{session_id}/tools")
 
         assert response.status_code == 200
-        assert response.json()["tools"] == []
+        tool_names = [tool["name"] for tool in response.json()["tools"]]
+        assert tool_names == [
+            "load_skill",
+            "load_skill_reference",
+            "spawn_subagent",
+            "wait_for_subagent",
+        ]
     finally:
         await engine.dispose()
 

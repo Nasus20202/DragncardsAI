@@ -8,10 +8,8 @@ from agent_orchestrator.repositories.base import utc_now
 from agent_orchestrator.storage.models import (
     AgentSession,
     Job,
-    JobAttempt,
     JobEvent,
     JobOutput,
-    PromptRun,
 )
 
 
@@ -30,16 +28,10 @@ class JobRepositoryMixin:
                 return None
             if session_obj.status != "active":
                 raise ValueError("terminated")
-            prompt_run = PromptRun(
+            job = Job(
                 session_id=session_id,
                 prompt=prompt,
                 metadata_json=metadata_json or {},
-            )
-            session.add(prompt_run)
-            await session.flush()
-            job = Job(
-                session_id=session_id,
-                prompt_run_id=prompt_run.id,
                 max_attempts=max_attempts,
             )
             session.add(job)
@@ -67,14 +59,6 @@ class JobRepositoryMixin:
             job.started_at = utc_now()
             job.updated_at = utc_now()
             job.attempts += 1
-            prompt_run = await self._get_prompt_run_for_update(
-                session, job.prompt_run_id
-            )
-            prompt_run.status = "running"
-            prompt_run.updated_at = utc_now()
-            session.add(
-                JobAttempt(job_id=job.id, attempt_number=job.attempts, status="running")
-            )
             job_id = job.id
         loaded = await self.get_job(job_id)
         assert loaded is not None
@@ -104,6 +88,13 @@ class JobRepositoryMixin:
             )
             return list(result.scalars().unique()), int(total or 0)
 
+    async def set_parent_job_id(self, job_id: str, parent_job_id: str) -> None:
+        async with self._session_factory() as session, session.begin():
+            job = await session.get(Job, job_id)
+            if job is not None:
+                job.parent_job_id = parent_job_id
+                job.updated_at = utc_now()
+
     async def get_job(self, job_id: str) -> Job | None:
         async with self._session_factory() as session:
             result = await session.execute(self._job_query().where(Job.id == job_id))
@@ -119,11 +110,6 @@ class JobRepositoryMixin:
             if job.status == "queued":
                 job.status = "cancelled"
                 job.completed_at = now
-                prompt_run = await self._get_prompt_run_for_update(
-                    session, job.prompt_run_id
-                )
-                prompt_run.status = "cancelled"
-                prompt_run.updated_at = now
             job.updated_at = now
             session_id = job.session_id
         await self.append_event(job_id, session_id, "cancellation", {"requested": True})
@@ -179,16 +165,6 @@ class JobRepositoryMixin:
             job.result_text = result_text
             job.completed_at = now
             job.updated_at = now
-            prompt_run = await self._get_prompt_run_for_update(
-                session, job.prompt_run_id
-            )
-            prompt_run.status = "completed"
-            prompt_run.updated_at = now
-            attempts = await self._get_attempts_for_update(session, job_id)
-            for attempt in attempts:
-                if attempt.status == "running" and attempt.completed_at is None:
-                    attempt.status = "completed"
-                    attempt.completed_at = now
         await self.store_output(job_id, result_text)
         return await self.get_job(job_id)
 
@@ -204,9 +180,6 @@ class JobRepositoryMixin:
             job = await session.get(Job, job_id)
             if job is None:
                 return None
-            prompt_run = await self._get_prompt_run_for_update(
-                session, job.prompt_run_id
-            )
             now = utc_now()
             should_retry = (
                 retryable
@@ -216,21 +189,12 @@ class JobRepositoryMixin:
             job.error_code = error_code
             job.error_message = error_message
             job.updated_at = now
-            attempts = await self._get_attempts_for_update(session, job_id)
-            for attempt in attempts:
-                if attempt.status == "running" and attempt.completed_at is None:
-                    attempt.status = "failed"
-                    attempt.error_message = error_message
-                    attempt.completed_at = now
             if should_retry:
                 job.status = "queued"
-                prompt_run.status = "queued"
                 job.started_at = None
             else:
                 job.status = "failed"
                 job.completed_at = now
-                prompt_run.status = "failed"
-            prompt_run.updated_at = now
         return await self.get_job(job_id)
 
     async def mark_job_cancelled(self, job_id: str, *, reason: str) -> Job | None:
@@ -238,23 +202,12 @@ class JobRepositoryMixin:
             job = await session.get(Job, job_id)
             if job is None:
                 return None
-            prompt_run = await self._get_prompt_run_for_update(
-                session, job.prompt_run_id
-            )
             now = utc_now()
             job.status = "cancelled"
             job.error_code = "cancelled"
             job.error_message = reason
             job.completed_at = now
             job.updated_at = now
-            prompt_run.status = "cancelled"
-            prompt_run.updated_at = now
-            attempts = await self._get_attempts_for_update(session, job_id)
-            for attempt in attempts:
-                if attempt.status == "running" and attempt.completed_at is None:
-                    attempt.status = "cancelled"
-                    attempt.error_message = reason
-                    attempt.completed_at = now
             session_id = job.session_id
         await self.append_event(job_id, session_id, "cancellation", {"reason": reason})
         return await self.get_job(job_id)

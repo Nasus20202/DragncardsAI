@@ -7,6 +7,19 @@ import {
   SessionDraft,
 } from "@/features/shared/lib/types";
 
+export function buildDefaultSessionName(now = new Date()): string {
+  return now
+    .toLocaleString("en-CA", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
+    .replace(",", "");
+}
+
 function safeJsonStringify(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
@@ -104,18 +117,8 @@ export function applyReasoningToGatewayOptions(
 }
 
 export function createDefaultDraft(config: DashboardConfig): SessionDraft {
-  const today = new Date()
-    .toLocaleString("en-CA", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })
-    .replace(",", "");
   return {
-    name: today,
+    name: buildDefaultSessionName(),
     providerId: config.defaultProviderId,
     modelName: config.defaultModelName,
     recentMessageLimit: "",

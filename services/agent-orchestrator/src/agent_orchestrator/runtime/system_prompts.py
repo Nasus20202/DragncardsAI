@@ -13,10 +13,30 @@ BASE_SYSTEM_PROMPT_PARTS = (
 
 def build_system_prompt(skill_registry: SkillRegistry, assignments: list[Any]) -> str:
     parts = list(BASE_SYSTEM_PROMPT_PARTS)
+    skill_blocks: list[str] = []
     for assignment in assignments:
         try:
-            content = skill_registry.load_markdown(assignment.skill_name)
+            definition = skill_registry.resolve(assignment.skill_name)
+            if definition is None:
+                continue
+            description = definition.description or skill_registry.get_summary(
+                assignment.skill_name
+            )
         except FileNotFoundError:
             continue
-        parts.append(f"Skill {assignment.skill_name}:\n{content}")
+        block_lines = [f"### {assignment.skill_name}", f"{description}"]
+        if definition.metadata:
+            meta_lines = "\n".join(
+                f"- {k}: {v}" for k, v in definition.metadata.items()
+            )
+            block_lines.append(f"**Metadata:**\n{meta_lines}")
+        skill_blocks.append("\n\n".join(block_lines))
+    if skill_blocks:
+        skills_section = "## Available skills\n\n" + "\n\n---\n\n".join(skill_blocks)
+        skills_section += (
+            "\n\n---\n\nBefore using a skill, call `load_skill(<name>)` to load `SKILL.md` "
+            "and see available references. If you need one of those references, call "
+            "`load_skill_reference(<skill_name>, <reference_name>)` for the specific file."
+        )
+        parts.append(skills_section)
     return "\n\n".join(parts)

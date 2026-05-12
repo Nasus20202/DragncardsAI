@@ -31,7 +31,8 @@ export interface CardProviderResponse {
 export interface SkillDefinitionResponse {
   name: string;
   path: string;
-  content_markdown: string;
+  description: string;
+  metadata: Record<string, string>;
 }
 
 export interface ModelConfigResponse {
@@ -61,7 +62,8 @@ export interface McpAssignmentResponse {
 
 export interface JobSummary {
   id: string;
-  prompt_run_id: string;
+  prompt: string;
+  metadata: Record<string, JsonValue>;
   status: string;
   attempts: number;
   max_attempts: number;
@@ -74,15 +76,6 @@ export interface JobSummary {
   completed_at: string | null;
   latest_event_id: string | null;
   latest_event_type: string | null;
-}
-
-export interface PromptRunSummary {
-  id: string;
-  prompt: string;
-  status: string;
-  metadata: Record<string, JsonValue>;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface JobEventResponse {
@@ -123,7 +116,6 @@ export interface SessionDetail extends SessionSummary {
 }
 
 export interface JobDetail extends JobSummary {
-  prompt_run: PromptRunSummary;
   outputs: string[];
   events: JobEventResponse[];
   available_tools: SessionToolResponse[];

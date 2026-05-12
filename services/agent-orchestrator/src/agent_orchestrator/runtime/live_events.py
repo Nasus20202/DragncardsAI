@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from agent_orchestrator.telemetry import get_tracer
+from opentelemetry.trace import Status, StatusCode
 
 logger = logging.getLogger(__name__)
 tracer = get_tracer(__name__)
@@ -157,7 +158,7 @@ class _RespConnection:
 
     async def execute(self, *parts: object) -> Any:
         command = str(parts[0]).upper() if parts else "UNKNOWN"
-        with tracer.start_as_current_span(
+        span = tracer.start_span(
             "valkey.live_events.execute",
             attributes={
                 "db.system": "redis",
@@ -165,15 +166,34 @@ class _RespConnection:
                 "server.address": self._host,
                 "server.port": self._port,
             },
-        ):
+        )
+        writer: asyncio.StreamWriter | None = None
+        skip_wait_closed = False
+        try:
             reader, writer = await asyncio.open_connection(self._host, self._port)
-            try:
-                writer.write(_encode_resp_array([str(part) for part in parts]))
-                await writer.drain()
-                return await _read_resp(reader)
-            finally:
+            writer.write(_encode_resp_array([str(part) for part in parts]))
+            await writer.drain()
+            response = await _read_resp(reader)
+        except GeneratorExit:
+            # Coroutine finalization cannot safely suspend for wait_closed().
+            skip_wait_closed = True
+            raise
+        except BaseException as exc:
+            span.record_exception(exc)
+            if isinstance(exc, asyncio.CancelledError):
+                span.set_status(Status(StatusCode.ERROR, "cancelled"))
+            else:
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+            raise
+        else:
+            span.set_status(Status(StatusCode.OK))
+            return response
+        finally:
+            if writer is not None:
                 writer.close()
-                await writer.wait_closed()
+                if not skip_wait_closed:
+                    await writer.wait_closed()
+            span.end()
 
 
 class ValkeyLiveEventSubscriber:

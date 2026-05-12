@@ -5,6 +5,7 @@ from fastapi import HTTPException, Request
 from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
+from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.repository import Repository
 
@@ -27,6 +28,10 @@ def get_skill_registry(request: Request) -> SkillRegistry:
 
 def get_mcp_tool_catalog(request: Request) -> McpToolCatalog:
     return request.app.state.mcp_tool_catalog
+
+
+def get_live_event_bus(request: Request) -> LiveEventBus:
+    return request.app.state.live_event_bus
 
 
 async def require_session(request: Request, session_id: str):

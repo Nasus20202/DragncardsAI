@@ -31,7 +31,8 @@ const selectedSession: SessionDetail = {
 function makeJob(events: JobEventResponse[], prompt = "Prompt"): JobDetail {
   return {
     id: "job-1",
-    prompt_run_id: "prompt-run-1",
+    prompt,
+    metadata: {},
     status: "completed",
     attempts: 1,
     max_attempts: 1,
@@ -44,14 +45,6 @@ function makeJob(events: JobEventResponse[], prompt = "Prompt"): JobDetail {
     completed_at: "2026-05-11T00:00:02Z",
     latest_event_id: events.at(-1)?.id ?? null,
     latest_event_type: events.at(-1)?.event_type ?? null,
-    prompt_run: {
-      id: "prompt-run-1",
-      prompt,
-      status: "completed",
-      metadata: {},
-      created_at: "2026-05-11T00:00:00Z",
-      updated_at: "2026-05-11T00:00:02Z",
-    },
     outputs: [],
     events,
     available_tools: [],

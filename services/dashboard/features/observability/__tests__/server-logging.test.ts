@@ -18,7 +18,7 @@ describe("server logging", () => {
   });
 
   it("creates OTLP log processors for the node runtime", () => {
-    expect(createLogRecordProcessors()).toHaveLength(1);
+    expect(createLogRecordProcessors()).toHaveLength(2);
   });
 
   it("emits logger output through the app logger", () => {

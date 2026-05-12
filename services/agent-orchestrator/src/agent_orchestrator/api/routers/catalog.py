@@ -89,7 +89,8 @@ async def list_available_skills(
         SkillDefinitionResponse(
             name=definition.name,
             path=str(definition.path),
-            content_markdown=registry.load_markdown(definition.name),
+            description=definition.description,
+            metadata=definition.metadata,
         )
         for definition in registry.list_skills().values()
     ]

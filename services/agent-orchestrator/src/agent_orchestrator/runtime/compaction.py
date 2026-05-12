@@ -91,8 +91,8 @@ async def perform_compaction(
     # Add all prior job events as the history to compress
     history_text_parts: list[str] = []
     for job in prior_jobs:
-        if job.prompt_run:
-            history_text_parts.append(f"USER: {job.prompt_run.prompt}")
+        if job.prompt:
+            history_text_parts.append(f"USER: {job.prompt}")
         for event in sorted(job.events, key=lambda e: e.id):
             if event.event_type == "model_output":
                 history_text_parts.append(

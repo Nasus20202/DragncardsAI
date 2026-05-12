@@ -58,6 +58,19 @@ The system SHALL allow clients to assign and remove skills from `@skills/` for a
 - **WHEN** a client assigns a skill identifier that cannot be resolved from configured skill roots
 - **THEN** the system SHALL reject the assignment and SHALL NOT persist it
 
+### Requirement: System prompt construction uses skill summaries
+The worker SHALL build the system prompt by including only a short skill summary for each assigned skill rather than the full `SKILL.md` content. Full skill content SHALL be delivered on demand through the built-in skill-loading tools.
+
+#### Scenario: System prompt with assigned skills
+- **WHEN** a job starts with skills assigned to the session
+- **THEN** the system prompt SHALL contain an "Available skills" section listing each skill name and summary
+- **THEN** the system prompt SHALL instruct the agent to call `load_skill` before using a skill and `load_skill_reference` only for the specific reference files it chooses to inspect
+- **THEN** the system prompt SHALL NOT include the full body of any assigned `SKILL.md`
+
+#### Scenario: System prompt with no assigned skills
+- **WHEN** a job starts with no skills assigned
+- **THEN** the system prompt SHALL contain the base identity and tool-usage instructions only
+
 ### Requirement: MCP assignment
 The system SHALL allow clients to assign and remove MCP server/tool configurations for an agent session, including the game-service MCP.
 
@@ -97,6 +110,71 @@ Invalid tool invocations from the model SHALL be surfaced back to the model as e
 - **WHEN** the model requests a tool that is unknown, unavailable to the session, or malformed in a way the worker can describe locally
 - **THEN** the worker SHALL append an error `tool_result` describing the problem
 - **AND** SHALL continue orchestration without failing the job attempt solely because of that invalid tool request
+
+### Requirement: Subagent jobs persist parent job reference
+The `jobs` table SHALL include a nullable `parent_job_id` foreign key referencing `jobs.id`. Jobs created by the `spawn_subagent` built-in tool SHALL have this field set to the spawning job's id. Jobs created through normal prompt submission SHALL have it set to null.
+
+#### Scenario: Master job has null parent_job_id
+- **WHEN** a prompt job is created via the normal prompt submission endpoint
+- **THEN** its `parent_job_id` SHALL be null
+
+#### Scenario: Child job has parent_job_id set
+- **WHEN** a job is created as a result of a `spawn_subagent` tool call
+- **THEN** its `parent_job_id` SHALL reference the spawning job's id
+
+### Requirement: Built-in tool dispatch in worker loop
+The worker SHALL maintain a registry of built-in tools that are dispatched locally before MCP tool lookup. Built-in tools SHALL appear in the tool list presented to the LLM alongside MCP tools. When the LLM calls a built-in tool the worker SHALL handle it locally and emit `tool_call` and `tool_result` events using `assignment="builtin"` and `server_url=null`.
+
+The worker SHALL determine whether a job is a master job by checking `parent_job_id is null AND job_type = "prompt"`. The `spawn_subagent` tool SHALL be included in the tool list only for master jobs.
+
+#### Scenario: Built-in tool called by LLM
+- **WHEN** the LLM invokes a tool name that matches a registered built-in
+- **THEN** the worker SHALL execute the built-in handler locally
+- **THEN** the worker SHALL append a `tool_call` event with `assignment="builtin"` and a `tool_result` event with the handler's output before continuing the tool round
+
+#### Scenario: Skill loading built-ins available on all jobs
+- **WHEN** the worker builds the built-in tool registry for any job type
+- **THEN** both `load_skill` and `load_skill_reference` SHALL be present in the tool definitions sent to the LLM
+
+#### Scenario: Built-in tool name takes precedence over MCP tool
+- **WHEN** the LLM invokes a tool name that matches a built-in and an MCP tool with the same name
+- **THEN** the built-in handler SHALL take precedence and no MCP call SHALL be made
+
+#### Scenario: spawn_subagent omitted for child jobs
+- **WHEN** a job has a non-null `parent_job_id`
+- **THEN** `spawn_subagent` SHALL NOT appear in the tool definitions sent to the LLM
+
+#### Scenario: spawn_subagent omitted for compaction jobs
+- **WHEN** a job has `job_type = "compaction"`
+- **THEN** `spawn_subagent` SHALL NOT appear in the tool definitions sent to the LLM
+
+### Requirement: spawn_subagent creates monitored child jobs without blocking
+When the `spawn_subagent` built-in tool is invoked the worker SHALL create a child session, configure it with the parent session's model config and skills, enqueue a prompt job with `parent_job_id` set, name the child session from the prompt, and return a tool result immediately containing the `child_job_id` and derived `name`. The child job runs concurrently; the parent agent can continue its work without waiting. A background task SHALL monitor the child job, append the child outcome to the parent job's event log, and terminate the child session when the child reaches a terminal state.
+
+#### Scenario: Child session created and configured
+- **WHEN** `spawn_subagent` is called with a valid prompt
+- **THEN** the worker SHALL create a new `AgentSession` via the repository
+- **THEN** the worker SHALL name the child session with the first 50 characters of the prompt, truncated without ellipsis
+- **THEN** the worker SHALL copy the parent session's model config and skill assignments
+
+#### Scenario: Child job enqueued with parent reference
+- **WHEN** the child session is configured
+- **THEN** the worker SHALL enqueue a prompt job with `parent_job_id` pointing to the current parent job
+- **THEN** the child job SHALL begin running concurrently via `asyncio.create_task`
+
+#### Scenario: spawn_subagent returns immediately
+- **WHEN** the child job is enqueued and started
+- **THEN** `spawn_subagent` SHALL return a tool result immediately with `child_job_id` and `name` without waiting for the child to finish
+- **THEN** the parent agent SHALL continue its own reasoning and may spawn additional subagents
+
+#### Scenario: subagent_started payload includes name
+- **WHEN** `spawn_subagent` emits `subagent_started`
+- **THEN** the event payload SHALL include `child_job_id`, `child_session_id`, and `name`
+
+#### Scenario: Background task monitors child and emits outcome
+- **WHEN** the child job reaches a terminal state
+- **THEN** a background coroutine SHALL append `subagent_completed` or `subagent_failed` to the parent job's event log
+- **THEN** the background coroutine SHALL terminate the child session
 
 ### Requirement: Prior job event replay
 When `multi_turn_memory` is enabled, the job worker SHALL replay prior job events for the session into the messages list before the current user prompt.
@@ -203,7 +281,7 @@ The system SHALL expose `GET /sessions/{session_id}/context` returning current c
 
 The session context metadata endpoint SHALL estimate context usage from the content the orchestrator would include in the next model request, rather than from cumulative historical job token totals.
 
-That estimate SHALL include the system prompt generated from active skills, replayed prior messages after compaction and replay-window limits are applied, and tool definitions exposed from active MCP assignments.
+That estimate SHALL include the system prompt generated from active skill summaries, replayed prior messages after compaction and replay-window limits are applied, and tool definitions exposed from active MCP assignments.
 
 That estimate SHALL NOT include prior history excluded by replay limits, inactive assignments, or a future user prompt that has not yet been submitted.
 
@@ -250,9 +328,27 @@ The system SHALL persist job lifecycle state, attempts, timestamps, errors, prom
 - **WHEN** a background worker fails a prompt job
 - **THEN** the system SHALL persist the failed status, error details, completion timestamp, and any events produced before failure
 
-#### Scenario: Job is cancelled
+### Requirement: Job cancellation
+The system SHALL allow clients to request cancellation for queued or running jobs. Cancellation SHALL be persisted, surfaced in job lifecycle state, observed by workers before any further model or MCP calls, and propagated from parent jobs to active spawned child jobs.
+
+#### Scenario: Cancellation is requested for a queued or running job
 - **WHEN** a client requests cancellation for a queued or running job
-- **THEN** the system SHALL persist the cancellation request and the worker SHALL stop the job before any further model or MCP calls when cancellation is observed
+- **THEN** the system SHALL persist the cancellation request on that job
+
+#### Scenario: Worker observes cancellation during execution
+- **WHEN** a worker observes that cancellation has been requested for a job before another model or MCP call
+- **THEN** the worker SHALL stop the job without performing further model or MCP calls
+- **THEN** the system SHALL mark the job cancelled and persist a cancellation event
+
+#### Scenario: Parent job cancellation propagates to active child jobs
+- **WHEN** a cancelled job is the parent of one or more running subagent jobs
+- **THEN** the system SHALL request cancellation for each still-running child job
+- **AND** SHALL NOT leave spawned child jobs running after the parent job has been cancelled
+
+#### Scenario: Cancelled child jobs are fully reconciled
+- **WHEN** a child job is cancelled because its parent job was cancelled
+- **THEN** the child job SHALL still reach a terminal cancelled state and its child session SHALL be terminated
+- **THEN** the parent job transcript SHALL record that child outcome as a `subagent_failed` event with a cancellation reason
 
 ### Requirement: Bifrost gateway execution
 The system SHALL route LLM prompt execution through Bifrost rather than calling provider SDKs directly.

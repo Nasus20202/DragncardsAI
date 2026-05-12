@@ -527,7 +527,10 @@ async def test_worker_continues_when_mcp_tool_discovery_fails(
     assert stored is not None
     assert stored.status == "completed"
     assert stored.result_text == "finished"
-    assert bifrost.calls[0]["tools"] == []
+    # MCP tools are absent due to discovery failure; builtin skill tools are always present
+    tool_names = {t["function"]["name"] for t in bifrost.calls[0]["tools"]}
+    assert "load_skill" in tool_names
+    assert "load_skill_reference" in tool_names
 
 
 @pytest.mark.asyncio
@@ -739,3 +742,116 @@ async def test_worker_live_stream_events_reference_snapshot_rows(
         event.payload_json["snapshot_event_id"] == str(model_output_event.id)
         for event in model_output_live
     )
+
+
+@pytest.mark.asyncio
+async def test_worker_terminates_child_session_on_completion(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    """Worker should terminate the child session when a child job completes."""
+    parent_session = await _prepare_session(repository)
+    child_session = await repository.create_session("child", {})
+    await repository.set_model_config(
+        child_session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
+    )
+    # Add a skill assignment to the child session (simulates spawn_subagent copying skills)
+    await repository.add_skill_assignment(
+        child_session.id, "demo-skill", str(skill_registry._roots[0] / "demo-skill")
+    )
+
+    # Enqueue a job with a parent_job_id to simulate a child job
+    parent_job = await repository.enqueue_prompt_job(
+        parent_session.id, prompt="parent", metadata_json={}, max_attempts=1
+    )
+    assert parent_job is not None
+
+    child_job = await repository.enqueue_prompt_job(
+        child_session.id, prompt="child task", metadata_json={}, max_attempts=1
+    )
+    assert child_job is not None
+    await repository.set_parent_job_id(child_job.id, parent_job.id)
+
+    # Claim the child job and run it
+    claimed = await repository.claim_next_job()
+    # Skip the parent job if claimed first
+    if claimed is not None and claimed.id == parent_job.id:
+        claimed = await repository.claim_next_job()
+    assert claimed is not None and claimed.id == child_job.id
+
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=FakeBifrost(
+            responses=[ChatResponse(content="child done", tool_calls=[], raw={})]
+        ),
+        live_event_bus=InMemoryLiveEventBus(),
+        mcp_tool_catalog=McpToolCatalog(FakeMcp()),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+
+    stored_child = await repository.get_job(child_job.id)
+    assert stored_child is not None
+    assert stored_child.status == "completed"
+
+    child_sess = await repository.get_session(child_session.id)
+    assert child_sess is not None
+    assert child_sess.status == "terminated"
+
+
+@pytest.mark.asyncio
+async def test_worker_terminates_child_session_on_failure(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    """Worker should terminate the child session when a child job fails."""
+    parent_session = await _prepare_session(repository)
+    child_session = await repository.create_session("child", {})
+    await repository.set_model_config(
+        child_session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
+    )
+
+    parent_job = await repository.enqueue_prompt_job(
+        parent_session.id, prompt="parent", metadata_json={}, max_attempts=1
+    )
+    assert parent_job is not None
+
+    child_job = await repository.enqueue_prompt_job(
+        child_session.id, prompt="child task", metadata_json={}, max_attempts=1
+    )
+    assert child_job is not None
+    await repository.set_parent_job_id(child_job.id, parent_job.id)
+
+    claimed = await repository.claim_next_job()
+    if claimed is not None and claimed.id == parent_job.id:
+        claimed = await repository.claim_next_job()
+    assert claimed is not None and claimed.id == child_job.id
+
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=FakeBifrost(
+            error=BifrostError("gateway_error", "permanent failure", retryable=False)
+        ),
+        live_event_bus=InMemoryLiveEventBus(),
+        mcp_tool_catalog=McpToolCatalog(FakeMcp()),
+        skill_registry=skill_registry,
+    )
+
+    await worker._run_job(claimed)
+
+    stored_child = await repository.get_job(child_job.id)
+    assert stored_child is not None
+    assert stored_child.status == "failed"
+
+    child_sess = await repository.get_session(child_session.id)
+    assert child_sess is not None
+    assert child_sess.status == "terminated"

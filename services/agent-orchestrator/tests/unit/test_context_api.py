@@ -275,7 +275,8 @@ async def test_get_context_metadata_active_session(tmp_path: Path):
     try:
         session = await repo.get_session(session_id)
         assert session is not None
-        replay_messages = await build_message_history(repo, session_id, latest_job_id)
+        # Use sentinel "" so all completed jobs are included (same as production).
+        replay_messages = await build_message_history(repo, session_id, "")
         with TestClient(app) as client:
             expected_tokens = await _expected_request_tokens(
                 app,
@@ -390,7 +391,8 @@ async def test_get_context_metadata_uses_replay_window_not_full_history(tmp_path
         assert latest_job_id is not None
         reloaded_session = await repo.get_session(session.id)
         assert reloaded_session is not None
-        expected_messages = await build_message_history(repo, session.id, latest_job_id)
+        # Use sentinel "" so all completed jobs are included (same as production).
+        expected_messages = await build_message_history(repo, session.id, "")
         with TestClient(app) as client:
             expected_tokens = await _expected_request_tokens(
                 app,

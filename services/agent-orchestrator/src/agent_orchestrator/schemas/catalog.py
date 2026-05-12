@@ -14,4 +14,5 @@ class ProviderResponse(BaseModel):
 class SkillDefinitionResponse(BaseModel):
     name: str
     path: str
-    content_markdown: str
+    description: str = ""
+    metadata: dict[str, str] = {}

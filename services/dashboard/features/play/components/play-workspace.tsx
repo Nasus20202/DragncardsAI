@@ -4,6 +4,7 @@ import { Spinner } from "@heroui/react";
 import {
   addMcp,
   addSkill,
+  cancelJob,
   compactSession,
   createSession,
   fetchDashboardConfig,
@@ -24,14 +25,30 @@ import {
 } from "@/features/play/lib/client-api";
 import {
   applyReasoningToGatewayOptions,
+  buildDefaultSessionName,
   buildDraftFromSession,
   createDefaultDraft,
   parseCustomMcps,
   parseJsonObject,
   parseOptionalPositiveInteger,
 } from "@/features/play/lib/session-draft";
+import { mergeJob } from "@/features/play/lib/job-events";
+import {
+  deriveSubagentEntries,
+  SubagentEntry,
+} from "@/features/play/lib/subagents";
 import { compareJobsOldestFirst } from "@/features/play/lib/transcript";
+import { useJobStreaming } from "@/features/play/lib/use-job-streaming";
+import {
+  dedupeProviders,
+  getMobileLayoutSnapshot,
+  readSelectedSessionIdFromUrl,
+  subscribeToMobileLayout,
+  writeSelectedSessionIdToUrl,
+} from "@/features/play/lib/workspace-state";
 import { PlayConfigPanel } from "@/features/play/components/play-config-panel";
+import { SubagentOutputModal } from "@/features/play/components/subagent-output-modal";
+import { SubagentBurger } from "@/features/play/components/subagent-burger";
 import { PlayPromptBox } from "@/features/play/components/play-prompt-box";
 import { PlaySessionList } from "@/features/play/components/play-session-list";
 import { PlayTranscript } from "@/features/play/components/play-transcript";
@@ -40,7 +57,6 @@ import {
   ContextMetadata,
   DashboardConfig,
   JobDetail,
-  JobEventResponse,
   JsonValue,
   ProviderResponse,
   SessionDetail,
@@ -57,83 +73,6 @@ import {
   useSyncExternalStore,
 } from "react";
 
-const SESSION_QUERY_PARAM = "session";
-
-function readSelectedSessionIdFromUrl(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  return params.get(SESSION_QUERY_PARAM);
-}
-
-function writeSelectedSessionIdToUrl(id: string | null) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  const url = new URL(window.location.href);
-  if (id) {
-    url.searchParams.set(SESSION_QUERY_PARAM, id);
-  } else {
-    url.searchParams.delete(SESSION_QUERY_PARAM);
-  }
-  window.history.replaceState({}, "", url);
-}
-
-function dedupeProviders(providers: ProviderResponse[]) {
-  const byId = new Map<string, ProviderResponse>();
-  for (const provider of providers) {
-    if (!byId.has(provider.provider_id)) {
-      byId.set(provider.provider_id, provider);
-    }
-  }
-  return Array.from(byId.values());
-}
-
-/** Merge a new or updated JobDetail into an existing sorted jobs array. */
-function mergeJob(jobs: JobDetail[], updated: JobDetail): JobDetail[] {
-  const existing = jobs.findIndex((j) => j.id === updated.id);
-  if (existing >= 0) {
-    const next = [...jobs];
-    next[existing] = updated;
-    return next;
-  }
-  return [...jobs, updated].sort(compareJobsOldestFirst);
-}
-
-function sameEventPayload(
-  left: JobEventResponse,
-  right: JobEventResponse
-): boolean {
-  return (
-    left.event_type === right.event_type &&
-    JSON.stringify(left.payload) === JSON.stringify(right.payload)
-  );
-}
-
-function subscribeToMobileLayout(onStoreChange: () => void) {
-  if (typeof window === "undefined") {
-    return () => {};
-  }
-
-  const mediaQuery = window.matchMedia("(max-width: 767px)");
-  mediaQuery.addEventListener("change", onStoreChange);
-
-  return () => {
-    mediaQuery.removeEventListener("change", onStoreChange);
-  };
-}
-
-function getMobileLayoutSnapshot() {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  return window.matchMedia("(max-width: 767px)").matches;
-}
-
 export function PlayWorkspace() {
   const [config, setConfig] = useState<DashboardConfig | null>(null);
   const [providers, setProviders] = useState<ProviderResponse[]>([]);
@@ -148,18 +87,21 @@ export function PlayWorkspace() {
   const [draft, setDraft] = useState<SessionDraft | null>(null);
   /** All jobs for the selected session, sorted oldest-first. */
   const [jobs, setJobs] = useState<JobDetail[]>([]);
-  /** ID of the job currently being streamed, so appendStreamEvent knows which to update. */
-  const streamingJobIdRef = useRef<string | null>(null);
-  const [streamingJobId, setStreamingJobId] = useState<string | null>(null);
+  /** DB statuses for child jobs, used to reconcile orphaned "running" subagent entries. */
+  const [childJobStatuses, setChildJobStatuses] = useState<Map<string, string>>(
+    new Map()
+  );
   const [prompt, setPrompt] = useState("");
   const [statusText, setStatusText] = useState("Loading dashboard...");
   const [errorText, setErrorText] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
-  const [streamState, setStreamState] = useState<"idle" | "streaming">("idle");
+  const [isCancellingExecution, setIsCancellingExecution] = useState(false);
+  const [subagentModal, setSubagentModal] = useState<{
+    childJobId: string;
+    name: string;
+  } | null>(null);
   const [contextMetadata, setContextMetadata] =
     useState<ContextMetadata | null>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
   /**
    * Tracks the provider/model currently committed to the open session.
    * Updated whenever a session loads so that the auto-sync effect can tell
@@ -175,6 +117,10 @@ export function PlayWorkspace() {
     () => dedupeProviders(providers),
     [providers]
   );
+
+  const subagentEntries = useMemo<SubagentEntry[]>(() => {
+    return deriveSubagentEntries(jobs, childJobStatuses);
+  }, [jobs, childJobStatuses]);
   const selectedProvider = useMemo(
     () =>
       uniqueProviders.find(
@@ -213,130 +159,43 @@ export function PlayWorkspace() {
     }
   }, []);
 
-  const clearReconnectTimer = useCallback(() => {
-    if (reconnectTimeoutRef.current !== null) {
-      window.clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
+  const refreshContextMetadata = useCallback(async (sessionId: string) => {
+    try {
+      const metadata = await getContextMetadata(sessionId);
+      setContextMetadata(metadata);
+    } catch {
+      // Non-fatal: ignore metadata fetch errors
     }
   }, []);
 
-  const closeEventSource = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-    clearReconnectTimer();
-  }, [clearReconnectTimer]);
-
-  const stopStreaming = useCallback(() => {
-    closeEventSource();
-    streamingJobIdRef.current = null;
-    setStreamingJobId(null);
-    setStreamState("idle");
-  }, [closeEventSource]);
-
-  const appendStreamEvent = useCallback((payload: JobEventResponse) => {
-    const jobId = streamingJobIdRef.current;
-    if (!jobId) return;
-
-    setJobs((current) => {
-      const idx = current.findIndex((j) => j.id === jobId);
-      if (idx < 0) return current;
-      const job = current[idx];
-
-      const isTerminal = ["completion", "failure", "cancellation"].includes(
-        payload.event_type
-      );
-      let nextEvents: JobEventResponse[];
-
-      // Live streaming chunks carry the full snapshot text plus the DB event id
-      // they belong to. Upsert that snapshot so live updates and DB replay stay
-      // idempotent even when they arrive in different orders.
-      const isStreamChunk =
-        (payload.event_type === "model_output" ||
-          payload.event_type === "reasoning") &&
-        payload.payload.stream === true;
-      const snapshotEventId =
-        typeof payload.payload.snapshot_event_id === "string"
-          ? payload.payload.snapshot_event_id
-          : null;
-
-      if (isStreamChunk && snapshotEventId) {
-        const normalizedPayload: Record<string, JsonValue> = {
-          ...payload.payload,
-        };
-        delete normalizedPayload.stream;
-        delete normalizedPayload.snapshot_event_id;
-        const normalizedEvent: JobEventResponse = {
-          ...payload,
-          id: snapshotEventId,
-          payload: normalizedPayload,
-        };
-        const existingIdx = job.events.findIndex(
-          (event) => event.id === snapshotEventId
-        );
-
-        if (existingIdx >= 0) {
-          const existing = job.events[existingIdx];
-          const updated = {
-            ...normalizedEvent,
-            created_at: existing.created_at,
-          };
-          if (sameEventPayload(existing, updated)) {
-            return current;
-          }
-          nextEvents = [...job.events];
-          nextEvents[existingIdx] = updated;
-        } else {
-          nextEvents = [...job.events, normalizedEvent].sort(
-            (l, r) =>
-              new Date(l.created_at).getTime() -
-              new Date(r.created_at).getTime()
-          );
-        }
-      } else {
-        const existingIdx = job.events.findIndex(
-          (event) => event.id === payload.id
-        );
-        if (existingIdx >= 0) {
-          const existing = job.events[existingIdx];
-          if (sameEventPayload(existing, payload)) {
-            return current;
-          }
-          nextEvents = [...job.events];
-          nextEvents[existingIdx] = payload;
-        } else {
-          nextEvents = [...job.events, payload].sort(
-            (l, r) =>
-              new Date(l.created_at).getTime() -
-              new Date(r.created_at).getTime()
-          );
-        }
+  const refreshSessions = useCallback(
+    async (preserveSelected = true) => {
+      const nextSessions = await listSessions();
+      setSessions(nextSessions);
+      if (!preserveSelected && nextSessions.length > 0) {
+        persistSelectedSessionId(nextSessions[0].id);
       }
+    },
+    [persistSelectedSessionId]
+  );
 
-      const updatedJob: JobDetail = {
-        ...job,
-        events: nextEvents,
-        latest_event_id: payload.id,
-        latest_event_type: payload.event_type,
-        status: isTerminal
-          ? payload.event_type === "completion"
-            ? "completed"
-            : payload.event_type === "cancellation"
-              ? "cancelled"
-              : payload.event_type
-          : job.status,
-        outputs:
-          payload.event_type === "completion" &&
-          typeof payload.payload.text === "string"
-            ? [payload.payload.text, ...job.outputs].filter(Boolean)
-            : job.outputs,
-      };
-      const next = [...current];
-      next[idx] = updatedJob;
-      return next;
+  const refreshCurrentSessions = useCallback(async () => {
+    await refreshSessions();
+  }, [refreshSessions]);
+
+  const { startStreaming, stopStreaming, streamingJobId, streamState } =
+    useJobStreaming({
+      selectedSessionId,
+      setJobs,
+      refreshContextMetadata,
+      refreshSessions: refreshCurrentSessions,
     });
-  }, []);
+  const streamingJob = useMemo(
+    () => jobs.find((job) => job.id === streamingJobId) ?? null,
+    [jobs, streamingJobId]
+  );
+  const cancelPending =
+    isCancellingExecution || Boolean(streamingJob?.cancellation_requested_at);
 
   /** Load ALL jobs for a session and set them as the transcript. */
   const loadAllJobs = useCallback(
@@ -347,105 +206,45 @@ export function PlayWorkspace() {
       );
       const sorted = [...detailed].sort(compareJobsOldestFirst);
       setJobs(sorted);
+
+      // Reconcile orphaned subagent entries: fetch child job status for any
+      // subagent_started entry that has no matching subagent_completed/failed.
+      const started = new Set<string>();
+      const resolved = new Set<string>();
+      for (const job of sorted) {
+        for (const event of job.events) {
+          const p = event.payload as Record<string, unknown>;
+          const childJobId =
+            typeof p.child_job_id === "string" ? p.child_job_id : null;
+          if (!childJobId) continue;
+          if (event.event_type === "subagent_started") started.add(childJobId);
+          if (
+            event.event_type === "subagent_completed" ||
+            event.event_type === "subagent_failed"
+          )
+            resolved.add(childJobId);
+        }
+      }
+      const orphaned = [...started].filter((id) => !resolved.has(id));
+      if (orphaned.length > 0) {
+        const fetched = await Promise.allSettled(
+          orphaned.map((id) => getJob(id))
+        );
+        const statusMap = new Map<string, string>();
+        for (let i = 0; i < orphaned.length; i++) {
+          const result = fetched[i];
+          if (result.status === "fulfilled") {
+            statusMap.set(orphaned[i], result.value.status);
+          }
+        }
+        setChildJobStatuses(statusMap);
+      } else {
+        setChildJobStatuses(new Map());
+      }
+
       return sorted;
     },
     []
-  );
-
-  const refreshContextMetadata = useCallback(async (sessionId: string) => {
-    try {
-      const metadata = await getContextMetadata(sessionId);
-      setContextMetadata(metadata);
-    } catch {
-      // Non-fatal: ignore metadata fetch errors
-    }
-  }, []);
-
-  const startStreaming = useCallback(
-    (jobId: string, afterId: string) => {
-      const connect = (currentAfterId: string) => {
-        closeEventSource();
-        streamingJobIdRef.current = jobId;
-        setStreamingJobId(jobId);
-        const source = new EventSource(
-          `/api/proxy/orchestrator/jobs/${jobId}/events/stream?after=${currentAfterId}`
-        );
-        eventSourceRef.current = source;
-        setStreamState("streaming");
-
-        const handleEvent = (event: MessageEvent<string>) => {
-          const payload = JSON.parse(event.data) as JobEventResponse;
-          appendStreamEvent(payload);
-          if (payload.event_type === "compaction") {
-            if (selectedSessionId) {
-              void refreshContextMetadata(selectedSessionId);
-            }
-          }
-          if (
-            ["completion", "failure", "cancellation"].includes(
-              payload.event_type
-            )
-          ) {
-            stopStreaming();
-            if (selectedSessionId) {
-              void refreshContextMetadata(selectedSessionId);
-            }
-          }
-        };
-
-        source.addEventListener("progress", handleEvent as EventListener);
-        source.addEventListener("reasoning", handleEvent as EventListener);
-        source.addEventListener("model_output", handleEvent as EventListener);
-        source.addEventListener("compaction", handleEvent as EventListener);
-        source.addEventListener("tool_call", handleEvent as EventListener);
-        source.addEventListener("tool_result", handleEvent as EventListener);
-        source.addEventListener("completion", handleEvent as EventListener);
-        source.addEventListener("failure", handleEvent as EventListener);
-        source.addEventListener("cancellation", handleEvent as EventListener);
-        source.onmessage = handleEvent;
-        source.onerror = () => {
-          source.close();
-          if (eventSourceRef.current === source) {
-            eventSourceRef.current = null;
-          }
-          clearReconnectTimer();
-          reconnectTimeoutRef.current = window.setTimeout(async () => {
-            if (streamingJobIdRef.current !== jobId) {
-              return;
-            }
-            try {
-              const refreshedJob = await getJob(jobId);
-              setJobs((current) => mergeJob(current, refreshedJob));
-              if (streamingJobIdRef.current !== jobId) {
-                return;
-              }
-              if (["queued", "running"].includes(refreshedJob.status)) {
-                connect(refreshedJob.latest_event_id ?? "0");
-              } else {
-                stopStreaming();
-                if (selectedSessionId) {
-                  void refreshContextMetadata(selectedSessionId);
-                }
-              }
-            } catch {
-              if (streamingJobIdRef.current === jobId) {
-                connect("0");
-              }
-            }
-          }, 1000);
-        };
-      };
-
-      connect(afterId);
-    },
-    [
-      appendStreamEvent,
-      clearReconnectTimer,
-      closeEventSource,
-      stopStreaming,
-      selectedSessionId,
-      refreshContextMetadata,
-    ]
   );
 
   useEffect(() => {
@@ -596,14 +395,6 @@ export function PlayWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.providerId, draft?.modelName, selectedSession]);
 
-  async function refreshSessions(preserveSelected = true) {
-    const nextSessions = await listSessions();
-    setSessions(nextSessions);
-    if (!preserveSelected && nextSessions.length > 0) {
-      persistSelectedSessionId(nextSessions[0].id);
-    }
-  }
-
   async function handleCreateSession() {
     if (!config || !draft) {
       return;
@@ -614,18 +405,8 @@ export function PlayWorkspace() {
     setStatusText("Creating session...");
 
     try {
-      const defaultName = new Date()
-        .toLocaleString("en-CA", {
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: false,
-        })
-        .replace(",", "");
       // Always use today's date for new sessions; the user can rename via Settings after creation.
-      const created = await createSession(defaultName, {
+      const created = await createSession(buildDefaultSessionName(), {
         context_recent_message_limit: parseOptionalPositiveInteger(
           draft.recentMessageLimit,
           "Recent message limit"
@@ -704,16 +485,7 @@ export function PlayWorkspace() {
         name:
           draft.name.trim() ||
           selectedSession.name ||
-          new Date()
-            .toLocaleString("en-CA", {
-              year: "numeric",
-              month: "2-digit",
-              day: "2-digit",
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            })
-            .replace(",", ""),
+          buildDefaultSessionName(),
         metadata: selectedSession.metadata,
         context_recent_message_limit: parseOptionalPositiveInteger(
           draft.recentMessageLimit,
@@ -782,6 +554,7 @@ export function PlayWorkspace() {
       };
       await refreshSessions();
       await loadAllJobs(selectedSession.id);
+      void refreshContextMetadata(selectedSession.id);
       setStatusText("Configuration saved");
     } catch (error) {
       setErrorText(
@@ -847,13 +620,25 @@ export function PlayWorkspace() {
     setErrorText(null);
     setStatusText("Submitting prompt...");
 
+    const trimmedPrompt = prompt.trim();
+    // Check before submission — if no non-compaction jobs yet, this is the first prompt
+    // Check before submission — if no jobs yet, this is the first prompt
+    const isFirstPrompt = jobs.length === 0;
+
     try {
-      const summary = await submitPrompt(selectedSession.id, prompt.trim());
+      const summary = await submitPrompt(selectedSession.id, trimmedPrompt);
       const nextJob = await getJob(summary.id);
       // Add the new job to the existing list immediately (no wipe)
       setJobs((current) => mergeJob(current, nextJob));
       startStreaming(nextJob.id, nextJob.latest_event_id ?? "0");
       setPrompt("");
+
+      // Auto-title the session from the first prompt
+      if (isFirstPrompt) {
+        const autoName = trimmedPrompt.slice(0, 60);
+        await updateSession(selectedSession.id, { name: autoName });
+      }
+
       await refreshSessions();
       setStatusText("Prompt submitted");
     } catch (error) {
@@ -863,6 +648,34 @@ export function PlayWorkspace() {
       setStatusText("Prompt failed");
     } finally {
       setIsBusy(false);
+    }
+  }
+
+  async function handleCancelExecution() {
+    if (!streamingJobId || cancelPending) {
+      return;
+    }
+
+    setIsCancellingExecution(true);
+    setErrorText(null);
+    setStatusText("Requesting cancellation...");
+
+    try {
+      const cancelledJob = await cancelJob(streamingJobId);
+      setJobs((current) =>
+        current.map((job) =>
+          job.id === cancelledJob.id ? { ...job, ...cancelledJob } : job
+        )
+      );
+      await refreshSessions();
+      setStatusText("Cancellation requested");
+    } catch (error) {
+      setErrorText(
+        error instanceof Error ? error.message : "Failed to cancel execution"
+      );
+      setStatusText("Cancel failed");
+    } finally {
+      setIsCancellingExecution(false);
     }
   }
 
@@ -903,7 +716,10 @@ export function PlayWorkspace() {
           isCollapsed={isSessionsCollapsed}
           isBusy={isBusy}
           selectedSessionId={selectedSessionId}
-          sessions={sessions}
+          streamingSessionId={streamingJobId ? selectedSessionId : null}
+          sessions={sessions.filter(
+            (s) => !subagentEntries.some((e) => e.childSessionId === s.id)
+          )}
           onCreate={handleCreateSession}
           onToggleCollapsed={() =>
             setSessionsCollapsedOverride(
@@ -915,7 +731,29 @@ export function PlayWorkspace() {
       </aside>
 
       {/* Centre — chat */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        {subagentEntries.length > 0 && (
+          <div className="pointer-events-none absolute right-3 top-14 z-10 flex max-w-[calc(100%-1.5rem)] justify-end sm:right-4">
+            <div className="pointer-events-auto">
+              <SubagentBurger
+                entries={subagentEntries}
+                onSelect={(entry) =>
+                  setSubagentModal({
+                    childJobId: entry.childJobId,
+                    name: entry.name ?? entry.childJobId.slice(0, 8),
+                  })
+                }
+                onSubagentFinished={(childJobId, outcome) => {
+                  setChildJobStatuses((prev) => {
+                    const next = new Map(prev);
+                    next.set(childJobId, outcome);
+                    return next;
+                  });
+                }}
+              />
+            </div>
+          </div>
+        )}
         <PlayTranscript
           errorText={errorText}
           isBusy={isBusy}
@@ -930,10 +768,13 @@ export function PlayWorkspace() {
           settingsOpen={isSettingsOpen}
         />
         <PlayPromptBox
+          activeJobId={streamingJobId}
+          cancelPending={cancelPending}
           contextMetadata={contextMetadata}
           isBusy={isBusy}
           prompt={prompt}
           selectedSession={selectedSession}
+          onCancelExecution={handleCancelExecution}
           onCompact={handleCompact}
           onPromptChange={setPrompt}
           onSubmit={handleSubmitPrompt}
@@ -954,6 +795,20 @@ export function PlayWorkspace() {
         onSave={handleSaveConfiguration}
         onTerminate={handleTerminateSession}
       />
+
+      {subagentModal && (
+        <SubagentOutputModal
+          key={subagentModal.childJobId}
+          childJobId={subagentModal.childJobId}
+          name={subagentModal.name}
+          isRunning={
+            subagentEntries.find(
+              (e) => e.childJobId === subagentModal.childJobId
+            )?.status === "running"
+          }
+          onClose={() => setSubagentModal(null)}
+        />
+      )}
     </div>
   );
 }

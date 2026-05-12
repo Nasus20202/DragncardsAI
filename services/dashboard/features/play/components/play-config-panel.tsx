@@ -12,6 +12,7 @@ import {
   Switch,
   TextArea,
   TextField,
+  Tooltip,
 } from "@heroui/react";
 import { useEffect, useState } from "react";
 import {
@@ -257,6 +258,174 @@ function SwitchField({
   );
 }
 
+function ReasoningSection({
+  draft,
+  set,
+}: {
+  draft: SessionDraft;
+  set: <K extends keyof SessionDraft>(key: K, value: SessionDraft[K]) => void;
+}) {
+  return (
+    <>
+      <SwitchField
+        id="cfg-reasoning"
+        label="Reasoning stream"
+        description="Stream the model's chain-of-thought."
+        checked={draft.reasoning.enabled}
+        onChange={(value) =>
+          set("reasoning", { ...draft.reasoning, enabled: value })
+        }
+      />
+
+      {draft.reasoning.enabled && (
+        <>
+          <SelectField
+            id="cfg-effort"
+            label="Reasoning effort"
+            items={[
+              { value: "low", label: "Low" },
+              { value: "medium", label: "Medium" },
+              { value: "high", label: "High" },
+            ]}
+            value={draft.reasoning.effort}
+            onChange={(value) =>
+              set("reasoning", {
+                ...draft.reasoning,
+                effort: value as "low" | "medium" | "high",
+              })
+            }
+          />
+          <TextInputField
+            id="cfg-rtokens"
+            label="Reasoning max tokens"
+            placeholder="e.g. 4096"
+            value={draft.reasoning.maxTokens}
+            onChange={(value) =>
+              set("reasoning", { ...draft.reasoning, maxTokens: value })
+            }
+          />
+        </>
+      )}
+    </>
+  );
+}
+
+function SkillsSection({
+  draft,
+  skills,
+  set,
+}: {
+  draft: SessionDraft;
+  skills: SkillDefinitionResponse[];
+  set: <K extends keyof SessionDraft>(key: K, value: SessionDraft[K]) => void;
+}) {
+  if (skills.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="grid gap-2">
+      <p className="text-xs font-semibold uppercase tracking-wider text-default-400">
+        Skills
+      </p>
+      <div className="grid gap-1 rounded-lg border border-default-200/60 px-3 py-2">
+        {skills.map((skill) => {
+          const metaStr = Object.entries(skill.metadata ?? {})
+            .map(([key, value]) => `${key}: ${value}`)
+            .join(" · ");
+          const hasInfo = Boolean(skill.description || metaStr);
+          return (
+            <div key={skill.name} className="flex items-center gap-1">
+              <div className="flex-1">
+                <SwitchField
+                  id={`cfg-sk-${skill.name}`}
+                  label={skill.name}
+                  checked={draft.selectedSkills.includes(skill.name)}
+                  onChange={(checked) =>
+                    set(
+                      "selectedSkills",
+                      checked
+                        ? [...draft.selectedSkills, skill.name]
+                        : draft.selectedSkills.filter(
+                            (name) => name !== skill.name
+                          )
+                    )
+                  }
+                />
+              </div>
+              {hasInfo && (
+                <Tooltip delay={200}>
+                  <Tooltip.Trigger>
+                    <button
+                      type="button"
+                      className="shrink-0 cursor-default select-none text-xs text-default-300 hover:text-default-500 focus:outline-none"
+                      aria-label={`Info about ${skill.name}`}
+                      onClick={(event) => event.preventDefault()}
+                    >
+                      ⓘ
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content placement="left" className="max-w-xs">
+                    <div className="space-y-1 p-1">
+                      {skill.description && (
+                        <p className="text-xs">{skill.description}</p>
+                      )}
+                      {metaStr && (
+                        <p className="text-[11px] opacity-70">{metaStr}</p>
+                      )}
+                    </div>
+                  </Tooltip.Content>
+                </Tooltip>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AdvancedJsonSection({
+  draft,
+  set,
+}: {
+  draft: SessionDraft;
+  set: <K extends keyof SessionDraft>(key: K, value: SessionDraft[K]) => void;
+}) {
+  return (
+    <>
+      <p className="text-xs font-semibold uppercase tracking-wider text-default-400">
+        Advanced JSON
+      </p>
+
+      <TextareaField
+        id="cfg-gateway"
+        label="Gateway options"
+        rows={3}
+        value={draft.gatewayOptionsText}
+        onChange={(value) => set("gatewayOptionsText", value)}
+      />
+      <TextareaField
+        id="cfg-popts"
+        label="Provider options"
+        rows={3}
+        value={draft.providerOptionsText}
+        onChange={(value) => set("providerOptionsText", value)}
+      />
+      <TextareaField
+        id="cfg-mcps"
+        label="Custom MCPs"
+        description="Array of {name, transport, server_url, headers}."
+        rows={4}
+        value={draft.customMcpsText}
+        onChange={(value) => set("customMcpsText", value)}
+      />
+    </>
+  );
+}
+
+/* ── Subagent panel ──────────────────────────────────────────────── */
+
 /* ── Main component ──────────────────────────────────────────────── */
 
 interface Props {
@@ -357,78 +526,11 @@ export function PlayConfigPanel({
 
             <Separator />
 
-            <SwitchField
-              id="cfg-reasoning"
-              label="Reasoning stream"
-              description="Stream the model's chain-of-thought."
-              checked={draft.reasoning.enabled}
-              onChange={(v) =>
-                set("reasoning", { ...draft.reasoning, enabled: v })
-              }
-            />
-
-            {draft.reasoning.enabled && (
-              <>
-                <SelectField
-                  id="cfg-effort"
-                  label="Reasoning effort"
-                  items={[
-                    { value: "low", label: "Low" },
-                    { value: "medium", label: "Medium" },
-                    { value: "high", label: "High" },
-                  ]}
-                  value={draft.reasoning.effort}
-                  onChange={(v) =>
-                    set("reasoning", {
-                      ...draft.reasoning,
-                      effort: v as "low" | "medium" | "high",
-                    })
-                  }
-                />
-                <TextInputField
-                  id="cfg-rtokens"
-                  label="Reasoning max tokens"
-                  placeholder="e.g. 4096"
-                  value={draft.reasoning.maxTokens}
-                  onChange={(v) =>
-                    set("reasoning", { ...draft.reasoning, maxTokens: v })
-                  }
-                />
-              </>
-            )}
+            <ReasoningSection draft={draft} set={set} />
 
             <Separator />
 
-            {skills.length > 0 && (
-              <>
-                <Separator />
-                <div className="grid gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-default-400">
-                    Skills
-                  </p>
-                  <div className="grid gap-1 rounded-lg border border-default-200/60 px-3 py-2">
-                    {skills.map((sk) => (
-                      <SwitchField
-                        key={sk.name}
-                        id={`cfg-sk-${sk.name}`}
-                        label={sk.name}
-                        checked={draft.selectedSkills.includes(sk.name)}
-                        onChange={(checked) =>
-                          set(
-                            "selectedSkills",
-                            checked
-                              ? [...draft.selectedSkills, sk.name]
-                              : draft.selectedSkills.filter(
-                                  (s) => s !== sk.name
-                                )
-                          )
-                        }
-                      />
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
+            <SkillsSection draft={draft} skills={skills} set={set} />
 
             <Separator />
 
@@ -460,32 +562,7 @@ export function PlayConfigPanel({
 
             <Separator />
 
-            <p className="text-xs font-semibold uppercase tracking-wider text-default-400">
-              Advanced JSON
-            </p>
-
-            <TextareaField
-              id="cfg-gateway"
-              label="Gateway options"
-              rows={3}
-              value={draft.gatewayOptionsText}
-              onChange={(v) => set("gatewayOptionsText", v)}
-            />
-            <TextareaField
-              id="cfg-popts"
-              label="Provider options"
-              rows={3}
-              value={draft.providerOptionsText}
-              onChange={(v) => set("providerOptionsText", v)}
-            />
-            <TextareaField
-              id="cfg-mcps"
-              label="Custom MCPs"
-              description="Array of {name, transport, server_url, headers}."
-              rows={4}
-              value={draft.customMcpsText}
-              onChange={(v) => set("customMcpsText", v)}
-            />
+            <AdvancedJsonSection draft={draft} set={set} />
           </div>
         </div>
 

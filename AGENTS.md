@@ -39,3 +39,7 @@ These instructions apply to the whole repository unless a deeper `AGENTS.md` ove
 - When working in `openspec/`, preserve the existing OpenSpec workflow and artifact format.
 - When working in `external/`, treat vendored or upstream code carefully and avoid unnecessary edits.
 - Explain assumptions briefly when behavior is ambiguous.
+- Before finishing a task, you are expected to run:
+  - `./scripts/lint.sh --fix`
+  - `./scripts/test.sh unit`
+  - `./scripts/docker-infrastructure.sh start` followed by `./scripts/test.sh integration`

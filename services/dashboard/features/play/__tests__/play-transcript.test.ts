@@ -25,7 +25,8 @@ const selectedSession = {
 function makeJob(events: JobDetail["events"]): JobDetail {
   return {
     id: "job-1",
-    prompt_run_id: "prompt-run-1",
+    prompt: "Who is logenz?",
+    metadata: {},
     status: "completed",
     attempts: 1,
     max_attempts: 1,
@@ -38,14 +39,6 @@ function makeJob(events: JobDetail["events"]): JobDetail {
     completed_at: "2026-05-11T00:00:02Z",
     latest_event_id: "2",
     latest_event_type: "completion",
-    prompt_run: {
-      id: "prompt-run-1",
-      prompt: "Who is logenz?",
-      status: "completed",
-      metadata: {},
-      created_at: "2026-05-11T00:00:00Z",
-      updated_at: "2026-05-11T00:00:02Z",
-    },
     outputs: [],
     events,
     available_tools: [],

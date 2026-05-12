@@ -5,7 +5,8 @@ An LLM-powered bot that plays **Marvel Champions** on [DragnCards](https://githu
 ## Quick start
 
 ```bash
-cd docker
+make up
+# or
 docker compose up -d
 ```
 

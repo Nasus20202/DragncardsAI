@@ -50,10 +50,13 @@ describe("PlayPromptBox", () => {
       <PlayPromptBox
         prompt="hello"
         selectedSession={null}
+        activeJobId={null}
         isBusy={false}
+        cancelPending={false}
         contextMetadata={null}
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
+        onCancelExecution={vi.fn()}
         onCompact={vi.fn()}
       />
     );
@@ -74,10 +77,13 @@ describe("PlayPromptBox", () => {
       <PlayPromptBox
         prompt="hello"
         selectedSession={activeSession}
+        activeJobId={null}
         isBusy={false}
+        cancelPending={false}
         contextMetadata={null}
         onPromptChange={vi.fn()}
         onSubmit={onSubmit}
+        onCancelExecution={vi.fn()}
         onCompact={vi.fn()}
       />
     );
@@ -96,10 +102,13 @@ describe("PlayPromptBox", () => {
       <PlayPromptBox
         prompt="hello"
         selectedSession={activeSession}
+        activeJobId={null}
         isBusy={false}
+        cancelPending={false}
         contextMetadata={metadata}
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
+        onCancelExecution={vi.fn()}
         onCompact={onCompact}
       />
     );
@@ -113,10 +122,13 @@ describe("PlayPromptBox", () => {
       <PlayPromptBox
         prompt="hello"
         selectedSession={activeSession}
+        activeJobId={null}
         isBusy={true}
+        cancelPending={false}
         contextMetadata={null}
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
+        onCancelExecution={vi.fn()}
         onCompact={vi.fn()}
       />
     );
@@ -131,10 +143,13 @@ describe("PlayPromptBox", () => {
       <PlayPromptBox
         prompt="hello"
         selectedSession={activeSession}
+        activeJobId={null}
         isBusy={false}
+        cancelPending={false}
         contextMetadata={metadata}
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
+        onCancelExecution={vi.fn()}
         onCompact={vi.fn()}
       />
     );
@@ -144,5 +159,51 @@ describe("PlayPromptBox", () => {
     expect(layoutRow).toBeInTheDocument();
     expect(contextColumn).toBeInTheDocument();
     expect(container.querySelector(".xl\\:w-48")).toBeNull();
+  });
+
+  it("shows a cancel button for the active execution", () => {
+    const onCancelExecution = vi.fn();
+
+    render(
+      <PlayPromptBox
+        prompt="hello"
+        selectedSession={activeSession}
+        activeJobId="job-1"
+        isBusy={false}
+        cancelPending={false}
+        contextMetadata={null}
+        onPromptChange={vi.fn()}
+        onSubmit={vi.fn()}
+        onCancelExecution={onCancelExecution}
+        onCompact={vi.fn()}
+      />
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /cancel active execution/i })
+    );
+    expect(onCancelExecution).toHaveBeenCalledOnce();
+  });
+
+  it("disables cancellation after a cancellation request is pending", () => {
+    render(
+      <PlayPromptBox
+        prompt="hello"
+        selectedSession={activeSession}
+        activeJobId="job-1"
+        isBusy={false}
+        cancelPending={true}
+        contextMetadata={null}
+        onPromptChange={vi.fn()}
+        onSubmit={vi.fn()}
+        onCancelExecution={vi.fn()}
+        onCompact={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: /cancel active execution/i })
+    ).toBeDisabled();
+    expect(screen.getByText("Cancelling...")).toBeInTheDocument();
   });
 });

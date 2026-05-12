@@ -13,6 +13,10 @@ const LABELS: Record<string, string> = {
   completion: "Done",
   failure: "Error",
   cancellation: "Cancelled",
+  skill_loaded: "Skill loaded",
+  subagent_started: "Subagent started",
+  subagent_completed: "Subagent completed",
+  subagent_failed: "Subagent failed",
 };
 
 function bodyText(event: JobEventResponse): string {
@@ -128,7 +132,24 @@ export function PlayEventCard({ event }: { event: JobEventResponse }) {
     case "compaction":
     case "tool_call":
     case "tool_result":
+    case "skill_loaded":
       return <CollapsibleCard event={event} />;
+
+    case "subagent_started":
+    case "subagent_completed":
+    case "subagent_failed": {
+      const label = LABELS[event.event_type] ?? event.event_type;
+      const childId =
+        typeof event.payload.child_job_id === "string"
+          ? event.payload.child_job_id
+          : "";
+      return (
+        <p className="text-xs text-default-400">
+          {label}
+          {childId ? `: ${childId.slice(0, 8)}…` : ""}
+        </p>
+      );
+    }
 
     default:
       // Unknown event — show as plain collapsible

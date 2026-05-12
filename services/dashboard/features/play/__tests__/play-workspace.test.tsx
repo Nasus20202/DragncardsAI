@@ -26,6 +26,7 @@ const api = vi.hoisted(() => ({
   setModelConfig: vi.fn(),
   createSession: vi.fn(),
   submitPrompt: vi.fn(),
+  cancelJob: vi.fn(),
   compactSession: vi.fn(),
   updateSession: vi.fn(),
   addSkill: vi.fn(),
@@ -109,18 +110,26 @@ vi.mock("@/features/play/components/play-prompt-box", () => ({
   PlayPromptBox: ({
     prompt,
     selectedSession,
+    activeJobId,
+    cancelPending,
     onPromptChange,
     onSubmit,
+    onCancelExecution,
     onCompact,
   }: {
     prompt: string;
     selectedSession: SessionDetail | null;
+    activeJobId: string | null;
+    cancelPending: boolean;
     onPromptChange: (value: string) => void;
     onSubmit: () => void;
+    onCancelExecution: () => void;
     onCompact: () => void;
   }) => (
     <div>
       <div data-testid="prompt-session">{selectedSession?.id ?? "none"}</div>
+      <div data-testid="active-job-id">{activeJobId ?? "none"}</div>
+      <div data-testid="cancel-pending">{String(cancelPending)}</div>
       <input
         aria-label="Prompt input"
         value={prompt}
@@ -128,6 +137,13 @@ vi.mock("@/features/play/components/play-prompt-box", () => ({
       />
       <button type="button" onClick={onSubmit}>
         Submit prompt
+      </button>
+      <button
+        type="button"
+        disabled={!activeJobId || cancelPending}
+        onClick={onCancelExecution}
+      >
+        Cancel execution
       </button>
       <button type="button" onClick={onCompact}>
         Compact context
@@ -227,8 +243,8 @@ const providers: ProviderResponse[] = [
 ];
 
 const skills: SkillDefinitionResponse[] = [
-  { name: "skill-a", path: "/skills/a", content_markdown: "a" },
-  { name: "skill-b", path: "/skills/b", content_markdown: "b" },
+  { name: "skill-a", path: "/skills/a", description: "Skill A", metadata: {} },
+  { name: "skill-b", path: "/skills/b", description: "Skill B", metadata: {} },
 ];
 
 const sessionSummary: SessionSummary = {
@@ -261,7 +277,8 @@ const sessionDetail: SessionDetail = {
 
 const job: JobDetail = {
   id: "job-1",
-  prompt_run_id: "prompt-run-1",
+  prompt: "Hi",
+  metadata: {},
   status: "completed",
   attempts: 1,
   max_attempts: 1,
@@ -274,14 +291,6 @@ const job: JobDetail = {
   completed_at: "2026-05-11T00:00:02Z",
   latest_event_id: "event-1",
   latest_event_type: "completion",
-  prompt_run: {
-    id: "prompt-run-1",
-    prompt: "Hi",
-    status: "completed",
-    metadata: {},
-    created_at: "2026-05-11T00:00:00Z",
-    updated_at: "2026-05-11T00:00:02Z",
-  },
   outputs: [],
   events: [],
   available_tools: [],
@@ -372,7 +381,6 @@ describe("PlayWorkspace", () => {
         {
           ...job,
           events: undefined,
-          prompt_run: undefined,
           outputs: undefined,
           available_tools: undefined,
         },
@@ -390,9 +398,15 @@ describe("PlayWorkspace", () => {
     api.submitPrompt.mockResolvedValue({
       ...job,
       events: undefined,
-      prompt_run: undefined,
       outputs: undefined,
       available_tools: undefined,
+    });
+    api.cancelJob.mockResolvedValue({
+      ...job,
+      id: "job-2",
+      status: "running",
+      cancellation_requested_at: "2026-05-11T00:00:04Z",
+      latest_event_type: "progress",
     });
     api.compactSession.mockResolvedValue(contextMetadata);
     api.updateSession.mockResolvedValue(sessionDetail);
@@ -570,7 +584,8 @@ describe("PlayWorkspace", () => {
   it("submits a prompt and refreshes the job list", async () => {
     api.submitPrompt.mockResolvedValueOnce({
       id: "job-2",
-      prompt_run_id: "prompt-run-2",
+      prompt: "Hello",
+      metadata: {},
       status: "queued",
       attempts: 1,
       max_attempts: 1,
@@ -607,6 +622,53 @@ describe("PlayWorkspace", () => {
       screen.getByRole("status", { name: /streaming response/i })
     ).toBeInTheDocument();
     expect(screen.getByText("Streaming response...")).toBeInTheDocument();
+    expect(screen.getByTestId("active-job-id")).toHaveTextContent("job-2");
+  });
+
+  it("requests cancellation for the active execution", async () => {
+    api.submitPrompt.mockResolvedValueOnce({
+      id: "job-2",
+      prompt: "Hello",
+      metadata: {},
+      status: "queued",
+      attempts: 1,
+      max_attempts: 1,
+      error_code: null,
+      error_message: null,
+      result_text: null,
+      cancellation_requested_at: null,
+      created_at: "2026-05-11T00:00:03Z",
+      started_at: null,
+      completed_at: null,
+      latest_event_id: null,
+      latest_event_type: null,
+    });
+    api.getJob
+      .mockResolvedValueOnce(job)
+      .mockResolvedValueOnce({ ...job, id: "job-2", status: "queued" });
+
+    render(<PlayWorkspace />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("prompt-session")).toHaveTextContent(
+        "session-1"
+      )
+    );
+    fireEvent.change(screen.getByLabelText("Prompt input"), {
+      target: { value: "Hello world" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /submit prompt/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-job-id")).toHaveTextContent("job-2")
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /cancel execution/i }));
+
+    await waitFor(() => expect(api.cancelJob).toHaveBeenCalledWith("job-2"));
+    await waitFor(() =>
+      expect(screen.getByTestId("cancel-pending")).toHaveTextContent("true")
+    );
   });
 
   it("compacts context and reloads jobs", async () => {
