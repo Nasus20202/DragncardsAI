@@ -17,6 +17,11 @@ from game_service.telemetry import get_tracer
 
 tracer = get_tracer(__name__)
 
+_RELEASE_LOCK_LUA = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] "
+    "then return redis.call('del', KEYS[1]) else return 0 end"
+)
+
 
 class SessionStore(Protocol):
     async def list_sessions(self) -> list[dict[str, Any]]: ...
@@ -247,7 +252,7 @@ class ValkeySessionStore:
         key = self._lock_key(session_id)
         await self._conn.execute(
             "EVAL",
-            "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+            _RELEASE_LOCK_LUA,
             "1",
             key,
             owner_token,

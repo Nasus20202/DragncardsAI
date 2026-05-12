@@ -342,7 +342,6 @@ async def test_session_locked_error_returns_423():
     async def locked(session_id: str, **kwargs):
         del session_id, kwargs
         raise SessionLockedError("busy")
-        yield
 
     manager.session_operation_lock = locked
     async with _make_client(manager) as client:
