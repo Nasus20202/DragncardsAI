@@ -19,6 +19,7 @@ services:
       - dragncards-shared
 
   dragncards-mc-plugin:
+    image: dragncardsai-dragncards-mc-plugin
     build:
       context: ../..
       dockerfile: external/docker/mc-plugin/Dockerfile
@@ -32,6 +33,7 @@ services:
       - dragncards-shared
 
   dragncards-backend:
+    image: dragncardsai-dragncards-backend
     build:
       context: ../..
       dockerfile: external/docker/backend/Dockerfile
@@ -51,6 +53,7 @@ services:
       - dragncards-shared
 
   dragncards-frontend:
+    image: dragncardsai-dragncards-frontend
     build:
       context: ../..
       dockerfile: external/docker/frontend/Dockerfile
