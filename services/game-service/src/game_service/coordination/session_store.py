@@ -105,8 +105,7 @@ class InMemorySessionStore:
             if token != owner_token or lock is None:
                 return
             self._session_lock_tokens.pop(session_id, None)
-            if lock.locked():
-                lock.release()
+            lock.release()
 
 
 class _RespError(RuntimeError):
@@ -239,6 +238,7 @@ class ValkeySessionStore:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + wait_timeout
         ttl_ms = max(int(lease_ttl * 1000), 1)
+        current_interval = max(retry_interval, 0.01)
         remaining = deadline - loop.time()
         while remaining > 0:
             result = await self._conn.execute(
@@ -249,7 +249,9 @@ class ValkeySessionStore:
             remaining = deadline - loop.time()
             if remaining <= 0:
                 return False
-            await asyncio.sleep(min(retry_interval, remaining))
+            sleep_for = min(current_interval, remaining)
+            await asyncio.sleep(sleep_for)
+            current_interval = min(current_interval * 2, 0.5)
             remaining = deadline - loop.time()
         return False
 
