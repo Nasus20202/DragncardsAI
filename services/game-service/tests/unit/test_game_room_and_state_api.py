@@ -338,10 +338,16 @@ async def test_session_locked_error_returns_423():
     session = _mock_session()
     manager = _mock_manager(session)
 
-    @asynccontextmanager
-    async def locked(session_id: str, **kwargs):
+    class _Locked:
+        async def __aenter__(self):
+            raise SessionLockedError("busy")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    def locked(session_id: str, **kwargs):
         del session_id, kwargs
-        raise SessionLockedError("busy")
+        return _Locked()
 
     manager.session_operation_lock = locked
     async with _make_client(manager) as client:
