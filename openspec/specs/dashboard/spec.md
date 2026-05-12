@@ -81,7 +81,10 @@ The dashboard UI SHALL display a context health indicator for the active session
 
 The dashboard SHALL present context usage as an estimate of the next orchestrator model request envelope, not as cumulative historical job usage.
 
-The indicator SHALL update after each job completes or compaction fires by re-fetching `GET /sessions/{session_id}/context`.
+The indicator SHALL update by re-fetching `GET /sessions/{session_id}/context` after each of the following events:
+- A job completes, fails, or is cancelled
+- A compaction fires
+- The user saves session configuration, including model, skill, MCP, or replay-limit changes
 
 The progress bar SHALL change color based on usage ratio:
 - Below 70%: neutral
@@ -99,6 +102,11 @@ The progress bar SHALL change color based on usage ratio:
 #### Scenario: Indicator updates after compaction
 - **WHEN** a compaction completes (manual or auto)
 - **THEN** the indicator SHALL refresh and reflect reduced `tokens_used` and incremented `compaction_count`
+
+#### Scenario: Indicator refreshes after configuration save
+- **WHEN** the user saves session configuration
+- **THEN** the context health indicator SHALL re-fetch `GET /sessions/{session_id}/context` immediately after the save completes successfully
+- **THEN** the displayed token estimate SHALL reflect the updated system prompt, tool definitions, and replay window resulting from the new configuration
 
 #### Scenario: Multi-turn memory disabled
 - **WHEN** `multi_turn_memory` is `false` for the active session
@@ -131,6 +139,15 @@ The dashboard SHALL provide a ChatGPT-like prompt and transcript interface backe
 - **WHEN** a user submits a prompt for an active session
 - **THEN** the dashboard SHALL create a prompt job through the agent-orchestrator and append the user prompt to the transcript
 
+#### Scenario: First prompt auto-generates session title
+- **WHEN** the user submits the first prompt and no non-timestamp name has been set on the session
+- **THEN** the dashboard SHALL call `PATCH /sessions/{id}` with the session name set to the first 60 characters of the prompt text
+- **THEN** the session list and any visible title area SHALL update to reflect the new name
+
+#### Scenario: Subsequent prompts leave session title unchanged
+- **WHEN** the user submits a second or later prompt in the same session
+- **THEN** the dashboard SHALL NOT patch the session name
+
 #### Scenario: Render streaming output
 - **WHEN** the agent-orchestrator streams job events
 - **THEN** the dashboard SHALL render model output as markdown, display reasoning in a collapsible block that auto-collapses when output arrives, and show tool calls and completion state in the transcript
@@ -146,6 +163,30 @@ The dashboard SHALL provide a ChatGPT-like prompt and transcript interface backe
 #### Scenario: Streaming job tracked atomically
 - **WHEN** multiple jobs exist for a session
 - **THEN** the dashboard SHALL maintain a single sorted jobs array and a streaming job ID ref to avoid race conditions between history load and live stream state
+
+### Requirement: Subagent cards rendered inline in the chat area
+The dashboard SHALL render each spawned subagent as an expandable card in the main chat column, positioned above the context health widget and below the main job thread. The card SHALL use the same `JobThread` / `AggEventRow` transcript rendering as the parent thread. There SHALL be no subagent panel in the config sidebar.
+
+#### Scenario: Subagent card appears on subagent_started
+- **WHEN** the parent job's SSE stream emits `subagent_started`
+- **THEN** a subagent card is inserted in the chat area with the subagent's `name` as its header title
+- **THEN** the card immediately opens an SSE connection to the child job's event stream and begins rendering events live
+
+#### Scenario: Subagent card stops streaming on terminal event
+- **WHEN** the child job's SSE stream emits a terminal event
+- **THEN** the card closes its SSE connection and switches to static display
+
+#### Scenario: Multiple subagent cards stack in order
+- **WHEN** multiple `subagent_started` events are received
+- **THEN** each gets its own card stacked below the previous one in chronological order
+
+#### Scenario: Subagent card collapses and expands
+- **WHEN** the user clicks the subagent card header
+- **THEN** the card body toggles collapsed or expanded
+
+#### Scenario: Config sidebar has no subagent panel
+- **WHEN** subagent activity exists for the active session
+- **THEN** the config sidebar SHALL NOT contain a subagent panel or subagent list
 
 ### Requirement: Merged Swagger playground
 The dashboard SHALL provide a Swagger section that displays a merged OpenAPI document for agent-orchestrator and game-service and routes playground calls through dashboard proxy routes.

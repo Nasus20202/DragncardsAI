@@ -30,6 +30,7 @@ function shortName(name: string | null | undefined) {
 export function PlaySessionList({
   sessions,
   selectedSessionId,
+  streamingSessionId,
   isBusy,
   canCreate,
   isCollapsed,
@@ -39,6 +40,7 @@ export function PlaySessionList({
 }: {
   sessions: SessionSummary[];
   selectedSessionId: string | null;
+  streamingSessionId: string | null;
   isBusy: boolean;
   canCreate: boolean;
   isCollapsed: boolean;
@@ -86,6 +88,7 @@ export function PlaySessionList({
 
         {sessions.map((s) => {
           const active = s.id === selectedSessionId;
+          const isStreaming = s.id === streamingSessionId;
           const jobStatus = s.recent_job?.status ?? null;
 
           return (
@@ -105,11 +108,18 @@ export function PlaySessionList({
               ].join(" ")}
               onClick={() => onSelect(s.id)}
             >
-              {/* Status dot */}
-              <span
-                aria-hidden="true"
-                className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${dotColor(jobStatus)}`}
-              />
+              {/* Status dot — streaming overrides job status */}
+              {isStreaming ? (
+                <span
+                  aria-hidden="true"
+                  className="mt-0.5 h-2 w-2 shrink-0 animate-ping rounded-full bg-success"
+                />
+              ) : (
+                <span
+                  aria-hidden="true"
+                  className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${dotColor(jobStatus)}`}
+                />
+              )}
 
               {!isCollapsed && (
                 <div className="min-w-0 flex-1">
@@ -117,7 +127,8 @@ export function PlaySessionList({
                     {shortName(s.name)}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-default-400">
-                    {shortModel(s.model_config?.model_name)} · {s.status}
+                    {shortModel(s.model_config?.model_name)} ·{" "}
+                    {isStreaming ? "streaming…" : s.status}
                   </div>
                 </div>
               )}

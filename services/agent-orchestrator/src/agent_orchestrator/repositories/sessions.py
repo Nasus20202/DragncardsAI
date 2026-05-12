@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from agent_orchestrator.repositories.base import utc_now
 from agent_orchestrator.storage.models import (
     AgentSession,
+    Job,
     SessionMcpAssignment,
     SessionModelConfig,
     SessionSkillAssignment,
@@ -14,6 +15,10 @@ from agent_orchestrator.storage.models import (
 
 
 class SessionRepositoryMixin:
+    @staticmethod
+    def _top_level_session_filter():
+        return ~AgentSession.jobs.any(Job.parent_job_id.is_not(None))
+
     async def create_session(
         self,
         name: str | None,
@@ -46,8 +51,11 @@ class SessionRepositoryMixin:
         offset: int = 0,
     ) -> tuple[list[AgentSession], int]:
         async with self._session_factory() as session:
-            query = self._session_query()
-            count_query = select(func.count()).select_from(AgentSession)
+            top_level_filter = self._top_level_session_filter()
+            query = self._session_query().where(top_level_filter)
+            count_query = (
+                select(func.count()).select_from(AgentSession).where(top_level_filter)
+            )
             if status is not None:
                 query = query.where(AgentSession.status == status)
                 count_query = count_query.where(AgentSession.status == status)

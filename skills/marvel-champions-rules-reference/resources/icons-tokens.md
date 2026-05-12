@@ -28,13 +28,13 @@
 | 🚀        | Acceleration         | Bottom of encounter cards      | +1 additional threat on main scheme during villain phase step 1 per icon in play                                                                        |
 | 🔱        | Amplify              | Encounter cards                | +1 boost icon added to each boost card during enemy activations per amplify icon in play                                                                |
 | 💥        | Crisis               | Encounter cards                | Player cards cannot remove threat from the **main scheme** (encounter card abilities unaffected)                                                        |
-| ☣         | Hazard               | Encounter cards                | During villain phase step 3: for each hazard icon in play, deal **one player** one additional encounter card (in player order; NOT one card per player) |
+| ☣        | Hazard               | Encounter cards                | During villain phase step 3: for each hazard icon in play, deal **one player** one additional encounter card (in player order; NOT one card per player) |
 | ★ (boost) | Boost                | Bottom-right of encounter card | +1 ATK or SCH to activating enemy per icon (resolved during boost card step)                                                                            |
 | ★ (stat)  | Star                 | Next to a stat value           | Reminder: check text box when that stat is used; NOT a boost icon; treated as 0 when referenced                                                         |
 | ✦         | Consequential Damage | Beneath ally ATK or THW field  | Ally takes 1 damage per icon after attacking (under ATK) or thwarting (under THW)                                                                       |
 | →         | Cost Arrow           | In ability text                | Separates cost from effect: "pay cost -> resolve effect"                                                                                                |
 | 👤        | Per Player           | Next to a value                | Multiplies that value by the number of players who **started** the scenario (does not change if player eliminated)                                      |
-| ♦         | Unique               | In card title                  | Card is unique; matching unique cards cannot coexist in same deck or play                                                                               |
+| ♦        | Unique               | In card title                  | Card is unique; matching unique cards cannot coexist in same deck or play                                                                               |
 
 ---
 

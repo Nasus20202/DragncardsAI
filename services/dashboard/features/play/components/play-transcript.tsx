@@ -1,139 +1,13 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import {
-  JobEventResponse,
-  JobDetail,
-  SessionDetail,
-} from "@/features/shared/lib/types";
+import { JobDetail, SessionDetail } from "@/features/shared/lib/types";
 import { useEffect, useRef, useState } from "react";
-
-/* ── Aggregated view types ───────────────────────────────────────── */
-
-type AggEvent =
-  | { kind: "reasoning"; text: string }
-  | { kind: "model_output"; text: string }
-  | { kind: "compaction"; text: string }
-  | { kind: "tool_call"; event: JobEventResponse }
-  | { kind: "tool_result"; event: JobEventResponse }
-  | { kind: "failure"; event: JobEventResponse }
-  | { kind: "cancellation"; event: JobEventResponse };
-
-function compactionText(event: JobEventResponse): string {
-  if (typeof event.payload.summary_text === "string") {
-    return event.payload.summary_text;
-  }
-  if (typeof event.payload.text === "string") {
-    return event.payload.text;
-  }
-  return JSON.stringify(event.payload, null, 2);
-}
-
-/**
- * Collapse raw events into a display list:
- *  - progress (queued/running) → dropped entirely
- *  - completion → final assistant text, replacing any partial streamed output
- *  - reasoning → all chunks merged into one string
- *  - model_output → all chunks merged into one string
- *  - everything else → kept as-is
- */
-function aggregateEvents(
-  events: JobEventResponse[],
-  isCompactionJob: boolean
-): AggEvent[] {
-  let reasoningText = "";
-  let modelText = "";
-  const result: AggEvent[] = [];
-
-  function flushReasoning() {
-    if (reasoningText) {
-      result.push({ kind: "reasoning", text: reasoningText });
-      reasoningText = "";
-    }
-  }
-  function flushModel() {
-    if (modelText) {
-      result.push({ kind: "model_output", text: modelText });
-      modelText = "";
-    }
-  }
-
-  for (const ev of events) {
-    switch (ev.event_type) {
-      case "progress":
-        break;
-
-      case "completion": {
-        flushReasoning();
-        const completionText =
-          typeof ev.payload.text === "string" ? ev.payload.text : "";
-        if (completionText) {
-          modelText = completionText;
-        }
-        break;
-      }
-
-      case "reasoning":
-        reasoningText +=
-          typeof ev.payload.text === "string" ? ev.payload.text : "";
-        break;
-
-      case "model_output":
-        if (isCompactionJob || eventHasCompactionPayload(ev)) {
-          flushReasoning();
-          flushModel();
-          result.push({ kind: "compaction", text: compactionText(ev) });
-          break;
-        }
-        flushReasoning();
-        modelText += typeof ev.payload.text === "string" ? ev.payload.text : "";
-        break;
-
-      case "tool_call":
-        flushReasoning();
-        flushModel();
-        result.push({ kind: "tool_call", event: ev });
-        break;
-
-      case "compaction":
-        flushReasoning();
-        flushModel();
-        result.push({ kind: "compaction", text: compactionText(ev) });
-        break;
-
-      case "tool_result":
-        flushReasoning();
-        flushModel();
-        result.push({ kind: "tool_result", event: ev });
-        break;
-
-      case "failure":
-        flushReasoning();
-        flushModel();
-        result.push({ kind: "failure", event: ev });
-        break;
-
-      case "cancellation":
-        flushReasoning();
-        flushModel();
-        result.push({ kind: "cancellation", event: ev });
-        break;
-
-      default:
-        flushReasoning();
-        flushModel();
-        result.push({ kind: "tool_call", event: ev });
-        break;
-    }
-  }
-
-  flushReasoning();
-  flushModel();
-  return result;
-}
-
-function eventHasCompactionPayload(event: JobEventResponse): boolean {
-  return event.payload.compaction === true;
-}
+import {
+  aggregateEvents,
+  AggEvent,
+  eventBodyText,
+} from "@/features/play/lib/transcript";
+import { JobEventResponse } from "@/features/shared/lib/types";
 
 /* ── Sub-renderers ───────────────────────────────────────────────── */
 
@@ -262,14 +136,6 @@ function CollapsibleEventBlock({
 }) {
   const [open, setOpen] = useState(false);
 
-  function bodyText(): string {
-    const p = event.payload;
-    if (typeof p.text === "string") return p.text;
-    if (typeof p.summary_text === "string") return p.summary_text;
-    if (typeof p.message === "string") return p.message;
-    return JSON.stringify(p, null, 2);
-  }
-
   return (
     <div className="overflow-hidden rounded-lg border border-default-200/60 bg-default-50/40 dark:bg-white/3">
       <button
@@ -293,7 +159,7 @@ function CollapsibleEventBlock({
       {open && (
         <div className="border-t border-default-200/60 px-3 py-2.5">
           <pre className="overflow-x-auto whitespace-pre-wrap text-xs leading-relaxed text-default-600 dark:text-default-300">
-            {bodyText()}
+            {eventBodyText(event)}
           </pre>
         </div>
       )}
@@ -301,7 +167,7 @@ function CollapsibleEventBlock({
   );
 }
 
-function AggEventRow({
+export function AggEventRow({
   agg,
   isStreaming,
   hasOutput,
@@ -339,6 +205,33 @@ function AggEventRow({
           event={agg.event}
         />
       );
+    case "skill_loaded":
+      return (
+        <CollapsibleEventBlock
+          label={`Skill loaded: ${typeof agg.event.payload.skill_name === "string" ? agg.event.payload.skill_name : ""}`}
+          dotClass="bg-secondary"
+          event={agg.event}
+        />
+      );
+    case "subagent_started":
+    case "subagent_completed":
+    case "subagent_failed": {
+      const labels: Record<string, string> = {
+        subagent_started: "Subagent started",
+        subagent_completed: "Subagent completed",
+        subagent_failed: "Subagent failed",
+      };
+      const childId =
+        typeof agg.event.payload.child_job_id === "string"
+          ? agg.event.payload.child_job_id
+          : "";
+      return (
+        <p className="text-xs text-default-400">
+          {labels[agg.kind]}
+          {childId ? `: ${childId.slice(0, 8)}…` : ""}
+        </p>
+      );
+    }
     case "failure":
       return (
         <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm">
@@ -363,7 +256,7 @@ function JobThread({
   job: JobDetail;
   isStreaming: boolean;
 }) {
-  const isCompactionJob = job.prompt_run.prompt === "[COMPACTION]";
+  const isCompactionJob = job.prompt === "[COMPACTION]";
   const aggEvents = aggregateEvents(job.events, isCompactionJob);
   const isWaiting = job.events.length === 0;
   const hasOutput = aggEvents.some((e) => e.kind === "model_output");
@@ -373,7 +266,7 @@ function JobThread({
       {!isCompactionJob && (
         <div className="flex justify-end">
           <div className="max-w-[78%] rounded-2xl rounded-tr-sm bg-default-100 px-4 py-2.5 text-base leading-relaxed text-foreground dark:bg-white/6">
-            {job.prompt_run.prompt}
+            {job.prompt}
           </div>
         </div>
       )}
@@ -405,11 +298,7 @@ function JobThread({
 
 /* ── Empty state ─────────────────────────────────────────────────── */
 function Empty({ message }: { message: string }) {
-  return (
-    <div className="flex h-full min-h-32 items-center justify-center">
-      <p className="text-sm text-default-400">{message}</p>
-    </div>
-  );
+  return <p className="text-sm text-default-400">{message}</p>;
 }
 
 /* ── Main transcript ─────────────────────────────────────────────── */
@@ -485,8 +374,10 @@ export function PlayTranscript({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex min-h-full flex-col">
           {/* Spacer pushes messages to the bottom when content is short */}
-          <div className="flex-1" />
-          <div className="mx-auto w-full max-w-3xl px-4 py-6">
+          {selectedSession && jobs.length > 0 && <div className="flex-1" />}
+          <div
+            className={`mx-auto w-full max-w-3xl px-4 py-6 ${!selectedSession || jobs.length === 0 ? "flex flex-1 items-center justify-center" : ""}`}
+          >
             {!selectedSession ? (
               <Empty message="Select or create a session to start." />
             ) : jobs.length === 0 ? (

@@ -10,6 +10,7 @@ from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError
 from agent_orchestrator.integrations.mcp.client import McpClientError
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
+from agent_orchestrator.runtime.builtin_tools import build_builtin_registry
 from agent_orchestrator.runtime.compaction import perform_compaction
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.memory import build_message_history
@@ -69,9 +70,127 @@ class WorkerService:
             self.is_running = False
             logger.info("Worker loop stopped")
 
+    async def run_child_job(self, job_id: str) -> None:
+        """Claim and run a specific child job by ID, used by spawn_subagent to run the child concurrently."""
+        job = await self._repository.get_job(job_id)
+        if job is None or job.status != "queued":
+            return
+        # Claim the job manually
+        claimed = None
+        for _ in range(20):
+            claimed = await self._repository.claim_next_job()
+            if claimed is not None and claimed.id == job_id:
+                break
+            if claimed is not None:
+                # Put it back by treating it as a job we don't run
+                # This should not happen in normal usage; just log
+                logger.warning(
+                    "run_child_job claimed unexpected job %s while waiting for %s",
+                    claimed.id,
+                    job_id,
+                )
+                break
+            await asyncio.sleep(0.01)
+        if claimed is not None and claimed.id == job_id:
+            await self._run_job(claimed)
+
     async def stop(self) -> None:
         self._stop_event.set()
         logger.info("Worker stop requested")
+
+    async def _record_failure(self, job: Job, failure: dict[str, Any]) -> None:
+        await self._repository.append_event(job.id, job.session.id, "failure", failure)
+        await self._live_event_bus.publish(job.id, "failure", failure)
+        await self._repository.mark_job_failed(
+            job.id,
+            error_code=failure["code"],
+            error_message=failure["message"],
+            retryable=bool(failure["retryable"]),
+        )
+        await self._maybe_terminate_child_session(job)
+
+    async def _append_tool_call_event(
+        self,
+        *,
+        job_id: str,
+        session_id: str,
+        tool_call_id: str,
+        exposed_tool_name: str,
+        tool_name: str,
+        assignment: str | None,
+        server_url: str | None,
+        arguments: dict[str, Any],
+    ) -> None:
+        await self._repository.append_event(
+            job_id,
+            session_id,
+            "tool_call",
+            {
+                "tool_call_id": tool_call_id,
+                "exposed_tool_name": exposed_tool_name,
+                "tool_name": tool_name,
+                "assignment": assignment,
+                "server_url": server_url,
+                "arguments": arguments,
+            },
+        )
+
+    async def _append_tool_result_event(
+        self,
+        *,
+        job_id: str,
+        session_id: str,
+        tool_call_id: str,
+        exposed_tool_name: str,
+        tool_name: str,
+        assignment: str | None,
+        server_url: str | None,
+        result: dict[str, Any],
+    ) -> None:
+        await self._repository.append_event(
+            job_id,
+            session_id,
+            "tool_result",
+            {
+                "tool_call_id": tool_call_id,
+                "exposed_tool_name": exposed_tool_name,
+                "tool_name": tool_name,
+                "assignment": assignment,
+                "server_url": server_url,
+                "is_error": result.get("is_error", False),
+                "result": result,
+            },
+        )
+
+    async def _complete_job(
+        self, job: Job, content: str, accumulated_job_tokens: int
+    ) -> None:
+        await self._repository.append_event(
+            job.id,
+            job.session.id,
+            "completion",
+            {"text": content},
+        )
+        await self._live_event_bus.publish(
+            job.id,
+            "completion",
+            {"text": content},
+        )
+        await self._repository.update_job_tokens_used(job.id, accumulated_job_tokens)
+        await self._repository.mark_job_completed(job.id, content)
+        await self._maybe_terminate_child_session(job)
+
+    async def _maybe_terminate_child_session(self, job: Job) -> None:
+        """Terminate the session if this is a child (subagent) job."""
+        if job.parent_job_id is not None:
+            try:
+                await self._repository.terminate_session(job.session.id)
+            except Exception:
+                logger.exception(
+                    "Failed to terminate child session %s for job %s",
+                    job.session.id,
+                    job.id,
+                )
 
     async def _run_job(self, job: Job) -> None:
         with tracer.start_as_current_span(
@@ -84,26 +203,36 @@ class WorkerService:
                 await self._repository.mark_job_cancelled(
                     job.id, reason="cancelled before execution"
                 )
+                await self._live_event_bus.publish(
+                    job.id, "cancellation", {"reason": "cancelled before execution"}
+                )
+                await self._maybe_terminate_child_session(job)
                 return
 
             full_job = await self._repository.get_job(job.id)
             assert full_job is not None
             session = full_job.session
-            prompt_run = full_job.prompt_run
             model_config = session.model_config
             job_span.set_attribute("session.id", session.id)
             if model_config is None:
                 logger.warning("Job %s missing model configuration", job.id)
                 job_span.set_attribute("job.status", "failed")
+                failure = {
+                    "code": "missing_model_config",
+                    "message": "Session model configuration is required",
+                    "retryable": False,
+                }
                 await self._repository.append_event(
                     job.id, session.id, "failure", {"code": "missing_model_config"}
                 )
+                await self._live_event_bus.publish(job.id, "failure", failure)
                 await self._repository.mark_job_failed(
                     job.id,
                     error_code="missing_model_config",
                     error_message="Session model configuration is required",
                     retryable=False,
                 )
+                await self._maybe_terminate_child_session(full_job)
                 return
 
             job_span.set_attribute("provider.id", model_config.provider_id)
@@ -124,8 +253,21 @@ class WorkerService:
                     full_job.session.mcp_assignments,
                     ignore_failures=True,
                 )
-                tools = self._mcp_tool_catalog.as_openai_tools(tool_definitions)
+                mcp_tools = self._mcp_tool_catalog.as_openai_tools(tool_definitions)
                 tool_mapping = self._mcp_tool_catalog.as_mapping(tool_definitions)
+
+                # Build per-job builtin tool registry
+                builtin_registry = build_builtin_registry(
+                    skill_registry=self._skill_registry,
+                    repository=self._repository,
+                    live_event_bus=self._live_event_bus,
+                    session_id=session.id,
+                    job_id=job.id,
+                    skill_assignments=session.skill_assignments,
+                    job=full_job,
+                    schedule_child_fn=self.run_child_job,
+                )
+                tools = builtin_registry.as_openai_tools() + mcp_tools
 
                 # Auto-compaction check before building history
                 if session.multi_turn_memory:
@@ -139,7 +281,7 @@ class WorkerService:
                         self._repository, session.id, job.id
                     )
                     messages.extend(prior)
-                messages.append({"role": "user", "content": prompt_run.prompt})
+                messages.append({"role": "user", "content": full_job.prompt})
                 await self._repository.append_event(
                     job.id, session.id, "progress", {"status": "running"}
                 )
@@ -161,6 +303,12 @@ class WorkerService:
                         await self._repository.mark_job_cancelled(
                             job.id, reason="cancelled during execution"
                         )
+                        await self._live_event_bus.publish(
+                            job.id,
+                            "cancellation",
+                            {"reason": "cancelled during execution"},
+                        )
+                        await self._maybe_terminate_child_session(full_job)
                         return
 
                     # Create snapshot DB rows at the start of each round.
@@ -305,17 +453,8 @@ class WorkerService:
                             "Job %s completed without further tool calls", job.id
                         )
                         job_span.set_attribute("job.status", "completed")
-                        await self._repository.append_event(
-                            job.id,
-                            session.id,
-                            "completion",
-                            {"text": response.content},
-                        )
-                        await self._repository.update_job_tokens_used(
-                            job.id, accumulated_job_tokens
-                        )
-                        await self._repository.mark_job_completed(
-                            job.id, response.content
+                        await self._complete_job(
+                            full_job, response.content, accumulated_job_tokens
                         )
                         return
 
@@ -336,6 +475,43 @@ class WorkerService:
                                 },
                             }
                         )
+                        # Check built-in tools first
+                        builtin = builtin_registry.get(tool_call.name)
+                        if builtin is not None:
+                            logger.info(
+                                "Job %s invoking builtin tool %s",
+                                job.id,
+                                tool_call.name,
+                            )
+                            await self._append_tool_call_event(
+                                job_id=job.id,
+                                session_id=session.id,
+                                tool_call_id=tool_call.id,
+                                exposed_tool_name=tool_call.name,
+                                tool_name=tool_call.name,
+                                assignment="builtin",
+                                server_url=None,
+                                arguments=tool_call.arguments,
+                            )
+                            result = await builtin.handler(tool_call.arguments)
+                            await self._append_tool_result_event(
+                                job_id=job.id,
+                                session_id=session.id,
+                                tool_call_id=tool_call.id,
+                                exposed_tool_name=tool_call.name,
+                                tool_name=tool_call.name,
+                                assignment="builtin",
+                                server_url=None,
+                                result=result,
+                            )
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": json.dumps(result),
+                                }
+                            )
+                            continue
                         if tool_call.name not in tool_mapping:
                             await self._append_invalid_tool_result(
                                 job_id=job.id,
@@ -353,18 +529,15 @@ class WorkerService:
                             tool_call.name,
                             tool_definition.server_url,
                         )
-                        await self._repository.append_event(
-                            job.id,
-                            session.id,
-                            "tool_call",
-                            {
-                                "tool_call_id": tool_call.id,
-                                "exposed_tool_name": tool_call.name,
-                                "tool_name": tool_definition.actual_name,
-                                "assignment": tool_definition.assignment_name,
-                                "server_url": tool_definition.server_url,
-                                "arguments": tool_call.arguments,
-                            },
+                        await self._append_tool_call_event(
+                            job_id=job.id,
+                            session_id=session.id,
+                            tool_call_id=tool_call.id,
+                            exposed_tool_name=tool_call.name,
+                            tool_name=tool_definition.actual_name,
+                            assignment=tool_definition.assignment_name,
+                            server_url=tool_definition.server_url,
+                            arguments=tool_call.arguments,
                         )
                         with tracer.start_as_current_span(
                             "agent_orchestrator.call_tool",
@@ -385,19 +558,15 @@ class WorkerService:
                             tool_call.name,
                             result.get("is_error", False),
                         )
-                        await self._repository.append_event(
-                            job.id,
-                            session.id,
-                            "tool_result",
-                            {
-                                "tool_call_id": tool_call.id,
-                                "exposed_tool_name": tool_call.name,
-                                "tool_name": tool_definition.actual_name,
-                                "assignment": tool_definition.assignment_name,
-                                "server_url": tool_definition.server_url,
-                                "is_error": result.get("is_error", False),
-                                "result": result,
-                            },
+                        await self._append_tool_result_event(
+                            job_id=job.id,
+                            session_id=session.id,
+                            tool_call_id=tool_call.id,
+                            exposed_tool_name=tool_call.name,
+                            tool_name=tool_definition.actual_name,
+                            assignment=tool_definition.assignment_name,
+                            server_url=tool_definition.server_url,
+                            result=result,
                         )
                         messages.append(
                             {
@@ -422,15 +591,7 @@ class WorkerService:
                     failure["message"],
                 )
                 job_span.set_attribute("job.status", "failed")
-                await self._repository.append_event(
-                    job.id, session.id, "failure", failure
-                )
-                await self._repository.mark_job_failed(
-                    job.id,
-                    error_code=failure["code"],
-                    error_message=failure["message"],
-                    retryable=bool(failure["retryable"]),
-                )
+                await self._record_failure(full_job, failure)
             except (
                 McpClientError,
                 RuntimeError,
@@ -440,15 +601,7 @@ class WorkerService:
                 logger.exception("Job %s failed", job.id)
                 failure = self._classify_execution_failure(exc)
                 job_span.set_attribute("job.status", "failed")
-                await self._repository.append_event(
-                    job.id, session.id, "failure", failure
-                )
-                await self._repository.mark_job_failed(
-                    job.id,
-                    error_code=failure["code"],
-                    error_message=failure["message"],
-                    retryable=bool(failure["retryable"]),
-                )
+                await self._record_failure(full_job, failure)
 
     async def _maybe_auto_compact(self, job_id: str, session_id: str) -> None:
         """Auto-compact context if estimated usage ratio exceeds threshold."""

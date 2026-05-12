@@ -90,9 +90,6 @@ class AgentSession(Base):
     mcp_assignments: Mapped[list[SessionMcpAssignment]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
-    prompt_runs: Mapped[list[PromptRun]] = relationship(
-        back_populates="session", cascade="all, delete-orphan"
-    )
     jobs: Mapped[list[Job]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
@@ -156,29 +153,6 @@ class SessionMcpAssignment(Base):
     session: Mapped[AgentSession] = relationship(back_populates="mcp_assignments")
 
 
-class PromptRun(Base):
-    __tablename__ = "prompt_runs"
-
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid4())
-    )
-    session_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_sessions.id", ondelete="CASCADE")
-    )
-    prompt: Mapped[str] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(32), default="queued")
-    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        UtcDateTime(), default=utc_now, onupdate=utc_now
-    )
-
-    session: Mapped[AgentSession] = relationship(back_populates="prompt_runs")
-    job: Mapped[Job | None] = relationship(
-        back_populates="prompt_run", cascade="all, delete-orphan"
-    )
-
-
 class Job(Base):
     __tablename__ = "jobs"
 
@@ -188,9 +162,8 @@ class Job(Base):
     session_id: Mapped[str] = mapped_column(
         ForeignKey("agent_sessions.id", ondelete="CASCADE")
     )
-    prompt_run_id: Mapped[str] = mapped_column(
-        ForeignKey("prompt_runs.id", ondelete="CASCADE"), unique=True
-    )
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     job_type: Mapped[str] = mapped_column(String(32), default="prompt")
     status: Mapped[str] = mapped_column(String(32), default="queued")
     attempts: Mapped[int] = mapped_column(Integer, default=0)
@@ -199,6 +172,9 @@ class Job(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     tokens_used: Mapped[int] = mapped_column(Integer, default=0)
+    parent_job_id: Mapped[str | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
     cancellation_requested_at: Mapped[datetime | None] = mapped_column(
         UtcDateTime(), nullable=True
     )
@@ -210,32 +186,12 @@ class Job(Base):
     )
 
     session: Mapped[AgentSession] = relationship(back_populates="jobs")
-    prompt_run: Mapped[PromptRun] = relationship(back_populates="job")
-    attempts_log: Mapped[list[JobAttempt]] = relationship(
-        back_populates="job", cascade="all, delete-orphan"
-    )
     events: Mapped[list[JobEvent]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )
     outputs: Mapped[list[JobOutput]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
     )
-
-
-class JobAttempt(Base):
-    __tablename__ = "job_attempts"
-
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid4())
-    )
-    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"))
-    attempt_number: Mapped[int] = mapped_column(Integer)
-    status: Mapped[str] = mapped_column(String(32))
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
-    completed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
-
-    job: Mapped[Job] = relationship(back_populates="attempts_log")
 
 
 class JobEvent(Base):

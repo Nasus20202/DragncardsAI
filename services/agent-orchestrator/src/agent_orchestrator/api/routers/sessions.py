@@ -3,13 +3,16 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agent_orchestrator.api.deps import (
+    get_live_event_bus,
     get_mcp_tool_catalog,
     get_repository,
     get_settings,
     get_skill_registry,
     require_session,
 )
+from agent_orchestrator.api.tool_catalog import list_effective_session_tools
 from agent_orchestrator.api.serializers import (
+    serialize_builtin_tool_definition,
     serialize_job,
     serialize_mcp,
     serialize_model_config,
@@ -23,6 +26,7 @@ from agent_orchestrator.integrations.mcp.tools import (
     McpToolCatalog,
     normalize_mcp_server_url,
 )
+from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.schemas.common import PageInfo
 from agent_orchestrator.schemas.jobs import SessionJobsResponse, SessionToolResponse
@@ -211,13 +215,24 @@ async def assign_mcp(
 @router.get("/sessions/{session_id}/tools")
 async def list_session_tools(
     tool_catalog: McpToolCatalog = Depends(get_mcp_tool_catalog),
+    repo: Repository = Depends(get_repository),
+    live_event_bus: LiveEventBus = Depends(get_live_event_bus),
+    skill_registry: SkillRegistry = Depends(get_skill_registry),
     item=Depends(require_session),
 ) -> SessionToolsResponse:
-    tools = await tool_catalog.list_session_tools(
-        item.mcp_assignments, ignore_failures=True
+    builtin_tools, mcp_tools = await list_effective_session_tools(
+        mcp_tool_catalog=tool_catalog,
+        skill_registry=skill_registry,
+        repository=repo,
+        live_event_bus=live_event_bus,
+        session=item,
+        is_master_job=True,
     )
     return SessionToolsResponse(
-        tools=[serialize_tool_definition(tool) for tool in tools]
+        tools=[
+            *[serialize_builtin_tool_definition(tool) for tool in builtin_tools],
+            *[serialize_tool_definition(tool) for tool in mcp_tools],
+        ]
     )
 
 

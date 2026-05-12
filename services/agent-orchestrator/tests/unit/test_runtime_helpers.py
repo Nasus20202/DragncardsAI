@@ -27,7 +27,11 @@ def test_build_system_prompt_includes_existing_skills_and_skips_missing(tmp_path
     )
 
     assert "You are an agent orchestrator for DragnCardsAI." in prompt
-    assert "Skill demo:\nfollow the runbook" in prompt
+    # Summaries (not full content) should appear in the skills section
+    assert "follow the runbook" in prompt
+    assert "load_skill" in prompt
+    assert "load_skill_reference" in prompt
+    # missing skill should be silently skipped
     assert "missing" not in prompt
 
 

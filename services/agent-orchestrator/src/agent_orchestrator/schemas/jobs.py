@@ -16,7 +16,8 @@ class PromptRequest(BaseModel):
 
 class JobSummary(BaseModel):
     id: str
-    prompt_run_id: str
+    prompt: str
+    metadata: dict[str, Any]
     status: str
     attempts: int
     max_attempts: int
@@ -29,15 +30,6 @@ class JobSummary(BaseModel):
     completed_at: datetime | None
     latest_event_id: str | None = None
     latest_event_type: str | None = None
-
-
-class PromptRunSummary(BaseModel):
-    id: str
-    prompt: str
-    status: str
-    metadata: dict[str, Any]
-    created_at: datetime
-    updated_at: datetime
 
 
 class JobEventResponse(BaseModel):
@@ -58,7 +50,6 @@ class SessionToolResponse(BaseModel):
 
 
 class JobDetail(JobSummary):
-    prompt_run: PromptRunSummary
     outputs: list[str]
     events: list[JobEventResponse] = Field(default_factory=list)
     available_tools: list[SessionToolResponse] = Field(default_factory=list)

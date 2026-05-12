@@ -3,6 +3,10 @@ import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import {
   BatchLogRecordProcessor,
   type LogRecordProcessor,
+  SimpleLogRecordProcessor,
+  ConsoleLogRecordExporter,
+  type LogRecordExporter,
+  type SdkLogRecord,
 } from "@opentelemetry/sdk-logs";
 
 type ServerLogLevel = "debug" | "error" | "info" | "warn";
@@ -27,12 +31,50 @@ function filterAttributes(
   ) as Record<string, string | number | boolean>;
 }
 
+class MinSeverityExporter implements LogRecordExporter {
+  constructor(
+    private readonly inner: LogRecordExporter,
+    private readonly minSeverity: SeverityNumber
+  ) {}
+
+  export(
+    records: SdkLogRecord[],
+    resultCallback: Parameters<LogRecordExporter["export"]>[1]
+  ) {
+    const filtered = records.filter(
+      (r) =>
+        (r.severityNumber ?? SeverityNumber.UNSPECIFIED) >= this.minSeverity
+    );
+    if (filtered.length === 0) {
+      resultCallback({ code: 0 });
+      return;
+    }
+    this.inner.export(filtered, resultCallback);
+  }
+
+  async forceFlush() {
+    return this.inner.forceFlush();
+  }
+
+  async shutdown() {
+    return this.inner.shutdown();
+  }
+}
+
 export function createLogRecordProcessors(): LogRecordProcessor[] {
   if (!isNodeRuntime()) {
     return [];
   }
 
-  return [new BatchLogRecordProcessor(new OTLPLogExporter())];
+  return [
+    new BatchLogRecordProcessor(new OTLPLogExporter()),
+    new SimpleLogRecordProcessor(
+      new MinSeverityExporter(
+        new ConsoleLogRecordExporter(),
+        SeverityNumber.WARN
+      )
+    ),
+  ];
 }
 
 export function createServerLogger(name = "dashboard.server") {

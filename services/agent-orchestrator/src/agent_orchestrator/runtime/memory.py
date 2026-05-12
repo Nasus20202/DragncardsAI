@@ -146,11 +146,11 @@ def _reconstruct_job_replay_items(
     tool_exchanges: list[_ToolExchange] = []
     order = start_order
 
-    if job.prompt_run:
+    if job.prompt:
         conversation_messages.append(
             _ConversationMessage(
                 order=order,
-                message={"role": "user", "content": job.prompt_run.prompt},
+                message={"role": "user", "content": job.prompt},
             )
         )
         order += 1

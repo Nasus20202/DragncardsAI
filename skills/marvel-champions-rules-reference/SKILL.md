@@ -79,6 +79,7 @@ Receive question
 2. **Apply errata first.** If a card has errata, use the corrected text. Note that the card has errata. Example: _"Loki (#28) has errata changing its trigger from 'Interrupt' to 'Forced Interrupt'. Applying the corrected text..."_
 
 3. **Follow the Golden Rules hierarchy:**
+
    - Card text overrides Rules Reference
    - Rules Reference overrides Learn to Play
    - "Cannot" is absolute unless overridden by card text per the Golden Rules
@@ -86,6 +87,7 @@ Receive question
 4. **For timing conflicts**, apply the Simultaneous Timing Priority order from [resources/timing.md](resources/timing.md). If no rule resolves the conflict, apply the **Grim Rule** (worst outcome for the players).
 
 5. **Be precise about distinctions** that commonly cause confusion:
+
    - "Dealt" damage vs. "taken" damage
    - "Played" vs. "put into play"
    - "Attacked" vs. "attacked and damaged"

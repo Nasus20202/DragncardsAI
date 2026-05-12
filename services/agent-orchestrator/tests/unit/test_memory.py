@@ -182,7 +182,7 @@ async def test_build_message_history_with_compaction_checkpoint(repository: Repo
 def test_reconstruct_job_messages_with_tool_calls():
     """Unit test for tool call reconstruction without hitting DB."""
     mock_job = MagicMock()
-    mock_job.prompt_run.prompt = "do a thing"
+    mock_job.prompt = "do a thing"
 
     model_event = MagicMock()
     model_event.id = 1

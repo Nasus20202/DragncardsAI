@@ -63,6 +63,70 @@ class SessionManager:
                     continue
                 await self._restore_session(record)
 
+    def _get_plugin_info(self, plugin_name: str) -> dict[str, Any]:
+        plugin_info = self._plugin_registry.get(plugin_name)
+        if plugin_info is None:
+            available = list(self._plugin_registry.keys())
+            raise SessionError(
+                f"Plugin {plugin_name!r} not found. Available: {available}"
+            )
+        return plugin_info
+
+    async def _connect_room_channel(
+        self, room_slug: str, auth_token: str
+    ) -> tuple[PhoenixClient, Any, Any]:
+        ws_client = PhoenixClient(self._ws_url, auth_token=auth_token)
+        await ws_client.connect()
+        channel = await ws_client.join(f"room:{room_slug}")
+        initial_state = await self._wait_for_initial_state(channel, room_slug)
+        return ws_client, channel, initial_state
+
+    async def _wait_for_initial_state(self, channel: Any, room_slug: str) -> Any:
+        try:
+            return await channel.wait_for_state_update(timeout=15.0)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "No initial state received for room %s, will fetch on demand",
+                room_slug,
+            )
+            return None
+
+    def _build_session(
+        self,
+        *,
+        session_id: str,
+        plugin_name: str,
+        plugin_id: int,
+        room_slug: str,
+        created_at: datetime,
+        client: PhoenixClient,
+        channel: Any,
+        initial_state: Any,
+    ) -> GameSession:
+        session = GameSession(
+            session_id=session_id,
+            plugin_name=plugin_name,
+            plugin_id=plugin_id,
+            room_slug=room_slug,
+            created_at=created_at,
+            client=client,
+            channel=channel,
+        )
+        session._state = initial_state
+        session._manager = self
+        return session
+
+    async def _register_session(
+        self, session: GameSession, *, persist: bool = True
+    ) -> GameSession:
+        if persist:
+            await self._session_store.put_session(session.to_metadata())
+
+        async with self._lock:
+            self._sessions[session.session_id] = session
+
+        return session
+
     async def _restore_session(self, record: dict[str, Any]) -> GameSession:
         with tracer.start_as_current_span(
             "game_service.restore_session",
@@ -78,20 +142,10 @@ class SessionManager:
             auth_token = await get_auth_token(
                 self._http_url, self._email, self._password
             )
-            ws_client = PhoenixClient(self._ws_url, auth_token=auth_token)
-            await ws_client.connect()
-            channel = await ws_client.join(f"room:{record['room_slug']}")
-
-            try:
-                initial_state = await channel.wait_for_state_update(timeout=15.0)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "No initial state received while restoring session %s, will fetch on demand",
-                    record["session_id"],
-                )
-                initial_state = None
-
-            session = GameSession(
+            ws_client, channel, initial_state = await self._connect_room_channel(
+                record["room_slug"], auth_token
+            )
+            session = self._build_session(
                 session_id=record["session_id"],
                 plugin_name=plugin_name,
                 plugin_id=plugin_info["id"],
@@ -99,12 +153,9 @@ class SessionManager:
                 created_at=datetime.fromisoformat(record["created_at"]),
                 client=ws_client,
                 channel=channel,
+                initial_state=initial_state,
             )
-            session._state = initial_state
-            session._manager = self
-
-            async with self._lock:
-                self._sessions[session.session_id] = session
+            await self._register_session(session, persist=False)
 
             logger.info(
                 "Restored session %s from coordination store", session.session_id
@@ -116,12 +167,7 @@ class SessionManager:
             "game_service.create_session",
             attributes={"game.plugin.name": plugin_name},
         ):
-            plugin_info = self._plugin_registry.get(plugin_name)
-            if plugin_info is None:
-                available = list(self._plugin_registry.keys())
-                raise SessionError(
-                    f"Plugin {plugin_name!r} not found. Available: {available}"
-                )
+            plugin_info = self._get_plugin_info(plugin_name)
 
             auth_token = await get_auth_token(
                 self._http_url, self._email, self._password
@@ -141,21 +187,12 @@ class SessionManager:
                 "Created DragnCards room %s for plugin %s", room_slug, plugin_name
             )
 
-            ws_client = PhoenixClient(self._ws_url, auth_token=auth_token)
-            await ws_client.connect()
-            channel = await ws_client.join(f"room:{room_slug}")
-
-            try:
-                initial_state = await channel.wait_for_state_update(timeout=15.0)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "No initial state received for room %s, will fetch on demand",
-                    room_slug,
-                )
-                initial_state = None
+            ws_client, channel, initial_state = await self._connect_room_channel(
+                room_slug, auth_token
+            )
 
             session_id = str(uuid.uuid4())
-            session = GameSession(
+            session = self._build_session(
                 session_id=session_id,
                 plugin_name=plugin_name,
                 plugin_id=plugin_info["id"],
@@ -163,42 +200,23 @@ class SessionManager:
                 created_at=datetime.now(timezone.utc),
                 client=ws_client,
                 channel=channel,
+                initial_state=initial_state,
             )
-            session._state = initial_state
-            session._manager = self
-
-            await self._session_store.put_session(session.to_metadata())
-
-            async with self._lock:
-                self._sessions[session_id] = session
+            await self._register_session(session)
 
             logger.info("Session %s created (room=%s)", session_id, room_slug)
             return session
 
     async def attach_session(self, plugin_name: str, room_slug: str) -> GameSession:
-        plugin_info = self._plugin_registry.get(plugin_name)
-        if plugin_info is None:
-            available = list(self._plugin_registry.keys())
-            raise SessionError(
-                f"Plugin {plugin_name!r} not found. Available: {available}"
-            )
+        plugin_info = self._get_plugin_info(plugin_name)
 
         auth_token = await get_auth_token(self._http_url, self._email, self._password)
-        ws_client = PhoenixClient(self._ws_url, auth_token=auth_token)
-        await ws_client.connect()
-        channel = await ws_client.join(f"room:{room_slug}")
-
-        try:
-            initial_state = await channel.wait_for_state_update(timeout=15.0)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "No initial state received for room %s on attach, will fetch on demand",
-                room_slug,
-            )
-            initial_state = None
+        ws_client, channel, initial_state = await self._connect_room_channel(
+            room_slug, auth_token
+        )
 
         session_id = str(uuid.uuid4())
-        session = GameSession(
+        session = self._build_session(
             session_id=session_id,
             plugin_name=plugin_name,
             plugin_id=plugin_info["id"],
@@ -206,14 +224,9 @@ class SessionManager:
             created_at=datetime.now(timezone.utc),
             client=ws_client,
             channel=channel,
+            initial_state=initial_state,
         )
-        session._state = initial_state
-        session._manager = self
-
-        await self._session_store.put_session(session.to_metadata())
-
-        async with self._lock:
-            self._sessions[session_id] = session
+        await self._register_session(session)
 
         logger.info("Session %s attached to existing room %s", session_id, room_slug)
         return session

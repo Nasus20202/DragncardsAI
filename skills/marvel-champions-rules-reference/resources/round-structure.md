@@ -33,7 +33,7 @@ During their turn, a player may perform the following options in **any order**. 
 
 | Option                                                                                           | Limit             | Requirement                                 |
 | ------------------------------------------------------------------------------------------------ | ----------------- | ------------------------------------------- |
-| **Change form** (hero ↔ alter-ego)                                                               | **Once per turn** | —                                           |
+| **Change form** (hero ↔ alter-ego)                                                              | **Once per turn** | —                                           |
 | **Play** an ally, upgrade, support, or player side scheme from hand                              | Unlimited         | Pay resource cost                           |
 | **Use basic recovery**                                                                           | Unlimited         | Must be in alter-ego form                   |
 | **Use basic attack or thwart**                                                                   | Unlimited         | Must be in hero form; valid target required |

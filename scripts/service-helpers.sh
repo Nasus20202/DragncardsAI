@@ -61,7 +61,7 @@ service_test_command() {
         game-service)
             case "$mode" in
                 unit)
-                    printf 'cd "%s/services/game-service" && exec uv run pytest tests/unit/ -n auto -n auto -v' "$root_dir"
+                    printf 'cd "%s/services/game-service" && exec uv run pytest tests/unit/ -n auto -v' "$root_dir"
                     ;;
                 integration)
                     printf 'cd "%s/services/game-service" && exec uv run%s pytest tests/integration/ -n auto -v' "$root_dir" "$env_args"
@@ -77,13 +77,13 @@ service_test_command() {
         agent-orchestrator)
             case "$mode" in
                 unit)
-                    printf 'cd "%s/services/agent-orchestrator" && exec uv run pytest tests/unit/ -v' "$root_dir"
+                    printf 'cd "%s/services/agent-orchestrator" && exec uv run pytest tests/unit/ -n auto -v' "$root_dir"
                     ;;
                 integration)
-                    printf 'cd "%s/services/agent-orchestrator" && exec uv run pytest tests/integration/ -v' "$root_dir"
+                    printf 'cd "%s/services/agent-orchestrator" && exec uv run%s pytest tests/integration/ -n auto -v' "$root_dir" "$env_args"
                     ;;
                 all)
-                    printf 'cd "%s/services/agent-orchestrator" && exec uv run pytest tests/ -v' "$root_dir"
+                    printf 'cd "%s/services/agent-orchestrator" && exec uv run%s pytest tests/ -n auto -v' "$root_dir" "$env_args"
                     ;;
                 *)
                     return 1
@@ -92,8 +92,11 @@ service_test_command() {
             ;;
         dashboard)
             case "$mode" in
-                unit|integration|all)
+                unit|all)
                     printf 'cd "%s/services/dashboard" && exec pnpm test' "$root_dir"
+                    ;;
+                integration)
+                    echo "Integration tests not defined for dashboard service" >&2
                     ;;
                 *)
                     return 1

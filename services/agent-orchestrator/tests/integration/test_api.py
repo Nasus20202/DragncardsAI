@@ -237,10 +237,16 @@ async def test_prompt_run_completes_background_job(app):
 
         tools_response = await client.get(f"/sessions/{session_id}/tools")
         assert tools_response.status_code == 200
-        assert (
-            tools_response.json()["tools"][0]["server_url"]
-            == "http://game-service/mcp/"
+        tools = tools_response.json()["tools"]
+        tool_names = [tool["name"] for tool in tools]
+        assert "load_skill" in tool_names
+        assert "load_skill_reference" in tool_names
+        assert "spawn_subagent" in tool_names
+        assert "wait_for_subagent" in tool_names
+        game_service_tool = next(
+            tool for tool in tools if tool["name"] == "game-service_next_step"
         )
+        assert game_service_tool["server_url"] == "http://game-service/mcp/"
 
         prompt_response = await client.post(
             f"/sessions/{session_id}/prompts",
@@ -257,7 +263,12 @@ async def test_prompt_run_completes_background_job(app):
         job = job_response.json()["job"]
         assert job["status"] == "completed"
         assert job["result_text"] == "All set"
-        assert job["available_tools"][0]["name"] == "game-service_next_step"
+        available_tool_names = [tool["name"] for tool in job["available_tools"]]
+        assert "load_skill" in available_tool_names
+        assert "load_skill_reference" in available_tool_names
+        assert "spawn_subagent" in available_tool_names
+        assert "wait_for_subagent" in available_tool_names
+        assert "game-service_next_step" in available_tool_names
         assert job["latest_event_type"] == "completion"
         assert any(event["event_type"] == "tool_result" for event in job["events"])
         assert not any(
@@ -394,9 +405,9 @@ async def test_prompt_run_uses_real_game_service_mcp(real_mcp_app):
         assert prompt_response.status_code == 202
         job_id = prompt_response.json()["job"]["id"]
 
-        for _ in range(80):
+        for _ in range(120):
             job_response = await client.get(f"/jobs/{job_id}")
-            if job_response.json()["job"]["status"] == "completed":
+            if job_response.json()["job"]["status"] in {"completed", "failed"}:
                 break
             await asyncio.sleep(0.1)
 
@@ -454,3 +465,299 @@ async def test_prompt_run_uses_real_game_service_mcp(real_mcp_app):
                 await live_client.delete(
                     f"{GAME_SERVICE_HTTP_URL}/games/{created_game_session_id}"
                 )
+
+
+class LoadSkillBifrost(FakeBifrost):
+    """Bifrost that loads a skill, then one listed reference, then completes."""
+
+    def __init__(self):
+        self.calls_list = []
+        self._round = 0
+
+    async def health(self) -> bool:
+        return True
+
+    async def aclose(self) -> None:
+        return None
+
+    async def get_model_context_length(self, provider_id, model_name) -> int | None:
+        return None
+
+    async def chat_completion(
+        self,
+        provider_id,
+        model_name,
+        messages,
+        tools,
+        gateway_options,
+        provider_options,
+        on_delta=None,
+    ):
+        from agent_orchestrator.integrations.bifrost import ChatDelta
+
+        self.calls_list.append({"tools": tools})
+        if self._round == 0:
+            self._round += 1
+            return ChatResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-ls",
+                        name="load_skill",
+                        arguments={"skill_name": "test-skill"},
+                    )
+                ],
+                raw={},
+            )
+        if self._round == 1:
+            self._round += 1
+            return ChatResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-lsr",
+                        name="load_skill_reference",
+                        arguments={
+                            "skill_name": "test-skill",
+                            "reference_name": "guide.md",
+                        },
+                    )
+                ],
+                raw={},
+            )
+        if on_delta is not None:
+            await on_delta(ChatDelta(content="Skill loaded!"))
+        return ChatResponse(content="Skill loaded!", tool_calls=[], raw={})
+
+
+@pytest.mark.asyncio
+async def test_load_skill_emits_skill_loaded_event(tmp_path: Path):
+    """Integration test: session with skill assigned, agent calls load_skill, skill_loaded event appears."""
+    database_path = tmp_path / "skill-test.sqlite3"
+    engine = create_engine(f"sqlite+aiosqlite:///{database_path}")
+    await ensure_schema(engine)
+    repository = Repository(create_session_factory(engine))
+
+    skill_root = tmp_path / "skills"
+    skill_root.mkdir()
+    test_skill = skill_root / "test-skill"
+    test_skill.mkdir()
+    (test_skill / "SKILL.md").write_text(
+        "# Test Skill\n\nPlay safely.", encoding="utf-8"
+    )
+    reference_dir = test_skill / "reference"
+    reference_dir.mkdir()
+    (reference_dir / "guide.md").write_text("Guide content.", encoding="utf-8")
+
+    bifrost = LoadSkillBifrost()
+    app = create_app(
+        settings=Settings(
+            database_url=f"sqlite+aiosqlite:///{database_path}",
+            SKILL_ROOTS=str(skill_root),
+        ),
+        repository=repository,
+        bifrost_client=bifrost,
+        live_event_bus=InMemoryLiveEventBus(),
+        mcp_client=FakeMcp(),
+        skill_registry=SkillRegistry((skill_root,)),
+    )
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                create_response = await client.post(
+                    "/sessions", json={"name": "skill-test"}
+                )
+                session_id = create_response.json()["session"]["id"]
+                await client.put(
+                    f"/sessions/{session_id}/model-config",
+                    json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+                )
+                await client.post(
+                    f"/sessions/{session_id}/skills",
+                    json={"skill_name": "test-skill"},
+                )
+
+                prompt_response = await client.post(
+                    f"/sessions/{session_id}/prompts",
+                    json={"prompt": "use the skill"},
+                )
+                assert prompt_response.status_code == 202
+                job_id = prompt_response.json()["job"]["id"]
+
+                for _ in range(60):
+                    job_response = await client.get(f"/jobs/{job_id}")
+                    if job_response.json()["job"]["status"] == "completed":
+                        break
+                    await asyncio.sleep(0.05)
+
+                job = job_response.json()["job"]
+                assert job["status"] == "completed"
+                events = job["events"]
+                skill_loaded = [e for e in events if e["event_type"] == "skill_loaded"]
+                assert len(skill_loaded) == 1
+                assert skill_loaded[0]["payload"]["skill_name"] == "test-skill"
+                assert skill_loaded[0]["payload"]["reference_file_count"] == 1
+    finally:
+        await engine.dispose()
+
+
+class SpawnSubagentBifrost:
+    """Bifrost that makes the parent call spawn_subagent, and the child completes directly."""
+
+    def __init__(self):
+        self._call_count = 0
+
+    async def health(self) -> bool:
+        return True
+
+    async def aclose(self) -> None:
+        return None
+
+    async def get_model_context_length(self, provider_id, model_name) -> int | None:
+        return None
+
+    async def chat_completion(
+        self,
+        provider_id,
+        model_name,
+        messages,
+        tools,
+        gateway_options,
+        provider_options,
+        on_delta=None,
+    ):
+        from agent_orchestrator.integrations.bifrost import ChatDelta
+
+        self._call_count += 1
+        user_messages = [m for m in messages if m.get("role") == "user"]
+        last_prompt = user_messages[-1]["content"] if user_messages else ""
+
+        if "subagent-task" in last_prompt:
+            # This is the child job — complete immediately
+            if on_delta:
+                await on_delta(ChatDelta(content="child done"))
+            return ChatResponse(content="child done", tool_calls=[], raw={})
+
+        if self._call_count == 1:
+            # Parent first round: call spawn_subagent
+            return ChatResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-spawn",
+                        name="spawn_subagent",
+                        arguments={"prompt": "subagent-task"},
+                    )
+                ],
+                raw={},
+            )
+
+        # Parent second round: after spawn_subagent returns
+        if on_delta:
+            await on_delta(ChatDelta(content="parent done"))
+        return ChatResponse(content="parent done", tool_calls=[], raw={})
+
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_creates_child_and_emits_events(tmp_path: Path):
+    """Integration: master job calls spawn_subagent; child created/terminated; events on parent job."""
+    database_path = tmp_path / "subagent-test.sqlite3"
+    engine = create_engine(f"sqlite+aiosqlite:///{database_path}")
+    await ensure_schema(engine)
+    repository = Repository(create_session_factory(engine))
+
+    skill_root = tmp_path / "skills"
+    skill_root.mkdir()
+
+    bifrost = SpawnSubagentBifrost()
+    app = create_app(
+        settings=Settings(
+            database_url=f"sqlite+aiosqlite:///{database_path}",
+            SKILL_ROOTS=str(skill_root),
+        ),
+        repository=repository,
+        bifrost_client=bifrost,
+        live_event_bus=InMemoryLiveEventBus(),
+        mcp_client=FakeMcp(),
+        skill_registry=SkillRegistry((skill_root,)),
+    )
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                create_response = await client.post(
+                    "/sessions", json={"name": "subagent-test"}
+                )
+                session_id = create_response.json()["session"]["id"]
+                await client.put(
+                    f"/sessions/{session_id}/model-config",
+                    json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+                )
+
+                prompt_response = await client.post(
+                    f"/sessions/{session_id}/prompts",
+                    json={"prompt": "run a subagent"},
+                )
+                assert prompt_response.status_code == 202
+                job_id = prompt_response.json()["job"]["id"]
+
+                for _ in range(120):
+                    job_response = await client.get(f"/jobs/{job_id}")
+                    status = job_response.json()["job"]["status"]
+                    if status in ("completed", "failed"):
+                        break
+                    await asyncio.sleep(0.1)
+
+                job = job_response.json()["job"]
+                assert job["status"] == "completed", f"Job failed: {job}"
+                events = job["events"]
+                event_types = [e["event_type"] for e in events]
+                assert "subagent_started" in event_types
+
+                # Verify name is present in subagent_started
+                started_event = next(
+                    e for e in events if e["event_type"] == "subagent_started"
+                )
+                assert "name" in started_event["payload"]
+                assert started_event["payload"]["name"] == "subagent-task"
+
+                # subagent_completed may arrive slightly after parent job completes (background task)
+                # Give it a short grace period
+                for _ in range(20):
+                    job_response = await client.get(f"/jobs/{job_id}")
+                    events = job_response.json()["job"]["events"]
+                    if any(e["event_type"] == "subagent_completed" for e in events):
+                        break
+                    await asyncio.sleep(0.05)
+
+                event_types = [e["event_type"] for e in events]
+                assert "subagent_completed" in event_types
+
+                # Verify child session was terminated
+                child_session_id = started_event["payload"]["child_session_id"]
+                child_session = None
+                for _ in range(20):
+                    child_session_response = await client.get(
+                        f"/sessions/{child_session_id}"
+                    )
+                    assert child_session_response.status_code == 200
+                    child_session = child_session_response.json()["session"]
+                    if child_session["status"] == "terminated":
+                        break
+                    await asyncio.sleep(0.05)
+
+                assert child_session is not None
+                assert child_session["status"] == "terminated"
+
+                sessions_response = await client.get("/sessions")
+                assert sessions_response.status_code == 200
+                listed_session_ids = [
+                    session["id"] for session in sessions_response.json()["sessions"]
+                ]
+                assert session_id in listed_session_ids
+                assert child_session_id not in listed_session_ids
+    finally:
+        await engine.dispose()

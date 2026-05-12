@@ -23,7 +23,6 @@ from agent_orchestrator.storage.models import (
     CompactionRecord,
     Job,
     JobEvent,
-    PromptRun,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,17 +114,10 @@ class ContextRepositoryMixin:
         """
         now = utc_now()
         async with self._session_factory() as session, session.begin():
-            prompt_run = PromptRun(
+            job = Job(
                 session_id=session_id,
                 prompt="[COMPACTION]",
                 metadata_json={"compaction": True},
-            )
-            session.add(prompt_run)
-            await session.flush()
-
-            job = Job(
-                session_id=session_id,
-                prompt_run_id=prompt_run.id,
                 job_type="compaction",
                 status="completed",
                 attempts=1,
@@ -177,7 +169,6 @@ class ContextRepositoryMixin:
             query = (
                 select(Job)
                 .options(
-                    selectinload(Job.prompt_run),
                     selectinload(Job.events),
                 )
                 .where(
@@ -282,12 +273,13 @@ class ContextRepositoryMixin:
             )
 
         if multi_turn_memory and session_obj is not None:
-            current_job_id = await self.get_latest_completed_job_id(session_id)
-            if current_job_id is not None:
-                replay_messages = await build_message_history(
-                    self, session_id, current_job_id
-                )
-                replay_tokens = estimate_tokens_for_messages(replay_messages)
+            # Use a sentinel current_job_id so that ALL completed jobs are
+            # included in the replay estimate (simulating what the next job
+            # would see as its prior-turn context).
+            replay_messages = await build_message_history(
+                self, session_id, current_job_id=""
+            )
+            replay_tokens = estimate_tokens_for_messages(replay_messages)
 
         tokens_used = system_prompt_tokens + replay_tokens + tools_tokens
 

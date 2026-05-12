@@ -120,6 +120,29 @@ async def test_session_repository_updates_existing_assignments_and_filters(
 
 
 @pytest.mark.asyncio
+async def test_list_sessions_excludes_child_subagent_sessions(repository: Repository):
+    parent_session = await repository.create_session("parent", {})
+    child_session = await repository.create_session("child", {})
+
+    parent_job = await repository.enqueue_prompt_job(
+        parent_session.id, prompt="parent", metadata_json={}, max_attempts=1
+    )
+    child_job = await repository.enqueue_prompt_job(
+        child_session.id,
+        prompt="child",
+        metadata_json={"parent_job_id": parent_job.id},
+        max_attempts=1,
+    )
+    await repository.set_parent_job_id(child_job.id, parent_job.id)
+
+    sessions, total = await repository.list_sessions(limit=10, offset=0)
+
+    assert total == 1
+    assert [item.id for item in sessions] == [parent_session.id]
+    assert await repository.get_session(child_session.id) is not None
+
+
+@pytest.mark.asyncio
 async def test_job_repository_claims_oldest_and_filters_results(repository: Repository):
     session = await _create_session_with_model(repository)
     first_job = await repository.enqueue_prompt_job(
@@ -194,9 +217,6 @@ async def test_job_repository_cancel_and_failure_branches(repository: Repository
     assert failed is not None
     assert failed.status == "failed"
     assert failed.completed_at is not None
-    assert failed.prompt_run.status == "failed"
-    assert failed.attempts_log[0].status == "failed"
-    assert failed.attempts_log[0].error_message == "do not retry"
 
     assert await repository.request_cancel("missing") is None
     assert await repository.mark_job_completed("missing", "done") is None

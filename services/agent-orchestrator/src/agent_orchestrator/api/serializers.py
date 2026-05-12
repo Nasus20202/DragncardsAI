@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from agent_orchestrator.schemas.jobs import (
     JobDetail,
     JobEventResponse,
     JobSummary,
-    PromptRunSummary,
     SessionToolResponse,
 )
 from agent_orchestrator.schemas.sessions import (
@@ -79,7 +80,8 @@ def serialize_job(item) -> JobSummary:
     )
     return JobSummary(
         id=item.id,
-        prompt_run_id=item.prompt_run_id,
+        prompt=item.prompt,
+        metadata=item.metadata_json,
         status=item.status,
         attempts=item.attempts,
         max_attempts=item.max_attempts,
@@ -92,17 +94,6 @@ def serialize_job(item) -> JobSummary:
         completed_at=item.completed_at,
         latest_event_id=None if latest_event is None else str(latest_event.id),
         latest_event_type=None if latest_event is None else latest_event.event_type,
-    )
-
-
-def serialize_prompt_run(item) -> PromptRunSummary:
-    return PromptRunSummary(
-        id=item.id,
-        prompt=item.prompt,
-        status=item.status,
-        metadata=item.metadata_json,
-        created_at=item.created_at,
-        updated_at=item.updated_at,
     )
 
 
@@ -125,6 +116,26 @@ def serialize_tool_definition(item) -> SessionToolResponse:
         description=item.description,
         parameters=item.parameters,
     )
+
+
+def serialize_builtin_tool_definition(item) -> SessionToolResponse:
+    return SessionToolResponse(
+        name=item.name,
+        assignment_name="builtin",
+        transport="builtin",
+        server_url="builtin://local",
+        actual_name=item.name,
+        description=item.description,
+        parameters=item.parameters,
+    )
+
+
+def serialize_session_tool(item) -> SessionToolResponse:
+    if isinstance(item, SessionToolResponse):
+        return item
+    if hasattr(item, "exposed_name"):
+        return serialize_tool_definition(item)
+    return serialize_builtin_tool_definition(item)
 
 
 def serialize_session_detail(item) -> SessionDetail:
@@ -152,8 +163,7 @@ def serialize_session_detail(item) -> SessionDetail:
 def serialize_job_detail(item, events, available_tools) -> JobDetail:
     return JobDetail(
         **serialize_job(item).model_dump(),
-        prompt_run=serialize_prompt_run(item.prompt_run),
         outputs=[output.content for output in item.outputs],
         events=[serialize_event(event) for event in events],
-        available_tools=[serialize_tool_definition(tool) for tool in available_tools],
+        available_tools=[serialize_session_tool(tool) for tool in available_tools],
     )

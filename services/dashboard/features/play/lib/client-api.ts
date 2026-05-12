@@ -3,6 +3,7 @@ import {
   ContextMetadata,
   DashboardConfig,
   JobDetail,
+  JobEventResponse,
   JobSummary,
   JsonValue,
   McpAssignmentResponse,
@@ -15,6 +16,43 @@ import {
 
 interface DashboardConfigResponse {
   config: DashboardConfig;
+}
+
+type JsonHeaders = { "content-type": "application/json" };
+
+async function request(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(path, init);
+}
+
+async function getJson<T>(path: string): Promise<T> {
+  const response = await request(path, { cache: "no-store" });
+  return readJson<T>(response);
+}
+
+async function sendJson<T>(
+  path: string,
+  method: "POST" | "PATCH" | "PUT",
+  body?: unknown
+): Promise<T> {
+  const headers: JsonHeaders = { "content-type": "application/json" };
+  const response = await request(path, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return readJson<T>(response);
+}
+
+async function sendNoContent(path: string, method: "DELETE" | "POST") {
+  const response = await request(path, { method });
+  if (!response.ok && response.status !== 204) {
+    const body = (await response.json().catch(() => null)) as {
+      detail?: string;
+    } | null;
+    throw new Error(
+      body?.detail ?? `${response.status} ${response.statusText}`
+    );
+  }
 }
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -31,64 +69,58 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 export async function fetchDashboardConfig(): Promise<DashboardConfig> {
-  const response = await fetch("/api/config", { cache: "no-store" });
-  const payload = await readJson<DashboardConfigResponse>(response);
+  const payload = await getJson<DashboardConfigResponse>("/api/config");
   return payload.config;
 }
 
 export async function listProviders(): Promise<ProviderResponse[]> {
-  const response = await fetch("/api/proxy/orchestrator/providers", {
-    cache: "no-store",
-  });
-  return (await readJson<{ providers: ProviderResponse[] }>(response))
-    .providers;
+  return (
+    await getJson<{ providers: ProviderResponse[] }>(
+      "/api/proxy/orchestrator/providers"
+    )
+  ).providers;
 }
 
 export async function listGamePlugins(): Promise<CardProviderResponse[]> {
-  const response = await fetch("/api/proxy/game/card-providers", {
-    cache: "no-store",
-  });
-  return (await readJson<{ providers: CardProviderResponse[] }>(response))
-    .providers;
+  return (
+    await getJson<{ providers: CardProviderResponse[] }>(
+      "/api/proxy/game/card-providers"
+    )
+  ).providers;
 }
 
 export async function listAvailableSkills(): Promise<
   SkillDefinitionResponse[]
 > {
-  const response = await fetch("/api/proxy/orchestrator/skills", {
-    cache: "no-store",
-  });
-  return (await readJson<{ skills: SkillDefinitionResponse[] }>(response))
-    .skills;
+  return (
+    await getJson<{ skills: SkillDefinitionResponse[] }>(
+      "/api/proxy/orchestrator/skills"
+    )
+  ).skills;
 }
 
 export async function listSessions(): Promise<SessionSummary[]> {
-  const response = await fetch("/api/proxy/orchestrator/sessions", {
-    cache: "no-store",
-  });
-  return (await readJson<{ sessions: SessionSummary[] }>(response)).sessions;
+  return (
+    await getJson<{ sessions: SessionSummary[] }>(
+      "/api/proxy/orchestrator/sessions"
+    )
+  ).sessions;
 }
 
 export async function getSession(sessionId: string): Promise<SessionDetail> {
-  const response = await fetch(
-    `/api/proxy/orchestrator/sessions/${sessionId}`,
-    {
-      cache: "no-store",
-    }
-  );
-  return (await readJson<{ session: SessionDetail }>(response)).session;
+  return (
+    await getJson<{ session: SessionDetail }>(
+      `/api/proxy/orchestrator/sessions/${sessionId}`
+    )
+  ).session;
 }
 
 export async function listSessionJobs(
   sessionId: string
 ): Promise<SessionJobsResponse> {
-  const response = await fetch(
-    `/api/proxy/orchestrator/sessions/${sessionId}/jobs`,
-    {
-      cache: "no-store",
-    }
+  return getJson<SessionJobsResponse>(
+    `/api/proxy/orchestrator/sessions/${sessionId}/jobs`
   );
-  return readJson<SessionJobsResponse>(response);
 }
 
 export async function createSession(
@@ -98,13 +130,13 @@ export async function createSession(
     context_recent_tool_exchange_limit?: number | null;
   }
 ): Promise<SessionDetail> {
-  const response = await fetch("/api/proxy/orchestrator/sessions", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name, metadata: {}, ...(body ?? {}) }),
-  });
-
-  return (await readJson<{ session: SessionDetail }>(response)).session;
+  return (
+    await sendJson<{ session: SessionDetail }>(
+      "/api/proxy/orchestrator/sessions",
+      "POST",
+      { name, metadata: {}, ...(body ?? {}) }
+    )
+  ).session;
 }
 
 export async function updateSession(
@@ -116,16 +148,13 @@ export async function updateSession(
     context_recent_tool_exchange_limit?: number | null;
   }
 ): Promise<SessionDetail> {
-  const response = await fetch(
-    `/api/proxy/orchestrator/sessions/${sessionId}`,
-    {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }
-  );
-
-  return (await readJson<{ session: SessionDetail }>(response)).session;
+  return (
+    await sendJson<{ session: SessionDetail }>(
+      `/api/proxy/orchestrator/sessions/${sessionId}`,
+      "PATCH",
+      body
+    )
+  ).session;
 }
 
 export async function setModelConfig(
@@ -137,51 +166,36 @@ export async function setModelConfig(
     provider_options: Record<string, JsonValue>;
   }
 ) {
-  const response = await fetch(
+  return sendJson<{ model_config: unknown }>(
     `/api/proxy/orchestrator/sessions/${sessionId}/model-config`,
-    {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }
+    "PUT",
+    body
   );
-  return readJson<{ model_config: unknown }>(response);
 }
 
 export async function addSkill(sessionId: string, skillName: string) {
-  const response = await fetch(
+  return sendJson<{ skill: unknown }>(
     `/api/proxy/orchestrator/sessions/${sessionId}/skills`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ skill_name: skillName }),
-    }
+    "POST",
+    { skill_name: skillName }
   );
-  return readJson<{ skill: unknown }>(response);
 }
 
 export async function removeSkill(sessionId: string, skillName: string) {
-  const response = await fetch(
+  await sendNoContent(
     `/api/proxy/orchestrator/sessions/${sessionId}/skills/${skillName}`,
-    {
-      method: "DELETE",
-    }
+    "DELETE"
   );
-  if (!response.ok && response.status !== 204) {
-    throw new Error(`Failed to remove skill ${skillName}`);
-  }
 }
 
 export async function listSessionMcps(
   sessionId: string
 ): Promise<McpAssignmentResponse[]> {
-  const response = await fetch(
-    `/api/proxy/orchestrator/sessions/${sessionId}/mcps`,
-    {
-      cache: "no-store",
-    }
-  );
-  return (await readJson<{ mcps: McpAssignmentResponse[] }>(response)).mcps;
+  return (
+    await getJson<{ mcps: McpAssignmentResponse[] }>(
+      `/api/proxy/orchestrator/sessions/${sessionId}/mcps`
+    )
+  ).mcps;
 }
 
 export async function addMcp(
@@ -193,83 +207,80 @@ export async function addMcp(
     headers?: Record<string, string>;
   }
 ) {
-  const response = await fetch(
+  return sendJson<{ mcp: McpAssignmentResponse }>(
     `/api/proxy/orchestrator/sessions/${sessionId}/mcps`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }
+    "POST",
+    body
   );
-  return readJson<{ mcp: McpAssignmentResponse }>(response);
 }
 
 export async function removeMcp(sessionId: string, assignmentName: string) {
-  const response = await fetch(
+  await sendNoContent(
     `/api/proxy/orchestrator/sessions/${sessionId}/mcps/${assignmentName}`,
-    {
-      method: "DELETE",
-    }
+    "DELETE"
   );
-  if (!response.ok && response.status !== 204) {
-    throw new Error(`Failed to remove MCP ${assignmentName}`);
-  }
 }
 
 export async function terminateSession(
   sessionId: string
 ): Promise<SessionDetail> {
-  const response = await fetch(
-    `/api/proxy/orchestrator/sessions/${sessionId}/terminate`,
-    {
-      method: "POST",
-    }
-  );
-  return (await readJson<{ session: SessionDetail }>(response)).session;
+  return (
+    await sendJson<{ session: SessionDetail }>(
+      `/api/proxy/orchestrator/sessions/${sessionId}/terminate`,
+      "POST"
+    )
+  ).session;
 }
 
 export async function submitPrompt(
   sessionId: string,
   prompt: string
 ): Promise<JobSummary> {
-  const response = await fetch(
-    `/api/proxy/orchestrator/sessions/${sessionId}/prompts`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    }
-  );
-  return (await readJson<{ job: JobSummary }>(response)).job;
+  return (
+    await sendJson<{ job: JobSummary }>(
+      `/api/proxy/orchestrator/sessions/${sessionId}/prompts`,
+      "POST",
+      { prompt }
+    )
+  ).job;
 }
 
 export async function getJob(jobId: string): Promise<JobDetail> {
-  const response = await fetch(`/api/proxy/orchestrator/jobs/${jobId}`, {
-    cache: "no-store",
-  });
-  return (await readJson<{ job: JobDetail }>(response)).job;
+  return (
+    await getJson<{ job: JobDetail }>(`/api/proxy/orchestrator/jobs/${jobId}`)
+  ).job;
+}
+
+export async function cancelJob(jobId: string): Promise<JobSummary> {
+  return (
+    await sendJson<{ job: JobSummary }>(
+      `/api/proxy/orchestrator/jobs/${jobId}/cancel`,
+      "POST"
+    )
+  ).job;
+}
+
+export async function getJobEvents(jobId: string): Promise<JobEventResponse[]> {
+  return (
+    await getJson<{ events: JobEventResponse[] }>(
+      `/api/proxy/orchestrator/jobs/${jobId}/events`
+    )
+  ).events;
 }
 
 export async function getContextMetadata(
   sessionId: string
 ): Promise<ContextMetadata> {
-  const response = await fetch(
-    `/api/proxy/orchestrator/sessions/${sessionId}/context`,
-    {
-      cache: "no-store",
-    }
+  return getJson<ContextMetadata>(
+    `/api/proxy/orchestrator/sessions/${sessionId}/context`
   );
-  return readJson<ContextMetadata>(response);
 }
 
 export async function compactSession(
   sessionId: string
 ): Promise<ContextMetadata> {
-  const response = await fetch(
+  return sendJson<ContextMetadata>(
     `/api/proxy/orchestrator/sessions/${sessionId}/compact`,
-    {
-      method: "POST",
-    }
+    "POST"
   );
-  return readJson<ContextMetadata>(response);
 }

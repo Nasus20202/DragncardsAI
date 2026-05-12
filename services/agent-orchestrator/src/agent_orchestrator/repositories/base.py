@@ -6,7 +6,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from agent_orchestrator.storage.models import AgentSession, Job, JobAttempt, PromptRun
+from agent_orchestrator.storage.models import AgentSession, Job
 
 
 def utc_now() -> datetime:
@@ -27,26 +27,9 @@ class RepositoryBase:
 
     def _job_query(self) -> Select[tuple[Job]]:
         return select(Job).options(
-            selectinload(Job.prompt_run),
             selectinload(Job.outputs),
             selectinload(Job.events),
-            selectinload(Job.attempts_log),
             selectinload(Job.session).selectinload(AgentSession.model_config),
             selectinload(Job.session).selectinload(AgentSession.skill_assignments),
             selectinload(Job.session).selectinload(AgentSession.mcp_assignments),
         )
-
-    async def _get_attempts_for_update(
-        self, session: AsyncSession, job_id: str
-    ) -> list[JobAttempt]:
-        result = await session.execute(
-            select(JobAttempt).where(JobAttempt.job_id == job_id)
-        )
-        return list(result.scalars())
-
-    async def _get_prompt_run_for_update(
-        self, session: AsyncSession, prompt_run_id: str
-    ) -> PromptRun:
-        prompt_run = await session.get(PromptRun, prompt_run_id)
-        assert prompt_run is not None
-        return prompt_run

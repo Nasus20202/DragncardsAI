@@ -27,7 +27,8 @@ const sessions: SessionSummary[] = [
     mcps: [],
     recent_job: {
       id: "job-1",
-      prompt_run_id: "prompt-1",
+      prompt: "Hello",
+      metadata: {},
       status: "running",
       attempts: 1,
       max_attempts: 1,
@@ -65,6 +66,7 @@ describe("PlaySessionList", () => {
       <PlaySessionList
         sessions={sessions}
         selectedSessionId="session-1"
+        streamingSessionId={null}
         isBusy={false}
         canCreate={true}
         isCollapsed={false}
@@ -92,6 +94,7 @@ describe("PlaySessionList", () => {
       <PlaySessionList
         sessions={sessions}
         selectedSessionId={null}
+        streamingSessionId={null}
         isBusy={false}
         canCreate={true}
         isCollapsed={true}
@@ -115,6 +118,7 @@ describe("PlaySessionList", () => {
       <PlaySessionList
         sessions={[]}
         selectedSessionId={null}
+        streamingSessionId={null}
         isBusy={true}
         canCreate={true}
         isCollapsed={false}
