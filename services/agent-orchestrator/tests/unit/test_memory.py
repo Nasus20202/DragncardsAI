@@ -54,6 +54,58 @@ async def _complete_job(
     return job.id
 
 
+async def _complete_job_with_tool_exchange(
+    repo: Repository,
+    session_id: str,
+    *,
+    prompt: str,
+    assistant_text: str,
+    tool_call_id: str,
+    exposed_tool_name: str,
+    tool_name: str,
+    assignment: str,
+    result: dict,
+) -> str:
+    job = await repo.enqueue_prompt_job(
+        session_id, prompt=prompt, metadata_json={}, max_attempts=1
+    )
+    assert job is not None
+    claimed = await repo.claim_next_job()
+    assert claimed is not None
+    await repo.append_event(
+        job.id, session_id, "model_output", {"text": assistant_text}
+    )
+    await repo.append_event(
+        job.id,
+        session_id,
+        "tool_call",
+        {
+            "tool_call_id": tool_call_id,
+            "exposed_tool_name": exposed_tool_name,
+            "tool_name": tool_name,
+            "assignment": assignment,
+            "server_url": "http://localhost:4001/mcp/",
+            "arguments": {},
+        },
+    )
+    await repo.append_event(
+        job.id,
+        session_id,
+        "tool_result",
+        {
+            "tool_call_id": tool_call_id,
+            "exposed_tool_name": exposed_tool_name,
+            "tool_name": tool_name,
+            "assignment": assignment,
+            "server_url": "http://localhost:4001/mcp/",
+            "is_error": False,
+            "result": result,
+        },
+    )
+    await repo.mark_job_completed(job.id, assistant_text)
+    return job.id
+
+
 @pytest.mark.asyncio
 async def test_build_message_history_no_prior_jobs(repository: Repository):
     session = await _make_session(repository)
@@ -176,3 +228,188 @@ def test_reconstruct_job_messages_with_tool_calls():
     assert messages[1]["tool_calls"][0]["id"] == "tc1"
     assert messages[2]["role"] == "tool"
     assert messages[2]["tool_call_id"] == "tc1"
+
+
+@pytest.mark.asyncio
+async def test_build_message_history_applies_recent_message_limit(
+    repository: Repository,
+):
+    session = await repository.create_session(
+        "test", {}, multi_turn_memory=True, context_recent_message_limit=2
+    )
+    await repository.set_model_config(
+        session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
+    )
+
+    await _complete_job(repository, session.id, "first prompt", "first response")
+    await _complete_job(repository, session.id, "second prompt", "second response")
+
+    current_job = await repository.enqueue_prompt_job(
+        session.id, prompt="third prompt", metadata_json={}, max_attempts=1
+    )
+    assert current_job is not None
+    await repository.claim_next_job()
+
+    history = await build_message_history(repository, session.id, current_job.id)
+    assert history == [
+        {"role": "user", "content": "second prompt"},
+        {"role": "assistant", "content": "second response"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_build_message_history_applies_recent_tool_exchange_limit(
+    repository: Repository,
+):
+    session = await repository.create_session(
+        "test", {}, multi_turn_memory=True, context_recent_tool_exchange_limit=1
+    )
+    await repository.set_model_config(
+        session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
+    )
+
+    await _complete_job_with_tool_exchange(
+        repository,
+        session.id,
+        prompt="turn 1",
+        assistant_text="calling one",
+        tool_call_id="tc1",
+        exposed_tool_name="game-service_next_step",
+        tool_name="next_step",
+        assignment="game-service",
+        result={"ok": 1},
+    )
+    await _complete_job_with_tool_exchange(
+        repository,
+        session.id,
+        prompt="turn 2",
+        assistant_text="calling two",
+        tool_call_id="tc2",
+        exposed_tool_name="game-service_next_step",
+        tool_name="next_step",
+        assignment="game-service",
+        result={"ok": 2},
+    )
+
+    current_job = await repository.enqueue_prompt_job(
+        session.id, prompt="turn 3", metadata_json={}, max_attempts=1
+    )
+    assert current_job is not None
+    await repository.claim_next_job()
+
+    history = await build_message_history(repository, session.id, current_job.id)
+    tool_messages = [message for message in history if message["role"] == "tool"]
+    assistant_tool_messages = [
+        message
+        for message in history
+        if message["role"] == "assistant" and "tool_calls" in message
+    ]
+
+    assert len(tool_messages) == 1
+    assert len(assistant_tool_messages) == 1
+    assert assistant_tool_messages[0]["content"] == "calling two"
+    assert tool_messages[0]["tool_call_id"] == "tc2"
+
+
+@pytest.mark.asyncio
+async def test_build_message_history_prefers_newest_state_heavy_exchange(
+    repository: Repository,
+):
+    session = await repository.create_session(
+        "test", {}, multi_turn_memory=True, context_recent_tool_exchange_limit=1
+    )
+    await repository.set_model_config(
+        session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
+    )
+
+    await _complete_job_with_tool_exchange(
+        repository,
+        session.id,
+        prompt="state one",
+        assistant_text="snapshot one",
+        tool_call_id="tc1",
+        exposed_tool_name="game-service_get_game_state",
+        tool_name="get_game_state",
+        assignment="game-service",
+        result={"state": 1},
+    )
+    await _complete_job_with_tool_exchange(
+        repository,
+        session.id,
+        prompt="lookup",
+        assistant_text="lookup card",
+        tool_call_id="tc2",
+        exposed_tool_name="game-service_search_cards_marvel_champions",
+        tool_name="search_cards_marvel_champions",
+        assignment="game-service",
+        result={"cards": ["A"]},
+    )
+    await _complete_job_with_tool_exchange(
+        repository,
+        session.id,
+        prompt="state two",
+        assistant_text="snapshot two",
+        tool_call_id="tc3",
+        exposed_tool_name="game-service_execute_action",
+        tool_name="execute_action",
+        assignment="game-service",
+        result={"state": 2},
+    )
+
+    current_job = await repository.enqueue_prompt_job(
+        session.id, prompt="next", metadata_json={}, max_attempts=1
+    )
+    assert current_job is not None
+    await repository.claim_next_job()
+
+    history = await build_message_history(repository, session.id, current_job.id)
+    tool_messages = [message for message in history if message["role"] == "tool"]
+    assert len(tool_messages) == 1
+    assert tool_messages[0]["tool_call_id"] == "tc3"
+
+
+@pytest.mark.asyncio
+async def test_build_message_history_preserves_compaction_summary_outside_limits(
+    repository: Repository,
+):
+    session = await repository.create_session(
+        "test", {}, multi_turn_memory=True, context_recent_message_limit=1
+    )
+    await repository.set_model_config(
+        session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
+    )
+
+    job1_id = await _complete_job(repository, session.id, "first", "first response")
+    await repository.create_compaction_record(
+        session.id,
+        summary_text="summary",
+        covers_up_to_job_id=job1_id,
+        tokens_used=100,
+    )
+    await _complete_job(repository, session.id, "second", "second response")
+
+    current_job = await repository.enqueue_prompt_job(
+        session.id, prompt="third", metadata_json={}, max_attempts=1
+    )
+    assert current_job is not None
+    await repository.claim_next_job()
+
+    history = await build_message_history(repository, session.id, current_job.id)
+    assert history[0] == {"role": "system", "content": "summary"}
+    assert history[1:] == [{"role": "assistant", "content": "second response"}]

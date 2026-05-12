@@ -91,11 +91,17 @@ export async function listSessionJobs(
   return readJson<SessionJobsResponse>(response);
 }
 
-export async function createSession(name: string): Promise<SessionDetail> {
+export async function createSession(
+  name: string,
+  body?: {
+    context_recent_message_limit?: number | null;
+    context_recent_tool_exchange_limit?: number | null;
+  }
+): Promise<SessionDetail> {
   const response = await fetch("/api/proxy/orchestrator/sessions", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name, metadata: {} }),
+    body: JSON.stringify({ name, metadata: {}, ...(body ?? {}) }),
   });
 
   return (await readJson<{ session: SessionDetail }>(response)).session;
@@ -103,7 +109,12 @@ export async function createSession(name: string): Promise<SessionDetail> {
 
 export async function updateSession(
   sessionId: string,
-  body: { name?: string; metadata?: Record<string, JsonValue> }
+  body: {
+    name?: string | null;
+    metadata?: Record<string, JsonValue>;
+    context_recent_message_limit?: number | null;
+    context_recent_tool_exchange_limit?: number | null;
+  }
 ): Promise<SessionDetail> {
   const response = await fetch(
     `/api/proxy/orchestrator/sessions/${sessionId}`,

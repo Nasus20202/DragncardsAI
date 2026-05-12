@@ -33,6 +33,28 @@ function buildDefaultReasoningDraft(): ReasoningDraft {
   };
 }
 
+function formatOptionalInteger(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? String(value)
+    : "";
+}
+
+export function parseOptionalPositiveInteger(
+  value: string,
+  label: string
+): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+  return parsed === 0 ? null : parsed;
+}
+
 function extractReasoningDraft(
   options: Record<string, JsonValue>
 ): ReasoningDraft {
@@ -96,6 +118,8 @@ export function createDefaultDraft(config: DashboardConfig): SessionDraft {
     name: today,
     providerId: config.defaultProviderId,
     modelName: config.defaultModelName,
+    recentMessageLimit: "",
+    recentToolExchangeLimit: "",
     reasoning: buildDefaultReasoningDraft(),
     gatewayOptionsText: safeJsonStringify({}),
     providerOptionsText: safeJsonStringify({}),
@@ -128,6 +152,12 @@ export function buildDraftFromSession(
     name: session.name ?? "",
     providerId: session.model_config?.provider_id ?? defaultDraft.providerId,
     modelName: session.model_config?.model_name ?? defaultDraft.modelName,
+    recentMessageLimit: formatOptionalInteger(
+      session.context_recent_message_limit
+    ),
+    recentToolExchangeLimit: formatOptionalInteger(
+      session.context_recent_tool_exchange_limit
+    ),
     reasoning: extractReasoningDraft(
       session.model_config?.gateway_options ?? {}
     ),

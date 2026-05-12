@@ -74,3 +74,10 @@ def count_tokens_for_text(text: str) -> int:
             "tiktoken estimation failed (%s), using character heuristic", exc
         )
         return max(1, len(text) // 4)
+
+
+def estimate_tokens_for_tools(tools: list[dict[str, Any]]) -> int:
+    """Estimate token count for tool definitions sent with a request."""
+    if not tools:
+        return 0
+    return count_tokens_for_text(json.dumps(tools, sort_keys=True))

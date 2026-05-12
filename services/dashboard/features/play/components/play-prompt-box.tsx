@@ -44,27 +44,12 @@ export function PlayPromptBox({
   );
 
   return (
-    <div className="shrink-0 border-t border-default-200/60 bg-background px-3 py-3 sm:px-4">
-      <div className="flex flex-col gap-2 md:flex-row md:items-start md:gap-3">
-        {/* Spacer left — mirrors the context widget width so input stays centered */}
-        <div className="hidden md:block md:w-64 md:shrink-0" />
-
-        {/* Context widget — stacked above the input on small screens, right-aligned on desktop */}
-        <div className="order-2 w-full md:order-3 md:w-64 md:shrink-0 md:self-end">
-          {contextMetadata && (
-            <ContextHealthWidget
-              contextMetadata={contextMetadata}
-              isBusy={isBusy}
-              onCompact={onCompact}
-            />
-          )}
-        </div>
-
-        {/* Input centered */}
-        <div className="order-1 min-w-0 w-full flex-1 md:order-2">
+    <div className="shrink-0 border-t border-default-200/60 bg-background px-2 py-3 sm:px-4">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-stretch lg:gap-3">
+        <div className="min-w-0 w-full flex-1 lg:flex">
           <div
             className={[
-              "flex w-full flex-col gap-2 rounded-xl border px-3 py-3 transition-colors sm:flex-row sm:items-end sm:py-2 md:mx-auto md:max-w-3xl",
+              "flex w-full flex-col gap-2 rounded-xl border px-2.5 py-3 transition-colors sm:flex-row sm:items-end sm:px-3 sm:py-2 lg:h-full",
               "bg-default-50 dark:bg-white/3",
               disabled
                 ? "border-default-200 opacity-60"
@@ -102,6 +87,16 @@ export function PlayPromptBox({
               {isBusy ? "…" : "Send"}
             </button>
           </div>
+        </div>
+
+        <div className="w-full lg:flex lg:w-56 lg:shrink-0">
+          {contextMetadata && (
+            <ContextHealthWidget
+              contextMetadata={contextMetadata}
+              isBusy={isBusy}
+              onCompact={onCompact}
+            />
+          )}
         </div>
       </div>
     </div>

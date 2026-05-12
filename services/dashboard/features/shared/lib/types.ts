@@ -106,6 +106,8 @@ export interface SessionSummary {
   id: string;
   name: string | null;
   status: string;
+  context_recent_message_limit: number | null;
+  context_recent_tool_exchange_limit: number | null;
   metadata: Record<string, JsonValue>;
   created_at: string;
   updated_at: string;
@@ -161,6 +163,8 @@ export interface SessionDraft {
   name: string;
   providerId: string;
   modelName: string;
+  recentMessageLimit: string;
+  recentToolExchangeLimit: string;
   reasoning: ReasoningDraft;
   gatewayOptionsText: string;
   providerOptionsText: string;
@@ -176,6 +180,11 @@ export interface ContextMetadata {
   compaction_count: number;
   last_compacted_at: string | null;
   multi_turn_memory: boolean;
+  token_breakdown: {
+    system_prompt: number;
+    replay: number;
+    tools: number;
+  };
 }
 
 export interface MergedOpenApiResult {

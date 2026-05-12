@@ -66,7 +66,11 @@ async def create_session(
     repo: Repository = Depends(get_repository),
 ) -> dict[str, SessionDetail]:
     item = await repo.create_session(
-        body.name, body.metadata, multi_turn_memory=body.multi_turn_memory
+        body.name,
+        body.metadata,
+        multi_turn_memory=body.multi_turn_memory,
+        context_recent_message_limit=body.context_recent_message_limit,
+        context_recent_tool_exchange_limit=body.context_recent_tool_exchange_limit,
     )
     return {"session": serialize_session_detail(item)}
 
@@ -101,9 +105,10 @@ async def update_session(
     body: SessionUpdateRequest,
     repo: Repository = Depends(get_repository),
 ) -> dict[str, SessionDetail]:
-    item = await repo.update_session(
-        session_id, name=body.name, metadata_json=body.metadata
-    )
+    changes = body.model_dump(exclude_unset=True)
+    if "metadata" in changes:
+        changes["metadata_json"] = changes.pop("metadata")
+    item = await repo.update_session(session_id, **changes)
     if item is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"session": serialize_session_detail(item)}

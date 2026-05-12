@@ -28,6 +28,7 @@ import {
   createDefaultDraft,
   parseCustomMcps,
   parseJsonObject,
+  parseOptionalPositiveInteger,
 } from "@/features/play/lib/session-draft";
 import { compareJobsOldestFirst } from "@/features/play/lib/transcript";
 import { PlayConfigPanel } from "@/features/play/components/play-config-panel";
@@ -55,6 +56,31 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+
+const SESSION_QUERY_PARAM = "session";
+
+function readSelectedSessionIdFromUrl(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  return params.get(SESSION_QUERY_PARAM);
+}
+
+function writeSelectedSessionIdToUrl(id: string | null) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  if (id) {
+    url.searchParams.set(SESSION_QUERY_PARAM, id);
+  } else {
+    url.searchParams.delete(SESSION_QUERY_PARAM);
+  }
+  window.history.replaceState({}, "", url);
+}
 
 function dedupeProviders(providers: ProviderResponse[]) {
   const byId = new Map<string, ProviderResponse>();
@@ -179,6 +205,7 @@ export function PlayWorkspace() {
   // Persist selected session across page reloads
   const persistSelectedSessionId = useCallback((id: string | null) => {
     setSelectedSessionId(id);
+    writeSelectedSessionIdToUrl(id);
     if (id) {
       localStorage.setItem("play:selectedSessionId", id);
     } else {
@@ -438,12 +465,16 @@ export function PlayWorkspace() {
         setDraft(createDefaultDraft(nextConfig));
         setStatusText("Ready");
         if (nextSessions.length > 0) {
+          const sessionIdFromUrl = readSelectedSessionIdFromUrl();
           const savedId = localStorage.getItem("play:selectedSessionId");
           const restoredId =
-            savedId && nextSessions.some((s) => s.id === savedId)
-              ? savedId
-              : nextSessions[0].id;
-          setSelectedSessionId(restoredId);
+            sessionIdFromUrl &&
+            nextSessions.some((s) => s.id === sessionIdFromUrl)
+              ? sessionIdFromUrl
+              : savedId && nextSessions.some((s) => s.id === savedId)
+                ? savedId
+                : nextSessions[0].id;
+          persistSelectedSessionId(restoredId);
         }
       } catch (error) {
         setErrorText(
@@ -454,7 +485,7 @@ export function PlayWorkspace() {
     }
 
     void load();
-  }, []);
+  }, [persistSelectedSessionId]);
 
   useEffect(() => {
     if (!selectedSessionId || !config) {
@@ -594,7 +625,16 @@ export function PlayWorkspace() {
         })
         .replace(",", "");
       // Always use today's date for new sessions; the user can rename via Settings after creation.
-      const created = await createSession(defaultName);
+      const created = await createSession(defaultName, {
+        context_recent_message_limit: parseOptionalPositiveInteger(
+          draft.recentMessageLimit,
+          "Recent message limit"
+        ),
+        context_recent_tool_exchange_limit: parseOptionalPositiveInteger(
+          draft.recentToolExchangeLimit,
+          "Recent tool exchange limit"
+        ),
+      });
       const gatewayOptions = applyReasoningToGatewayOptions(
         parseJsonObject(draft.gatewayOptionsText, "Gateway options"),
         draft.reasoning
@@ -675,6 +715,14 @@ export function PlayWorkspace() {
             })
             .replace(",", ""),
         metadata: selectedSession.metadata,
+        context_recent_message_limit: parseOptionalPositiveInteger(
+          draft.recentMessageLimit,
+          "Recent message limit"
+        ),
+        context_recent_tool_exchange_limit: parseOptionalPositiveInteger(
+          draft.recentToolExchangeLimit,
+          "Recent tool exchange limit"
+        ),
       });
       await setModelConfig(selectedSession.id, {
         provider_id: draft.providerId,
@@ -845,8 +893,9 @@ export function PlayWorkspace() {
       ) : null}
       {/* Left — session sidebar */}
       <aside
+        data-testid="session-sidebar"
         className={`flex shrink-0 flex-col border-r border-default-200/60 bg-background transition-all duration-200 ${
-          isSessionsCollapsed ? "w-14" : "w-56"
+          isSessionsCollapsed ? "w-11 sm:w-14" : "w-56"
         }`}
       >
         <PlaySessionList

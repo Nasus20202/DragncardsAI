@@ -68,6 +68,12 @@ class AgentSession(Base):
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="active")
     multi_turn_memory: Mapped[bool] = mapped_column(Boolean, default=True)
+    context_recent_message_limit: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    context_recent_tool_exchange_limit: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
