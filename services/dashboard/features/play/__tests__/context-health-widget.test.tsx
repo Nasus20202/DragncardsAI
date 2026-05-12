@@ -19,23 +19,13 @@ vi.mock("@heroui/react", () => ({
       {children}
     </button>
   ),
-  ProgressBar: ({
-    value,
-    color,
-    "aria-label": ariaLabel,
-  }: {
-    value: number;
-    color: string;
-    "aria-label": string;
-  }) => (
-    <div
-      role="progressbar"
-      aria-label={ariaLabel}
-      data-value={value}
-      data-color={color}
-    />
+  Tooltip: Object.assign(
+    ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    {
+      Trigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+      Content: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    }
   ),
-  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
 const baseMetadata: ContextMetadata = {
@@ -45,6 +35,11 @@ const baseMetadata: ContextMetadata = {
   compaction_count: 0,
   last_compacted_at: null,
   multi_turn_memory: true,
+  token_breakdown: {
+    system_prompt: 4000,
+    replay: 42000,
+    tools: 4000,
+  },
 };
 
 describe("ContextHealthWidget", () => {
@@ -172,5 +167,34 @@ describe("ContextHealthWidget", () => {
       />
     );
     expect(screen.getByText(/3 compactions/i)).toBeInTheDocument();
+  });
+
+  it("renders hoverable usage summary text", () => {
+    render(
+      <ContextHealthWidget
+        contextMetadata={baseMetadata}
+        isBusy={false}
+        onCompact={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(/50\.0k \/ 128\.0k tokens \(39%\)/i)).toHaveClass(
+      "cursor-help"
+    );
+  });
+
+  it("renders token breakdown content", () => {
+    render(
+      <ContextHealthWidget
+        contextMetadata={baseMetadata}
+        isBusy={false}
+        onCompact={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Usage breakdown")).toBeInTheDocument();
+    expect(screen.getByText("System prompt")).toBeInTheDocument();
+    expect(screen.getByText("Replay")).toBeInTheDocument();
+    expect(screen.getByText("Tools")).toBeInTheDocument();
   });
 });

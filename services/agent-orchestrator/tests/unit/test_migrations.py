@@ -72,4 +72,4 @@ async def test_ensure_schema_is_idempotent(tmp_path: Path):
     finally:
         await engine.dispose()
 
-    assert rows == [("0001_initial",), ("0002_context_management",)]
+    assert rows == [(version,) for version in runner.MIGRATIONS]

@@ -235,6 +235,8 @@ const sessionSummary: SessionSummary = {
   id: "session-1",
   name: "Existing session",
   status: "active",
+  context_recent_message_limit: null,
+  context_recent_tool_exchange_limit: null,
   metadata: {},
   created_at: "2026-05-11T00:00:00Z",
   updated_at: "2026-05-11T00:00:00Z",
@@ -292,6 +294,11 @@ const contextMetadata: ContextMetadata = {
   compaction_count: 0,
   last_compacted_at: null,
   multi_turn_memory: true,
+  token_breakdown: {
+    system_prompt: 2,
+    replay: 5,
+    tools: 3,
+  },
 };
 
 function createStorageMock() {
@@ -398,9 +405,32 @@ describe("PlayWorkspace", () => {
       ...sessionDetail,
       status: "terminated",
     });
+    window.history.replaceState({}, "", "/play");
   });
 
-  it("loads config, restores saved session, and avoids syncing unchanged model config", async () => {
+  it("loads config, restores the session from the url, and avoids syncing unchanged model config", async () => {
+    window.history.replaceState({}, "", "/play?session=session-1");
+    globalThis.localStorage.setItem(
+      "play:selectedSessionId",
+      "different-session"
+    );
+
+    render(<PlayWorkspace />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-id")).toHaveTextContent(
+        "session-1"
+      )
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
+    );
+    expect(api.setModelConfig).not.toHaveBeenCalled();
+  });
+
+  it("falls back to saved session when the url has no session id", async () => {
     globalThis.localStorage.setItem("play:selectedSessionId", "session-1");
 
     render(<PlayWorkspace />);
@@ -431,6 +461,7 @@ describe("PlayWorkspace", () => {
     await waitFor(() =>
       expect(screen.getByTestId("config-open")).toHaveTextContent("false")
     );
+    expect(screen.getByTestId("session-sidebar").className).toContain("w-11");
   });
 
   it("syncs model config when the draft provider changes", async () => {
@@ -468,10 +499,70 @@ describe("PlayWorkspace", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /create session/i }));
 
-    await waitFor(() => expect(api.createSession).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(api.createSession).toHaveBeenCalledWith(expect.any(String), {
+        context_recent_message_limit: null,
+        context_recent_tool_exchange_limit: null,
+      })
+    );
     await waitFor(() =>
       expect(globalThis.localStorage.getItem("play:selectedSessionId")).toBe(
         "session-2"
+      )
+    );
+    expect(window.location.search).toBe("?session=session-2");
+  });
+
+  it("updates the url when selecting a session", async () => {
+    api.listSessions.mockResolvedValue([
+      sessionSummary,
+      { ...sessionSummary, id: "session-2", name: "Second session" },
+    ]);
+
+    render(<PlayWorkspace />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /second session/i })
+      ).toBeInTheDocument()
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /second session/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-id")).toHaveTextContent(
+        "session-2"
+      )
+    );
+    expect(window.location.search).toBe("?session=session-2");
+  });
+
+  it("saves replay window settings with the session update", async () => {
+    api.getSession.mockResolvedValueOnce({
+      ...sessionDetail,
+      context_recent_message_limit: 5,
+      context_recent_tool_exchange_limit: 2,
+    });
+
+    render(<PlayWorkspace />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /save configuration/i })
+    );
+
+    await waitFor(() =>
+      expect(api.updateSession).toHaveBeenCalledWith(
+        "session-1",
+        expect.objectContaining({
+          context_recent_message_limit: 5,
+          context_recent_tool_exchange_limit: 2,
+        })
       )
     );
   });

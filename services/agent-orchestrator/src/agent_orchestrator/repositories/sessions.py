@@ -20,12 +20,16 @@ class SessionRepositoryMixin:
         metadata_json: dict[str, Any] | None,
         *,
         multi_turn_memory: bool = True,
+        context_recent_message_limit: int | None = None,
+        context_recent_tool_exchange_limit: int | None = None,
     ) -> AgentSession:
         async with self._session_factory() as session, session.begin():
             item = AgentSession(
                 name=name,
                 metadata_json=metadata_json or {},
                 multi_turn_memory=multi_turn_memory,
+                context_recent_message_limit=context_recent_message_limit,
+                context_recent_tool_exchange_limit=context_recent_tool_exchange_limit,
             )
             session.add(item)
             await session.flush()
@@ -63,22 +67,30 @@ class SessionRepositoryMixin:
             return result.scalars().unique().first()
 
     async def update_session(
-        self,
-        session_id: str,
-        *,
-        name: str | None = None,
-        metadata_json: dict[str, Any] | None = None,
+        self, session_id: str, **changes: Any
     ) -> AgentSession | None:
         async with self._session_factory() as session, session.begin():
             item = await session.get(AgentSession, session_id)
             if item is None:
                 return None
-            if name is not None:
-                item.name = name
-            if metadata_json is not None:
-                item.metadata_json = metadata_json
+            if "name" in changes:
+                item.name = changes["name"]
+            if "metadata_json" in changes:
+                item.metadata_json = changes["metadata_json"]
+            if "context_recent_message_limit" in changes:
+                item.context_recent_message_limit = changes[
+                    "context_recent_message_limit"
+                ]
+            if "context_recent_tool_exchange_limit" in changes:
+                item.context_recent_tool_exchange_limit = changes[
+                    "context_recent_tool_exchange_limit"
+                ]
             item.updated_at = utc_now()
         return await self.get_session(session_id)
+
+    async def get_session_replay_settings(self, session_id: str) -> AgentSession | None:
+        async with self._session_factory() as session:
+            return await session.get(AgentSession, session_id)
 
     async def update_multi_turn_memory(
         self, session_id: str, *, multi_turn_memory: bool

@@ -9,6 +9,8 @@ const selectedSession = {
   id: "session-1",
   name: "Session",
   status: "active",
+  context_recent_message_limit: null,
+  context_recent_tool_exchange_limit: null,
   metadata: {},
   created_at: "2026-05-11T00:00:00Z",
   updated_at: "2026-05-11T00:00:00Z",

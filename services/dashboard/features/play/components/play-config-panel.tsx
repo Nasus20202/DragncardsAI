@@ -442,6 +442,24 @@ export function PlayConfigPanel({
 
             <Separator />
 
+            <TextInputField
+              id="cfg-rmsg-limit"
+              label="Recent message limit"
+              placeholder="Unlimited"
+              value={draft.recentMessageLimit}
+              onChange={(v) => set("recentMessageLimit", v)}
+            />
+
+            <TextInputField
+              id="cfg-rtool-limit"
+              label="Recent tool exchange limit"
+              placeholder="Unlimited"
+              value={draft.recentToolExchangeLimit}
+              onChange={(v) => set("recentToolExchangeLimit", v)}
+            />
+
+            <Separator />
+
             <p className="text-xs font-semibold uppercase tracking-wider text-default-400">
               Advanced JSON
             </p>

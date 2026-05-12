@@ -245,3 +245,31 @@ async def test_update_multi_turn_memory_missing_session(repository: Repository):
         "missing", multi_turn_memory=False
     )
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_session_replay_limits_default_to_unlimited(repository: Repository):
+    session = await repository.create_session("demo", {})
+    assert session.context_recent_message_limit is None
+    assert session.context_recent_tool_exchange_limit is None
+
+
+@pytest.mark.asyncio
+async def test_session_replay_limits_can_be_created_and_updated(repository: Repository):
+    session = await repository.create_session(
+        "demo",
+        {},
+        context_recent_message_limit=8,
+        context_recent_tool_exchange_limit=2,
+    )
+    assert session.context_recent_message_limit == 8
+    assert session.context_recent_tool_exchange_limit == 2
+
+    updated = await repository.update_session(
+        session.id,
+        context_recent_message_limit=4,
+        context_recent_tool_exchange_limit=None,
+    )
+    assert updated is not None
+    assert updated.context_recent_message_limit == 4
+    assert updated.context_recent_tool_exchange_limit is None

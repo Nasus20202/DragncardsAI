@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyReasoningToGatewayOptions,
   createDefaultDraft,
+  parseOptionalPositiveInteger,
   parseJsonObject,
 } from "@/features/play/lib/session-draft";
 
@@ -55,5 +56,13 @@ describe("session draft helpers", () => {
         { enabled: false, effort: "medium", maxTokens: "" }
       )
     ).toEqual({ temperature: 0.2 });
+  });
+
+  it("treats empty and zero replay inputs as unlimited", () => {
+    expect(parseOptionalPositiveInteger("", "Recent message limit")).toBeNull();
+    expect(
+      parseOptionalPositiveInteger("0", "Recent message limit")
+    ).toBeNull();
+    expect(parseOptionalPositiveInteger("3", "Recent message limit")).toBe(3);
   });
 });

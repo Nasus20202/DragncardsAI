@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 tracer = get_tracer(__name__)
 
 
+class InvalidToolInvocationError(RuntimeError):
+    def __init__(self, tool_name: str, message: str):
+        super().__init__(message)
+        self.tool_name = tool_name
+
+
 class WorkerService:
     def __init__(
         self,
@@ -320,17 +326,6 @@ class WorkerService:
                     }
                     messages.append(assistant_message)
                     for tool_call in response.tool_calls:
-                        if tool_call.name not in tool_mapping:
-                            raise RuntimeError(
-                                f"Unknown tool requested: {tool_call.name}"
-                            )
-                        tool_definition = tool_mapping[tool_call.name]
-                        logger.info(
-                            "Job %s invoking tool %s via %s",
-                            job.id,
-                            tool_call.name,
-                            tool_definition.server_url,
-                        )
                         assistant_message["tool_calls"].append(
                             {
                                 "id": tool_call.id,
@@ -340,6 +335,23 @@ class WorkerService:
                                     "arguments": json.dumps(tool_call.arguments),
                                 },
                             }
+                        )
+                        if tool_call.name not in tool_mapping:
+                            await self._append_invalid_tool_result(
+                                job_id=job.id,
+                                session_id=session.id,
+                                messages=messages,
+                                tool_call_id=tool_call.id,
+                                tool_name=tool_call.name,
+                                message=f"Unknown tool requested: {tool_call.name}",
+                            )
+                            continue
+                        tool_definition = tool_mapping[tool_call.name]
+                        logger.info(
+                            "Job %s invoking tool %s via %s",
+                            job.id,
+                            tool_call.name,
+                            tool_definition.server_url,
                         )
                         await self._repository.append_event(
                             job.id,
@@ -365,7 +377,7 @@ class WorkerService:
                             result = await self._mcp_tool_catalog.call_tool(
                                 tool_definition,
                                 tool_call.arguments,
-                                ignore_failures=True,
+                                ignore_failures=False,
                             )
                         logger.info(
                             "Job %s received tool result for %s (is_error=%s)",
@@ -401,49 +413,41 @@ class WorkerService:
                 job_span.set_attribute("job.status", "failed")
                 raise RuntimeError("tool round limit exceeded")
             except BifrostError as exc:
+                failure = self._classify_execution_failure(exc)
                 logger.warning(
                     "Job %s failed with bifrost error code=%s retryable=%s message=%s",
                     job.id,
-                    exc.code,
-                    exc.retryable,
-                    str(exc),
+                    failure["code"],
+                    failure["retryable"],
+                    failure["message"],
                 )
                 job_span.set_attribute("job.status", "failed")
                 await self._repository.append_event(
-                    job.id,
-                    session.id,
-                    "failure",
-                    {
-                        "code": exc.code,
-                        "message": str(exc),
-                        "retryable": exc.retryable,
-                    },
+                    job.id, session.id, "failure", failure
                 )
                 await self._repository.mark_job_failed(
                     job.id,
-                    error_code=exc.code,
-                    error_message=str(exc),
-                    retryable=exc.retryable,
+                    error_code=failure["code"],
+                    error_message=failure["message"],
+                    retryable=bool(failure["retryable"]),
                 )
-            except (McpClientError, RuntimeError, ValueError) as exc:
+            except (
+                McpClientError,
+                RuntimeError,
+                ValueError,
+                InvalidToolInvocationError,
+            ) as exc:
                 logger.exception("Job %s failed", job.id)
-                error_message = self._format_execution_error(exc)
+                failure = self._classify_execution_failure(exc)
                 job_span.set_attribute("job.status", "failed")
                 await self._repository.append_event(
-                    job.id,
-                    session.id,
-                    "failure",
-                    {
-                        "code": "execution_error",
-                        "message": error_message,
-                        "retryable": False,
-                    },
+                    job.id, session.id, "failure", failure
                 )
                 await self._repository.mark_job_failed(
                     job.id,
-                    error_code="execution_error",
-                    error_message=error_message,
-                    retryable=False,
+                    error_code=failure["code"],
+                    error_message=failure["message"],
+                    retryable=bool(failure["retryable"]),
                 )
 
     async def _maybe_auto_compact(self, job_id: str, session_id: str) -> None:
@@ -505,6 +509,83 @@ class WorkerService:
             if nested_messages:
                 return nested_messages[0]
         return str(exc)
+
+    def _classify_execution_failure(self, exc: Exception) -> dict[str, Any]:
+        if isinstance(exc, BifrostError):
+            return {
+                "code": exc.code,
+                "message": str(exc),
+                "retryable": exc.retryable,
+            }
+        if isinstance(exc, McpClientError):
+            return {
+                "code": "mcp_transport_error",
+                "message": self._format_execution_error(exc),
+                "retryable": True,
+            }
+        if isinstance(exc, InvalidToolInvocationError):
+            return {
+                "code": "invalid_tool_feedback_error",
+                "message": self._format_execution_error(exc),
+                "retryable": False,
+            }
+        return {
+            "code": "execution_error",
+            "message": self._format_execution_error(exc),
+            "retryable": False,
+        }
+
+    async def _append_invalid_tool_result(
+        self,
+        *,
+        job_id: str,
+        session_id: str,
+        messages: list[dict[str, Any]],
+        tool_call_id: str,
+        tool_name: str,
+        message: str,
+    ) -> None:
+        result = {
+            "is_error": True,
+            "content": [{"type": "text", "text": message}],
+        }
+        try:
+            await self._repository.append_event(
+                job_id,
+                session_id,
+                "tool_call",
+                {
+                    "tool_call_id": tool_call_id,
+                    "exposed_tool_name": tool_name,
+                    "tool_name": tool_name,
+                    "assignment": None,
+                    "server_url": None,
+                    "arguments": {},
+                },
+            )
+            await self._repository.append_event(
+                job_id,
+                session_id,
+                "tool_result",
+                {
+                    "tool_call_id": tool_call_id,
+                    "exposed_tool_name": tool_name,
+                    "tool_name": tool_name,
+                    "assignment": None,
+                    "server_url": None,
+                    "is_error": True,
+                    "result": result,
+                },
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": json.dumps(result),
+                }
+            )
+        except Exception as exc:
+            raise InvalidToolInvocationError(tool_name, message) from exc
 
     def _reasoning_enabled(
         self,

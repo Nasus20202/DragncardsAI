@@ -17,6 +17,8 @@ const activeSession: SessionDetail = {
   id: "session-1",
   name: "Session",
   status: "active",
+  context_recent_message_limit: null,
+  context_recent_tool_exchange_limit: null,
   metadata: {},
   created_at: "2026-05-11T00:00:00Z",
   updated_at: "2026-05-11T00:00:00Z",
@@ -35,6 +37,11 @@ const metadata: ContextMetadata = {
   compaction_count: 0,
   last_compacted_at: null,
   multi_turn_memory: true,
+  token_breakdown: {
+    system_prompt: 1,
+    replay: 0,
+    tools: 0,
+  },
 };
 
 describe("PlayPromptBox", () => {
@@ -117,5 +124,25 @@ describe("PlayPromptBox", () => {
     expect(
       screen.getByRole("button", { name: /send message/i })
     ).toBeDisabled();
+  });
+
+  it("uses a simple prompt-left context-right layout without a balancing spacer", () => {
+    const { container } = render(
+      <PlayPromptBox
+        prompt="hello"
+        selectedSession={activeSession}
+        isBusy={false}
+        contextMetadata={metadata}
+        onPromptChange={vi.fn()}
+        onSubmit={vi.fn()}
+        onCompact={vi.fn()}
+      />
+    );
+
+    const layoutRow = container.querySelector(".lg\\:flex-row");
+    const contextColumn = container.querySelector(".lg\\:w-56");
+    expect(layoutRow).toBeInTheDocument();
+    expect(contextColumn).toBeInTheDocument();
+    expect(container.querySelector(".xl\\:w-48")).toBeNull();
   });
 });

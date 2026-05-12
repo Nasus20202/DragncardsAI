@@ -6,13 +6,17 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from agent_orchestrator.api.deps import (
     get_bifrost_client,
+    get_mcp_tool_catalog,
     get_repository,
     get_settings,
+    get_skill_registry,
     require_session,
 )
 from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient
+from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.runtime.compaction import perform_compaction
+from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.schemas.context import ContextMetadataResponse
 from agent_orchestrator.storage.models import AgentSession
 from agent_orchestrator.storage.repository import Repository
@@ -38,6 +42,8 @@ async def compact_session(
     session: AgentSession = Depends(require_session),
     repo: Repository = Depends(get_repository),
     bifrost_client: BifrostClient = Depends(get_bifrost_client),
+    skill_registry: SkillRegistry = Depends(get_skill_registry),
+    mcp_tool_catalog: McpToolCatalog = Depends(get_mcp_tool_catalog),
     settings: Settings = Depends(get_settings),
 ) -> ContextMetadataResponse:
     """Trigger manual compaction for a session.
@@ -69,7 +75,12 @@ async def compact_session(
     context_window_size = await _resolve_context_window(
         session, settings, bifrost_client
     )
-    metadata = await repo.get_context_metadata(session_id, context_window_size)
+    metadata = await repo.get_context_metadata(
+        session_id,
+        context_window_size,
+        skill_registry=skill_registry,
+        mcp_tool_catalog=mcp_tool_catalog,
+    )
     return ContextMetadataResponse(**metadata)
 
 
@@ -79,11 +90,18 @@ async def get_context_metadata(
     session: AgentSession = Depends(require_session),
     repo: Repository = Depends(get_repository),
     bifrost_client: BifrostClient = Depends(get_bifrost_client),
+    skill_registry: SkillRegistry = Depends(get_skill_registry),
+    mcp_tool_catalog: McpToolCatalog = Depends(get_mcp_tool_catalog),
     settings: Settings = Depends(get_settings),
 ) -> ContextMetadataResponse:
     """Return current context health metadata for a session."""
     context_window_size = await _resolve_context_window(
         session, settings, bifrost_client
     )
-    metadata = await repo.get_context_metadata(session_id, context_window_size)
+    metadata = await repo.get_context_metadata(
+        session_id,
+        context_window_size,
+        skill_registry=skill_registry,
+        mcp_tool_catalog=mcp_tool_catalog,
+    )
     return ContextMetadataResponse(**metadata)

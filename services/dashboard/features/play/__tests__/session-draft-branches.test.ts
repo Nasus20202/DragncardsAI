@@ -24,6 +24,8 @@ const session: SessionDetail = {
   id: "session-1",
   name: "Saved session",
   status: "active",
+  context_recent_message_limit: 6,
+  context_recent_tool_exchange_limit: 2,
   metadata: {},
   created_at: "2026-05-11T00:00:00Z",
   updated_at: "2026-05-11T00:00:00Z",
@@ -79,6 +81,8 @@ describe("session draft helper branches", () => {
       effort: "high",
       maxTokens: "512",
     });
+    expect(draft.recentMessageLimit).toBe("6");
+    expect(draft.recentToolExchangeLimit).toBe("2");
     expect(draft.selectedSkills).toEqual(["custom-skill"]);
     expect(draft.enableDefaultGameServiceMcp).toBe(true);
     expect(draft.customMcpsText).toContain("custom");

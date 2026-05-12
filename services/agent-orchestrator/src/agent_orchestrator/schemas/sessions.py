@@ -13,11 +13,15 @@ class SessionCreateRequest(BaseModel):
     name: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     multi_turn_memory: bool = True
+    context_recent_message_limit: int | None = Field(default=None, ge=0)
+    context_recent_tool_exchange_limit: int | None = Field(default=None, ge=0)
 
 
 class SessionUpdateRequest(BaseModel):
     name: str | None = None
     metadata: dict[str, Any] | None = None
+    context_recent_message_limit: int | None = Field(default=None, ge=0)
+    context_recent_tool_exchange_limit: int | None = Field(default=None, ge=0)
 
 
 class ModelConfigRequest(BaseModel):
@@ -43,6 +47,8 @@ class SessionSummary(BaseModel):
     name: str | None
     status: str
     multi_turn_memory: bool
+    context_recent_message_limit: int | None
+    context_recent_tool_exchange_limit: int | None
     metadata: dict[str, Any]
     created_at: datetime
     updated_at: datetime
