@@ -21,6 +21,9 @@ _RELEASE_LOCK_LUA = (
     "if redis.call('get', KEYS[1]) == ARGV[1] "
     "then return redis.call('del', KEYS[1]) else return 0 end"
 )
+_MIN_LOCK_TTL_MS = 1
+_MIN_LOCK_RETRY_INTERVAL = 0.01
+_MAX_LOCK_RETRY_INTERVAL = 0.5
 
 
 class SessionStore(Protocol):
@@ -237,8 +240,8 @@ class ValkeySessionStore:
         key = self._lock_key(session_id)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + wait_timeout
-        ttl_ms = max(int(lease_ttl * 1000), 1)
-        current_interval = max(retry_interval, 0.01)
+        ttl_ms = max(int(lease_ttl * 1000), _MIN_LOCK_TTL_MS)
+        current_interval = max(retry_interval, _MIN_LOCK_RETRY_INTERVAL)
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
@@ -253,7 +256,7 @@ class ValkeySessionStore:
                 return False
             sleep_for = min(current_interval, remaining)
             await asyncio.sleep(sleep_for)
-            current_interval = min(current_interval * 2, 0.5)
+            current_interval = min(current_interval * 2, _MAX_LOCK_RETRY_INTERVAL)
 
     async def release_session_lock(self, session_id: str, owner_token: str) -> None:
         key = self._lock_key(session_id)
