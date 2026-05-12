@@ -3,7 +3,7 @@ from __future__ import annotations
 from game_service.coordination.session_store import InMemorySessionStore
 
 
-async def test_in_memory_session_lock_serializes_same_session():
+async def test_in_memory_session_lock_enforces_mutual_exclusion():
     store = InMemorySessionStore()
     owner_a = "owner-a"
     owner_b = "owner-b"
