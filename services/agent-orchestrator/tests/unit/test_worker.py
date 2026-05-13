@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,19 @@ from agent_orchestrator.config import Settings
 from agent_orchestrator.storage.db import create_engine, create_session_factory
 from agent_orchestrator.storage.migrations import ensure_schema
 from agent_orchestrator.storage.repository import Repository
+
+
+class FailingClaimRepository:
+    def __init__(self):
+        self.calls = 0
+        self.recovered = asyncio.Event()
+
+    async def claim_next_job(self):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("temporary claim failure")
+        self.recovered.set()
+        return None
 
 
 class FakeBifrost:
@@ -206,6 +220,26 @@ async def test_worker_completes_prompt_with_tool(
     assert mcp.calls[0]["tool_name"] == "next_step"
     events = await repository.list_events(job.id)
     assert [event.event_type for event in events][-1] == "completion"
+
+
+@pytest.mark.asyncio
+async def test_worker_survives_transient_claim_failures(skill_registry: SkillRegistry):
+    repository = FailingClaimRepository()
+    worker = WorkerService(
+        settings=Settings(SKILL_ROOTS=str(skill_registry._roots[0])),
+        repository=repository,
+        bifrost_client=FakeBifrost(),
+        live_event_bus=InMemoryLiveEventBus(),
+        mcp_tool_catalog=McpToolCatalog(FakeMcp()),
+        skill_registry=skill_registry,
+    )
+
+    task = asyncio.create_task(worker.run_forever())
+    await asyncio.wait_for(repository.recovered.wait(), timeout=1)
+    await worker.stop()
+    await asyncio.wait_for(task, timeout=1)
+
+    assert repository.calls >= 2
 
 
 @pytest.mark.asyncio

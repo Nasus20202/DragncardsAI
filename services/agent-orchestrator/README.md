@@ -109,7 +109,7 @@ GET /providers
 
 This returns only enabled provider IDs, the model prefix used when routing through Bifrost, the currently available models reported by Bifrost, and per-provider availability/error state.
 
-Supported provider IDs include `github-copilot`, `nvidia`, `openrouter`, `mistral`, `claude`, `openai`, `lmstudio`, and `gemini`.
+Supported provider IDs include `nvidia`, `openrouter`, `mistral`, `claude`, `openai`, `lmstudio`, and `gemini`.
 
 To avoid hitting Bifrost on every provider-picker refresh, agent-orchestrator keeps an in-memory TTL cache for provider model lists. Configure it with:
 

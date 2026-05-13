@@ -1,13 +1,61 @@
 services:
+  llama-cpp-smoke-model-cache:
+    profiles: ["smoke"]
+    image: curlimages/curl
+    user: "0:0"
+    restart: "no"
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - |
+        mkdir -p /models
+        if [ ! -f "/models/${LLAMA_CPP_MODEL_FILE:-Qwen3.5-0.8B-Q4_K_M.gguf}" ]; then
+          echo "Downloading smoke model ${LLAMA_CPP_MODEL_FILE:-Qwen3.5-0.8B-Q4_K_M.gguf}"
+          curl --fail --location --silent --show-error \
+            "${LLAMA_CPP_MODEL_URL:-https://huggingface.co/lmstudio-community/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf?download=1}" \
+            -o "/models/${LLAMA_CPP_MODEL_FILE:-Qwen3.5-0.8B-Q4_K_M.gguf}.part"
+          mv "/models/${LLAMA_CPP_MODEL_FILE:-Qwen3.5-0.8B-Q4_K_M.gguf}.part" \
+            "/models/${LLAMA_CPP_MODEL_FILE:-Qwen3.5-0.8B-Q4_K_M.gguf}"
+        fi
+    volumes:
+      - "${LLAMA_CPP_MODEL_CACHE_DIR:-/tmp/dragncardsai-llama-cache}:/models"
+
+  llama-cpp-smoke:
+    profiles: ["smoke"]
+    image: ghcr.io/ggml-org/llama.cpp:server
+    restart: unless-stopped
+    depends_on:
+      llama-cpp-smoke-model-cache:
+        condition: service_completed_successfully
+    ports:
+      - "${LLAMA_CPP_HOST_PORT:-1234}:1234"
+    command:
+      - --model
+      - "/models/${LLAMA_CPP_MODEL_FILE:-Qwen3.5-0.8B-Q4_K_M.gguf}"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "1234"
+      - --alias
+      - "${SMOKE_MODEL_NAME:-qwen3.5-0.8b}"
+      - --ctx-size
+      - "${LLAMA_CPP_CTX_SIZE:-16384}"
+      - --n-gpu-layers
+      - "${LLAMA_CPP_N_GPU_LAYERS:-0}"
+    volumes:
+      - "${LLAMA_CPP_MODEL_CACHE_DIR:-/tmp/dragncardsai-llama-cache}:/models:ro"
+    networks:
+      - dragncards-shared
+
   otel-lgtm:
     image: grafana/otel-lgtm:0.27.1
     restart: unless-stopped
     volumes:
       - ./services/otel/loki-config.yaml:/otel-lgtm/loki-config.yaml:ro
     ports:
-      - "3004:3000"
-      - "4317:4317"
-      - "4318:4318"
+      - "${OTEL_LGTM_HOST_PORT:-3004}:3000"
+      - "${OTEL_OTLP_GRPC_HOST_PORT:-4317}:4317"
+      - "${OTEL_OTLP_HTTP_HOST_PORT:-4318}:4318"
     healthcheck:
       test: ["CMD", "sh", "-lc", "test -f /tmp/ready"]
       interval: 10s
@@ -21,7 +69,7 @@ services:
     restart: unless-stopped
     command: ["valkey-server", "--save", "", "--appendonly", "no"]
     ports:
-      - "6380:6379"
+      - "${GAME_SERVICE_VALKEY_HOST_PORT:-6380}:6379"
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
@@ -35,7 +83,7 @@ services:
     restart: unless-stopped
     command: ["valkey-server", "--save", "", "--appendonly", "no"]
     ports:
-      - "6381:6379"
+      - "${AGENT_ORCHESTRATOR_VALKEY_HOST_PORT:-6381}:6379"
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
@@ -52,7 +100,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: agent_orchestrator
     ports:
-      - "5441:5432"
+      - "${AGENT_ORCHESTRATOR_POSTGRES_HOST_PORT:-5441}:5432"
     volumes:
       - agent-orchestrator-postgres-data:/var/lib/postgresql/18/docker
     healthcheck:
@@ -73,13 +121,25 @@ services:
       - path: services/bifrost/.env
         required: false
     environment:
+      LMSTUDIO_BASE_URL: ${LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.namespace=dragncardsai
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./services/bifrost/config.json:/app/data/config.json:ro
     ports:
-      - "4003:8080"
+      - "${BIFROST_HOST_PORT:-4003}:8080"
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://localhost:8080/health"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "-O",
+          "/dev/null",
+          "http://localhost:8080/health",
+        ]
       interval: 10s
       timeout: 5s
       retries: 10

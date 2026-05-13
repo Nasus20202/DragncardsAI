@@ -40,11 +40,27 @@ jobs:
         with:
           node-version: "24"
           cache: pnpm
-          cache-dependency-path: services/dashboard/pnpm-lock.yaml
+          cache-dependency-path: |
+            services/dashboard/pnpm-lock.yaml
+            services/smoketest/pnpm-lock.yaml
+
+      - name: Cache llama.cpp smoke model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/dragncardsai/llama.cpp
+          key: llama-cpp-smoke-qwen3.5-0.8b-q4km-v1
 
       - name: Install dashboard dependencies
         run: pnpm install --frozen-lockfile
         working-directory: services/dashboard
+
+      - name: Install smoketest dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: services/smoketest
+
+      - name: Install Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+        working-directory: services/smoketest
 
       - name: Run lint and format validation
         run: scripts/lint.sh
@@ -62,7 +78,11 @@ jobs:
             *.output=type=docker
 
       - name: Start Docker stack
-        run: docker compose up --no-build -d
+        env:
+          DEFAULT_PROVIDER_ID: lmstudio
+          DEFAULT_MODEL_NAME: qwen3.5-0.8b
+          ENABLED_PROVIDER_IDS: lmstudio
+        run: ./services/smoketest/smoke.sh up --no-build
 
       - name: Wait for backend
         run: |
@@ -78,6 +98,16 @@ jobs:
 
       - name: Run integration tests
         run: scripts/test.sh integration
+
+      - name: Run smoke test
+        env:
+          SMOKE_MODEL_PROVIDER_ID: lmstudio
+          SMOKE_MODEL_NAME: qwen3.5-0.8b
+          LLAMA_CPP_SMOKE_URL: http://127.0.0.1:1234/v1
+          DASHBOARD_SMOKE_BASE_URL: http://127.0.0.1:3001
+          AGENT_ORCHESTRATOR_SMOKE_URL: http://127.0.0.1:4002
+          GAME_SERVICE_SMOKE_URL: http://127.0.0.1:4001
+        run: services/smoketest/smoke.sh test
 
       - name: Stop Docker stack
         if: always()

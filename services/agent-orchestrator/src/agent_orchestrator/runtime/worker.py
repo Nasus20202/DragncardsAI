@@ -59,13 +59,30 @@ class WorkerService:
         logger.info("Worker loop started")
         try:
             while not self._stop_event.is_set():
-                with tracer.start_as_current_span("agent_orchestrator.claim_next_job"):
-                    job = await self._repository.claim_next_job()
-                if job is None:
-                    await asyncio.sleep(self._settings.worker_poll_interval_seconds)
-                    continue
-                logger.info("Claimed job %s", job.id)
-                await self._run_job(job)
+                job = None
+                try:
+                    with tracer.start_as_current_span(
+                        "agent_orchestrator.claim_next_job"
+                    ):
+                        job = await self._repository.claim_next_job()
+                    if job is None:
+                        await asyncio.sleep(self._settings.worker_poll_interval_seconds)
+                        continue
+                    logger.info("Claimed job %s", job.id)
+                    await self._run_job(job)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    if job is None:
+                        logger.exception(
+                            "Worker loop iteration failed before claiming a job"
+                        )
+                    else:
+                        logger.exception(
+                            "Worker loop iteration failed for job %s", job.id
+                        )
+                    if not self._stop_event.is_set():
+                        await asyncio.sleep(self._settings.worker_poll_interval_seconds)
         finally:
             self.is_running = False
             logger.info("Worker loop stopped")

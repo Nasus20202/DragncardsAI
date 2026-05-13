@@ -56,7 +56,7 @@ def _matches_provider_model(provider_id: str, model_id: str, model_prefix: str) 
         return True
     if "/" in model_id:
         return False
-    if provider_id == "openai":
+    if provider_id in {"openai", "lmstudio"}:
         return True
     return model_id.startswith(provider_id) or model_id.startswith(model_prefix)
 
