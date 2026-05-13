@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from game_service.logic.action_catalog import build_action_catalog_entries
 from game_service.api.models import (
     ActionSchema,
     DragnLangArg,
@@ -11,32 +12,8 @@ from game_service.api.models import (
     HealthResponse,
     ListActionsResponse,
 )
-from game_service.logic.actions import (
-    DrawCardAction,
-    LoadCardsAction,
-    MoveCardAction,
-    NextStepAction,
-    PrevStepAction,
-    RawAction,
-    SetCardPropertyAction,
-    SetPlayerCountAction,
-    UnloadCardsAction,
-)
 
 router = APIRouter(tags=["meta"])
-
-# All concrete action types in the order they should be presented to consumers.
-ACTION_TYPES = [
-    NextStepAction,
-    PrevStepAction,
-    DrawCardAction,
-    MoveCardAction,
-    SetCardPropertyAction,
-    SetPlayerCountAction,
-    LoadCardsAction,
-    UnloadCardsAction,
-    RawAction,
-]
 
 # ---------------------------------------------------------------------------
 # Curated DragnLang op catalogue
@@ -565,19 +542,7 @@ RAW_OPS: list[DragnLangOp] = [
 
 def build_action_schemas() -> list[ActionSchema]:
     """Build ActionSchema list from all supported action model classes."""
-    actions = []
-    for model_cls in ACTION_TYPES:
-        schema = model_cls.model_json_schema()
-        type_val = model_cls.model_fields["type"].default
-        doc = (model_cls.__doc__ or "").strip()
-        actions.append(
-            ActionSchema(
-                type=type_val,
-                description=doc,
-                schema=schema,
-            )
-        )
-    return actions
+    return [ActionSchema(**entry) for entry in build_action_catalog_entries()]
 
 
 def build_generic_action_catalog() -> tuple[list[ActionSchema], list[DragnLangOp]]:

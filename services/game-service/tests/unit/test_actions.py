@@ -22,6 +22,7 @@ import pytest
 
 from game_service.logic.actions import (
     DrawCardAction,
+    SetPlayerCountAction,
     MoveCardAction,
     NextStepAction,
     PrevStepAction,
@@ -242,3 +243,17 @@ def test_raw_action_can_wrap_next_step():
     action = RawAction(action_list=["NEXT_STEP"])
     payload = translate_action(action)
     assert payload["options"]["action_list"] == ["NEXT_STEP"]
+
+
+def test_set_player_count_translation_matches_shared_action():
+    payload = translate_action(
+        SetPlayerCountAction(num_players=2, layout_id="standard2Player")
+    )
+    assert payload["options"]["action_list"] == [
+        ["SET", "/numPlayers", 2],
+        ["SET_LAYOUT", "shared", "standard2Player"],
+    ]
+    assert (
+        payload["options"]["description"]
+        == "Set player count to 2 (layout: standard2Player)"
+    )

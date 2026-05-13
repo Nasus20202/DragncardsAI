@@ -3,9 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { JobEventResponse } from "@/features/shared/lib/types";
 import { getJobEvents } from "@/features/play/lib/client-api";
-import { upsertStreamEvent } from "@/features/play/lib/job-events";
-import { SubagentEntry } from "@/features/play/lib/subagents";
-import { aggregateEvents } from "@/features/play/lib/transcript";
+import {
+  aggregateEvents,
+  SubagentEntry,
+  upsertStreamEvent,
+} from "@/features/play/lib/play-session-events";
 import { AggEventRow } from "./play-transcript";
 
 interface SubagentCardProps {

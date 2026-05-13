@@ -23,6 +23,7 @@ from game_service.logic.exceptions import (
     SnapshotValidationError,
     StateUnavailableError,
 )
+from game_service.logic.action_catalog import build_action_catalog_entries
 from game_service.logic.session import GameSession
 from game_service.phoenix_client.client import Channel, PhoenixClient, PhxMessage
 
@@ -353,24 +354,23 @@ async def test_reset_game_reload_plugin_pushes_reset_and_reload():
 
 async def test_set_seat_sends_message():
     session = _make_session()
-    session.client._send = AsyncMock()
+    session.room.send_room_event = AsyncMock()
     await session.set_seat(player_index=0, user_id=42)
-    session.client._send.assert_awaited_once()
-    msg = session.client._send.await_args.args[0]
-    assert msg.event == "set_seat"
-    assert msg.payload["player_i"] == 0
-    assert msg.payload["new_user_id"] == 42
-    assert "timestamp" in msg.payload
+    session.room.send_room_event.assert_awaited_once()
+    call = session.room.send_room_event.await_args
+    assert call.args[0] == "set_seat"
+    assert call.args[1]["player_i"] == 0
+    assert call.args[1]["new_user_id"] == 42
+    assert "timestamp" in call.args[1]
 
 
 async def test_set_spectator_sends_message():
     session = _make_session()
-    session.client._send = AsyncMock()
+    session.room.send_room_event = AsyncMock()
     await session.set_spectator(user_id=7, spectating=True)
-    session.client._send.assert_awaited_once()
-    msg = session.client._send.await_args.args[0]
-    assert msg.event == "set_spectator"
-    assert msg.payload == {"user_id": 7, "value": True}
+    session.room.send_room_event.assert_awaited_once_with(
+        "set_spectator", {"user_id": 7, "value": True}
+    )
 
 
 async def test_close_room_pushes_close_room():
@@ -382,13 +382,20 @@ async def test_close_room_pushes_close_room():
 
 
 async def test_close_room_removes_from_manager():
+    on_close = AsyncMock()
     session = _make_session()
     session.channel.push = AsyncMock(return_value={})
-    mock_manager = MagicMock()
-    mock_manager._remove_session = AsyncMock()
-    session._manager = mock_manager
+    session.on_close = on_close
     await session.close_room()
-    mock_manager._remove_session.assert_awaited_once_with("test-session")
+    on_close.assert_awaited_once_with()
+
+
+def test_action_catalog_entries_include_player_count_once():
+    entries = build_action_catalog_entries()
+    player_count_entries = [
+        entry for entry in entries if entry["type"] == "set_player_count"
+    ]
+    assert len(player_count_entries) == 1
 
 
 async def test_send_alert_pushes_send_alert():

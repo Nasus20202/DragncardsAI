@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useState } from "react";
 import { Tooltip } from "@heroui/react";
-import { SubagentEntry } from "@/features/play/lib/subagents";
+import { SubagentEntry } from "@/features/play/lib/play-session-events";
 
 interface Props {
   entries: SubagentEntry[];
@@ -15,7 +15,7 @@ interface Props {
 }
 
 const TERMINAL_EVENT_TYPES = new Set(["completion", "failure", "cancellation"]);
-const BURGER_STREAM_EVENT_TYPES = [
+const SUBAGENT_STREAM_EVENT_TYPES = [
   "completion",
   "failure",
   "cancellation",
@@ -23,7 +23,7 @@ const BURGER_STREAM_EVENT_TYPES = [
 
 /**
  * Subscribes to a running child job's SSE stream and fires `onFinished`
- * when a terminal event arrives. Renders nothing — side-effect only.
+ * when a terminal event arrives. Renders nothing; side-effect only.
  */
 function ChildJobWatcher({
   childJobId,
@@ -56,8 +56,8 @@ function ChildJobWatcher({
       }
     };
 
-    for (const t of BURGER_STREAM_EVENT_TYPES) {
-      source.addEventListener(t, handle as EventListener);
+    for (const eventType of SUBAGENT_STREAM_EVENT_TYPES) {
+      source.addEventListener(eventType, handle as EventListener);
     }
 
     source.onerror = () => {
@@ -97,12 +97,13 @@ function Spinner() {
 
 function StatusIcon({ status }: { status: SubagentEntry["status"] }) {
   if (status === "running") return <Spinner />;
-  if (status === "failed")
+  if (status === "failed") {
     return (
       <span className="h-3 w-3 shrink-0 text-center text-[10px] leading-none text-danger-500">
-        ✕
+        X
       </span>
     );
+  }
   return (
     <span className="h-3 w-3 shrink-0 text-center text-[10px] leading-none text-success-500">
       ✓
@@ -149,34 +150,29 @@ function EntryRow({
   return button;
 }
 
-export function SubagentBurger({
-  entries,
-  onSelect,
-  onSubagentFinished,
-}: Props) {
+export function SubagentList({ entries, onSelect, onSubagentFinished }: Props) {
   const [expanded, setExpanded] = useState(false);
 
-  const running = entries.filter((e) => e.status === "running");
-  const failed = entries.filter((e) => e.status === "failed");
-  // Default: show running + failed; all when expanded
+  const running = entries.filter((entry) => entry.status === "running");
+  const failed = entries.filter((entry) => entry.status === "failed");
   const visible = expanded ? entries : [...running, ...failed];
 
-  if (entries.length === 0) return null;
+  if (entries.length === 0) {
+    return null;
+  }
 
   return (
     <div className="flex flex-col items-end gap-0.5">
-      {/* Watch all running child jobs so the burger updates without waiting for
-          the parent job's subagent_completed / subagent_failed event. */}
+      {/* Watch running child jobs so the list updates immediately. */}
       {onSubagentFinished &&
-        running.map((e) => (
+        running.map((entry) => (
           <ChildJobWatcher
-            key={e.childJobId}
-            childJobId={e.childJobId}
+            key={entry.childJobId}
+            childJobId={entry.childJobId}
             onFinished={onSubagentFinished}
           />
         ))}
 
-      {/* Group header — always visible */}
       <div className="flex items-center gap-1.5 px-1">
         {failed.length > 0 && !expanded && (
           <span className="text-[10px] font-medium text-danger-500">
@@ -188,7 +184,7 @@ export function SubagentBurger({
         </span>
         <button
           type="button"
-          onClick={() => setExpanded((v) => !v)}
+          onClick={() => setExpanded((value) => !value)}
           className="rounded px-1 py-0.5 text-[10px] text-default-400 hover:bg-default-100 hover:text-default-600"
           aria-label={expanded ? "Collapse subagents" : "Expand subagents"}
         >
@@ -196,7 +192,6 @@ export function SubagentBurger({
         </button>
       </div>
 
-      {/* Rows */}
       {visible.length > 0 && (
         <div className="flex flex-col items-end gap-0.5">
           {visible.map((entry) => (

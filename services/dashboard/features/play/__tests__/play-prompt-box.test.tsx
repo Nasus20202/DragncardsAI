@@ -62,6 +62,7 @@ describe("PlayPromptBox", () => {
     );
 
     expect(screen.getByLabelText("Message")).toBeDisabled();
+    expect(screen.getByTestId("play-prompt-input")).toBeDisabled();
     expect(
       screen.getByPlaceholderText("Select an active session to start.")
     ).toBeInTheDocument();
@@ -89,6 +90,7 @@ describe("PlayPromptBox", () => {
     );
 
     const input = screen.getByLabelText("Message");
+    expect(screen.getByTestId("play-prompt-send")).toBeInTheDocument();
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 

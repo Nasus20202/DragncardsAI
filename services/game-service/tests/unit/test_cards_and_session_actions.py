@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from game_service.api.app import create_app
+from game_service.logic.action_catalog import build_action_catalog_entries
 from game_service.catalog.providers.base import CatalogProvider
 from game_service.catalog.providers.registry import PROVIDERS
 from game_service.catalog.service import (
@@ -435,6 +436,14 @@ async def test_get_global_actions_typed_actions():
     assert "next_step" in types
     assert "load_cards" in types
     assert "raw" in types
+
+
+def test_shared_action_catalog_matches_http_types():
+    entries = build_action_catalog_entries()
+    types = {entry["type"] for entry in entries}
+    assert "next_step" in types
+    assert "set_player_count" in types
+    assert "load_cards" in types
 
 
 async def test_get_global_actions_raw_ops_curated():

@@ -16,21 +16,25 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Awaitable, Callable
 
-from game_service.logic.actions import GameAction, translate_action
+from game_service.logic.actions import (
+    GameAction,
+    SetPlayerCountAction,
+    translate_action,
+)
 from game_service.logic.exceptions import (
     BadGameStateError,
     SessionError,
     SnapshotValidationError,
     StateUnavailableError,
 )
+from game_service.logic.room import PhoenixRoom
 from game_service.logic.snapshots import GameStateSnapshot, SNAPSHOT_SCHEMA_VERSION
 from game_service.phoenix_client.client import (
     Channel,
     PhoenixChannelError,
     PhoenixClient,
-    PhxMessage,
 )
 from game_service.telemetry import get_tracer
 
@@ -49,7 +53,9 @@ class GameSession:
     created_at: datetime
     client: PhoenixClient
     channel: Channel
-    _manager: Any = field(default=None, init=False)
+    initial_state: Any = None
+    on_close: Callable[[], Awaitable[None]] | None = None
+    room: PhoenixRoom = field(init=False)
     _state: Any = field(default=None, init=False)
     _state_stale: bool = field(default=False, init=False)
     _state_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
@@ -59,13 +65,16 @@ class GameSession:
     _gui_updates: dict = field(default_factory=dict, init=False)
 
     def __post_init__(self):
-        self.channel.on("current_state", self._on_full_state)
-        self.channel.on("state_update", self._on_delta)
-        self.channel.on("bad_game_state", self._on_bad_game_state)
-        self.channel.on("unable_to_get_state_on_join", self._on_state_unavailable)
-        self.channel.on("unable_to_get_state_on_request", self._on_state_unavailable)
-        self.channel.on("send_alert", self._on_alert)
-        self.channel.on("gui_update", self._on_gui_update)
+        self.room = PhoenixRoom(client=self.client, channel=self.channel)
+        self.room.register_state_handlers(
+            on_full_state=self._on_full_state,
+            on_state_update=self._on_delta,
+            on_bad_game_state=self._on_bad_game_state,
+            on_state_unavailable=self._on_state_unavailable,
+            on_alert=self._on_alert,
+            on_gui_update=self._on_gui_update,
+        )
+        self._state = self.initial_state
 
     def _on_full_state(self, payload: Any) -> None:
         self._state = payload
@@ -105,8 +114,7 @@ class GameSession:
 
     async def _request_fresh_state(self, timeout: float) -> Any:
         with tracer.start_as_current_span("game_session.request_state"):
-            await self.channel.push("request_state", {}, timeout=timeout)
-            new_state = await self.channel.wait_for_state_update(timeout=timeout)
+            new_state = await self.room.request_state(timeout=timeout)
             self._check_state_flags()
             async with self._state_lock:
                 self._state = new_state
@@ -151,10 +159,8 @@ class GameSession:
                 "execute_action: session_id=%s payload=%r", self.session_id, payload
             )
             try:
-                await self.channel.push("game_action", payload, timeout=timeout)
-                await self.channel.wait_for_event(
-                    "state_update", "current_state", timeout=timeout
-                )
+                await self.room.execute_game_action(payload, timeout=timeout)
+                await self.room.wait_for_state_change(timeout=timeout)
                 self._check_state_flags()
                 new_state = await self._request_fresh_state(timeout=timeout)
                 logger.info(
@@ -229,10 +235,8 @@ class GameSession:
             "timestamp": int(time.time() * 1000),
         }
         try:
-            await self.channel.push("game_action", payload, timeout=timeout)
-            await self.channel.wait_for_event(
-                "state_update", "current_state", timeout=timeout
-            )
+            await self.room.execute_game_action(payload, timeout=timeout)
+            await self.room.wait_for_state_change(timeout=timeout)
             self._check_state_flags()
             return await self._request_fresh_state(timeout=timeout)
         except PhoenixChannelError as exc:
@@ -248,7 +252,7 @@ class GameSession:
             "reset_game: session_id=%s event=%s save=%s", self.session_id, event, save
         )
         try:
-            await self.channel.push(
+            await self.room.push_room_event(
                 event, {"options": {"save?": save}}, timeout=timeout
             )
             new_state = await self._request_fresh_state(timeout=timeout)
@@ -263,29 +267,10 @@ class GameSession:
             raise SessionError("Timed out waiting for state after reset") from exc
 
     async def set_seat(self, player_index: int, user_id: int) -> None:
-        timestamp = int(time.time() * 1000)
-        msg = PhxMessage(
-            join_ref=self.channel.join_ref,
-            ref=self.client._next_ref(),
-            topic=self.channel.topic,
-            event="set_seat",
-            payload={
-                "player_i": player_index,
-                "new_user_id": user_id,
-                "timestamp": timestamp,
-            },
-        )
-        await self.client._send(msg)
+        await self.room.set_seat(player_index=player_index, user_id=user_id)
 
     async def set_spectator(self, user_id: int, spectating: bool) -> None:
-        msg = PhxMessage(
-            join_ref=self.channel.join_ref,
-            ref=self.client._next_ref(),
-            topic=self.channel.topic,
-            event="set_spectator",
-            payload={"user_id": user_id, "value": spectating},
-        )
-        await self.client._send(msg)
+        await self.room.set_spectator(user_id=user_id, spectating=spectating)
 
     async def set_player_count(
         self,
@@ -299,61 +284,28 @@ class GameSession:
             num_players,
             layout_id,
         )
-        action_list: list = [["SET", "/numPlayers", num_players]]
-        if layout_id is not None:
-            action_list.append(["SET_LAYOUT", "shared", layout_id])
-
-        description = f"Set player count to {num_players}"
-        if layout_id is not None:
-            description += f" (layout: {layout_id})"
-
-        payload = {
-            "action": "evaluate",
-            "options": {
-                "action_list": action_list,
-                "description": description,
-            },
-            "timestamp": int(time.time() * 1000),
-        }
-        try:
-            await self.channel.push("game_action", payload, timeout=timeout)
-            await self.channel.wait_for_event(
-                "state_update", "current_state", timeout=timeout
-            )
-            self._check_state_flags()
-            new_state = await self._request_fresh_state(timeout=timeout)
-            logger.info(
-                "set_player_count: session_id=%s -> state updated", self.session_id
-            )
-            return new_state
-        except PhoenixChannelError as exc:
-            logger.error(
-                "set_player_count: session_id=%s rejected: %s", self.session_id, exc
-            )
-            raise SessionError(f"set_player_count rejected: {exc}") from exc
-        except asyncio.TimeoutError as exc:
-            logger.error("set_player_count: session_id=%s timed out", self.session_id)
-            raise SessionError(
-                "Timed out waiting for state after set_player_count"
-            ) from exc
+        return await self.execute_action(
+            SetPlayerCountAction(num_players=num_players, layout_id=layout_id),
+            timeout=timeout,
+        )
 
     async def close_room(self, timeout: float = 10.0) -> None:
         try:
-            await self.channel.push("close_room", {"options": {}}, timeout=timeout)
+            await self.room.push_room_event("close_room", {"options": {}}, timeout)
         except PhoenixChannelError as exc:
             raise SessionError(f"close_room rejected: {exc}") from exc
         except asyncio.TimeoutError as exc:
             raise SessionError("Timed out waiting for close_room ack") from exc
         finally:
-            if self._manager is not None:
+            if self.on_close is not None:
                 try:
-                    await self._manager._remove_session(self.session_id)
+                    await self.on_close()
                 except Exception:
                     pass
 
     async def send_alert(self, message: str, timeout: float = 10.0) -> None:
         try:
-            await self.channel.push("send_alert", {"message": message}, timeout=timeout)
+            await self.room.push_room_event("send_alert", {"message": message}, timeout)
         except PhoenixChannelError as exc:
             raise SessionError(f"send_alert rejected: {exc}") from exc
         except asyncio.TimeoutError as exc:
@@ -362,8 +314,8 @@ class GameSession:
     async def save_replay(self, timeout: float = 10.0) -> None:
         timestamp = int(time.time() * 1000)
         try:
-            await self.channel.push(
-                "save_replay", {"options": {}, "timestamp": timestamp}, timeout=timeout
+            await self.room.push_room_event(
+                "save_replay", {"options": {}, "timestamp": timestamp}, timeout
             )
         except PhoenixChannelError as exc:
             raise SessionError(f"save_replay rejected: {exc}") from exc

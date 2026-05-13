@@ -64,6 +64,7 @@ export function PlayPromptBox({
             ].join(" ")}
           >
             <textarea
+              data-testid="play-prompt-input"
               ref={ref}
               aria-label="Message"
               rows={1}
@@ -97,6 +98,7 @@ export function PlayPromptBox({
                 </button>
               ) : null}
               <button
+                data-testid="play-prompt-send"
                 type="button"
                 aria-label="Send message"
                 disabled={!canSend}

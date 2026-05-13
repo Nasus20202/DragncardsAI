@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveSubagentEntries } from "@/features/play/lib/subagents";
+import { deriveSubagentEntries } from "@/features/play/lib/play-session-events";
 import { JobDetail } from "@/features/shared/lib/types";
 
 function makeJob(

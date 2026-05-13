@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from game_service.dragncards.http_client import create_room, get_auth_token, get_user_id
-from game_service.logic.exceptions import (  # noqa: F401
+from game_service.logic.exceptions import (
     BadGameStateError,
     SessionError,
     SessionLockedError,
@@ -111,9 +111,9 @@ class SessionManager:
             created_at=created_at,
             client=client,
             channel=channel,
+            initial_state=initial_state,
+            on_close=lambda: self._remove_session(session_id),
         )
-        session._state = initial_state
-        session._manager = self
         return session
 
     async def _register_session(
