@@ -61,6 +61,7 @@ export function PlaySessionList({
           className={`flex items-center gap-1 ${isCollapsed ? "w-full justify-center" : ""}`}
         >
           <button
+            data-testid="new-session-button"
             aria-label="New session"
             disabled={isBusy || !canCreate}
             type="button"
@@ -94,6 +95,7 @@ export function PlaySessionList({
           return (
             <button
               key={s.id}
+              data-testid={`play-session-${s.id}`}
               aria-label={s.name ?? "Untitled session"}
               aria-current={active ? "true" : undefined}
               type="button"

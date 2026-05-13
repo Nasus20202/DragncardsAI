@@ -18,6 +18,7 @@ from agent_orchestrator.runtime.live_events import (
     LiveEventBus,
     ValkeyLiveEventBus,
 )
+from agent_orchestrator.runtime.job_event_stream import JobEventStreamService
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.runtime.worker import WorkerService
 from agent_orchestrator.storage.db import create_engine, create_session_factory
@@ -90,6 +91,11 @@ def create_app(
             timeout_seconds=settings.mcp_request_timeout_seconds,
         )
         app.state.mcp_tool_catalog = McpToolCatalog(app.state.mcp_client)
+        app.state.job_event_stream = JobEventStreamService(
+            repository=app.state.repository,
+            live_event_bus=app.state.live_event_bus,
+            poll_interval_seconds=settings.worker_poll_interval_seconds,
+        )
         app.state.worker = WorkerService(
             settings=settings,
             repository=app.state.repository,

@@ -8,17 +8,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from game_service.logic.actions import (
-    DrawCardAction,
-    LoadCardsAction,
-    MoveCardAction,
-    NextStepAction,
-    PrevStepAction,
-    RawAction,
-    SetCardPropertyAction,
-    SetPlayerCountAction,
-    UnloadCardsAction,
-)
+from game_service.logic.actions import GameAction
 from game_service.logic.snapshots import GameStateSnapshot
 
 # ---------------------------------------------------------------------------
@@ -47,15 +37,7 @@ class AttachGameRequest(BaseModel):
 # Re-export action types so API consumers can reference them from one place.
 # FastAPI/Pydantic will use the discriminated union for request body validation.
 ActionRequest = Annotated[
-    MoveCardAction
-    | DrawCardAction
-    | NextStepAction
-    | PrevStepAction
-    | SetCardPropertyAction
-    | SetPlayerCountAction
-    | LoadCardsAction
-    | UnloadCardsAction
-    | RawAction,
+    GameAction,
     Field(discriminator="type"),
 ]
 

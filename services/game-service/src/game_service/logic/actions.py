@@ -222,6 +222,18 @@ GameAction = (
     | RawAction
 )
 
+ACTION_TYPES = (
+    NextStepAction,
+    PrevStepAction,
+    DrawCardAction,
+    MoveCardAction,
+    SetCardPropertyAction,
+    SetPlayerCountAction,
+    LoadCardsAction,
+    UnloadCardsAction,
+    RawAction,
+)
+
 
 def translate_action(action: GameAction) -> dict:
     """

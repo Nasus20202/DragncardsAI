@@ -77,6 +77,7 @@ describe("PlaySessionList", () => {
     );
 
     expect(screen.getByText("Sessions")).toBeInTheDocument();
+    expect(screen.getByTestId("new-session-button")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /session-1234567890123456789012345/i })
     ).toHaveAttribute("aria-current", "true");

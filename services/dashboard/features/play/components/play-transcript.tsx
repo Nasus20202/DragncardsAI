@@ -6,8 +6,20 @@ import {
   aggregateEvents,
   AggEvent,
   eventBodyText,
-} from "@/features/play/lib/transcript";
+} from "@/features/play/lib/play-session-events";
 import { JobEventResponse } from "@/features/shared/lib/types";
+
+const JOB_STATE_LABELS = {
+  streaming: "Streaming…",
+  completed: "Completed",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  queued: "Queued",
+  running: "Running",
+  working: "Working…",
+} as const;
+
+type VisibleJobStateKey = keyof typeof JOB_STATE_LABELS | "idle";
 
 /* ── Sub-renderers ───────────────────────────────────────────────── */
 
@@ -324,6 +336,34 @@ export function PlayTranscript({
   settingsOpen: boolean;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const latestJobStatus = jobs.at(-1)?.status ?? null;
+
+  function getVisibleJobStateKey(): VisibleJobStateKey {
+    if (streamState === "streaming") {
+      return "streaming";
+    }
+
+    switch (latestJobStatus) {
+      case "completed":
+      case "failed":
+      case "cancelled":
+      case "queued":
+      case "running":
+        return latestJobStatus;
+    }
+
+    if (isBusy) {
+      return "working";
+    }
+
+    return "idle";
+  }
+
+  const visibleJobStateKey = getVisibleJobStateKey();
+  const visibleJobState =
+    visibleJobStateKey === "idle"
+      ? statusText
+      : JOB_STATE_LABELS[visibleJobStateKey];
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -332,7 +372,10 @@ export function PlayTranscript({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Status bar */}
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-default-200/60 px-4">
+      <div
+        data-testid="play-status-banner"
+        className="flex h-10 shrink-0 items-center justify-between border-b border-default-200/60 px-4"
+      >
         <div className="flex items-center gap-2">
           {streamState === "streaming" && (
             <span
@@ -340,12 +383,12 @@ export function PlayTranscript({
               className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-success"
             />
           )}
-          <span className="text-xs text-default-400">
-            {streamState === "streaming"
-              ? "Streaming…"
-              : isBusy
-                ? "Working…"
-                : statusText}
+          <span
+            data-testid="play-job-state"
+            data-state={visibleJobStateKey}
+            className="text-xs text-default-400"
+          >
+            {visibleJobState}
           </span>
         </div>
         <button

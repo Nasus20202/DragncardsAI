@@ -2,7 +2,10 @@ import { getJob } from "@/features/play/lib/client-api";
 import {
   applyStreamEventToJob,
   mergeJob,
-} from "@/features/play/lib/job-events";
+  STREAM_EVENT_TYPES,
+  SUBAGENT_TERMINAL_EVENT_TYPES,
+  TERMINAL_EVENT_TYPES,
+} from "@/features/play/lib/play-session-events";
 import { JobDetail, JobEventResponse } from "@/features/shared/lib/types";
 import { Dispatch, SetStateAction, useCallback, useRef, useState } from "react";
 
@@ -12,27 +15,6 @@ interface UseJobStreamingOptions {
   refreshContextMetadata: (sessionId: string) => Promise<void>;
   refreshSessions: () => Promise<void>;
 }
-
-const TERMINAL_EVENT_TYPES = new Set(["completion", "failure", "cancellation"]);
-const SUBAGENT_TERMINAL_EVENT_TYPES = new Set([
-  "subagent_completed",
-  "subagent_failed",
-]);
-const STREAM_EVENT_TYPES = [
-  "progress",
-  "reasoning",
-  "model_output",
-  "compaction",
-  "tool_call",
-  "tool_result",
-  "completion",
-  "failure",
-  "cancellation",
-  "skill_loaded",
-  "subagent_started",
-  "subagent_completed",
-  "subagent_failed",
-] as const;
 
 export function useJobStreaming({
   selectedSessionId,

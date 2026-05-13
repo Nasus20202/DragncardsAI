@@ -86,6 +86,9 @@ describe("PlayTranscript branches", () => {
     );
 
     expect(screen.getByText("Streaming…")).toBeInTheDocument();
+    expect(screen.getByTestId("play-job-state")).toHaveTextContent(
+      "Streaming…"
+    );
     expect(screen.getByRole("alert")).toHaveTextContent("Boom");
     expect(
       screen.getByText("No messages yet. Type a prompt below.")
@@ -156,6 +159,7 @@ describe("PlayTranscript branches", () => {
     );
 
     expect(screen.getByText("Prompt")).toBeInTheDocument();
+    expect(screen.getByTestId("play-job-state")).toHaveTextContent("Completed");
     expect(screen.getByText("Reasoning")).toBeInTheDocument();
     expect(screen.getByText("Think 1. Think 2.")).toBeInTheDocument();
     expect(screen.getByText("Context compaction")).toBeInTheDocument();

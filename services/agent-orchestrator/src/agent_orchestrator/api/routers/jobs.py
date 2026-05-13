@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import asyncio
-import json
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from agent_orchestrator.api.deps import (
+    get_job_event_stream,
     get_live_event_bus,
     get_mcp_tool_catalog,
     get_repository,
@@ -20,7 +18,7 @@ from agent_orchestrator.api.serializers import (
 )
 from agent_orchestrator.api.tool_catalog import list_effective_session_tools
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
-from agent_orchestrator.runtime.live_events import LiveJobEvent
+from agent_orchestrator.runtime.job_event_stream import JobEventStreamService
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.schemas.jobs import (
@@ -32,15 +30,6 @@ from agent_orchestrator.schemas.jobs import (
 from agent_orchestrator.storage.repository import Repository
 
 router = APIRouter(tags=["jobs"])
-
-
-def _serialize_live_event(event: LiveJobEvent) -> JobEventResponse:
-    return JobEventResponse(
-        id=str(event.id),
-        event_type=event.event_type,
-        payload=event.payload_json,
-        created_at=event.created_at,
-    )
 
 
 @router.post("/sessions/{session_id}/prompts", status_code=202)
@@ -132,70 +121,17 @@ async def stream_job_events(
     request: Request,
     job_id: str,
     after: int = 0,
-    repo: Repository = Depends(get_repository),
+    job_event_stream: JobEventStreamService = Depends(get_job_event_stream),
     item=Depends(require_job),
 ) -> StreamingResponse:
     del item
 
-    async def event_source():
-        cursor = after
-        live_event_bus = request.app.state.live_event_bus
-        live_subscriber = await live_event_bus.subscribe(job_id)
-        terminal_received = False
-        try:
-            while True:
-                if await request.is_disconnected():
-                    return
-
-                events = await asyncio.shield(repo.list_events(job_id, after_id=cursor))
-                for event in events:
-                    cursor = event.id
-                    payload = serialize_event(event).model_dump(mode="json")
-                    yield f"id: {event.id}\nevent: {event.event_type}\ndata: {json.dumps(payload)}\n\n"
-                    if event.event_type in {"completion", "failure", "cancellation"}:
-                        terminal_received = True
-
-                if terminal_received and not events:
-                    return
-
-                if await request.is_disconnected():
-                    return
-
-                live_event = await live_subscriber.get(
-                    request.app.state.settings.worker_poll_interval_seconds
-                )
-                if live_event is None:
-                    # On timeout, fall back to job status check so we don't
-                    # hang forever if the terminal DB event was already flushed.
-                    job = await asyncio.shield(repo.get_job(job_id))
-                    if job is None:
-                        return
-                    if job.status in {"completed", "failed", "cancelled"}:
-                        # Flush any remaining DB events before closing.
-                        events = await asyncio.shield(
-                            repo.list_events(job_id, after_id=cursor)
-                        )
-                        for event in events:
-                            cursor = event.id
-                            payload = serialize_event(event).model_dump(mode="json")
-                            yield f"id: {event.id}\nevent: {event.event_type}\ndata: {json.dumps(payload)}\n\n"
-                        return
-                    continue
-
-                payload = _serialize_live_event(live_event).model_dump(mode="json")
-                yield (
-                    f"event: {live_event.event_type}\n"
-                    f"data: {json.dumps(payload)}\n\n"
-                )
-                if live_event.event_type in {"completion", "failure", "cancellation"}:
-                    terminal_received = True
-        except asyncio.CancelledError:
-            return
-        finally:
-            await live_subscriber.aclose()
-
     return StreamingResponse(
-        event_source(),
+        job_event_stream.stream(
+            job_id,
+            after=after,
+            is_disconnected=request.is_disconnected,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

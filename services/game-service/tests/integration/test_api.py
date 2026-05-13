@@ -390,6 +390,63 @@ async def test_execute_action_next_step(app, manager):
         await manager.delete_session(session.session_id)
 
 
+@pytest.mark.asyncio
+async def test_room_control_http_flows(app, manager):
+    """Representative room-control endpoints work through the preserved HTTP surface."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            initial_state_resp = await client.get(f"/games/{session.session_id}/state")
+            assert initial_state_resp.status_code == 200
+            initial_round = initial_state_resp.json()["state"]["game"]["roundNumber"]
+
+            player_count_resp = await client.post(
+                f"/games/{session.session_id}/player-count",
+                json={"num_players": 2, "layout_id": "standard2Player"},
+            )
+            assert player_count_resp.status_code == 200
+            player_count_body = player_count_resp.json()
+            assert player_count_body["session_id"] == session.session_id
+            assert "game" in player_count_body["state"]
+
+            alert_resp = await client.post(
+                f"/games/{session.session_id}/alert",
+                json={"message": "integration alert"},
+            )
+            assert alert_resp.status_code == 204
+
+            alerts_resp = await client.get(f"/games/{session.session_id}/alerts")
+            assert alerts_resp.status_code == 200
+            assert any(
+                alert.get("text") == "integration alert"
+                for alert in alerts_resp.json()["alerts"]
+            )
+
+            replay_resp = await client.post(f"/games/{session.session_id}/replay")
+            assert replay_resp.status_code == 204
+
+            reset_resp = await client.post(
+                f"/games/{session.session_id}/reset", json={}
+            )
+            assert reset_resp.status_code == 200
+            reset_body = reset_resp.json()
+            assert reset_body["session_id"] == session.session_id
+            assert "game" in reset_body["state"]
+
+            refreshed_state_resp = await client.get(
+                f"/games/{session.session_id}/state"
+            )
+            assert refreshed_state_resp.status_code == 200
+            refreshed_round = refreshed_state_resp.json()["state"]["game"][
+                "roundNumber"
+            ]
+            assert refreshed_round <= initial_round
+    finally:
+        await manager.delete_session(session.session_id)
+
+
 def test_execute_action_not_found(sync_client):
     """POST /games/{id}/actions with unknown session ID returns 404."""
     resp = sync_client.post(

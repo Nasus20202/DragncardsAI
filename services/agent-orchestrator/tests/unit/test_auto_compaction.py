@@ -199,7 +199,7 @@ async def test_auto_compact_fires_above_threshold(
     )
 
     with patch(
-        "agent_orchestrator.runtime.worker.perform_compaction",
+        "agent_orchestrator.runtime.prompt_run.perform_compaction",
         wraps=__import__(
             "agent_orchestrator.runtime.compaction", fromlist=["perform_compaction"]
         ).perform_compaction,

@@ -2,30 +2,19 @@
 
 from __future__ import annotations
 
-import json
-import logging
-from typing import Any
-
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.repositories.base import utc_now
-from agent_orchestrator.runtime.memory import build_message_history
+from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
 from agent_orchestrator.runtime.skills import SkillRegistry
-from agent_orchestrator.runtime.system_prompts import build_system_prompt
-from agent_orchestrator.runtime.tokens import (
-    estimate_tokens_for_messages,
-    estimate_tokens_for_tools,
-)
 from agent_orchestrator.storage.models import (
     AgentSession,
     CompactionRecord,
     Job,
     JobEvent,
 )
-
-logger = logging.getLogger(__name__)
 
 COMPACTION_SYSTEM_PROMPT = """\
 You are summarizing a Marvel Champions card game session history for context compression.
@@ -248,55 +237,10 @@ class ContextRepositoryMixin:
         mcp_tool_catalog: McpToolCatalog,
     ) -> dict:
         """Return context health metadata for a session."""
-        compaction = await self.get_latest_compaction_record(session_id)
-        compaction_count = await self.count_compaction_records(session_id)
-
-        session_obj = await self.get_session_context_snapshot(session_id)
-        multi_turn_memory = session_obj.multi_turn_memory if session_obj else True
-
-        system_prompt_tokens = 0
-        replay_tokens = 0
-        tools_tokens = 0
-        if session_obj is not None:
-            system_prompt = build_system_prompt(
-                skill_registry, session_obj.skill_assignments
-            )
-            system_prompt_tokens = estimate_tokens_for_messages(
-                [{"role": "system", "content": system_prompt}]
-            )
-            tool_definitions = await mcp_tool_catalog.list_session_tools(
-                session_obj.mcp_assignments,
-                ignore_failures=True,
-            )
-            tools_tokens = estimate_tokens_for_tools(
-                mcp_tool_catalog.as_openai_tools(tool_definitions)
-            )
-
-        if multi_turn_memory and session_obj is not None:
-            # Use a sentinel current_job_id so that ALL completed jobs are
-            # included in the replay estimate (simulating what the next job
-            # would see as its prior-turn context).
-            replay_messages = await build_message_history(
-                self, session_id, current_job_id=""
-            )
-            replay_tokens = estimate_tokens_for_messages(replay_messages)
-
-        tokens_used = system_prompt_tokens + replay_tokens + tools_tokens
-
-        usage_ratio = (
-            tokens_used / context_window_size if context_window_size > 0 else 0.0
+        metadata = await SessionTranscriptService(self).build_context_metadata(
+            session_id,
+            context_window_size,
+            skill_registry=skill_registry,
+            mcp_tool_catalog=mcp_tool_catalog,
         )
-
-        return {
-            "tokens_used": tokens_used,
-            "context_window_size": context_window_size,
-            "usage_ratio": round(min(usage_ratio, 1.0), 6),
-            "compaction_count": compaction_count,
-            "last_compacted_at": compaction.created_at if compaction else None,
-            "multi_turn_memory": multi_turn_memory,
-            "token_breakdown": {
-                "system_prompt": system_prompt_tokens,
-                "replay": replay_tokens,
-                "tools": tools_tokens,
-            },
-        }
+        return metadata.as_dict()
