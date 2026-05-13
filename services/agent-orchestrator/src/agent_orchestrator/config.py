@@ -7,7 +7,6 @@ from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REQUIRED_PROVIDER_IDS = (
-    "github-copilot",
     "nvidia",
     "openrouter",
     "mistral",
@@ -124,7 +123,6 @@ class Settings(BaseSettings):
     @property
     def provider_prefixes(self) -> dict[str, str]:
         return {
-            "github-copilot": "github-copilot",
             "nvidia": "nvidia",
             "openrouter": "openrouter",
             "mistral": "mistral",
