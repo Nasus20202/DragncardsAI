@@ -7,7 +7,6 @@ from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REQUIRED_PROVIDER_IDS = (
-    "github-copilot",
     "nvidia",
     "openrouter",
     "mistral",
@@ -28,6 +27,7 @@ class Settings(BaseSettings):
     )
     bifrost_url: str = "http://localhost:4003"
     bifrost_api_key: str = "dummy"
+    lmstudio_base_url: str = "http://localhost:1234/v1"
     http_host: str = "0.0.0.0"
     http_port: int = 4002
     skill_roots_raw: str = Field(
@@ -124,7 +124,6 @@ class Settings(BaseSettings):
     @property
     def provider_prefixes(self) -> dict[str, str]:
         return {
-            "github-copilot": "github-copilot",
             "nvidia": "nvidia",
             "openrouter": "openrouter",
             "mistral": "mistral",

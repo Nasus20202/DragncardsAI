@@ -15,7 +15,7 @@ services:
       otel-lgtm:
         condition: service_healthy
     ports:
-      - "4001:8000"
+      - "${GAME_SERVICE_HOST_PORT:-4001}:8000"
     environment:
       DRAGNCARDS_HTTP_URL: ${DRAGNCARDS_HTTP_URL:-http://dragncards-backend:4000}
       DRAGNCARDS_WS_URL: ${DRAGNCARDS_WS_URL:-ws://dragncards-backend:4000/socket}
@@ -52,11 +52,13 @@ services:
       otel-lgtm:
         condition: service_healthy
     ports:
-      - "4002:8010"
+      - "${AGENT_ORCHESTRATOR_HOST_PORT:-4002}:8010"
     environment:
       DATABASE_URL: ${AGENT_ORCHESTRATOR_DATABASE_URL:-postgresql+asyncpg://postgres:postgres@agent-orchestrator-postgres:5432/agent_orchestrator}
       BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
       BIFROST_API_KEY: ${BIFROST_API_KEY:-dummy}
+      LMSTUDIO_BASE_URL: ${LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
+      ENABLED_PROVIDER_IDS: ${ENABLED_PROVIDER_IDS:-nvidia,openrouter,mistral,claude,openai,lmstudio,gemini}
       HTTP_HOST: ${AGENT_ORCHESTRATOR_HTTP_HOST:-0.0.0.0}
       HTTP_PORT: ${AGENT_ORCHESTRATOR_HTTP_PORT:-8010}
       SKILL_ROOTS: ${SKILL_ROOTS:-/app/skills}
@@ -66,6 +68,8 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${AGENT_ORCHESTRATOR_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-lgtm:4318}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${AGENT_ORCHESTRATOR_OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
       OTEL_RESOURCE_ATTRIBUTES: ${AGENT_ORCHESTRATOR_OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=local,service.namespace=dragncardsai}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - dragncards-shared
 
@@ -85,7 +89,7 @@ services:
       otel-lgtm:
         condition: service_healthy
     ports:
-      - "3001:3000"
+      - "${DASHBOARD_HOST_PORT:-3001}:3000"
     environment:
       AGENT_ORCHESTRATOR_URL: ${AGENT_ORCHESTRATOR_URL:-http://agent-orchestrator:8010}
       GAME_SERVICE_URL: ${GAME_SERVICE_URL:-http://game-service:8000}

@@ -41,6 +41,7 @@ class FakeBifrostClient(BifrostClient):
         data = {
             "openai": ["gpt-4o-mini", "gpt-4.1-mini"],
             "gemini": ["gemini-2.0-flash"],
+            "lmstudio": ["qwen3.5-0.8b"],
         }
         return [
             type(
@@ -93,6 +94,7 @@ async def build_test_app(
     unavailable_provider_ids: set[str] | None = None,
     bifrost_client: BifrostClient | None = None,
     mcp_client: StreamableHttpMcpClient | None = None,
+    enabled_provider_ids: str = "openai,gemini",
 ):
     database_path = tmp_path / "unit.sqlite3"
     engine = create_engine(f"sqlite+aiosqlite:///{database_path}")
@@ -111,7 +113,7 @@ async def build_test_app(
             bifrost_url="http://bifrost",
             bifrost_api_key="dummy",
             SKILL_ROOTS=str(skill_root),
-            ENABLED_PROVIDER_IDS="openai,gemini",
+            ENABLED_PROVIDER_IDS=enabled_provider_ids,
         ),
         repository=repository,
         bifrost_client=bifrost_client
@@ -214,6 +216,100 @@ async def test_list_providers_marks_unavailable_provider(tmp_path: Path):
         assert providers["gemini"]["available"] is False
         assert providers["gemini"]["models"] == []
         assert "unavailable" in providers["gemini"]["error"].lower()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_list_providers_keeps_unprefixed_lmstudio_models(tmp_path: Path):
+    class LocalModelBifrostClient(FakeBifrostClient):
+        async def list_models(self, provider_id: str):
+            if provider_id != "lmstudio":
+                return await super().list_models(provider_id)
+            model_ids = [
+                "qwen3.5-0.8b",
+                "lmstudio/backup-local-model",
+                "openrouter/google/gemini-2.5-pro",
+            ]
+            return [
+                type(
+                    "ModelInfo",
+                    (),
+                    {
+                        "id": model_id,
+                        "name": model_id,
+                        "supported_methods": ["chat_completion"],
+                    },
+                )()
+                for model_id in model_ids
+            ]
+
+    app, engine = await build_test_app(
+        tmp_path,
+        bifrost_client=LocalModelBifrostClient(),
+        enabled_provider_ids="lmstudio",
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get("/providers")
+        assert response.status_code == 200
+        providers = response.json()["providers"]
+        assert providers == [
+            {
+                "provider_id": "lmstudio",
+                "model_prefix": "lmstudio",
+                "models": [
+                    "qwen3.5-0.8b",
+                    "lmstudio/backup-local-model",
+                ],
+                "available": True,
+                "error": None,
+            }
+        ]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_session_lifecycle_supports_lmstudio_provider_and_game_service_mcp(
+    tmp_path: Path,
+):
+    app, engine = await build_test_app(tmp_path, enabled_provider_ids="lmstudio")
+    try:
+        with TestClient(app) as client:
+            session_id = client.post("/sessions", json={"name": "smoke"}).json()[
+                "session"
+            ]["id"]
+
+            model_response = client.put(
+                f"/sessions/{session_id}/model-config",
+                json={
+                    "provider_id": "lmstudio",
+                    "model_name": "qwen3.5-0.8b",
+                },
+            )
+            assert model_response.status_code == 200
+
+            mcp_response = client.post(
+                f"/sessions/{session_id}/mcps",
+                json={
+                    "name": "game-service",
+                    "server_url": "http://localhost:4001/mcp",
+                },
+            )
+            assert mcp_response.status_code == 201
+
+            tools_response = client.get(f"/sessions/{session_id}/tools")
+            assert tools_response.status_code == 200
+            tool_names = [tool["name"] for tool in tools_response.json()["tools"]]
+            assert "game-service_next_step" in tool_names
+
+            detail_response = client.get(f"/sessions/{session_id}")
+            assert detail_response.status_code == 200
+            detail = detail_response.json()["session"]
+            assert detail["model_config"]["provider_id"] == "lmstudio"
+            assert detail["model_config"]["model_name"] == "qwen3.5-0.8b"
+            assert detail["mcps"][0]["name"] == "game-service"
     finally:
         await engine.dispose()
 

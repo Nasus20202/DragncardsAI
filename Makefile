@@ -1,6 +1,6 @@
 
 .PHONY: help lint lint-fix test test-unit test-integration build up down down-clean \
-	infra-up infra-down infra-restart \
+	infra-up infra-down infra-restart smoke-up smoke-check smoke-model \
 	run run-game-service run-agent-orchestrator run-dashboard
 
 help:
@@ -17,6 +17,9 @@ help:
 		"make infra-up           # start infrastructure services only" \
 		"make infra-down         # stop infrastructure services only" \
 		"make infra-restart      # restart infrastructure services only" \
+		"make smoke-up           # start stack with compose-managed smoke model" \
+		"make smoke-check        # validate smoke dependencies" \
+		"make smoke-model        # start compose-managed llama.cpp smoke model" \
 		"make run                # run local services directly" \
 		"make run-game-service   # run game-service locally" \
 		"make run-agent-orchestrator" \
@@ -57,6 +60,15 @@ infra-down:
 
 infra-restart:
 	./scripts/docker-infrastructure.sh restart
+
+smoke-up:
+	./services/smoketest/smoke.sh up
+
+smoke-check:
+	./services/smoketest/smoke.sh check
+
+smoke-model:
+	./services/smoketest/smoke.sh model
 
 run:
 	./scripts/run.sh start

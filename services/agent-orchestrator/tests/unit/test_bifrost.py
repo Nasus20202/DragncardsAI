@@ -278,3 +278,85 @@ async def test_list_models_refreshes_cache_after_ttl_expiry():
     assert call_count == 2
     assert [model.id for model in first] == ["openrouter/model-1"]
     assert [model.id for model in second] == ["openrouter/model-2"]
+
+
+@pytest.mark.asyncio
+async def test_list_models_uses_direct_lmstudio_endpoint():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL("http://lmstudio.local/v1/models")
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "qwen3.5-0.8b",
+                        "name": "qwen3.5-0.8b",
+                        "meta": {"n_ctx": 4096},
+                    }
+                ]
+            },
+            request=request,
+        )
+
+    client = BifrostClient(
+        "http://bifrost",
+        "",
+        {"openai": "openai", "lmstudio": "lmstudio"},
+        lmstudio_base_url="http://lmstudio.local/v1",
+    )
+    await client._http_client.aclose()
+    client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        models = await client.list_models("lmstudio")
+        context_length = await client.get_model_context_length(
+            "lmstudio", "qwen3.5-0.8b"
+        )
+    finally:
+        await client.aclose()
+
+    assert [model.id for model in models] == ["qwen3.5-0.8b"]
+    assert context_length == 4096
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_uses_direct_lmstudio_endpoint():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL("http://lmstudio.local/v1/chat/completions")
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["model"] == "qwen3.5-0.8b"
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "Hello there!",
+                            "tool_calls": [],
+                        }
+                    }
+                ]
+            },
+            request=request,
+        )
+
+    client = BifrostClient(
+        "http://bifrost",
+        "",
+        {"openai": "openai", "lmstudio": "lmstudio"},
+        lmstudio_base_url="http://lmstudio.local/v1",
+    )
+    await client._http_client.aclose()
+    client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        response = await client.chat_completion(
+            "lmstudio",
+            "qwen3.5-0.8b",
+            [{"role": "user", "content": "hi"}],
+            None,
+            {},
+            {},
+        )
+    finally:
+        await client.aclose()
+
+    assert response.content == "Hello there!"

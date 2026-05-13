@@ -9,15 +9,17 @@ case "$MODE" in
     check|--check)
         DASHBOARD_FORMAT_CMD="pnpm format:check"
         DASHBOARD_LINT_CMD="pnpm lint"
+        SMOKETEST_FORMAT_CMD="pnpm format:check"
         PYTHON_FORMAT_CMD="uv run black --check src tests"
-        DASHBOARD_LABEL="Validating"
+        JS_LABEL="Validating"
         PYTHON_LABEL="Validating"
         ;;
     fix|--fix)
         DASHBOARD_FORMAT_CMD="pnpm format"
         DASHBOARD_LINT_CMD="pnpm lint --fix"
+        SMOKETEST_FORMAT_CMD="pnpm format"
         PYTHON_FORMAT_CMD="uv run black src tests"
-        DASHBOARD_LABEL="Fixing"
+        JS_LABEL="Fixing"
         PYTHON_LABEL="Fixing"
         ;;
     *)
@@ -26,11 +28,18 @@ case "$MODE" in
         ;;
 esac
 
-echo ">>> $DASHBOARD_LABEL dashboard formatting and linting..."
+echo ">>> $JS_LABEL dashboard formatting and linting..."
 (
     cd "$ROOT_DIR/services/dashboard"
     eval "$DASHBOARD_FORMAT_CMD"
     eval "$DASHBOARD_LINT_CMD"
+    pnpm typecheck
+)
+
+echo ">>> $JS_LABEL smoketest formatting..."
+(
+    cd "$ROOT_DIR/services/smoketest"
+    eval "$SMOKETEST_FORMAT_CMD"
     pnpm typecheck
 )
 

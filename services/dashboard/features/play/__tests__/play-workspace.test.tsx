@@ -531,7 +531,7 @@ describe("PlayWorkspace", () => {
     api.fetchDashboardConfig.mockResolvedValueOnce({
       ...baseConfig,
       defaultProviderId: "lmstudio",
-      defaultModelName: "qwen2.5-1.5b-instruct",
+      defaultModelName: "qwen3.5-0.8b",
       defaultSkills: ["skill-b"],
       defaultCustomMcps: [
         {
@@ -592,7 +592,7 @@ describe("PlayWorkspace", () => {
         "session-2",
         expect.objectContaining({
           provider_id: "lmstudio",
-          model_name: "qwen2.5-1.5b-instruct",
+          model_name: "qwen3.5-0.8b",
           gateway_options: {},
           provider_options: {},
         })
