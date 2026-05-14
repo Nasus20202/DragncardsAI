@@ -81,6 +81,16 @@ class FakeGameFlowMcp:
         raise AssertionError(f"Unexpected tool call: {tool_name}")
 
 
+class FakeGameFlowErrorMcp(FakeGameFlowMcp):
+    async def call_tool(self, server_url, tool_name, arguments, headers=None):
+        if tool_name == "execute_action":
+            return {
+                "is_error": True,
+                "content": [{"type": "text", "text": "failed to advance game"}],
+            }
+        return await super().call_tool(server_url, tool_name, arguments, headers=headers)
+
+
 class FakeGameFlowBifrost:
     def __init__(self):
         self._round = 0
@@ -136,6 +146,21 @@ class FakeGameFlowBifrost:
         return ChatResponse(content="Advanced fake game", tool_calls=[], raw={})
 
 
+class FakeGameFlowErrorRecoveryBifrost(FakeGameFlowBifrost):
+    async def chat_completion(self, *args, **kwargs):
+        response = await super().chat_completion(*args, **kwargs)
+        if self._round == 2 and not response.tool_calls:
+            on_delta = kwargs.get("on_delta")
+            if on_delta is not None:
+                from agent_orchestrator.integrations.bifrost import ChatDelta
+
+                await on_delta(ChatDelta(content="Could not advance fake game"))
+            return ChatResponse(
+                content="Could not advance fake game", tool_calls=[], raw={}
+            )
+        return response
+
+
 @pytest.fixture
 async def fake_game_orchestrator_app(tmp_path: Path):
     database_path = tmp_path / "integration-game-flow.sqlite3"
@@ -149,6 +174,25 @@ async def fake_game_orchestrator_app(tmp_path: Path):
         bifrost_client=FakeGameFlowBifrost(),
         live_event_bus=InMemoryLiveEventBus(),
         mcp_client=FakeGameFlowMcp(),
+    )
+    async with app.router.lifespan_context(app):
+        yield app
+    await engine.dispose()
+
+
+@pytest.fixture
+async def fake_game_orchestrator_error_app(tmp_path: Path):
+    database_path = tmp_path / "integration-game-flow-error.sqlite3"
+    engine = create_engine(f"sqlite+aiosqlite:///{database_path}")
+    await ensure_schema(engine)
+    repository = Repository(create_session_factory(engine))
+
+    app = create_app(
+        settings=Settings(database_url=f"sqlite+aiosqlite:///{database_path}"),
+        repository=repository,
+        bifrost_client=FakeGameFlowErrorRecoveryBifrost(),
+        live_event_bus=InMemoryLiveEventBus(),
+        mcp_client=FakeGameFlowErrorMcp(),
     )
     async with app.router.lifespan_context(app):
         yield app
@@ -233,6 +277,63 @@ async def test_prompt_run_orchestrates_game_service_tools(fake_game_orchestrator
 
         execute_payload = json.loads(execute_result["payload"]["result"]["content"][0]["text"])
         assert execute_payload["session_id"] == created_session_id
+
+
+@pytest.mark.asyncio
+async def test_prompt_run_records_mcp_tool_errors(fake_game_orchestrator_error_app):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=fake_game_orchestrator_error_app),
+        base_url="http://test",
+    ) as client:
+        create_response = await client.post("/sessions", json={"name": "game-flow-error"})
+        session_id = create_response.json()["session"]["id"]
+
+        await client.put(
+            f"/sessions/{session_id}/model-config",
+            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+        )
+        await client.post(
+            f"/sessions/{session_id}/mcps",
+            json={"name": "game-service", "server_url": "http://game-service/mcp"},
+        )
+
+        prompt_response = await client.post(
+            f"/sessions/{session_id}/prompts",
+            json={"prompt": "Create and advance a game"},
+        )
+        assert prompt_response.status_code == 202
+        job_id = prompt_response.json()["job"]["id"]
+
+        for _ in range(60):
+            job_response = await client.get(f"/jobs/{job_id}")
+            status = job_response.json()["job"]["status"]
+            if status in {"completed", "failed"}:
+                break
+            await asyncio.sleep(0.05)
+
+        job = job_response.json()["job"]
+        assert job["status"] == "completed"
+        assert job["result_text"] == "Could not advance fake game"
+
+        tool_result_events = [e for e in job["events"] if e["event_type"] == "tool_result"]
+        assert len(tool_result_events) == 2
+
+        create_result = next(
+            event
+            for event in tool_result_events
+            if event["payload"]["tool_name"] == "create_game"
+        )
+        execute_result = next(
+            event
+            for event in tool_result_events
+            if event["payload"]["tool_name"] == "execute_action"
+        )
+
+        assert create_result["payload"]["is_error"] is False
+        assert execute_result["payload"]["is_error"] is True
+        assert execute_result["payload"]["result"]["content"][0]["text"] == (
+            "failed to advance game"
+        )
 
 
 @pytest.mark.asyncio
