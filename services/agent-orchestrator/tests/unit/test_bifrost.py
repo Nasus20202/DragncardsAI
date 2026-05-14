@@ -116,6 +116,36 @@ async def test_list_models_raises_gateway_error_for_http_failure():
 
 
 @pytest.mark.asyncio
+async def test_list_models_raises_timeout_for_request_timeout():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    client = await _build_client(handler)
+    try:
+        with pytest.raises(BifrostError) as exc_info:
+            await client.list_models("openai")
+    finally:
+        await client.aclose()
+
+    assert exc_info.value.code == "timeout"
+    assert exc_info.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_get_model_context_length_returns_none_when_fetch_all_models_fails():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"error": {"message": "down"}}, request=request)
+
+    client = await _build_client(handler)
+    try:
+        context_length = await client.get_model_context_length("openai", "gpt-4o-mini")
+    finally:
+        await client.aclose()
+
+    assert context_length is None
+
+
+@pytest.mark.asyncio
 async def test_chat_completion_parses_tool_calls():
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = request.content.decode("utf-8")
@@ -217,6 +247,89 @@ async def test_chat_completion_streams_reasoning_and_content_deltas():
     assert response.reasoning == "Let me think. "
     assert response.content == "Hello world"
     assert response.reasoning_details[0].text == "Let me think. "
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_stream_parses_tool_call_deltas_without_callback_invocation():
+    deltas = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["stream"] is True
+        return httpx.Response(
+            200,
+            text="\n\n".join(
+                [
+                    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"demo_","arguments":"{\\"count\\":"}}]},"finish_reason":null}]}',
+                    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"tool","arguments":" 2}"}}]},"finish_reason":null}]}',
+                    "data: [DONE]",
+                ]
+            ),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    client = await _build_client(handler)
+    try:
+        response = await client.chat_completion(
+            "openai",
+            "gpt-4o-mini",
+            [{"role": "user", "content": "hi"}],
+            [{"type": "function", "function": {"name": "demo_tool", "parameters": {}}}],
+            {},
+            {},
+            on_delta=deltas.append,
+        )
+    finally:
+        await client.aclose()
+
+    assert deltas == []
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].id == "call-1"
+    assert response.tool_calls[0].name == "demo_tool"
+    assert response.tool_calls[0].arguments == {"count": 2}
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_parses_invalid_tool_call_arguments_as_raw_string():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "hello",
+                            "tool_calls": [
+                                {
+                                    "id": "call-1",
+                                    "function": {
+                                        "name": "demo_tool",
+                                        "arguments": "{not-json}",
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            request=request,
+        )
+
+    client = await _build_client(handler)
+    try:
+        response = await client.chat_completion(
+            "openai",
+            "gpt-4o-mini",
+            [{"role": "user", "content": "hi"}],
+            None,
+            {},
+            {},
+        )
+    finally:
+        await client.aclose()
+
+    assert response.tool_calls[0].arguments == {"raw": "{not-json}"}
 
 
 @pytest.mark.asyncio
