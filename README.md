@@ -43,9 +43,6 @@ make test-unit
 scripts/test.sh integration
 make test-integration
 
-# Browser smoke test (services/smoketest, compose-managed smoke profile)
-services/smoketest/smoke.sh test
-
 # Rebuild images
 scripts/docker.sh build
 make build
