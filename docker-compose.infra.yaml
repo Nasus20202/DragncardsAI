@@ -93,7 +93,7 @@ services:
       - dragncards-shared
 
   agent-orchestrator-postgres:
-    image: postgres:18.3-alpine
+    image: postgres:18.4-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
