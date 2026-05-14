@@ -113,7 +113,9 @@ async def test_spawn_subagent_creates_child_and_emits_events(tmp_path: Path):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
             ) as client:
-                create_response = await client.post("/sessions", json={"name": "subagent-test"})
+                create_response = await client.post(
+                    "/sessions", json={"name": "subagent-test"}
+                )
                 session_id = create_response.json()["session"]["id"]
                 await client.put(
                     f"/sessions/{session_id}/model-config",
@@ -159,7 +161,9 @@ async def test_spawn_subagent_creates_child_and_emits_events(tmp_path: Path):
                 child_session_id = started_event["payload"]["child_session_id"]
                 child_session = None
                 for _ in range(20):
-                    child_session_response = await client.get(f"/sessions/{child_session_id}")
+                    child_session_response = await client.get(
+                        f"/sessions/{child_session_id}"
+                    )
                     assert child_session_response.status_code == 200
                     child_session = child_session_response.json()["session"]
                     if child_session["status"] == "terminated":

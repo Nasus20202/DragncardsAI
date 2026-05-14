@@ -15,7 +15,9 @@ async def test_prompt_run_completes_background_job(app):
         create_response = await client.post("/sessions", json={"name": "demo"})
         session_id = create_response.json()["session"]["id"]
 
-        sessions_response = await client.get("/sessions", params={"limit": 10, "offset": 0})
+        sessions_response = await client.get(
+            "/sessions", params={"limit": 10, "offset": 0}
+        )
         assert sessions_response.status_code == 200
         assert sessions_response.json()["page"]["total"] >= 1
 
@@ -23,7 +25,9 @@ async def test_prompt_run_completes_background_job(app):
             f"/sessions/{session_id}/model-config",
             json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
         )
-        await client.post(f"/sessions/{session_id}/skills", json={"skill_name": "test-skill"})
+        await client.post(
+            f"/sessions/{session_id}/skills", json={"skill_name": "test-skill"}
+        )
         await client.post(
             f"/sessions/{session_id}/mcps",
             json={"name": "game-service", "server_url": "http://game-service/mcp"},
@@ -111,7 +115,9 @@ async def test_event_stream_replays_and_resumes(app):
             f"/sessions/{session_id}/model-config",
             json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
         )
-        await client.post(f"/sessions/{session_id}/skills", json={"skill_name": "test-skill"})
+        await client.post(
+            f"/sessions/{session_id}/skills", json={"skill_name": "test-skill"}
+        )
         await client.post(
             f"/sessions/{session_id}/mcps",
             json={"name": "game-service", "server_url": "http://game-service/mcp"},
@@ -145,7 +151,9 @@ async def test_event_stream_replays_and_resumes(app):
             params={"after": resume_cursor},
         ) as resumed_response:
             assert resumed_response.status_code == 200
-            resumed_lines = [line async for line in resumed_response.aiter_lines() if line]
+            resumed_lines = [
+                line async for line in resumed_response.aiter_lines() if line
+            ]
 
         resumed_ids = [
             line.removeprefix("id: ")

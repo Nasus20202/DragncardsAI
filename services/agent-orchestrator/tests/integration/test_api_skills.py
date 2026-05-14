@@ -106,7 +106,9 @@ async def test_load_skill_emits_skill_loaded_event(tmp_path: Path):
     skill_root.mkdir()
     test_skill = skill_root / "test-skill"
     test_skill.mkdir()
-    (test_skill / "SKILL.md").write_text("# Test Skill\n\nPlay safely.", encoding="utf-8")
+    (test_skill / "SKILL.md").write_text(
+        "# Test Skill\n\nPlay safely.", encoding="utf-8"
+    )
     reference_dir = test_skill / "reference"
     reference_dir.mkdir()
     (reference_dir / "guide.md").write_text("Guide content.", encoding="utf-8")
@@ -128,7 +130,9 @@ async def test_load_skill_emits_skill_loaded_event(tmp_path: Path):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
             ) as client:
-                create_response = await client.post("/sessions", json={"name": "skill-test"})
+                create_response = await client.post(
+                    "/sessions", json={"name": "skill-test"}
+                )
                 session_id = create_response.json()["session"]["id"]
                 await client.put(
                     f"/sessions/{session_id}/model-config",

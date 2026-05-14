@@ -88,7 +88,9 @@ class FakeGameFlowErrorMcp(FakeGameFlowMcp):
                 "is_error": True,
                 "content": [{"type": "text", "text": "failed to advance game"}],
             }
-        return await super().call_tool(server_url, tool_name, arguments, headers=headers)
+        return await super().call_tool(
+            server_url, tool_name, arguments, headers=headers
+        )
 
 
 class FakeGameFlowBifrost:
@@ -205,7 +207,9 @@ async def test_prompt_run_orchestrates_game_service_tools(fake_game_orchestrator
         transport=httpx.ASGITransport(app=fake_game_orchestrator_app),
         base_url="http://test",
     ) as client:
-        create_response = await client.post("/sessions", json={"name": "game-flow-demo"})
+        create_response = await client.post(
+            "/sessions", json={"name": "game-flow-demo"}
+        )
         session_id = create_response.json()["session"]["id"]
 
         await client.put(
@@ -242,7 +246,9 @@ async def test_prompt_run_orchestrates_game_service_tools(fake_game_orchestrator
         assert job["result_text"] == "Advanced fake game"
 
         tool_call_events = [e for e in job["events"] if e["event_type"] == "tool_call"]
-        tool_result_events = [e for e in job["events"] if e["event_type"] == "tool_result"]
+        tool_result_events = [
+            e for e in job["events"] if e["event_type"] == "tool_result"
+        ]
 
         assert [event["payload"]["tool_name"] for event in tool_call_events] == [
             "create_game",
@@ -269,13 +275,15 @@ async def test_prompt_run_orchestrates_game_service_tools(fake_game_orchestrator
             if event["payload"]["tool_name"] == "execute_action"
         )
 
-        created_payload = json.loads(create_result["payload"]["result"]["content"][0]["text"])
-        created_session_id = created_payload["session"]["session_id"]
-        assert (
-            execute_call["payload"]["arguments"]["session_id"] == created_session_id
+        created_payload = json.loads(
+            create_result["payload"]["result"]["content"][0]["text"]
         )
+        created_session_id = created_payload["session"]["session_id"]
+        assert execute_call["payload"]["arguments"]["session_id"] == created_session_id
 
-        execute_payload = json.loads(execute_result["payload"]["result"]["content"][0]["text"])
+        execute_payload = json.loads(
+            execute_result["payload"]["result"]["content"][0]["text"]
+        )
         assert execute_payload["session_id"] == created_session_id
 
 
@@ -285,7 +293,9 @@ async def test_prompt_run_records_mcp_tool_errors(fake_game_orchestrator_error_a
         transport=httpx.ASGITransport(app=fake_game_orchestrator_error_app),
         base_url="http://test",
     ) as client:
-        create_response = await client.post("/sessions", json={"name": "game-flow-error"})
+        create_response = await client.post(
+            "/sessions", json={"name": "game-flow-error"}
+        )
         session_id = create_response.json()["session"]["id"]
 
         await client.put(
@@ -315,7 +325,9 @@ async def test_prompt_run_records_mcp_tool_errors(fake_game_orchestrator_error_a
         assert job["status"] == "completed"
         assert job["result_text"] == "Could not advance fake game"
 
-        tool_result_events = [e for e in job["events"] if e["event_type"] == "tool_result"]
+        tool_result_events = [
+            e for e in job["events"] if e["event_type"] == "tool_result"
+        ]
         assert len(tool_result_events) == 2
 
         create_result = next(
