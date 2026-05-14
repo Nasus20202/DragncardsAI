@@ -207,3 +207,8 @@ async def real_mcp_app(tmp_path: Path):
     async with app.router.lifespan_context(app):
         yield app
     await engine.dispose()
+
+
+@pytest.fixture
+async def live_game_service_available():
+    await require_live_game_service()

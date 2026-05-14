@@ -21,7 +21,6 @@ GAME_SERVICE_HTTP_URL = os.environ.get("GAME_SERVICE_HTTP_URL", "http://localhos
 GAME_SERVICE_MCP_URL = os.environ.get(
     "GAME_SERVICE_MCP_URL", f"{GAME_SERVICE_HTTP_URL}/mcp/"
 )
-DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:4000")
 
 
 class FakeGameFlowMcp:
@@ -97,7 +96,6 @@ class FakeGameFlowBifrost:
 
     async def chat_completion(self, *args, **kwargs):
         await asyncio.sleep(0.01)
-        messages = args[2] if len(args) > 2 else kwargs.get("messages") or []
         on_delta = kwargs.get("on_delta")
 
         if self._round == 0:
@@ -116,7 +114,6 @@ class FakeGameFlowBifrost:
 
         if self._round == 1:
             self._round += 1
-            session_id = _extract_created_session_id(messages)
             return ChatResponse(
                 content="",
                 tool_calls=[
@@ -124,7 +121,7 @@ class FakeGameFlowBifrost:
                         id="call-step",
                         name="game-service_execute_action",
                         arguments={
-                            "session_id": session_id,
+                            "session_id": "game-session-fake-001",
                             "action": {"type": "next_step"},
                         },
                     )
@@ -137,42 +134,6 @@ class FakeGameFlowBifrost:
 
             await on_delta(ChatDelta(content="Advanced fake game"))
         return ChatResponse(content="Advanced fake game", tool_calls=[], raw={})
-
-
-def _extract_created_session_id(messages: list[dict[str, object]]) -> str:
-    for message in reversed(messages):
-        if message.get("role") != "tool":
-            continue
-        content = message.get("content")
-        if not isinstance(content, str):
-            continue
-        tool_result = json.loads(content)
-        parts = tool_result.get("content") or []
-        if not parts:
-            continue
-        text = parts[0].get("text")
-        if not isinstance(text, str):
-            continue
-        payload = json.loads(text)
-        session = payload.get("session") or {}
-        session_id = session.get("session_id")
-        if isinstance(session_id, str):
-            return session_id
-    raise AssertionError("Could not extract created session_id from tool messages")
-
-
-async def _require_live_game_service() -> None:
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            game_service_resp = await client.get(f"{GAME_SERVICE_HTTP_URL}/health")
-            dragncards_resp = await client.get(DRAGNCARDS_HTTP_URL)
-    except httpx.HTTPError as exc:
-        pytest.skip(f"Live game-service stack unavailable: {exc}")
-
-    if game_service_resp.status_code != 200:
-        pytest.skip(f"game-service not reachable at {GAME_SERVICE_HTTP_URL}")
-    if dragncards_resp.status_code >= 500:
-        pytest.skip(f"DragnCards backend not healthy at {DRAGNCARDS_HTTP_URL}")
 
 
 @pytest.fixture
@@ -275,8 +236,10 @@ async def test_prompt_run_orchestrates_game_service_tools(fake_game_orchestrator
 
 
 @pytest.mark.asyncio
-async def test_prompt_run_uses_real_game_service_mcp(real_mcp_app):
-    await _require_live_game_service()
+async def test_prompt_run_uses_real_game_service_mcp(
+    real_mcp_app, live_game_service_available
+):
+    del live_game_service_available
 
     created_game_session_id = None
     async with httpx.AsyncClient(
