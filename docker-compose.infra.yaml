@@ -48,7 +48,7 @@ services:
       - dragncards-shared
 
   otel-lgtm:
-    image: grafana/otel-lgtm:0.27.1
+    image: grafana/otel-lgtm:0.28.0
     restart: unless-stopped
     volumes:
       - ./services/otel/loki-config.yaml:/otel-lgtm/loki-config.yaml:ro
