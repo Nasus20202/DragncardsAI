@@ -1,6 +1,13 @@
 import {
+  addMcp,
+  addMcpRegistry,
+  enableMcpForSession,
+  getSession,
   getContextMetadata,
+  listSessionMcps,
   listSessions,
+  removeMcp,
+  removeMcpRegistry,
   setModelConfig,
 } from "@/features/play/lib/client-api";
 import {
@@ -19,6 +26,7 @@ import {
   DashboardConfig,
   JobDetail,
   JsonValue,
+  McpRegistryResponse,
   ProviderResponse,
   SessionDetail,
   SessionDraft,
@@ -68,6 +76,9 @@ interface UsePlaySessionResult {
     childJobId: string,
     outcome: "completed" | "failed"
   ) => void;
+  toggleMcp: (mcpName: string, enabled: boolean) => Promise<void>;
+  addMcpToRegistry: (mcp: McpRegistryResponse) => Promise<void>;
+  deleteMcpFromRegistry: (mcpName: string) => Promise<void>;
 }
 
 function normalizeDraft(
@@ -199,6 +210,19 @@ export function usePlaySession(): UsePlaySessionResult {
     await refreshSessions();
   }, [refreshSessions]);
 
+  const refreshSelectedSession = useCallback(
+    async (sessionId: string) => {
+      const [session, mcps] = await Promise.all([
+        getSession(sessionId),
+        listSessionMcps(sessionId),
+      ]);
+      const hydratedSession = { ...session, mcps };
+      setSelectedSession(hydratedSession);
+      return hydratedSession;
+    },
+    [setSelectedSession]
+  );
+
   const { startStreaming, stopStreaming, streamingJobId, streamState } =
     useJobStreaming({
       selectedSessionId,
@@ -313,6 +337,111 @@ export function usePlaySession(): UsePlaySessionResult {
     []
   );
 
+  const toggleMcp = useCallback(
+    async (mcpName: string, enabled: boolean) => {
+      if (!selectedSession) {
+        return;
+      }
+      setIsBusy(true);
+      setStatusText(enabled ? "Enabling MCP..." : "Disabling MCP...");
+      try {
+        await enableMcpForSession(selectedSession.id, mcpName, enabled);
+        await refreshSessions();
+        await refreshSelectedSession(selectedSession.id);
+        setStatusText("MCP updated");
+      } catch (error) {
+        setErrorText(
+          error instanceof Error ? error.message : "Failed to update MCP"
+        );
+        setStatusText("MCP update failed");
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [
+      selectedSession,
+      refreshSessions,
+      refreshSelectedSession,
+      setStatusText,
+      setErrorText,
+      setIsBusy,
+    ]
+  );
+
+  const addMcpToRegistry = useCallback(
+    async (mcp: McpRegistryResponse) => {
+      if (!selectedSession) {
+        return;
+      }
+      setIsBusy(true);
+      setStatusText("Creating MCP...");
+      try {
+        await addMcpRegistry(mcp);
+        if (!mcp.custom) {
+          await addMcp(selectedSession.id, {
+            name: mcp.name,
+            transport: mcp.transport,
+            server_url: mcp.server_url,
+            headers: mcp.headers as Record<string, string>,
+          });
+        }
+        await refreshSessions();
+        await refreshSelectedSession(selectedSession.id);
+        setStatusText(mcp.custom ? "MCP created" : "MCP added");
+      } catch (error) {
+        setErrorText(
+          error instanceof Error ? error.message : "Failed to create MCP"
+        );
+        setStatusText("MCP create failed");
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [
+      refreshSessions,
+      refreshSelectedSession,
+      selectedSession,
+      setStatusText,
+      setErrorText,
+      setIsBusy,
+    ]
+  );
+
+  const deleteMcpFromRegistry = useCallback(
+    async (mcpName: string) => {
+      if (!selectedSession) {
+        return;
+      }
+      setIsBusy(true);
+      setStatusText("Deleting MCP...");
+      try {
+        const target = selectedSession.mcps.find((mcp) => mcp.name === mcpName);
+        if (target?.enabled) {
+          await removeMcp(selectedSession.id, mcpName);
+        }
+        await removeMcpRegistry(mcpName);
+        await refreshSessions();
+        await refreshSelectedSession(selectedSession.id);
+        setStatusText("MCP deleted");
+      } catch (error) {
+        setErrorText(
+          error instanceof Error ? error.message : "Failed to delete MCP"
+        );
+        setStatusText("MCP delete failed");
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [
+      refreshSessions,
+      refreshSelectedSession,
+      selectedSession,
+      setErrorText,
+      setIsBusy,
+      setStatusText,
+    ]
+  );
+
   return {
     config,
     draft,
@@ -343,5 +472,8 @@ export function usePlaySession(): UsePlaySessionResult {
     submitSessionPrompt,
     cancelExecution,
     recordSubagentOutcome,
+    toggleMcp,
+    addMcpToRegistry,
+    deleteMcpFromRegistry,
   };
 }

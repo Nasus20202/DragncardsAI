@@ -60,7 +60,7 @@ class FakeBifrost:
 
 
 class FakeMcp:
-    async def list_tools(self, server_url, headers=None):
+    async def list_tools(self, server_url, transport, headers=None):
         return [
             McpToolDefinition(
                 name="next_step",
@@ -69,7 +69,9 @@ class FakeMcp:
             )
         ]
 
-    async def call_tool(self, server_url, tool_name, arguments, headers=None):
+    async def call_tool(
+        self, server_url, transport, tool_name, arguments, headers=None
+    ):
         return {"is_error": False, "content": [{"type": "text", "text": "advanced"}]}
 
 
@@ -195,7 +197,10 @@ async def build_real_mcp_app(tmp_path: Path):
     repository = Repository(create_session_factory(engine))
 
     app = create_app(
-        settings=Settings(database_url=f"sqlite+aiosqlite:///{database_path}"),
+        settings=Settings(
+            database_url=f"sqlite+aiosqlite:///{database_path}",
+            DEFAULT_GAME_SERVICE_MCP_ENABLED=False,
+        ),
         repository=repository,
         bifrost_client=LiveGameServiceBifrost(),
         live_event_bus=InMemoryLiveEventBus(),

@@ -1,7 +1,7 @@
 ## 1. Smoke Runtime Wiring
 
 - [x] 1.1 Add the documented local `llama.cpp` smoke-model startup path and required environment variables for the smoke workflow
-- [x] 1.2 Wire the smoke-model environment into the local stack entrypoint used for end-to-end testing without making it mandatory for normal development
+- [x] 1.2 Wire the smoke-model environment into `services/smoketest/smoke.sh`, repo `make` targets, and the optional Docker Compose `smoke` profile without making it mandatory for normal development
 - [x] 1.3 Document how to obtain or point to the small smoke-test model artifact and how to verify the local model endpoint is healthy
 
 ## 2. Agent-Orchestrator Smoke Model Support
@@ -27,4 +27,4 @@
 
 - [x] 5.1 Run the relevant dashboard and agent-orchestrator unit tests after the smoke-path changes
 - [x] 5.2 Run the new Playwright smoke test against the local stack and fix any timing or reliability issues in the retry loop
-- [x] 5.3 Update repo docs or scripts so the `services/smoketest` workflow is discoverable from the standard development entrypoints
+- [x] 5.3 Update repo docs, helper scripts, and `make` targets so the `services/smoketest` workflow is discoverable from the standard development entrypoints

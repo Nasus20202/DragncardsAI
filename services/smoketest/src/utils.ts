@@ -19,6 +19,102 @@ export function logSmokeStatus(message: string) {
   console.log(`[smoketest] ${message}`);
 }
 
+function stringifyPayload(value: unknown) {
+  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+function readToolResultText(payload: Record<string, unknown>) {
+  const result = payload.result;
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const firstText = content.find(
+    (item) =>
+      item &&
+      typeof item === "object" &&
+      typeof (item as { text?: unknown }).text === "string",
+  ) as { text: string } | undefined;
+
+  return firstText?.text ?? null;
+}
+
+export function logSmokeChatTranscript(
+  prompt: string,
+  events: JobEventsResponse["events"],
+) {
+  console.log("[smoketest][chat] user>");
+  console.log(prompt);
+
+  for (const event of events) {
+    const payload = event.payload as Record<string, unknown>;
+
+    switch (event.event_type) {
+      case "reasoning": {
+        if (typeof payload.text === "string" && payload.text.trim()) {
+          console.log("[smoketest][chat] reasoning>");
+          console.log(payload.text);
+        }
+        break;
+      }
+      case "model_output":
+      case "completion": {
+        if (typeof payload.text === "string" && payload.text.trim()) {
+          console.log("[smoketest][chat] assistant>");
+          console.log(payload.text);
+        }
+        break;
+      }
+      case "tool_call": {
+        const toolName =
+          typeof payload.exposed_tool_name === "string"
+            ? payload.exposed_tool_name
+            : typeof payload.tool_name === "string"
+              ? payload.tool_name
+              : "unknown_tool";
+        console.log(`[smoketest][chat] tool_call ${toolName}>`);
+        console.log(stringifyPayload(payload.arguments ?? payload));
+        break;
+      }
+      case "tool_result": {
+        const toolName =
+          typeof payload.exposed_tool_name === "string"
+            ? payload.exposed_tool_name
+            : typeof payload.tool_name === "string"
+              ? payload.tool_name
+              : "unknown_tool";
+        console.log(`[smoketest][chat] tool_result ${toolName}>`);
+        console.log(
+          readToolResultText(payload) ??
+            stringifyPayload(payload.result ?? payload),
+        );
+        break;
+      }
+      case "failure": {
+        console.log("[smoketest][chat] failure>");
+        console.log(
+          typeof payload.message === "string"
+            ? payload.message
+            : stringifyPayload(payload),
+        );
+        break;
+      }
+      case "cancellation": {
+        console.log("[smoketest][chat] cancellation>");
+        console.log(stringifyPayload(payload));
+        break;
+      }
+      default:
+        break;
+    }
+  }
+}
+
 export async function requireOk(
   request: APIRequestContext,
   url: string,

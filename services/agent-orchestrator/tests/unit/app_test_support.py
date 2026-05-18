@@ -61,7 +61,7 @@ class FakeMcpClient(StreamableHttpMcpClient):
     def __init__(self):
         pass
 
-    async def list_tools(self, server_url, headers=None):
+    async def list_tools(self, server_url, transport, headers=None):
         return [
             McpToolDefinition(
                 name="next_step",
@@ -70,9 +70,19 @@ class FakeMcpClient(StreamableHttpMcpClient):
             )
         ]
 
+    async def call_tool(
+        self, server_url, transport, tool_name, arguments, headers=None
+    ):
+        return {"is_error": False, "content": [{"type": "text", "text": "done"}]}
+
 
 class FailingMcpClient(FakeMcpClient):
-    async def list_tools(self, server_url, headers=None):
+    async def list_tools(self, server_url, transport, headers=None):
+        raise McpClientError(f"cannot connect to {server_url}")
+
+    async def call_tool(
+        self, server_url, transport, tool_name, arguments, headers=None
+    ):
         raise McpClientError(f"cannot connect to {server_url}")
 
 

@@ -21,7 +21,9 @@ describe("PlayWorkspace configuration", () => {
     renderPlayWorkspace();
 
     await waitFor(() =>
-      expect(screen.getByTestId("draft-provider")).toHaveTextContent("openai")
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
     );
     fireEvent.click(screen.getByRole("button", { name: /change provider/i }));
 
@@ -72,14 +74,6 @@ describe("PlayWorkspace configuration", () => {
       defaultProviderId: "lmstudio",
       defaultModelName: "qwen3.5-0.8b",
       defaultSkills: ["skill-b"],
-      defaultCustomMcps: [
-        {
-          name: "custom-mcp",
-          transport: "streamable-http",
-          server_url: "http://custom-mcp.test/mcp/",
-          headers: { Authorization: "Bearer test" },
-        },
-      ],
     });
     api.getSession.mockResolvedValueOnce({
       ...sessionDetail,
@@ -98,17 +92,7 @@ describe("PlayWorkspace configuration", () => {
           created_at: "2026-05-11T00:00:00Z",
         },
       ],
-      mcps: [
-        {
-          id: "mcp-existing",
-          name: "game-service",
-          transport: "streamable-http",
-          server_url: "http://localhost:4001/mcp/",
-          headers: {},
-          created_at: "2026-05-11T00:00:00Z",
-          updated_at: "2026-05-11T00:00:00Z",
-        },
-      ],
+      mcps: [],
     });
     api.listSessions
       .mockResolvedValueOnce([sessionSummary])
@@ -138,19 +122,8 @@ describe("PlayWorkspace configuration", () => {
       )
     );
     expect(api.addSkill).toHaveBeenCalledWith("session-2", "skill-b");
-    expect(api.addMcp).toHaveBeenCalledWith(
-      "session-2",
-      expect.objectContaining({
-        name: "game-service",
-        server_url: "http://game-service:8000/mcp/",
-      })
-    );
-    expect(api.addMcp).toHaveBeenCalledWith("session-2", {
-      name: "custom-mcp",
-      transport: "streamable-http",
-      server_url: "http://custom-mcp.test/mcp/",
-      headers: { Authorization: "Bearer test" },
-    });
+    // MCPs are now managed via McpSection UI, not automatically from config
+    expect(api.addMcp).not.toHaveBeenCalled();
   });
 
   it("saves replay window settings with the session update", async () => {
@@ -180,6 +153,43 @@ describe("PlayWorkspace configuration", () => {
           context_recent_tool_exchange_limit: 2,
         })
       )
+    );
+  });
+
+  it("keeps disabled MCPs visible after saving configuration", async () => {
+    api.listSessionMcps
+      .mockResolvedValueOnce([
+        {
+          name: "game-service",
+          transport: "streamable-http",
+          server_url: "http://game-service:8000/mcp/",
+          enabled: false,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          name: "game-service",
+          transport: "streamable-http",
+          server_url: "http://game-service:8000/mcp/",
+          enabled: false,
+        },
+      ]);
+
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("selected-session-mcp-count")
+      ).toHaveTextContent("1")
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /save configuration/i })
+    );
+
+    await waitFor(() => expect(api.listSessionMcps).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("selected-session-mcp-count")).toHaveTextContent(
+      "1"
     );
   });
 });

@@ -55,6 +55,8 @@ def _matches_provider_model(provider_id: str, model_id: str, model_prefix: str) 
     if model_id.startswith(f"{model_prefix}/"):
         return True
     if "/" in model_id:
+        if provider_id == "openrouter":
+            return True
         return False
     if provider_id in {"openai", "lmstudio"}:
         return True

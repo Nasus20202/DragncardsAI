@@ -5,10 +5,14 @@ import { AppShell } from "@/features/shell/components/app-shell";
 import { Providers } from "@/features/shell/components/providers";
 import type { Metadata } from "next";
 
-export const metadata: Metadata = {
-  title: "DragnCardsAI Dashboard",
-  description: "Playground dashboard for agent-orchestrator and game-service.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const config = await getPublicConfig();
+  return {
+    title: config.appName,
+    description:
+      "Playground dashboard for agent-orchestrator and game-service.",
+  };
+}
 
 export default function RootLayout({
   children,

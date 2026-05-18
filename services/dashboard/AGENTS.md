@@ -1,0 +1,98 @@
+# Dashboard Service Agent Guide
+
+Read this file before making changes in `services/dashboard/`.
+
+## Scope
+
+These instructions apply to the dashboard service and override the repository-level `AGENTS.md`.
+
+## Tech Stack
+
+- **Framework**: Next.js 16 with React 19
+- **UI Library**: Hero UI (`@heroui/react`, `@heroui/styles` v3.0.5)
+- **Styling**: Tailwind CSS 4 with Hero UI preset
+- **TypeScript**: Strict mode enabled
+- **Testing**: Vitest with React Testing Library
+
+## Project Structure
+
+```
+features/
+  games/           # Game session management
+    components/    # GamesSessionList, DragnCardsIframe, GamesWorkspace
+    lib/           # useGames hook
+  shared/          # Shared types and utilities
+```
+
+## Component Guidelines
+
+### Hero UI Components
+
+Always use Hero UI components from `@heroui/react` instead of native HTML elements. Import directly:
+
+```tsx
+import { Button, Card, Chip, Spinner, Input, Modal } from "@heroui/react";
+```
+
+Common component mappings:
+
+- Buttons: `Button` (not `<button>`)
+- Cards: `Card` for containers, `CardBody` for content
+- Form inputs: `Input`, `Textarea`, `Select`
+- Layout: `Card` with `divider` prop, or Hero UI `Spacer`
+- Loading: `Spinner`
+- Badges: `Chip`
+- Modals: `Modal`, `ModalContent`, `ModalHeader`, `ModalBody`, `ModalFooter`
+
+### Styling
+
+Use Hero UI's theme classes:
+
+- Colors: `text-default-500`, `text-danger`, `bg-background`, `border-default-200`
+- Spacing: Standard Tailwind (`p-4`, `gap-3`, `flex-1`)
+- Responsive: Use Hero UI's responsive utilities
+
+Example:
+
+```tsx
+<Card className="p-4 shadow-none">
+  <h2 className="text-lg font-semibold">Title</h2>
+  <p className="text-sm text-default-500">Description</p>
+</Card>
+```
+
+## Working Rules
+
+- Use Hero UI components for all interactive elements
+- Follow the existing component structure (client components with "use client")
+- Place new components in `features/<feature>/components/`
+- Place hooks in `features/<feature>/lib/`
+- Use TypeScript strict mode - no `any` types
+- Prefer `className` over inline styles for consistency
+
+## Testing
+
+```bash
+pnpm test              # Run vitest
+pnpm test -- --ui     # Run with UI
+```
+
+Tests live alongside components in `__tests__/` directories.
+
+## Commands
+
+```bash
+pnpm dev              # Start dev server
+pnpm build            # Build for production
+pnpm lint             # Run ESLint
+pnpm typecheck        # Run TypeScript compiler
+pnpm format           # Format with Prettier
+pnpm format:check     # Check formatting
+```
+
+## Agent Guidance
+
+1. Before creating new components, check existing Hero UI patterns in `features/`
+2. Follow the "use client" directive for interactive components
+3. Use Hero UI's TypeScript types - they are included in the package
+4. When styling, prefer Hero UI theme tokens over custom values

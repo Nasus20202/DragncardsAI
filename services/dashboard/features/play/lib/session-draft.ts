@@ -24,14 +24,6 @@ function safeJsonStringify(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-function normalizeMcpServerUrl(serverUrl: string, transport: string): string {
-  if (transport === "streamable-http" && !serverUrl.endsWith("/")) {
-    return `${serverUrl}/`;
-  }
-
-  return serverUrl;
-}
-
 function isRecord(
   value: JsonValue | undefined
 ): value is Record<string, JsonValue> {
@@ -127,8 +119,6 @@ export function createDefaultDraft(config: DashboardConfig): SessionDraft {
     gatewayOptionsText: safeJsonStringify({}),
     providerOptionsText: safeJsonStringify({}),
     selectedSkills: config.defaultSkills,
-    enableDefaultGameServiceMcp: config.defaultGameServiceMcpEnabled,
-    customMcpsText: safeJsonStringify(config.defaultCustomMcps),
   };
 }
 
@@ -136,19 +126,7 @@ export function buildDraftFromSession(
   config: DashboardConfig,
   session: SessionDetail
 ): SessionDraft {
-  const normalizedDefaultMcpUrl = normalizeMcpServerUrl(
-    config.defaultGameServiceMcpUrl,
-    config.defaultGameServiceMcpTransport
-  );
   const defaultDraft = createDefaultDraft(config);
-  const customMcps = session.mcps.filter(
-    (mcp) =>
-      !(
-        mcp.name === config.defaultGameServiceMcpName &&
-        normalizeMcpServerUrl(mcp.server_url, mcp.transport) ===
-          normalizedDefaultMcpUrl
-      )
-  );
 
   return {
     ...defaultDraft,
@@ -171,20 +149,6 @@ export function buildDraftFromSession(
       session.model_config?.provider_options ?? {}
     ),
     selectedSkills: session.skills.map((skill) => skill.skill_name),
-    enableDefaultGameServiceMcp: session.mcps.some(
-      (mcp) =>
-        mcp.name === config.defaultGameServiceMcpName &&
-        normalizeMcpServerUrl(mcp.server_url, mcp.transport) ===
-          normalizedDefaultMcpUrl
-    ),
-    customMcpsText: safeJsonStringify(
-      customMcps.map((mcp) => ({
-        name: mcp.name,
-        transport: mcp.transport,
-        server_url: mcp.server_url,
-        headers: mcp.headers as Record<string, string>,
-      }))
-    ),
   };
 }
 

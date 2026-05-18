@@ -16,8 +16,8 @@ class FakeMcpClient:
     def __init__(self):
         self.calls = []
 
-    async def list_tools(self, server_url, headers=None):
-        self.calls.append(("list_tools", server_url, headers))
+    async def list_tools(self, server_url, transport, headers=None):
+        self.calls.append(("list_tools", server_url, transport, headers))
         return [
             McpToolDefinition(
                 name="next step",
@@ -29,24 +29,32 @@ class FakeMcpClient:
             )
         ]
 
-    async def call_tool(self, server_url, tool_name, arguments, headers=None):
-        self.calls.append(("call_tool", server_url, tool_name, arguments, headers))
+    async def call_tool(
+        self, server_url, transport, tool_name, arguments, headers=None
+    ):
+        self.calls.append(
+            ("call_tool", server_url, transport, tool_name, arguments, headers)
+        )
         return {"is_error": False, "content": [{"type": "text", "text": "ok"}]}
 
 
 class FailingMcpClient(FakeMcpClient):
-    async def list_tools(self, server_url, headers=None):
-        self.calls.append(("list_tools", server_url, headers))
+    async def list_tools(self, server_url, transport, headers=None):
+        self.calls.append(("list_tools", server_url, transport, headers))
         if "bad" in server_url:
             raise McpClientError("connection failed")
-        return await super().list_tools(server_url, headers=headers)
+        return await super().list_tools(server_url, transport, headers=headers)
 
-    async def call_tool(self, server_url, tool_name, arguments, headers=None):
-        self.calls.append(("call_tool", server_url, tool_name, arguments, headers))
+    async def call_tool(
+        self, server_url, transport, tool_name, arguments, headers=None
+    ):
+        self.calls.append(
+            ("call_tool", server_url, transport, tool_name, arguments, headers)
+        )
         if "bad" in server_url:
             raise McpClientError("connection failed")
         return await super().call_tool(
-            server_url, tool_name, arguments, headers=headers
+            server_url, transport, tool_name, arguments, headers=headers
         )
 
 
@@ -69,14 +77,19 @@ def test_safe_tool_name_replaces_unsupported_characters():
 async def test_mcp_tool_catalog_builds_and_calls_tools():
     client = FakeMcpClient()
     catalog = McpToolCatalog(client)
-    assignment = SimpleNamespace(
+    mcp_registry = SimpleNamespace(
         name="game-service",
         transport="streamable-http",
         server_url="http://game-service/mcp",
         headers_json={"Authorization": "Bearer token"},
     )
+    enabled_mcp = SimpleNamespace(
+        mcp_name="game-service",
+        enabled=True,
+        mcp=mcp_registry,
+    )
 
-    tools = await catalog.list_session_tools([assignment])
+    tools = await catalog.list_session_tools([enabled_mcp], [mcp_registry])
 
     assert tools[0].exposed_name == "game-service_next_step"
     assert tools[0].server_url == "http://game-service/mcp/"
@@ -94,11 +107,13 @@ async def test_mcp_tool_catalog_builds_and_calls_tools():
     assert client.calls[0] == (
         "list_tools",
         "http://game-service/mcp/",
+        "streamable-http",
         {"Authorization": "Bearer token"},
     )
     assert client.calls[1] == (
         "call_tool",
         "http://game-service/mcp/",
+        "streamable-http",
         "next step",
         {"count": 1},
         {"Authorization": "Bearer token"},
@@ -109,7 +124,7 @@ async def test_mcp_tool_catalog_builds_and_calls_tools():
 async def test_mcp_tool_catalog_can_skip_unreachable_assignments_for_read_paths():
     client = FailingMcpClient()
     catalog = McpToolCatalog(client)
-    assignments = [
+    mcp_registries = [
         SimpleNamespace(
             name="bad-service",
             transport="streamable-http",
@@ -123,8 +138,22 @@ async def test_mcp_tool_catalog_can_skip_unreachable_assignments_for_read_paths(
             headers_json={},
         ),
     ]
+    enabled_mcps = [
+        SimpleNamespace(
+            mcp_name="bad-service",
+            enabled=True,
+            mcp=mcp_registries[0],
+        ),
+        SimpleNamespace(
+            mcp_name="game-service",
+            enabled=True,
+            mcp=mcp_registries[1],
+        ),
+    ]
 
-    tools = await catalog.list_session_tools(assignments, ignore_failures=True)
+    tools = await catalog.list_session_tools(
+        enabled_mcps, mcp_registries, ignore_failures=True
+    )
 
     assert [tool.assignment_name for tool in tools] == ["game-service"]
 
@@ -139,6 +168,7 @@ async def test_mcp_tool_catalog_can_return_error_result_for_unreachable_tool_cal
         assignment_name="bad-service",
         server_url="http://bad-service/mcp/",
         headers={},
+        transport="streamable-http",
     )
 
     result = await catalog.call_tool(tool, {}, ignore_failures=True)

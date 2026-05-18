@@ -109,6 +109,10 @@ jobs:
           GAME_SERVICE_SMOKE_URL: http://127.0.0.1:4001
         run: services/smoketest/smoke.sh test
 
+      - name: Dump container logs
+        if: failure()
+        run: docker compose --profile smoke ps -a && docker compose --profile smoke logs --no-color --tail=100
+
       - name: Stop Docker stack
         if: always()
         run: scripts/docker.sh down

@@ -162,13 +162,15 @@ class SessionTranscriptService:
         tools_tokens = 0
         if session_obj is not None:
             system_prompt = build_system_prompt(
-                skill_registry, session_obj.skill_assignments
+                skill_registry, session_obj.enabled_skills
             )
             system_prompt_tokens = estimate_tokens_for_messages(
                 [{"role": "system", "content": system_prompt}]
             )
+            all_registries = await self._repository.list_mcp_registries()
             tool_definitions = await mcp_tool_catalog.list_session_tools(
-                session_obj.mcp_assignments,
+                session_obj.enabled_mcps,
+                all_registries,
                 ignore_failures=True,
             )
             tools_tokens = estimate_tokens_for_tools(

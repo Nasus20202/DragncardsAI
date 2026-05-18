@@ -36,6 +36,23 @@ The system SHALL allow each agent session to configure the model provider, model
 - **WHEN** a client configures a session with an unknown provider identifier
 - **THEN** the system SHALL reject the request with a validation error and SHALL NOT change the session model configuration
 
+### Requirement: Smoke-model provider configuration
+The agent-orchestrator SHALL support a local smoke-test model configuration that can target a repo-local `llama.cpp` server through the same session model configuration flow used for other providers.
+
+The smoke-model configuration SHALL be expressible through non-secret environment-backed provider metadata and session model configuration fields rather than hard-coded test logic in the worker.
+
+#### Scenario: Configure a session for the local smoke model
+- **WHEN** a client configures an agent session for the documented smoke-test provider and model
+- **THEN** the agent-orchestrator SHALL persist that model configuration and use it for prompt execution without requiring hosted-provider credentials
+
+#### Scenario: Smoke-model configuration survives normal session retrieval
+- **WHEN** a client retrieves a session configured for the local smoke model
+- **THEN** the returned session detail SHALL include the persisted provider, model, and non-secret options needed to understand the smoke configuration
+
+#### Scenario: Smoke session can use default game-service MCP
+- **WHEN** a session is configured for the local smoke model
+- **THEN** the session SHALL still expose the default `game-service` MCP tools needed for prompt-driven game creation
+
 ### Requirement: Multi-turn memory session flag
 The agent-orchestrator SHALL support a `multi_turn_memory` boolean flag on `AgentSession` (default `true`). When `false`, job workers SHALL build a fresh messages list with no replay of prior job events, preserving existing behavior.
 
@@ -72,15 +89,79 @@ The worker SHALL build the system prompt by including only a short skill summary
 - **THEN** the system prompt SHALL contain the base identity and tool-usage instructions only
 
 ### Requirement: MCP assignment
-The system SHALL allow clients to assign and remove MCP server/tool configurations for an agent session, including the game-service MCP.
+The system SHALL maintain a global registry of MCP servers accessible to all sessions. Sessions SHALL enable and disable MCPs from this registry to make them available for tool calls.
 
 #### Scenario: Assign game-service MCP
-- **WHEN** a client assigns the game-service MCP to an agent session
-- **THEN** prompt jobs for that session SHALL be able to call the assigned game-service MCP tools during orchestration
+- **WHEN** a client enables the game-service MCP for an agent session
+- **THEN** prompt jobs for that session SHALL be able to call the game-service MCP tools during orchestration
 
 #### Scenario: Inspect MCP assignments
 - **WHEN** a client retrieves an agent session
-- **THEN** the response SHALL include the MCP assignments available to prompt jobs for that session
+- **THEN** the response SHALL include all registered MCPs with their enabled and disabled state for that session
+
+#### Scenario: Default MCP available immediately
+- **WHEN** a client creates or later loads an agent session
+- **THEN** non-custom default MCPs such as `game-service` SHALL already be enabled for that session
+
+#### Scenario: SSE transport supported
+- **WHEN** an MCP is configured with transport `sse`
+- **THEN** the system SHALL connect using SSE transport rather than streamable-http
+
+### Requirement: Global MCP registry management
+The system SHALL expose CRUD endpoints for managing the global MCP registry.
+
+#### Scenario: List all registered MCPs
+- **WHEN** a client requests `GET /mcps`
+- **THEN** the system SHALL return all MCPs in the global registry
+
+#### Scenario: Add new MCP to registry
+- **WHEN** a client submits `POST /mcps` with valid name, transport, and server_url
+- **THEN** the system SHALL create the MCP entry and return its details
+
+#### Scenario: Remove MCP from registry
+- **WHEN** a client submits `DELETE /mcps/{mcp_name}`
+- **THEN** the system SHALL remove the MCP from the registry
+
+#### Scenario: Non-custom MCP registry cannot be removed
+- **WHEN** a client submits `DELETE /mcps/{mcp_name}` for a non-custom default MCP
+- **THEN** the system SHALL reject the request instead of deleting that registry entry
+
+### Requirement: Default game-service MCP
+The system SHALL auto-create a default game-service MCP entry on startup using the configured URL.
+
+#### Scenario: Default MCP exists after startup
+- **WHEN** the agent-orchestrator starts
+- **THEN** a game-service MCP entry SHALL exist in the registry with the URL from `game_service_mcp_url` config
+
+### Requirement: Session MCP enablement
+Sessions SHALL see all registered MCPs. Custom registries SHALL require explicit enablement, while non-custom default registries SHALL be enabled automatically.
+
+#### Scenario: Session lists MCPs with enablement state
+- **WHEN** a client requests `GET /sessions/{session_id}/mcps`
+- **THEN** the response SHALL include all registered MCPs with their enabled and disabled state for that session
+
+#### Scenario: Enable MCP for session
+- **WHEN** a client submits `PATCH /sessions/{session_id}/mcps/{mcp_name}` with `{"enabled": true}`
+- **THEN** the system SHALL enable the MCP for that session
+
+#### Scenario: Session-scoped MCP add remains supported
+- **WHEN** a client submits `POST /sessions/{session_id}/mcps` with a valid MCP payload
+- **THEN** the system SHALL upsert that MCP in the global registry and enable it for the session
+
+#### Scenario: Session-scoped MCP delete disables assignment
+- **WHEN** a client submits `DELETE /sessions/{session_id}/mcps/{mcp_name}`
+- **THEN** the system SHALL disable that MCP for the session without removing the global registry entry
+
+#### Scenario: Disabled MCP tools not available
+- **WHEN** a session has an MCP disabled
+- **THEN** the MCP tools SHALL NOT be included in tool definitions for that session
+
+### Requirement: Child session MCP inheritance
+When spawning a subagent, the child session SHALL inherit enabled MCPs from the parent.
+
+#### Scenario: Spawn subagent copies enabled MCPs
+- **WHEN** `spawn_subagent` is called
+- **THEN** the child session SHALL have the same MCPs enabled as the parent
 
 ### Requirement: Prompt submission creates background jobs
 The system SHALL expose an endpoint to submit prompts to an agent session and SHALL execute the resulting orchestration work only through background jobs.

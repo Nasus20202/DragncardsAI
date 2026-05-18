@@ -25,11 +25,11 @@ describe("session draft helpers", () => {
       defaultGameServiceMcpUrl: "http://game-service:8000/mcp/",
       defaultSkills: ["demo-skill"],
       defaultCustomMcps: [],
+      dragncardsFrontendUrl: "http://localhost:4000",
     });
 
     expect(draft.providerId).toBe("openai");
     expect(draft.selectedSkills).toEqual(["demo-skill"]);
-    expect(draft.enableDefaultGameServiceMcp).toBe(true);
     expect(draft.reasoning).toEqual({
       enabled: false,
       effort: "medium",

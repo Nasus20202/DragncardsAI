@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agent_orchestrator.api.deps import (
     get_live_event_bus,
@@ -14,34 +16,35 @@ from agent_orchestrator.api.tool_catalog import list_effective_session_tools
 from agent_orchestrator.api.serializers import (
     serialize_builtin_tool_definition,
     serialize_job,
-    serialize_mcp,
+    serialize_mcp_assignment,
+    serialize_mcp_registry,
     serialize_model_config,
     serialize_session_detail,
+    serialize_session_enabled_skill,
     serialize_session_summary,
-    serialize_skill,
     serialize_tool_definition,
 )
 from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.mcp.tools import (
     McpToolCatalog,
-    normalize_mcp_server_url,
 )
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.schemas.common import PageInfo
 from agent_orchestrator.schemas.jobs import SessionJobsResponse, SessionToolResponse
 from agent_orchestrator.schemas.sessions import (
-    McpAssignmentRequest,
     McpAssignmentResponse,
+    McpRegistryRequest,
+    McpRegistryResponse,
     ModelConfigRequest,
     ModelConfigResponse,
     SessionCreateRequest,
     SessionDetail,
     SessionListResponse,
+    SessionMcpEnableRequest,
     SessionToolsResponse,
     SessionUpdateRequest,
     SkillAssignmentRequest,
-    SkillAssignmentResponse,
 )
 from agent_orchestrator.storage.repository import Repository
 
@@ -150,66 +153,272 @@ async def set_model_config(
     return {"model_config": serialize_model_config(item)}
 
 
-@router.get("/sessions/{session_id}/skills")
-async def list_skills(
-    item=Depends(require_session),
-) -> dict[str, list[SkillAssignmentResponse]]:
-    return {"skills": [serialize_skill(skill) for skill in item.skill_assignments]}
+# Global Skill Registry endpoints
+@router.get("/skills")
+async def list_skill_registry(
+    repo: Repository = Depends(get_repository),
+) -> dict[str, list[dict[str, Any]]]:
+    registries = await repo.list_skill_registries()
+    return {
+        "skills": [
+            {
+                "name": r.name,
+                "skill_path": r.skill_path,
+                "description": r.description,
+                "metadata": r.metadata_json,
+            }
+            for r in registries
+        ]
+    }
 
 
+@router.post("/skills", status_code=201)
+async def add_skill_registry(
+    body: dict[str, Any],
+    repo: Repository = Depends(get_repository),
+    registry: SkillRegistry = Depends(get_skill_registry),
+) -> dict[str, Any]:
+    skill_name = body.get("name")
+    if not skill_name:
+        raise HTTPException(status_code=400, detail="name is required")
+    definition = registry.resolve(skill_name)
+    if definition is None:
+        raise HTTPException(status_code=400, detail="Unknown skill")
+    item = await repo.add_skill_registry(
+        name=skill_name,
+        skill_path=str(definition.path),
+        description=definition.description,
+        metadata_json=body.get("metadata"),
+    )
+    return {
+        "skill": {
+            "name": item.name,
+            "skill_path": item.skill_path,
+            "description": item.description,
+            "metadata": item.metadata_json,
+        }
+    }
+
+
+@router.delete("/skills/{skill_name}", status_code=204)
+async def remove_skill_registry(
+    skill_name: str,
+    repo: Repository = Depends(get_repository),
+) -> None:
+    removed = await repo.remove_skill_registry(skill_name)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+
+# Session Skill enablement endpoints
 @router.post("/sessions/{session_id}/skills", status_code=201)
-async def assign_skill(
+async def enable_session_skill(
     session_id: str,
     body: SkillAssignmentRequest,
     repo: Repository = Depends(get_repository),
     registry: SkillRegistry = Depends(get_skill_registry),
-) -> dict[str, SkillAssignmentResponse]:
+) -> dict[str, Any]:
+    # Verify session exists
+    session = await repo.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
     definition = registry.resolve(body.skill_name)
     if definition is None:
         raise HTTPException(status_code=400, detail="Unknown skill")
-    item = await repo.add_skill_assignment(
-        session_id, body.skill_name, str(definition.path)
+    await repo.add_skill_registry(
+        name=body.skill_name,
+        skill_path=str(definition.path),
+        description=definition.description,
+        metadata_json={},
     )
-    if item is None:
+    enabled = await repo.enable_skill_for_session(session_id, body.skill_name, True)
+    if enabled is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return {"skill": serialize_skill(item)}
+    return {
+        "skill": {
+            "id": f"{session_id}:{body.skill_name}",
+            "skill_name": body.skill_name,
+            "skill_path": str(definition.path),
+            "created_at": enabled.created_at,
+        }
+    }
+
+
+@router.get("/sessions/{session_id}/skills")
+async def list_session_skills(
+    item=Depends(require_session),
+) -> dict[str, list[dict[str, Any]]]:
+    return {
+        "skills": [
+            {
+                "id": f"{item.id}:{skill.skill_name}",
+                "skill_name": skill.skill_name,
+                "skill_path": skill.skill.skill_path if skill.skill else "",
+                "created_at": skill.created_at,
+                "description": skill.skill.description if skill.skill else "",
+                "enabled": skill.enabled,
+            }
+            for skill in item.enabled_skills
+            if skill.enabled
+        ]
+    }
+
+
+@router.patch("/sessions/{session_id}/skills/{skill_name}")
+async def enable_skill_for_session(
+    session_id: str,
+    skill_name: str,
+    body: SessionMcpEnableRequest,
+    repo: Repository = Depends(get_repository),
+) -> dict[str, Any]:
+    item = await repo.enable_skill_for_session(session_id, skill_name, body.enabled)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Session or skill not found")
+    return {"skill": {"name": skill_name, "enabled": item.enabled}}
 
 
 @router.delete("/sessions/{session_id}/skills/{skill_name}", status_code=204)
-async def remove_skill(
+async def disable_skill_for_session(
     session_id: str,
     skill_name: str,
     repo: Repository = Depends(get_repository),
 ) -> None:
-    removed = await repo.remove_skill_assignment(session_id, skill_name)
+    item = await repo.get_session_enabled_skill_state(session_id, skill_name)
+    if item is None or not item.enabled:
+        raise HTTPException(status_code=404, detail="Skill not enabled for session")
+    await repo.enable_skill_for_session(session_id, skill_name, enabled=False)
+
+
+# Global MCP Registry endpoints
+@router.get("/mcps")
+async def list_mcp_registry(
+    repo: Repository = Depends(get_repository),
+) -> dict[str, list[McpRegistryResponse]]:
+    registries = await repo.list_mcp_registries()
+    return {"mcps": [serialize_mcp_registry(mcp) for mcp in registries]}
+
+
+@router.post("/mcps", status_code=201)
+async def add_mcp_registry(
+    body: McpRegistryRequest,
+    repo: Repository = Depends(get_repository),
+) -> dict[str, McpRegistryResponse]:
+    item = await repo.add_mcp_registry(
+        name=body.name,
+        transport=body.transport,
+        server_url=body.server_url,
+        headers_json=body.headers,
+    )
+    return {"mcp": serialize_mcp_registry(item)}
+
+
+@router.delete("/mcps/{mcp_name}", status_code=204)
+async def remove_mcp_registry(
+    mcp_name: str,
+    repo: Repository = Depends(get_repository),
+) -> None:
+    removed = await repo.remove_mcp_registry(mcp_name)
     if not removed:
-        raise HTTPException(status_code=404, detail="Skill assignment not found")
+        registry = await repo.get_mcp_registry(mcp_name)
+        if registry is not None and not registry.custom:
+            raise HTTPException(
+                status_code=403, detail="Cannot delete non-custom MCP registry"
+            )
+        raise HTTPException(status_code=404, detail="MCP registry not found")
+
+
+# Session MCP enablement endpoints
+@router.post("/sessions/{session_id}/mcps", status_code=201)
+async def add_mcp_to_session(
+    session_id: str,
+    body: McpRegistryRequest,
+    repo: Repository = Depends(get_repository),
+) -> dict[str, McpAssignmentResponse]:
+    # Add or update the global MCP registry
+    registry = await repo.add_mcp_registry(
+        name=body.name,
+        transport=body.transport,
+        server_url=body.server_url,
+        headers_json=body.headers,
+    )
+    # Enable the MCP for this session
+    item = await repo.enable_mcp_for_session(session_id, body.name, enabled=True)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "mcp": McpAssignmentResponse(
+            name=registry.name,
+            transport=registry.transport,
+            server_url=registry.server_url,
+            headers=registry.headers_json,
+            enabled=True,
+            custom=registry.custom,
+        )
+    }
 
 
 @router.get("/sessions/{session_id}/mcps")
-async def list_mcps(
+async def list_session_mcps(
     item=Depends(require_session),
+    repo: Repository = Depends(get_repository),
 ) -> dict[str, list[McpAssignmentResponse]]:
-    return {"mcps": [serialize_mcp(mcp) for mcp in item.mcp_assignments]}
+    all_registries = await repo.list_mcp_registries()
+    registry_map = {r.name: r for r in all_registries}
+    enabled_map = {em.mcp_name: em for em in item.enabled_mcps}
+    result = []
+    for registry in all_registries:
+        enabled_mcp = enabled_map.get(registry.name)
+        result.append(
+            McpAssignmentResponse(
+                name=registry.name,
+                transport=registry.transport,
+                server_url=registry.server_url,
+                headers=registry.headers_json,
+                enabled=enabled_mcp.enabled if enabled_mcp else False,
+                custom=registry.custom,
+            )
+        )
+    return {"mcps": result}
 
 
-@router.post("/sessions/{session_id}/mcps", status_code=201)
-async def assign_mcp(
+@router.delete("/sessions/{session_id}/mcps/{mcp_name}", status_code=204)
+async def disable_mcp_for_session(
     session_id: str,
-    body: McpAssignmentRequest,
+    mcp_name: str,
+    repo: Repository = Depends(get_repository),
+) -> None:
+    item = await repo.get_session_enabled_mcp_state(session_id, mcp_name)
+    if item is None or not item.enabled:
+        raise HTTPException(status_code=404, detail="MCP not enabled for session")
+    await repo.enable_mcp_for_session(session_id, mcp_name, enabled=False)
+
+
+@router.patch("/sessions/{session_id}/mcps/{mcp_name}")
+async def enable_mcp_for_session(
+    session_id: str,
+    mcp_name: str,
+    body: SessionMcpEnableRequest,
     repo: Repository = Depends(get_repository),
 ) -> dict[str, McpAssignmentResponse]:
-    normalized_server_url = normalize_mcp_server_url(body.server_url, body.transport)
-    item = await repo.add_mcp_assignment(
-        session_id,
-        name=body.name,
-        transport=body.transport,
-        server_url=normalized_server_url,
-        headers_json=body.headers,
-    )
+    item = await repo.enable_mcp_for_session(session_id, mcp_name, body.enabled)
     if item is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return {"mcp": serialize_mcp(item)}
+        raise HTTPException(status_code=404, detail="Session or MCP not found")
+    # Get the registry for transport/server_url info
+    registries = await repo.list_mcp_registries()
+    registry = next((r for r in registries if r.name == mcp_name), None)
+    if registry is None:
+        raise HTTPException(status_code=404, detail="MCP registry not found")
+    return {
+        "mcp": McpAssignmentResponse(
+            name=mcp_name,
+            transport=registry.transport,
+            server_url=registry.server_url,
+            headers=registry.headers_json,
+            enabled=item.enabled,
+            custom=registry.custom,
+        )
+    }
 
 
 @router.get("/sessions/{session_id}/tools")
@@ -234,14 +443,3 @@ async def list_session_tools(
             *[serialize_tool_definition(tool) for tool in mcp_tools],
         ]
     )
-
-
-@router.delete("/sessions/{session_id}/mcps/{assignment_name}", status_code=204)
-async def remove_mcp(
-    session_id: str,
-    assignment_name: str,
-    repo: Repository = Depends(get_repository),
-) -> None:
-    removed = await repo.remove_mcp_assignment(session_id, assignment_name)
-    if not removed:
-        raise HTTPException(status_code=404, detail="MCP assignment not found")

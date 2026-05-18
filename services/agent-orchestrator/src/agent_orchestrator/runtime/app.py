@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from agent_orchestrator.api.routers import catalog, context, jobs, meta, sessions
 from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient
-from agent_orchestrator.integrations.mcp.client import StreamableHttpMcpClient
+from agent_orchestrator.integrations.mcp.client import McpClient
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.runtime.live_events import (
     InMemoryLiveEventBus,
@@ -29,13 +29,46 @@ from agent_orchestrator.telemetry import instrument_fastapi_app, shutdown_teleme
 logger = logging.getLogger(__name__)
 
 
+async def _ensure_default_mcp_registry(repo: Repository, settings: Settings) -> None:
+    """Ensure default game-service MCP exists in registry and matches settings."""
+    if not settings.default_game_service_mcp_enabled:
+        return
+
+    existing = await repo.get_mcp_registry(settings.default_game_service_mcp_name)
+    if existing is None:
+        logger.info(
+            "Creating default %s MCP in registry",
+            settings.default_game_service_mcp_name,
+        )
+    elif (
+        existing.transport != settings.default_game_service_mcp_transport
+        or existing.server_url != settings.game_service_mcp_url.rstrip("/") + "/"
+        or existing.headers_json != {}
+        or existing.custom
+    ):
+        logger.info(
+            "Updating default %s MCP in registry from settings",
+            settings.default_game_service_mcp_name,
+        )
+    else:
+        return
+
+    await repo.add_mcp_registry(
+        name=settings.default_game_service_mcp_name,
+        transport=settings.default_game_service_mcp_transport,
+        server_url=settings.game_service_mcp_url,
+        headers_json=None,
+        custom=False,
+    )
+
+
 def create_app(
     *,
     settings: Settings | None = None,
     repository: Repository | None = None,
     bifrost_client: BifrostClient | None = None,
     live_event_bus: LiveEventBus | None = None,
-    mcp_client: StreamableHttpMcpClient | None = None,
+    mcp_client: McpClient | None = None,
     skill_registry: SkillRegistry | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
@@ -88,10 +121,12 @@ def create_app(
         logger.info(
             "Skill roots: %s", ", ".join(str(root) for root in settings.skill_roots)
         )
-        app.state.mcp_client = mcp_client or StreamableHttpMcpClient(
+        app.state.mcp_client = mcp_client or McpClient(
             timeout_seconds=settings.mcp_request_timeout_seconds,
         )
         app.state.mcp_tool_catalog = McpToolCatalog(app.state.mcp_client)
+        # Initialize default game-service MCP
+        await _ensure_default_mcp_registry(app.state.repository, settings)
         app.state.job_event_stream = JobEventStreamService(
             repository=app.state.repository,
             live_event_bus=app.state.live_event_bus,

@@ -7,6 +7,7 @@ import {
 } from "../src/config";
 import {
   extractCreatedGameSessionId,
+  logSmokeChatTranscript,
   logSmokeStatus,
   requireOk,
   requireSmokeEnvironment,
@@ -85,6 +86,7 @@ test("creates a Marvel Champions game from dashboard chat", async ({
     `job events for ${latestJobId}`,
   );
   const eventsPayload = (await eventsResponse.json()) as JobEventsResponse;
+  logSmokeChatTranscript(createGamePrompt, eventsPayload.events);
   const gameSessionId = extractCreatedGameSessionId(eventsPayload.events);
   if (!gameSessionId) {
     throw new Error(

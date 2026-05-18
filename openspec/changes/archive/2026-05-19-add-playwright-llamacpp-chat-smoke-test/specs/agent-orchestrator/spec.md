@@ -12,3 +12,7 @@ The smoke-model configuration SHALL be expressible through non-secret environmen
 #### Scenario: Smoke-model configuration survives normal session retrieval
 - **WHEN** a client retrieves a session configured for the local smoke model
 - **THEN** the returned session detail SHALL include the persisted provider, model, and non-secret options needed to understand the smoke configuration
+
+#### Scenario: Smoke session can use default game-service MCP
+- **WHEN** a session is configured for the local smoke model
+- **THEN** the session SHALL still expose the default `game-service` MCP tools needed for prompt-driven game creation

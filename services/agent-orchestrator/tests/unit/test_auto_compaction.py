@@ -77,7 +77,7 @@ class FakeBifrost:
 
 
 class FakeMcp:
-    async def list_tools(self, server_url, headers=None):
+    async def list_tools(self, server_url, transport, headers=None):
         return [
             McpToolDefinition(
                 name="next_step",
@@ -86,7 +86,9 @@ class FakeMcp:
             )
         ]
 
-    async def call_tool(self, server_url, tool_name, arguments, headers=None):
+    async def call_tool(
+        self, server_url, transport, tool_name, arguments, headers=None
+    ):
         return {"is_error": False, "content": [{"type": "text", "text": "done"}]}
 
 
@@ -118,13 +120,13 @@ async def _prepare_session(repo: Repository):
         gateway_options={},
         provider_options={},
     )
-    await repo.add_mcp_assignment(
-        session.id,
+    await repo.add_mcp_registry(
         name="game-service",
         transport="streamable-http",
         server_url="http://localhost:4001/mcp",
         headers_json={},
     )
+    await repo.enable_mcp_for_session(session.id, "game-service", enabled=True)
     return session
 
 

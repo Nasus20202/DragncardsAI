@@ -265,11 +265,19 @@ def make_spawn_subagent_handler(
                 provider_options=mc.provider_options,
             )
 
-        # Copy skill assignments from parent to child
-        for sa in parent_session.skill_assignments:
-            await repository.add_skill_assignment(
-                child_session.id, sa.skill_name, sa.skill_path
-            )
+        # Copy enabled skills from parent to child
+        for es in parent_session.enabled_skills:
+            if es.enabled:
+                await repository.enable_skill_for_session(
+                    child_session.id, es.skill_name, es.enabled
+                )
+
+        # Copy enabled MCPs from parent to child
+        for em in parent_session.enabled_mcps:
+            if em.enabled:
+                await repository.enable_mcp_for_session(
+                    child_session.id, em.mcp_name, em.enabled
+                )
 
         # Enqueue the child job
         child_job = await repository.enqueue_prompt_job(

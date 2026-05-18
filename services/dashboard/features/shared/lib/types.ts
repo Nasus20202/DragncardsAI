@@ -50,14 +50,22 @@ export interface SkillAssignmentResponse {
   created_at: string;
 }
 
-export interface McpAssignmentResponse {
-  id: string;
+export interface McpRegistryResponse {
   name: string;
   transport: string;
   server_url: string;
-  headers: Record<string, JsonValue>;
+  headers: Record<string, string>;
+  custom: boolean;
   created_at: string;
-  updated_at: string;
+}
+
+export interface McpAssignmentResponse {
+  name: string;
+  transport: string;
+  server_url: string;
+  headers?: Record<string, string>;
+  enabled: boolean;
+  custom?: boolean;
 }
 
 export interface JobSummary {
@@ -136,6 +144,7 @@ export interface DashboardConfig {
   defaultGameServiceMcpUrl: string;
   defaultSkills: string[];
   defaultCustomMcps: CustomMcpDraft[];
+  dragncardsFrontendUrl: string;
 }
 
 export interface CustomMcpDraft {
@@ -161,8 +170,6 @@ export interface SessionDraft {
   gatewayOptionsText: string;
   providerOptionsText: string;
   selectedSkills: string[];
-  enableDefaultGameServiceMcp: boolean;
-  customMcpsText: string;
 }
 
 export interface ContextMetadata {
@@ -182,4 +189,12 @@ export interface ContextMetadata {
 export interface MergedOpenApiResult {
   document: Record<string, JsonValue>;
   errors: { service: string; message: string }[];
+}
+
+export interface GameSession {
+  id: string;
+  plugin: string;
+  plugin_id: number;
+  created_at: string;
+  room_slug: string;
 }
