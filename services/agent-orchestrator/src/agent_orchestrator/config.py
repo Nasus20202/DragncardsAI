@@ -37,7 +37,28 @@ class Settings(BaseSettings):
     worker_poll_interval_seconds: float = 0.2
     worker_max_tool_rounds: int = 8
     default_job_max_attempts: int = 2
-    game_service_mcp_url: str = "http://localhost:4001/mcp/"
+    game_service_mcp_url: str = Field(
+        default="http://localhost:4001/mcp/",
+        validation_alias=AliasChoices("game_service_mcp_url", "GAME_SERVICE_MCP_URL"),
+    )
+    default_game_service_mcp_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "default_game_service_mcp_enabled", "DEFAULT_GAME_SERVICE_MCP_ENABLED"
+        ),
+    )
+    default_game_service_mcp_name: str = Field(
+        default="game-service",
+        validation_alias=AliasChoices(
+            "default_game_service_mcp_name", "DEFAULT_GAME_SERVICE_MCP_NAME"
+        ),
+    )
+    default_game_service_mcp_transport: str = Field(
+        default="streamable-http",
+        validation_alias=AliasChoices(
+            "default_game_service_mcp_transport", "DEFAULT_GAME_SERVICE_MCP_TRANSPORT"
+        ),
+    )
     valkey_url: str = "redis://localhost:6381/0"
     mcp_request_timeout_seconds: float = 30.0
     provider_models_cache_ttl_seconds: float = 600.0

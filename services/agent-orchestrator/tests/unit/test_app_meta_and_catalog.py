@@ -163,3 +163,49 @@ def test_list_available_skills_returns_sorted_metadata_only(app):
     assert "description" in skills[0]
     assert "metadata" in skills[0]
     assert "content_markdown" not in skills[0]
+
+
+@pytest.mark.asyncio
+async def test_list_providers_includes_prefixed_models_for_openrouter(tmp_path: Path):
+    class OpenRouterModelBifrostClient(FakeBifrostClient):
+        async def list_models(self, provider_id: str):
+            if provider_id == "openrouter":
+                model_ids = [
+                    "openrouter/test-model",
+                    "openai/gpt-4o-mini",
+                    "openai/bagage-002",
+                    "anthropic/claude-3-5-sonnet",
+                    "google/gemini-2.0-flash",
+                ]
+                return [
+                    type(
+                        "ModelInfo",
+                        (),
+                        {
+                            "id": model_id,
+                            "name": model_id,
+                            "supported_methods": ["chat_completion"],
+                        },
+                    )()
+                    for model_id in model_ids
+                ]
+            return await super().list_models(provider_id)
+
+    app, engine = await build_test_app(
+        tmp_path,
+        bifrost_client=OpenRouterModelBifrostClient(),
+        enabled_provider_ids="openai,gemini,openrouter",
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get("/providers")
+        assert response.status_code == 200
+        providers = {item["provider_id"]: item for item in response.json()["providers"]}
+        assert "openrouter" in providers
+        openrouter_models = providers["openrouter"]["models"]
+        assert "openai/gpt-4o-mini" in openrouter_models
+        assert "openai/bagage-002" in openrouter_models
+        assert "anthropic/claude-3-5-sonnet" in openrouter_models
+        assert "google/gemini-2.0-flash" in openrouter_models
+    finally:
+        await engine.dispose()

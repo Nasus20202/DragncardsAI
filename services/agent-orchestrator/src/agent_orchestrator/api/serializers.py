@@ -10,6 +10,7 @@ from agent_orchestrator.schemas.jobs import (
 )
 from agent_orchestrator.schemas.sessions import (
     McpAssignmentResponse,
+    McpRegistryResponse,
     ModelConfigResponse,
     SessionDetail,
     SessionSummary,
@@ -35,8 +36,10 @@ def serialize_session_summary(item) -> SessionSummary:
             if item.model_config is None
             else serialize_model_config(item.model_config)
         ),
-        skills=[serialize_skill(skill) for skill in item.skill_assignments],
-        mcps=[serialize_mcp(mcp) for mcp in item.mcp_assignments],
+        skills=[
+            serialize_session_enabled_skill(skill) for skill in item.enabled_skills
+        ],
+        mcps=[serialize_mcp_assignment(em) for em in item.enabled_mcps],
         recent_job=None if not recent_jobs else serialize_job(recent_jobs[0]),
     )
 
@@ -51,24 +54,45 @@ def serialize_model_config(item) -> ModelConfigResponse:
     )
 
 
-def serialize_skill(item) -> SkillAssignmentResponse:
+def serialize_session_enabled_skill(item) -> SkillAssignmentResponse:
     return SkillAssignmentResponse(
-        id=item.id,
+        id=f"{item.session_id}:{item.skill_name}",
         skill_name=item.skill_name,
-        skill_path=item.skill_path,
+        skill_path=item.skill.skill_path if item.skill else "",
         created_at=item.created_at,
     )
 
 
-def serialize_mcp(item) -> McpAssignmentResponse:
-    return McpAssignmentResponse(
-        id=item.id,
+def serialize_mcp_registry(item) -> McpRegistryResponse:
+    return McpRegistryResponse(
         name=item.name,
         transport=item.transport,
         server_url=item.server_url,
         headers=item.headers_json,
+        custom=item.custom,
         created_at=item.created_at,
-        updated_at=item.updated_at,
+    )
+
+
+def serialize_mcp_assignment(item) -> McpAssignmentResponse:
+    # SessionEnabledMcp has mcp_name and relationship to McpRegistry via item.mcp
+    if hasattr(item, "mcp") and item.mcp is not None:
+        return McpAssignmentResponse(
+            name=item.mcp_name,
+            transport=item.mcp.transport,
+            server_url=item.mcp.server_url,
+            headers=item.mcp.headers_json,
+            enabled=item.enabled,
+            custom=item.mcp.custom,
+        )
+    # Fallback for other types
+    return McpAssignmentResponse(
+        name=item.mcp_name if hasattr(item, "mcp_name") else item.name,
+        transport=getattr(item, "transport", "streamable-http"),
+        server_url=getattr(item, "server_url", ""),
+        headers=getattr(item, "headers_json", getattr(item, "headers", {})),
+        enabled=item.enabled if hasattr(item, "enabled") else True,
+        custom=getattr(item, "custom", False),
     )
 
 

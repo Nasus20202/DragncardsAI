@@ -34,6 +34,7 @@ const apiMocks = vi.hoisted(() => ({
   listSessionMcps: vi.fn(),
   addMcp: vi.fn(),
   removeMcp: vi.fn(),
+  removeMcpRegistry: vi.fn(),
   terminateSession: vi.fn(),
 }));
 
@@ -101,6 +102,9 @@ vi.mock("@/features/play/components/play-transcript", () => ({
       <div data-testid="stream-state">{streamState}</div>
       <div data-testid="selected-session-name">
         {selectedSession?.name ?? "none"}
+      </div>
+      <div data-testid="selected-session-mcp-count">
+        {selectedSession?.mcps.length ?? 0}
       </div>
       <div data-testid="job-count">{jobs.length}</div>
       <button type="button" onClick={onOpenSettings}>
@@ -220,6 +224,7 @@ export const baseConfig: DashboardConfig = {
   defaultGameServiceMcpUrl: "http://game-service:8000/mcp/",
   defaultSkills: ["skill-a"],
   defaultCustomMcps: [],
+  dragncardsFrontendUrl: "http://localhost:4000",
 };
 
 export const providers: ProviderResponse[] = [
@@ -418,6 +423,7 @@ export function resetPlayWorkspaceEnvironment() {
   apiMocks.listSessionMcps.mockResolvedValue([]);
   apiMocks.addMcp.mockResolvedValue({});
   apiMocks.removeMcp.mockResolvedValue(undefined);
+  apiMocks.removeMcpRegistry.mockResolvedValue(undefined);
   apiMocks.terminateSession.mockResolvedValue({
     ...sessionDetail,
     status: "terminated",

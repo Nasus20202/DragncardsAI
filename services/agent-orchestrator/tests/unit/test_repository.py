@@ -47,19 +47,31 @@ async def test_session_repository_handles_missing_records(repository: Repository
         )
         is None
     )
-    assert await repository.add_skill_assignment("missing", "demo", "/tmp/demo") is None
+    assert await repository.add_skill_registry(
+        name="demo",
+        skill_path="/tmp/demo",
+        description=None,
+        metadata_json={},
+    )
+    assert await repository.enable_skill_for_session("missing", "demo", True) is None
+
+    # MCP registry operations
     assert (
-        await repository.add_mcp_assignment(
-            "missing",
-            name="game-service",
+        await repository.add_mcp_registry(
+            name="test-mcp",
             transport="streamable-http",
-            server_url="http://game-service/mcp/",
+            server_url="http://test/mcp",
             headers_json={},
         )
-        is None
+        is not None
     )
+    assert await repository.remove_mcp_registry("missing") is False
+
+    # Session MCP enablement for missing session
+    assert await repository.enable_mcp_for_session("missing", "test-mcp", True) is None
+    assert await repository.get_session_enabled_mcp_state("missing", "test-mcp") is None
+
     assert await repository.get_skill_assignment("missing") is None
-    assert await repository.get_mcp_assignment("missing") is None
 
 
 @pytest.mark.asyncio
@@ -70,47 +82,59 @@ async def test_session_repository_updates_existing_assignments_and_filters(
     terminated_session = await _create_session_with_model(repository, "terminated")
     await repository.terminate_session(terminated_session.id)
 
-    first_skill = await repository.add_skill_assignment(
-        active_session.id, "demo", "/tmp/first"
+    first_skill = await repository.add_skill_registry(
+        name="demo",
+        skill_path="/tmp/first",
+        description=None,
+        metadata_json={},
     )
-    second_skill = await repository.add_skill_assignment(
-        active_session.id, "demo", "/tmp/second"
+    await repository.enable_skill_for_session(active_session.id, "demo", enabled=True)
+    second_skill = await repository.add_skill_registry(
+        name="demo",
+        skill_path="/tmp/second",
+        description=None,
+        metadata_json={},
     )
+    await repository.enable_skill_for_session(active_session.id, "demo", enabled=True)
     assert first_skill is not None
-    assert second_skill is not None
-    assert second_skill.id == first_skill.id
+    assert first_skill.skill_path == "/tmp/first"
     assert second_skill.skill_path == "/tmp/second"
     assert await repository.remove_skill_assignment(active_session.id, "demo") is True
     assert await repository.remove_skill_assignment(active_session.id, "demo") is False
 
-    first_mcp = await repository.add_mcp_assignment(
-        active_session.id,
+    assert await repository.get_session_enabled_skill_state("missing", "demo") is None
+
+    # MCP registry operations
+    mcp = await repository.add_mcp_registry(
         name="game-service",
         transport="streamable-http",
         server_url="http://game-service/mcp/",
         headers_json={},
     )
-    second_mcp = await repository.add_mcp_assignment(
-        active_session.id,
-        name="game-service",
-        transport="sse",
-        server_url="http://game-service/sse",
-        headers_json={"Authorization": "Bearer token"},
+    assert mcp is not None
+    assert mcp.transport == "streamable-http"
+    assert mcp.server_url == "http://game-service/mcp/"
+
+    # List registries
+    registries = await repository.list_mcp_registries()
+    assert len(registries) == 1
+    assert registries[0].name == "game-service"
+
+    # Enable MCP for session
+    enabled = await repository.enable_mcp_for_session(
+        active_session.id, "game-service", True
     )
-    assert first_mcp is not None
-    assert second_mcp is not None
-    assert second_mcp.id == first_mcp.id
-    assert second_mcp.transport == "sse"
-    assert second_mcp.server_url == "http://game-service/sse"
-    assert second_mcp.headers_json == {"Authorization": "Bearer token"}
-    assert (
-        await repository.remove_mcp_assignment(active_session.id, "game-service")
-        is True
-    )
-    assert (
-        await repository.remove_mcp_assignment(active_session.id, "game-service")
-        is False
-    )
+    assert enabled is not None
+    assert enabled.enabled is True
+
+    # Session enabled MCPs
+    session_mcps = await repository.list_session_enabled_mcps(active_session.id)
+    assert len(session_mcps) == 1
+    assert session_mcps[0].mcp_name == "game-service"
+
+    # Remove registry
+    assert await repository.remove_mcp_registry("game-service") is True
+    assert await repository.remove_mcp_registry("game-service") is False
 
     sessions, total = await repository.list_sessions(
         status="terminated", limit=10, offset=0

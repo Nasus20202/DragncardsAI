@@ -6,7 +6,12 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from agent_orchestrator.storage.models import AgentSession, Job
+from agent_orchestrator.storage.models import (
+    AgentSession,
+    Job,
+    SessionEnabledMcp,
+    SessionEnabledSkill,
+)
 
 
 def utc_now() -> datetime:
@@ -20,8 +25,10 @@ class RepositoryBase:
     def _session_query(self) -> Select[tuple[AgentSession]]:
         return select(AgentSession).options(
             selectinload(AgentSession.model_config),
-            selectinload(AgentSession.skill_assignments),
-            selectinload(AgentSession.mcp_assignments),
+            selectinload(AgentSession.enabled_skills).selectinload(
+                SessionEnabledSkill.skill
+            ),
+            selectinload(AgentSession.enabled_mcps).selectinload(SessionEnabledMcp.mcp),
             selectinload(AgentSession.jobs).selectinload(Job.events),
         )
 
@@ -30,6 +37,6 @@ class RepositoryBase:
             selectinload(Job.outputs),
             selectinload(Job.events),
             selectinload(Job.session).selectinload(AgentSession.model_config),
-            selectinload(Job.session).selectinload(AgentSession.skill_assignments),
-            selectinload(Job.session).selectinload(AgentSession.mcp_assignments),
+            selectinload(Job.session).selectinload(AgentSession.enabled_skills),
+            selectinload(Job.session).selectinload(AgentSession.enabled_mcps),
         )

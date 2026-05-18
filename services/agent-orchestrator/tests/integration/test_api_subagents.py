@@ -123,3 +123,108 @@ async def test_spawn_subagent_creates_child_and_emits_events(tmp_path: Path):
                 assert child_session_id not in listed_session_ids
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_inherits_enabled_mcps(tmp_path: Path):
+    """Test that child sessions inherit enabled MCPs from parent session."""
+    database_path = tmp_path / "subagent-mcp-inherit.sqlite3"
+    engine = create_engine(f"sqlite+aiosqlite:///{database_path}")
+    await ensure_schema(engine)
+    repository = Repository(create_session_factory(engine))
+
+    skill_root = tmp_path / "skills"
+    skill_root.mkdir()
+
+    bifrost = SpawnSubagentBifrost()
+    app = create_app(
+        settings=Settings(
+            database_url=f"sqlite+aiosqlite:///{database_path}",
+            SKILL_ROOTS=str(skill_root),
+        ),
+        repository=repository,
+        bifrost_client=bifrost,
+        live_event_bus=InMemoryLiveEventBus(),
+        mcp_client=FakeMcp(),
+        skill_registry=SkillRegistry((skill_root,)),
+    )
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                # Create parent session
+                parent_response = await client.post(
+                    "/sessions", json={"name": "parent-mcp-test"}
+                )
+                parent_session_id = parent_response.json()["session"]["id"]
+                await client.put(
+                    f"/sessions/{parent_session_id}/model-config",
+                    json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+                )
+
+                # Add a custom MCP to registry
+                await client.post(
+                    "/mcps",
+                    json={
+                        "name": "custom-mcp",
+                        "transport": "streamable-http",
+                        "server_url": "http://custom/mcp",
+                    },
+                )
+
+                # Enable the custom MCP for parent session
+                await client.patch(
+                    f"/sessions/{parent_session_id}/mcps/custom-mcp",
+                    json={"enabled": True},
+                )
+
+                # Verify parent has the MCP enabled
+                parent_mcps = await client.get(f"/sessions/{parent_session_id}/mcps")
+                parent_mcp_list = parent_mcps.json()["mcps"]
+                custom_mcp = next(
+                    m for m in parent_mcp_list if m["name"] == "custom-mcp"
+                )
+                assert custom_mcp["enabled"] is True
+
+                # Submit prompt to spawn a subagent
+                prompt_response = await client.post(
+                    f"/sessions/{parent_session_id}/prompts",
+                    json={"prompt": "run a subagent task"},
+                )
+                assert prompt_response.status_code == 202
+                job_id = prompt_response.json()["job"]["id"]
+
+                # Wait for completion
+                for _ in range(120):
+                    job_response = await client.get(f"/jobs/{job_id}")
+                    status = job_response.json()["job"]["status"]
+                    if status in ("completed", "failed"):
+                        break
+                    await asyncio.sleep(0.1)
+
+                # Get child session from events
+                job = job_response.json()["job"]
+                started_event = next(
+                    e for e in job["events"] if e["event_type"] == "subagent_started"
+                )
+                child_session_id = started_event["payload"]["child_session_id"]
+
+                # Wait for child to complete
+                for _ in range(20):
+                    child_response = await client.get(f"/sessions/{child_session_id}")
+                    child_session = child_response.json()["session"]
+                    if child_session["status"] == "terminated":
+                        break
+                    await asyncio.sleep(0.05)
+
+                # Verify child session inherited the enabled MCP
+                child_mcps = await client.get(f"/sessions/{child_session_id}/mcps")
+                child_mcp_list = child_mcps.json()["mcps"]
+                child_custom_mcp = next(
+                    (m for m in child_mcp_list if m["name"] == "custom-mcp"), None
+                )
+                assert child_custom_mcp is not None
+                assert child_custom_mcp["enabled"] is True
+    finally:
+        await engine.dispose()

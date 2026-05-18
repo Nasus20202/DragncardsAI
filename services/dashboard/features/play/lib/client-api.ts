@@ -2,16 +2,18 @@ import {
   CardProviderResponse,
   ContextMetadata,
   DashboardConfig,
+  GameSession,
   JobDetail,
   JobEventResponse,
   JobSummary,
-  JsonValue,
   McpAssignmentResponse,
+  McpRegistryResponse,
   ProviderResponse,
   SessionDetail,
   SessionJobsResponse,
   SessionSummary,
   SkillDefinitionResponse,
+  JsonValue,
 } from "@/features/shared/lib/types";
 
 interface DashboardConfigResponse {
@@ -221,6 +223,47 @@ export async function removeMcp(sessionId: string, assignmentName: string) {
   );
 }
 
+export async function listGlobalMcps(): Promise<McpRegistryResponse[]> {
+  return (
+    await getJson<{ mcps: McpRegistryResponse[] }>(
+      "/api/proxy/orchestrator/mcps"
+    )
+  ).mcps;
+}
+
+export async function addMcpRegistry(body: {
+  name: string;
+  transport: string;
+  server_url: string;
+  headers?: Record<string, string>;
+}): Promise<McpRegistryResponse> {
+  return (
+    await sendJson<{ mcp: McpRegistryResponse }>(
+      "/api/proxy/orchestrator/mcps",
+      "POST",
+      body
+    )
+  ).mcp;
+}
+
+export async function removeMcpRegistry(mcpName: string) {
+  await sendNoContent(`/api/proxy/orchestrator/mcps/${mcpName}`, "DELETE");
+}
+
+export async function enableMcpForSession(
+  sessionId: string,
+  mcpName: string,
+  enabled: boolean
+): Promise<McpAssignmentResponse> {
+  return (
+    await sendJson<{ mcp: McpAssignmentResponse }>(
+      `/api/proxy/orchestrator/sessions/${sessionId}/mcps/${mcpName}`,
+      "PATCH",
+      { enabled }
+    )
+  ).mcp;
+}
+
 export async function terminateSession(
   sessionId: string
 ): Promise<SessionDetail> {
@@ -283,4 +326,25 @@ export async function compactSession(
     `/api/proxy/orchestrator/sessions/${sessionId}/compact`,
     "POST"
   );
+}
+
+interface SessionMetadata {
+  session_id: string;
+  plugin_name: string;
+  plugin_id: number;
+  room_slug: string;
+  created_at: string;
+}
+
+export async function listGames(): Promise<GameSession[]> {
+  const { sessions } = await getJson<{ sessions: SessionMetadata[] }>(
+    "/api/proxy/game/games"
+  );
+  return sessions.map((s) => ({
+    id: s.session_id,
+    plugin: s.plugin_name,
+    plugin_id: s.plugin_id,
+    room_slug: s.room_slug,
+    created_at: s.created_at,
+  }));
 }

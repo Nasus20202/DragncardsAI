@@ -116,11 +116,11 @@ class PromptRunService:
                     model_config.model_name,
                 )
                 system_prompt = build_system_prompt(
-                    self._skill_registry, session.skill_assignments
+                    self._skill_registry, session.enabled_skills
                 )
+                all_registries = await self._repository.list_mcp_registries()
                 tool_definitions = await self._mcp_tool_catalog.list_session_tools(
-                    full_job.session.mcp_assignments,
-                    ignore_failures=True,
+                    session.enabled_mcps, all_registries, ignore_failures=True
                 )
                 mcp_tools = self._mcp_tool_catalog.as_openai_tools(tool_definitions)
                 tool_mapping = self._mcp_tool_catalog.as_mapping(tool_definitions)
@@ -131,7 +131,7 @@ class PromptRunService:
                     live_event_bus=self._live_event_bus,
                     session_id=session.id,
                     job_id=job.id,
-                    skill_assignments=session.skill_assignments,
+                    skill_assignments=session.enabled_skills,
                     job=full_job,
                     schedule_child_fn=self._schedule_child_job,
                 )

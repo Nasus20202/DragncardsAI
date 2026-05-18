@@ -1,6 +1,6 @@
 import { DashboardConfig, CustomMcpDraft } from "@/features/shared/lib/types";
 
-const DEFAULT_APP_NAME = "DragnCardsAI Dashboard";
+const DEFAULT_APP_NAME = "DragncardsAI";
 
 function splitCsv(raw: string | undefined): string[] {
   if (!raw) {
@@ -42,10 +42,13 @@ export function getServerConfig() {
   const isLocalDevelopment =
     orchestratorUrl.includes("localhost") ||
     orchestratorUrl.includes("127.0.0.1");
+  const dragncardsFrontendUrl =
+    process.env.DRAGNCARDS_FRONTEND_URL ?? "http://localhost:3000";
 
   return {
     orchestratorUrl,
     gameServiceUrl,
+    dragncardsFrontendUrl,
     orchestratorOpenApiPath:
       process.env.AGENT_ORCHESTRATOR_OPENAPI_PATH ?? "/openapi.json",
     gameServiceOpenApiPath:
@@ -70,6 +73,7 @@ export function getServerConfig() {
           : "http://game-service:8000/mcp/"),
       defaultSkills: splitCsv(process.env.DEFAULT_SKILLS),
       defaultCustomMcps: parseCustomMcps(process.env.DEFAULT_CUSTOM_MCPS_JSON),
+      dragncardsFrontendUrl,
     } satisfies DashboardConfig,
   };
 }

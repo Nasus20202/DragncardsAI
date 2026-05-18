@@ -140,7 +140,9 @@ def test_list_sessions_returns_pagination_metadata(app):
     session = body["sessions"][0]
     assert session["model_config"]["provider_id"] == "openai"
     assert session["skills"] == []
-    assert session["mcps"] == []
+    assert len(session["mcps"]) == 1
+    assert session["mcps"][0]["name"] == "game-service"
+    assert session["mcps"][0]["enabled"] is True
     assert session["recent_job"] is None
 
 
@@ -232,27 +234,19 @@ def test_list_session_assignments_returns_skills_and_mcps(app):
         skills_response = client.get(f"/sessions/{session_id}/skills")
         mcps_response = client.get(f"/sessions/{session_id}/mcps")
 
-    assert skills_response.status_code == 200
-    assert skills_response.json()["skills"] == [
-        {
-            "id": skills_response.json()["skills"][0]["id"],
-            "skill_name": "demo-skill",
-            "skill_path": skills_response.json()["skills"][0]["skill_path"],
-            "created_at": skills_response.json()["skills"][0]["created_at"],
-        }
-    ]
-    assert mcps_response.status_code == 200
-    assert mcps_response.json()["mcps"] == [
-        {
-            "id": mcps_response.json()["mcps"][0]["id"],
-            "name": "game-service",
-            "transport": "streamable-http",
-            "server_url": "http://localhost:4001/mcp/",
-            "headers": {},
-            "created_at": mcps_response.json()["mcps"][0]["created_at"],
-            "updated_at": mcps_response.json()["mcps"][0]["updated_at"],
-        }
-    ]
+        assert skills_response.status_code == 200
+        skills = skills_response.json()["skills"]
+        assert len(skills) == 1
+        assert skills[0]["skill_name"] == "demo-skill"
+        assert skills[0]["enabled"] is True
+        assert "id" in skills[0]
+        assert "skill_path" in skills[0]
+        assert "created_at" in skills[0]
+        assert mcps_response.status_code == 200
+        mcps = mcps_response.json()["mcps"]
+        assert mcps[0]["name"] == "game-service"
+        assert mcps[0]["transport"] == "streamable-http"
+        assert mcps[0]["enabled"] is True
 
 
 def test_rejects_unknown_provider(app):

@@ -1,5 +1,4 @@
 import {
-  addMcp,
   addSkill,
   cancelJob,
   compactSession,
@@ -7,7 +6,6 @@ import {
   getJob,
   getSession,
   listSessionMcps,
-  removeMcp,
   removeSkill,
   setModelConfig,
   submitPrompt,
@@ -20,7 +18,6 @@ import {
   buildDefaultSessionName,
   buildDraftFromSession,
   createDefaultDraft,
-  parseCustomMcps,
   parseJsonObject,
   parseOptionalPositiveInteger,
 } from "@/features/play/lib/session-draft";
@@ -126,19 +123,6 @@ export function usePlaySessionActions({
         await addSkill(created.id, skillName);
       }
 
-      if (nextDraft.enableDefaultGameServiceMcp) {
-        await addMcp(created.id, {
-          name: config.defaultGameServiceMcpName,
-          transport: config.defaultGameServiceMcpTransport,
-          server_url: config.defaultGameServiceMcpUrl,
-          headers: {},
-        });
-      }
-
-      for (const mcp of parseCustomMcps(nextDraft.customMcpsText)) {
-        await addMcp(created.id, mcp);
-      }
-
       await refreshSessions(false);
       persistSelectedSessionId(created.id);
       setStatusText("Session created");
@@ -178,7 +162,6 @@ export function usePlaySessionActions({
         draft.providerOptionsText,
         "Provider options"
       );
-      const customMcps = parseCustomMcps(draft.customMcpsText);
 
       await updateSession(selectedSession.id, {
         name:
@@ -218,34 +201,13 @@ export function usePlaySessionActions({
         }
       }
 
-      const currentMcps = await listSessionMcps(selectedSession.id);
-      const targetMcps = [
-        ...(draft.enableDefaultGameServiceMcp
-          ? [
-              {
-                name: config.defaultGameServiceMcpName,
-                transport: config.defaultGameServiceMcpTransport,
-                server_url: config.defaultGameServiceMcpUrl,
-                headers: {},
-              },
-            ]
-          : []),
-        ...customMcps,
-      ];
-
-      for (const currentMcp of currentMcps) {
-        if (!targetMcps.some((mcp) => mcp.name === currentMcp.name)) {
-          await removeMcp(selectedSession.id, currentMcp.name);
-        }
-      }
-
-      for (const mcp of targetMcps) {
-        await addMcp(selectedSession.id, mcp);
-      }
-
-      const refreshed = await getSession(selectedSession.id);
-      setSelectedSession(refreshed);
-      const savedDraft = buildDraftFromSession(config, refreshed);
+      const [refreshed, mcps] = await Promise.all([
+        getSession(selectedSession.id),
+        listSessionMcps(selectedSession.id),
+      ]);
+      const hydratedSession = { ...refreshed, mcps };
+      setSelectedSession(hydratedSession);
+      const savedDraft = buildDraftFromSession(config, hydratedSession);
       setDraft(savedDraft);
       committedModelRef.current = {
         providerId: savedDraft.providerId,

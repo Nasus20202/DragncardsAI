@@ -19,6 +19,14 @@ These instructions apply to the whole repository unless a deeper `AGENTS.md` ove
 - Read [`services/agent-orchestrator/README.md`](services/agent-orchestrator/README.md) when working on agent sessions, skills, providers, or background jobs.
 - Read files nearest to the change before introducing new patterns.
 
+## Service-Level Guides
+
+Service-specific AGENTS.md files override these instructions:
+
+- [`services/dashboard/AGENTS.md`](services/dashboard/AGENTS.md) - Frontend development with Hero UI components
+- [`services/game-service/AGENTS.md`](services/game-service/AGENTS.md) - Game service patterns, DragnLang actions, Phoenix Channels
+- [`services/agent-orchestrator/AGENTS.md`](services/agent-orchestrator/AGENTS.md) - Session lifecycle, jobs, provider configuration
+
 ## Working Rules
 
 - Prefer the smallest correct change that fits the existing code style.

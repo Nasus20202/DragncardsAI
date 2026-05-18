@@ -9,17 +9,19 @@ import {
   ListBoxItem,
   Select,
   Separator,
-  Switch,
   TextArea,
   TextField,
-  Tooltip,
 } from "@heroui/react";
 import { useEffect, useState } from "react";
 import {
+  McpAssignmentResponse,
+  McpRegistryResponse,
   ProviderResponse,
   SessionDraft,
   SkillDefinitionResponse,
 } from "@/features/shared/lib/types";
+import { McpSection } from "@/features/play/components/mcp-section";
+import { ToggleInfoRow } from "@/features/play/components/toggle-info-row";
 
 /* ── Reusable field wrappers ─────────────────────────────────────── */
 
@@ -122,8 +124,12 @@ function SelectField({
         fullWidth
         aria-label={label}
         isDisabled={disabled}
-        selectedKey={value}
-        onSelectionChange={(key) => onChange(String(key))}
+        value={value}
+        onChange={(nextValue) => {
+          if (nextValue != null) {
+            onChange(String(nextValue));
+          }
+        }}
       >
         <Select.Trigger aria-label={label}>
           <Select.Value />
@@ -184,7 +190,7 @@ function ComboSelectField({
         fullWidth
         aria-label={label}
         isDisabled={disabled}
-        selectedKey={value}
+        value={value}
         inputValue={inputValue}
         onInputChange={setInputValue}
         onOpenChange={(isOpen) => {
@@ -196,11 +202,11 @@ function ComboSelectField({
             setInputValue(items.find((i) => i.value === value)?.label ?? value);
           }
         }}
-        onSelectionChange={(key) => {
-          if (key) {
-            const item = items.find((i) => i.value === String(key));
-            setInputValue(item?.label ?? String(key));
-            onChange(String(key));
+        onChange={(nextValue) => {
+          if (nextValue) {
+            const item = items.find((i) => i.value === String(nextValue));
+            setInputValue(item?.label ?? String(nextValue));
+            onChange(String(nextValue));
           }
         }}
       >
@@ -239,22 +245,12 @@ function SwitchField({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <Switch
-      aria-label={label}
-      isSelected={checked}
+    <ToggleInfoRow
+      label={label}
+      description={description}
+      checked={checked}
       onChange={onChange}
-      className="flex w-full items-center justify-between gap-3 py-0.5"
-    >
-      <Switch.Content className="flex flex-1 flex-col">
-        <div className="text-sm text-foreground">{label}</div>
-        {description && (
-          <div className="text-xs text-default-400">{description}</div>
-        )}
-      </Switch.Content>
-      <Switch.Control className="shrink-0">
-        <Switch.Thumb />
-      </Switch.Control>
-    </Switch>
+    />
   );
 }
 
@@ -335,49 +331,32 @@ function SkillsSection({
             .join(" · ");
           const hasInfo = Boolean(skill.description || metaStr);
           return (
-            <div key={skill.name} className="flex items-center gap-1">
-              <div className="flex-1">
-                <SwitchField
-                  id={`cfg-sk-${skill.name}`}
-                  label={skill.name}
-                  checked={draft.selectedSkills.includes(skill.name)}
-                  onChange={(checked) =>
-                    set(
-                      "selectedSkills",
-                      checked
-                        ? [...draft.selectedSkills, skill.name]
-                        : draft.selectedSkills.filter(
-                            (name) => name !== skill.name
-                          )
-                    )
-                  }
-                />
-              </div>
-              {hasInfo && (
-                <Tooltip delay={200}>
-                  <Tooltip.Trigger>
-                    <button
-                      type="button"
-                      className="shrink-0 cursor-default select-none text-xs text-default-300 hover:text-default-500 focus:outline-none"
-                      aria-label={`Info about ${skill.name}`}
-                      onClick={(event) => event.preventDefault()}
-                    >
-                      ⓘ
-                    </button>
-                  </Tooltip.Trigger>
-                  <Tooltip.Content placement="left" className="max-w-xs">
-                    <div className="space-y-1 p-1">
-                      {skill.description && (
-                        <p className="text-xs">{skill.description}</p>
-                      )}
-                      {metaStr && (
-                        <p className="text-[11px] opacity-70">{metaStr}</p>
-                      )}
-                    </div>
-                  </Tooltip.Content>
-                </Tooltip>
-              )}
-            </div>
+            <ToggleInfoRow
+              key={skill.name}
+              label={skill.name}
+              checked={draft.selectedSkills.includes(skill.name)}
+              onChange={(checked) =>
+                set(
+                  "selectedSkills",
+                  checked
+                    ? [...draft.selectedSkills, skill.name]
+                    : draft.selectedSkills.filter((name) => name !== skill.name)
+                )
+              }
+              infoLabel={hasInfo ? `Info about ${skill.name}` : undefined}
+              infoContent={
+                hasInfo ? (
+                  <div className="space-y-1 p-1">
+                    {skill.description && (
+                      <p className="text-xs">{skill.description}</p>
+                    )}
+                    {metaStr && (
+                      <p className="text-[11px] opacity-70">{metaStr}</p>
+                    )}
+                  </div>
+                ) : undefined
+              }
+            />
           );
         })}
       </div>
@@ -412,19 +391,9 @@ function AdvancedJsonSection({
         value={draft.providerOptionsText}
         onChange={(value) => set("providerOptionsText", value)}
       />
-      <TextareaField
-        id="cfg-mcps"
-        label="Custom MCPs"
-        description="Array of {name, transport, server_url, headers}."
-        rows={4}
-        value={draft.customMcpsText}
-        onChange={(value) => set("customMcpsText", value)}
-      />
     </>
   );
 }
-
-/* ── Subagent panel ──────────────────────────────────────────────── */
 
 /* ── Main component ──────────────────────────────────────────────── */
 
@@ -433,6 +402,7 @@ interface Props {
   providers: ProviderResponse[];
   modelOptions: string[];
   skills: SkillDefinitionResponse[];
+  mcps: McpAssignmentResponse[];
   isBusy: boolean;
   canSave: boolean;
   isOpen: boolean;
@@ -440,6 +410,9 @@ interface Props {
   onClose: () => void;
   onSave: () => void;
   onTerminate: () => void;
+  onToggleMcp: (mcpName: string, enabled: boolean) => Promise<void>;
+  onAddMcp: (mcp: McpRegistryResponse) => Promise<void>;
+  onDeleteMcp: (mcpName: string) => Promise<void>;
 }
 
 export function PlayConfigPanel({
@@ -447,6 +420,7 @@ export function PlayConfigPanel({
   providers,
   modelOptions,
   skills,
+  mcps,
   isBusy,
   canSave,
   isOpen,
@@ -454,6 +428,9 @@ export function PlayConfigPanel({
   onClose,
   onSave,
   onTerminate,
+  onToggleMcp,
+  onAddMcp,
+  onDeleteMcp,
 }: Props) {
   if (!isOpen) return null;
 
@@ -534,12 +511,12 @@ export function PlayConfigPanel({
 
             <Separator />
 
-            <SwitchField
-              id="cfg-default-game-service-mcp"
-              label="Default game-service MCP"
-              description="Attach the configured game-service MCP to this session."
-              checked={draft.enableDefaultGameServiceMcp}
-              onChange={(v) => set("enableDefaultGameServiceMcp", v)}
+            <McpSection
+              mcps={mcps}
+              isBusy={isBusy}
+              onToggle={onToggleMcp}
+              onAdd={onAddMcp}
+              onDelete={onDeleteMcp}
             />
 
             <Separator />

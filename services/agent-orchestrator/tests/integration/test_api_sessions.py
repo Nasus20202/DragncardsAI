@@ -5,56 +5,80 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_mcp_assignment_list_normalizes_and_remove_lifecycle(app):
+async def test_mcp_registry_and_session_enablement_lifecycle(app):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        create_response = await client.post(
-            "/sessions",
-            json={
-                "name": "mcp-lifecycle",
-                "context_recent_message_limit": 3,
-                "context_recent_tool_exchange_limit": 1,
-            },
-        )
+        # Create session
+        create_response = await client.post("/sessions", json={"name": "mcp-test"})
         session_id = create_response.json()["session"]["id"]
 
-        assign_response = await client.post(
-            f"/sessions/{session_id}/mcps",
+        # Initially no additional MCPs registered (game-service is auto-created)
+        list_response = await client.get("/mcps")
+        assert list_response.status_code == 200
+        mcps = list_response.json()["mcps"]
+        # game-service is auto-created by default
+        assert len(mcps) == 1
+        assert mcps[0]["name"] == "game-service"
+
+        # Add another MCP registry
+        add_response = await client.post(
+            "/mcps",
             json={
-                "name": "game-service",
-                "server_url": "http://game-service/mcp",
+                "name": "custom-mcp",
+                "transport": "sse",
+                "server_url": "http://custom/mcp",
             },
         )
-        list_response = await client.get(f"/sessions/{session_id}/mcps")
-        session_response = await client.get(f"/sessions/{session_id}")
-        remove_response = await client.delete(
-            f"/sessions/{session_id}/mcps/game-service"
+        assert add_response.status_code == 201
+        assert add_response.json()["mcp"]["name"] == "custom-mcp"
+        assert add_response.json()["mcp"]["transport"] == "sse"
+
+        # List registries
+        list_response = await client.get("/mcps")
+        assert list_response.status_code == 200
+        assert len(list_response.json()["mcps"]) == 2
+
+        # List session MCPs (built-ins enabled by default, custom disabled)
+        session_mcps = await client.get(f"/sessions/{session_id}/mcps")
+        assert session_mcps.status_code == 200
+        mcps = session_mcps.json()["mcps"]
+        assert len(mcps) == 2
+        game_mcp = next(m for m in mcps if m["name"] == "game-service")
+        assert game_mcp["enabled"] is True
+        custom_mcp = next(m for m in mcps if m["name"] == "custom-mcp")
+        assert custom_mcp["enabled"] is False
+
+        # Enable custom MCP for session
+        enable_response = await client.patch(
+            f"/sessions/{session_id}/mcps/custom-mcp",
+            json={"enabled": True},
         )
-        list_after_remove_response = await client.get(f"/sessions/{session_id}/mcps")
-        remove_missing_response = await client.delete(
-            f"/sessions/{session_id}/mcps/game-service"
+        assert enable_response.status_code == 200
+        assert enable_response.json()["mcp"]["enabled"] is True
+
+        # Disable MCP for session
+        disable_response = await client.patch(
+            f"/sessions/{session_id}/mcps/custom-mcp",
+            json={"enabled": False},
         )
+        assert disable_response.status_code == 200
+        assert disable_response.json()["mcp"]["enabled"] is False
 
-    assert assign_response.status_code == 201
-    assigned_mcp = assign_response.json()["mcp"]
-    assert assigned_mcp["server_url"] == "http://game-service/mcp/"
+        # Delete MCP registry (custom one)
+        delete_response = await client.delete("/mcps/custom-mcp")
+        assert delete_response.status_code == 204
 
-    assert list_response.status_code == 200
-    listed_mcps = list_response.json()["mcps"]
-    assert len(listed_mcps) == 1
-    assert listed_mcps[0]["name"] == "game-service"
-    assert listed_mcps[0]["server_url"] == "http://game-service/mcp/"
+        # Still have game-service
+        list_after = await client.get("/mcps")
+        assert len(list_after.json()["mcps"]) == 1
 
-    assert session_response.status_code == 200
-    session = session_response.json()["session"]
-    assert session["context_recent_message_limit"] == 3
-    assert session["context_recent_tool_exchange_limit"] == 1
-
-    assert remove_response.status_code == 204
-    assert list_after_remove_response.status_code == 200
-    assert list_after_remove_response.json() == {"mcps": []}
-    assert remove_missing_response.status_code == 404
+        # Enable non-existent MCP returns 404
+        enable_missing = await client.patch(
+            f"/sessions/{session_id}/mcps/missing",
+            json={"enabled": True},
+        )
+        assert enable_missing.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -97,9 +121,9 @@ async def test_session_endpoints_return_404_for_missing_resources(app):
             "/sessions/missing/skills",
             json={"skill_name": "test-skill"},
         )
-        mcp_response = await client.post(
-            "/sessions/missing/mcps",
-            json={"name": "game-service", "server_url": "http://game-service/mcp"},
+        mcp_enable_response = await client.patch(
+            "/sessions/missing/mcps/game-service",
+            json={"enabled": True},
         )
 
     assert session_response.status_code == 404
@@ -107,7 +131,7 @@ async def test_session_endpoints_return_404_for_missing_resources(app):
     assert terminate_response.status_code == 404
     assert model_config_response.status_code == 404
     assert skill_response.status_code == 404
-    assert mcp_response.status_code == 404
+    assert mcp_enable_response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -145,7 +169,7 @@ async def test_assign_skill_rejects_unknown_skill(app):
 
 
 @pytest.mark.asyncio
-async def test_session_tools_reflect_mcp_assignment_changes(app):
+async def test_session_tools_reflect_mcp_enablement_changes(app):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -153,15 +177,33 @@ async def test_session_tools_reflect_mcp_assignment_changes(app):
         session_id = create_response.json()["session"]["id"]
 
         initial_tools_response = await client.get(f"/sessions/{session_id}/tools")
-        assign_response = await client.post(
-            f"/sessions/{session_id}/mcps",
-            json={"name": "game-service", "server_url": "http://game-service/mcp"},
+
+        # Built-in MCP is available and enabled by default for each session.
+        initial_mcps_response = await client.get(f"/sessions/{session_id}/mcps")
+
+        # Register MCP in global registry
+        await client.post(
+            "/mcps",
+            json={
+                "name": "game-service",
+                "transport": "streamable-http",
+                "server_url": "http://game-service/mcp",
+            },
+        )
+
+        # Enable MCP for session
+        await client.patch(
+            f"/sessions/{session_id}/mcps/game-service",
+            json={"enabled": True},
         )
         tools_with_mcp_response = await client.get(f"/sessions/{session_id}/tools")
-        remove_response = await client.delete(
-            f"/sessions/{session_id}/mcps/game-service"
+
+        # Disable MCP for session
+        await client.patch(
+            f"/sessions/{session_id}/mcps/game-service",
+            json={"enabled": False},
         )
-        tools_after_remove_response = await client.get(f"/sessions/{session_id}/tools")
+        tools_after_disable_response = await client.get(f"/sessions/{session_id}/tools")
 
     assert initial_tools_response.status_code == 200
     initial_tool_names = {
@@ -173,18 +215,19 @@ async def test_session_tools_reflect_mcp_assignment_changes(app):
         "spawn_subagent",
         "wait_for_subagent",
     }.issubset(initial_tool_names)
-    assert "game-service_next_step" not in initial_tool_names
+    assert "game-service_next_step" in initial_tool_names
 
-    assert assign_response.status_code == 201
+    initial_mcps = {mcp["name"]: mcp for mcp in initial_mcps_response.json()["mcps"]}
+    assert initial_mcps["game-service"]["enabled"] is True
+
     assert tools_with_mcp_response.status_code == 200
     tools_with_mcp_names = {
         tool["name"] for tool in tools_with_mcp_response.json()["tools"]
     }
     assert "game-service_next_step" in tools_with_mcp_names
 
-    assert remove_response.status_code == 204
-    assert tools_after_remove_response.status_code == 200
-    tools_after_remove_names = {
-        tool["name"] for tool in tools_after_remove_response.json()["tools"]
+    assert tools_after_disable_response.status_code == 200
+    tools_after_disable_names = {
+        tool["name"] for tool in tools_after_disable_response.json()["tools"]
     }
-    assert "game-service_next_step" not in tools_after_remove_names
+    assert "game-service_next_step" not in tools_after_disable_names

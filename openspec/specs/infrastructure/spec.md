@@ -36,6 +36,23 @@ The full stack SHALL be startable with `docker compose build && docker compose u
 - **WHEN** `docker compose up` is run
 - **THEN** the stack SHALL also start a local `grafana/otel-lgtm:0.27.1` service for observability and wire the first-party services plus the Bifrost gateway to export OTLP telemetry to it
 
+### Requirement: Local smoke-model runtime wiring
+The repository SHALL provide a documented local runtime path for a small `llama.cpp` model used by smoke tests, including the environment configuration needed for the dashboard and agent-orchestrator to target that model.
+
+The smoke-model runtime SHALL remain optional for developers who are not running the smoke workflow.
+
+#### Scenario: Smoke runtime can be started locally
+- **WHEN** a developer follows the documented smoke-test setup for the local model runtime
+- **THEN** the `llama.cpp` server SHALL be startable with the configured model artifact and reachable at the documented local endpoint
+
+#### Scenario: Smoke runtime can be started through compose profile helper
+- **WHEN** a developer runs the documented smoke helper or `make smoke-up` or `make smoke-model`
+- **THEN** Docker Compose SHALL start the `llama-cpp-smoke-model-cache` and `llama-cpp-smoke` services under the optional `smoke` profile using the documented environment defaults
+
+#### Scenario: Normal local stack does not require the smoke runtime
+- **WHEN** a developer starts the normal local stack without the smoke-test workflow
+- **THEN** the dashboard, game-service, and agent-orchestrator SHALL remain runnable without requiring the `llama.cpp` smoke-model process
+
 ### Requirement: Service runtime infrastructure wiring
 The repository's Compose configuration SHALL provide consistent runtime telemetry wiring for `game-service`, `agent-orchestrator`, `dashboard`, and the repo-managed Bifrost gateway when they run in the local stack.
 

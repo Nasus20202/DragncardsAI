@@ -19,7 +19,7 @@ from agent_orchestrator.storage.repository import Repository
 
 
 class FakeMcp:
-    async def list_tools(self, server_url, headers=None):
+    async def list_tools(self, server_url, transport, headers=None):
         return [
             McpToolDefinition(
                 name="next_step",
@@ -61,13 +61,13 @@ async def _make_session(repo: Repository, multi_turn_memory: bool = True):
         provider_options={},
     )
     await repo.add_skill_assignment(session.id, "demo-skill", "/tmp/demo-skill")
-    await repo.add_mcp_assignment(
-        session.id,
+    await repo.add_mcp_registry(
         name="game-service",
         transport="streamable-http",
         server_url="http://localhost:4001/mcp",
         headers_json={},
     )
+    await repo.enable_mcp_for_session(session.id, "game-service", enabled=True)
     return session
 
 
@@ -254,7 +254,7 @@ async def test_session_transcript_builds_context_metadata(
                 {
                     "role": "system",
                     "content": build_system_prompt(
-                        skill_registry, reloaded_session.skill_assignments
+                        skill_registry, reloaded_session.enabled_skills
                     ),
                 }
             ]
@@ -263,7 +263,8 @@ async def test_session_transcript_builds_context_metadata(
         "tools": estimate_tokens_for_tools(
             mcp_tool_catalog.as_openai_tools(
                 await mcp_tool_catalog.list_session_tools(
-                    reloaded_session.mcp_assignments,
+                    reloaded_session.enabled_mcps,
+                    await repository.list_mcp_registries(),
                     ignore_failures=True,
                 )
             )

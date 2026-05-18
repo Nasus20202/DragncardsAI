@@ -52,7 +52,7 @@ class FakeMcpClient(StreamableHttpMcpClient):
     def __init__(self):
         pass
 
-    async def list_tools(self, server_url, headers=None):
+    async def list_tools(self, server_url, transport, headers=None):
         return [
             McpToolDefinition(
                 name="next_step",
@@ -60,6 +60,11 @@ class FakeMcpClient(StreamableHttpMcpClient):
                 input_schema={"type": "object", "properties": {}},
             )
         ]
+
+    async def call_tool(
+        self, server_url, transport, tool_name, arguments, headers=None
+    ):
+        return {"is_error": False, "content": [{"type": "text", "text": "done"}]}
 
 
 async def build_context_test_app(tmp_path: Path, bifrost_client=None):
@@ -70,6 +75,14 @@ async def build_context_test_app(tmp_path: Path, bifrost_client=None):
 
     skill_root = tmp_path / "skills"
     skill_root.mkdir()
+
+    await repository.add_mcp_registry(
+        name="game-service",
+        transport="streamable-http",
+        server_url="http://localhost:4001/mcp/",
+        headers_json=None,
+        custom=False,
+    )
 
     app = create_app(
         settings=Settings(
@@ -90,10 +103,11 @@ async def build_context_test_app(tmp_path: Path, bifrost_client=None):
 
 async def expected_request_tokens(app, session, replay_messages):
     system_prompt = build_system_prompt(
-        app.state.skill_registry, session.skill_assignments
+        app.state.skill_registry, session.enabled_skills
     )
     listed_tool_definitions = await app.state.mcp_tool_catalog.list_session_tools(
-        session.mcp_assignments,
+        session.enabled_mcps,
+        await app.state.repository.list_mcp_registries(),
         ignore_failures=True,
     )
     tool_definitions = app.state.mcp_tool_catalog.as_openai_tools(
@@ -108,10 +122,11 @@ async def expected_request_tokens(app, session, replay_messages):
 
 async def expected_token_breakdown(app, session, replay_messages):
     system_prompt = build_system_prompt(
-        app.state.skill_registry, session.skill_assignments
+        app.state.skill_registry, session.enabled_skills
     )
     listed_tool_definitions = await app.state.mcp_tool_catalog.list_session_tools(
-        session.mcp_assignments,
+        session.enabled_mcps,
+        await app.state.repository.list_mcp_registries(),
         ignore_failures=True,
     )
     tool_definitions = app.state.mcp_tool_catalog.as_openai_tools(

@@ -53,10 +53,11 @@ async def list_effective_session_tools(
         repository=repository,
         live_event_bus=live_event_bus,
         session_id=session.id,
-        skill_assignments=session.skill_assignments,
+        skill_assignments=session.enabled_skills,
         is_master_job=is_master_job,
     )
+    all_registries = await repository.list_mcp_registries()
     mcp_tools = await mcp_tool_catalog.list_session_tools(
-        session.mcp_assignments, ignore_failures=True
+        session.enabled_mcps, all_registries, ignore_failures=True
     )
     return builtin_tools, mcp_tools

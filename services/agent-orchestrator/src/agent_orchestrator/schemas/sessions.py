@@ -35,11 +35,15 @@ class SkillAssignmentRequest(BaseModel):
     skill_name: str
 
 
-class McpAssignmentRequest(BaseModel):
+class McpRegistryRequest(BaseModel):
     name: str
     transport: str = "streamable-http"
     server_url: str
     headers: dict[str, str] = Field(default_factory=dict)
+
+
+class SessionMcpEnableRequest(BaseModel):
+    enabled: bool
 
 
 class SessionSummary(BaseModel):
@@ -77,14 +81,22 @@ class SkillAssignmentResponse(BaseModel):
     created_at: datetime
 
 
-class McpAssignmentResponse(BaseModel):
-    id: str
+class McpRegistryResponse(BaseModel):
     name: str
     transport: str
     server_url: str
     headers: dict[str, Any]
+    custom: bool
     created_at: datetime
-    updated_at: datetime
+
+
+class McpAssignmentResponse(BaseModel):
+    name: str
+    transport: str
+    server_url: str
+    headers: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool
+    custom: bool = False
 
 
 class SessionDetail(SessionSummary):

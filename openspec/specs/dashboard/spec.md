@@ -7,11 +7,11 @@ This spec describes the Next.js dashboard application for DragnCardsAI, includin
 ## Requirements
 
 ### Requirement: Dashboard application shell
-The system SHALL provide a Next.js dashboard application with a dark-mode-capable HeroUI interface and top-level navigation for `Play` and `Swagger` sections.
+The system SHALL provide a Next.js dashboard application with a dark-mode-capable HeroUI interface and top-level navigation for `Play`, `Games`, and `Swagger` sections.
 
 #### Scenario: Navigate between dashboard sections
 - **WHEN** a user opens the dashboard in a browser
-- **THEN** the system SHALL display a top navbar with `Play` and `Swagger` navigation entries
+- **THEN** the system SHALL display a top navbar with `Play`, `Games`, and `Swagger` navigation entries
 
 #### Scenario: Use dark mode
 - **WHEN** the user enables dark mode or the browser prefers dark mode
@@ -27,6 +27,46 @@ The system SHALL provide a Play workspace with a left session sidebar, centre ch
 #### Scenario: Session selection persisted across reloads
 - **WHEN** a user selects a session and reloads the page
 - **THEN** the dashboard SHALL restore the previously selected session from local storage
+
+### Requirement: Games session workspace
+The dashboard SHALL provide a Games workspace with a left session sidebar and centre embedded iframe viewer, filling the full viewport height without page-level scrolling.
+
+#### Scenario: View games layout
+- **WHEN** a user opens the Games section on a desktop viewport
+- **THEN** the dashboard SHALL show a game list on the left and an iframe viewer in the centre
+
+### Requirement: Game session list
+The dashboard SHALL fetch and display a list of active game sessions from the game-service `/games` endpoint.
+
+#### Scenario: Games list shows active sessions
+- **WHEN** a user opens the Games view
+- **THEN** the dashboard SHALL fetch games from the game-service and display each session's room slug and plugin name
+
+#### Scenario: Games list ordered by newest first
+- **WHEN** multiple game sessions are active
+- **THEN** the dashboard SHALL sort them by `created_at` descending before rendering the list
+
+#### Scenario: Empty games list shown when no active sessions
+- **WHEN** no game sessions are active
+- **THEN** the dashboard SHALL display an empty state message
+
+### Requirement: Embedded DragnCards iframe
+The dashboard SHALL embed the DragnCards frontend in an iframe, showing the selected game room.
+
+#### Scenario: Iframe loads selected game
+- **WHEN** a game is selected in the Games view
+- **THEN** the dashboard SHALL render an iframe pointing to the DragnCards frontend URL using the `/room/{room_slug}` path
+
+#### Scenario: Placeholder shown when no game selected
+- **WHEN** no game is selected
+- **THEN** the dashboard SHALL display a placeholder in the iframe area indicating no game is selected
+
+### Requirement: DragnCards frontend URL configuration
+The dashboard SHALL read the DragnCards frontend URL from the `DRAGNCARDS_FRONTEND_URL` environment variable.
+
+#### Scenario: Missing frontend URL uses local development default
+- **WHEN** the DRAGNCARDS_FRONTEND_URL environment variable is not set
+- **THEN** the dashboard SHALL fall back to `http://localhost:3000` for the embedded iframe target
 
 ### Requirement: Agent session management
 The dashboard SHALL allow users to create, select, inspect, update, and terminate agent sessions through agent-orchestrator APIs.
@@ -149,9 +189,21 @@ The dashboard UI SHALL display a `Compact` button within the context health indi
 ### Requirement: Live chat and orchestration event rendering
 The dashboard SHALL provide a ChatGPT-like prompt and transcript interface backed by agent-orchestrator prompt jobs and streaming events, rendered with markdown support.
 
+The dashboard SHALL expose a stable browser automation path for the Play workspace that allows an end-to-end test to create or select a session, submit a prompt, and observe when the resulting job reaches a terminal state.
+
+The automation path SHALL rely on stable labels, roles, or explicit test selectors for the controls required by that smoke flow rather than incidental DOM structure.
+
 #### Scenario: Submit prompt
 - **WHEN** a user submits a prompt for an active session
 - **THEN** the dashboard SHALL create a prompt job through the agent-orchestrator and append the user prompt to the transcript
+
+#### Scenario: Browser test can create a new session
+- **WHEN** a browser automation client opens the Play workspace
+- **THEN** it SHALL be able to locate and activate the new-session control through a stable selector or label
+
+#### Scenario: Browser test can submit a prompt
+- **WHEN** a browser automation client opens the Play workspace and creates or selects a session
+- **THEN** it SHALL be able to locate the prompt input and submit control through stable automation-facing selectors or accessible labels
 
 #### Scenario: First prompt auto-generates session title
 - **WHEN** the user submits the first prompt and no non-timestamp name has been set on the session
@@ -165,6 +217,14 @@ The dashboard SHALL provide a ChatGPT-like prompt and transcript interface backe
 #### Scenario: Render streaming output
 - **WHEN** the agent-orchestrator streams job events
 - **THEN** the dashboard SHALL render model output as markdown, display reasoning in a collapsible block that auto-collapses when output arrives, and show tool calls and completion state in the transcript
+
+#### Scenario: Browser test can observe streaming progress
+- **WHEN** a submitted prompt job begins streaming
+- **THEN** the Play workspace SHALL expose a stable visible state that indicates the job is streaming
+
+#### Scenario: Browser test can observe terminal job state
+- **WHEN** a submitted prompt job completes, fails, or is cancelled
+- **THEN** the Play workspace SHALL expose a stable visible state that allows browser automation to detect that the job is no longer streaming
 
 #### Scenario: Suppress script tags in markdown
 - **WHEN** model output contains a script tag

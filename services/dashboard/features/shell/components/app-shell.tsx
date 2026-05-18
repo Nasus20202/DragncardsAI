@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
 import { PropsWithChildren } from "react";
@@ -45,12 +46,14 @@ export function AppShell({
         <div className="flex items-center gap-4">
           <NextLink
             href="/play"
-            className="text-sm font-semibold tracking-tight text-foreground/80 hover:text-foreground"
+            className="flex items-center gap-2 text-sm font-semibold tracking-tight text-foreground/80 hover:text-foreground"
           >
-            {appName}
+            <Image src="/logo.webp" alt="Logo" width={20} height={20} />
+            <span className="font-bold">{appName}</span>
           </NextLink>
           <nav className="flex items-center gap-1">
             <NavLink href="/play">Play</NavLink>
+            <NavLink href="/games">Games</NavLink>
             <NavLink href="/swagger">Swagger</NavLink>
           </nav>
         </div>

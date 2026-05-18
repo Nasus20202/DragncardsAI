@@ -44,6 +44,9 @@ export function PlayWorkspace() {
     submitSessionPrompt,
     cancelExecution,
     recordSubagentOutcome,
+    toggleMcp,
+    addMcpToRegistry,
+    deleteMcpFromRegistry,
   } = usePlaySession();
   const [subagentModal, setSubagentModal] = useState<{
     childJobId: string;
@@ -168,6 +171,7 @@ export function PlayWorkspace() {
         draft={draft}
         isBusy={isBusy}
         isOpen={isSettingsOpen}
+        mcps={selectedSession?.mcps ?? []}
         modelOptions={modelOptions}
         providers={uniqueProviders}
         skills={skills}
@@ -175,6 +179,9 @@ export function PlayWorkspace() {
         onDraftChange={setDraft}
         onSave={saveConfiguration}
         onTerminate={terminatePlaySession}
+        onToggleMcp={toggleMcp}
+        onAddMcp={addMcpToRegistry}
+        onDeleteMcp={deleteMcpFromRegistry}
       />
 
       {subagentModal && (

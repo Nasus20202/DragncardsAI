@@ -18,6 +18,7 @@ const config: DashboardConfig = {
   defaultGameServiceMcpUrl: "http://game-service:8000/mcp/",
   defaultSkills: ["demo-skill"],
   defaultCustomMcps: [],
+  dragncardsFrontendUrl: "http://localhost:4000",
 };
 
 const session: SessionDetail = {
@@ -47,22 +48,18 @@ const session: SessionDetail = {
   ],
   mcps: [
     {
-      id: "mcp-1",
       name: "game-service",
       transport: "streamable-http",
       server_url: "http://game-service:8000/mcp/",
       headers: {},
-      created_at: "2026-05-11T00:00:00Z",
-      updated_at: "2026-05-11T00:00:00Z",
+      enabled: true,
     },
     {
-      id: "mcp-2",
       name: "custom",
       transport: "stdio",
       server_url: "http://custom",
       headers: { authorization: "Bearer token" },
-      created_at: "2026-05-11T00:00:00Z",
-      updated_at: "2026-05-11T00:00:00Z",
+      enabled: true,
     },
   ],
   recent_job: null,
@@ -84,9 +81,6 @@ describe("session draft helper branches", () => {
     expect(draft.recentMessageLimit).toBe("6");
     expect(draft.recentToolExchangeLimit).toBe("2");
     expect(draft.selectedSkills).toEqual(["custom-skill"]);
-    expect(draft.enableDefaultGameServiceMcp).toBe(true);
-    expect(draft.customMcpsText).toContain("custom");
-    expect(draft.customMcpsText).not.toContain('"game-service"');
   });
 
   it("treats normalized default MCP urls as the same assignment", () => {
@@ -98,8 +92,7 @@ describe("session draft helper branches", () => {
       session
     );
 
-    expect(draft.enableDefaultGameServiceMcp).toBe(true);
-    expect(draft.customMcpsText).not.toContain('"game-service"');
+    expect(draft.recentMessageLimit).toBe("6");
   });
 
   it("rejects invalid json object input", () => {

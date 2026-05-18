@@ -3,6 +3,7 @@ import {
   getJob,
   getSession,
   listAvailableSkills,
+  listSessionMcps,
   listProviders,
   listSessionJobs,
   listSessions,
@@ -170,9 +171,13 @@ export function usePlaySessionLoader({
     async function loadSession() {
       try {
         setStatusText("Loading session...");
-        const nextSession = await getSession(currentSessionId);
-        setSelectedSession(nextSession);
-        const nextDraft = buildDraftFromSession(currentConfig, nextSession);
+        const [nextSession, nextMcps] = await Promise.all([
+          getSession(currentSessionId),
+          listSessionMcps(currentSessionId),
+        ]);
+        const hydratedSession = { ...nextSession, mcps: nextMcps };
+        setSelectedSession(hydratedSession);
+        const nextDraft = buildDraftFromSession(currentConfig, hydratedSession);
         setDraft(nextDraft);
         committedModelRef.current = {
           providerId: nextDraft.providerId,

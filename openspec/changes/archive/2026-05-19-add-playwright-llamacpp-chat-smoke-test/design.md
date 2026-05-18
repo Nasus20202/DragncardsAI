@@ -76,7 +76,7 @@ That browser smoke flow should be owned by a dedicated repo service rather than 
 
 ### D5: Separate smoke-runtime wiring from the normal dev stack
 
-**Decision**: Infrastructure changes will define a documented smoke-test runtime path for `llama.cpp`, model file location, and env wiring without making the local smoke model a mandatory dependency for every normal `docker compose up` or service startup.
+**Decision**: Infrastructure changes will define a documented smoke-test runtime path for `llama.cpp`, model file download/cache location, and env wiring through `services/smoketest/smoke.sh` plus a `docker compose --profile smoke` path without making the local smoke model a mandatory dependency for every normal `docker compose up` or service startup.
 
 **Alternatives considered**:
 - *Always start `llama.cpp` in the main stack*: Rejected because it imposes unnecessary resource usage on all developers.
@@ -97,13 +97,14 @@ That browser smoke flow should be owned by a dedicated repo service rather than 
 1. Add the smoke-model runtime wiring and documentation.
 2. Add agent-orchestrator provider/session support for the smoke model path.
 3. Add the dashboard automation contract needed by the browser test.
-4. Add the `services/smoketest` Playwright harness and DragnCards creation verification with retries.
+4. Add the `services/smoketest` Playwright harness, `smoke.sh`, and DragnCards creation verification with retries.
 5. Validate the smoke path against the local stack before treating it as the supported workflow.
 
 Rollback is straightforward: remove the smoke runtime wiring and Playwright smoke harness without impacting the existing hosted-provider or service-level test paths.
 
-## Open Questions
+## Resolved Implementation Notes
 
-- Which exact small model file should the repo standardize on for the smoke path, and will that model be downloaded on demand or managed outside the repo?
-- Should the smoke runtime be started through Docker Compose, a repo script, or both?
-- What is the most stable observable signal of “game created” for the retry loop: orchestrator events, game-service session state, or DragnCards HTTP room metadata?
+- The smoke path standardizes on `Qwen3.5-0.8B-Q4_K_M.gguf`, exposed as model alias `qwen3.5-0.8b`.
+- The model is downloaded on demand into `LLAMA_CPP_MODEL_CACHE_DIR` by the compose-managed `llama-cpp-smoke-model-cache` service.
+- The supported entrypoints are `services/smoketest/smoke.sh` and the repo-level `make smoke-up`, `make smoke-check`, and `make smoke-model` targets.
+- The retry loop verifies success by polling `GET /games/{session_id}/state` after extracting the created game session id from the `game-service_create_game` tool result in orchestrator job events.

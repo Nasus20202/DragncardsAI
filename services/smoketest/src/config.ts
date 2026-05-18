@@ -11,4 +11,4 @@ export const llamaCppBaseUrl =
   process.env.LLAMA_CPP_SMOKE_URL ?? "http://127.0.0.1:1234/v1";
 
 export const createGamePrompt =
-  'Create one new Marvel Champions game using the game-service create_game tool. Use plugin_name "marvel-champions". After the game is created, stop and report the created session_id.';
+  'Create exactly one new Marvel Champions game using the game-service create_game tool with plugin_name "marvel-champions". After the tool succeeds, stop. Reply with only the created session_id and nothing else.';

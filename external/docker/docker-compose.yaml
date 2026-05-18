@@ -9,7 +9,7 @@ services:
     ports:
       - "5440:5432"
     volumes:
-      - dragncards-postgres-data:/var/lib/postgresql/18/docker
+      - dragncards-postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s

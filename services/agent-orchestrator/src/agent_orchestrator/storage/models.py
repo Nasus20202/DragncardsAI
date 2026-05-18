@@ -84,10 +84,10 @@ class AgentSession(Base):
     model_config: Mapped[SessionModelConfig | None] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
-    skill_assignments: Mapped[list[SessionSkillAssignment]] = relationship(
+    enabled_skills: Mapped[list[SessionEnabledSkill]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
-    mcp_assignments: Mapped[list[SessionMcpAssignment]] = relationship(
+    enabled_mcps: Mapped[list[SessionEnabledMcp]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
     jobs: Mapped[list[Job]] = relationship(
@@ -112,45 +112,69 @@ class SessionModelConfig(Base):
     session: Mapped[AgentSession] = relationship(back_populates="model_config")
 
 
-class SessionSkillAssignment(Base):
-    __tablename__ = "session_skill_assignments"
-    __table_args__ = (
-        UniqueConstraint("session_id", "skill_name", name="uq_session_skill"),
-    )
+class SkillRegistry(Base):
+    __tablename__ = "skill_registries"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid4())
-    )
-    session_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_sessions.id", ondelete="CASCADE")
-    )
-    skill_name: Mapped[str] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(String(255), primary_key=True)
     skill_path: Mapped[str] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
 
-    session: Mapped[AgentSession] = relationship(back_populates="skill_assignments")
 
-
-class SessionMcpAssignment(Base):
-    __tablename__ = "session_mcp_assignments"
-    __table_args__ = (UniqueConstraint("session_id", "name", name="uq_session_mcp"),)
-
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid4())
+class SessionEnabledSkill(Base):
+    __tablename__ = "session_enabled_skills"
+    __table_args__ = (
+        UniqueConstraint("session_id", "skill_name", name="uq_session_skill_enabled"),
     )
+
     session_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_sessions.id", ondelete="CASCADE")
+        ForeignKey("agent_sessions.id", ondelete="CASCADE"), primary_key=True
     )
-    name: Mapped[str] = mapped_column(String(255))
-    transport: Mapped[str] = mapped_column(String(64), default="streamable-http")
-    server_url: Mapped[str] = mapped_column(Text)
-    headers_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    skill_name: Mapped[str] = mapped_column(
+        ForeignKey("skill_registries.name"), primary_key=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime(), default=utc_now, onupdate=utc_now
     )
 
-    session: Mapped[AgentSession] = relationship(back_populates="mcp_assignments")
+    session: Mapped[AgentSession] = relationship(back_populates="enabled_skills")
+    skill: Mapped[SkillRegistry] = relationship()
+
+
+class McpRegistry(Base):
+    __tablename__ = "mcp_registries"
+
+    name: Mapped[str] = mapped_column(String(255), primary_key=True)
+    transport: Mapped[str] = mapped_column(String(64))
+    server_url: Mapped[str] = mapped_column(Text)
+    headers_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    custom: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
+
+
+class SessionEnabledMcp(Base):
+    __tablename__ = "session_enabled_mcps"
+    __table_args__ = (
+        UniqueConstraint("session_id", "mcp_name", name="uq_session_mcp_enabled"),
+    )
+
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    mcp_name: Mapped[str] = mapped_column(
+        ForeignKey("mcp_registries.name"), primary_key=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime(), default=utc_now, onupdate=utc_now
+    )
+
+    session: Mapped[AgentSession] = relationship(back_populates="enabled_mcps")
+    mcp: Mapped[McpRegistry] = relationship()
 
 
 class Job(Base):

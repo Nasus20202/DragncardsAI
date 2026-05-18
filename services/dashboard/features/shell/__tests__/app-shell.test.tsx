@@ -36,15 +36,16 @@ vi.mock("@/features/shell/components/providers", () => ({
 describe("AppShell", () => {
   it("renders nav links and toggles theme", async () => {
     render(
-      <AppShell appName="Dashboard">
+      <AppShell appName="DragncardsAI">
         <div>Child content</div>
       </AppShell>
     );
 
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /logo/i })).toHaveAttribute(
       "href",
       "/play"
     );
+    expect(screen.getByText("DragncardsAI")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Swagger" }).className).toContain(
       "bg-default-100"
     );

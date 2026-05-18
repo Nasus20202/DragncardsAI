@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_orchestrator.integrations.mcp.client import (
+    McpClient,
     McpClientError,
-    StreamableHttpMcpClient,
 )
 
 logger = logging.getLogger(__name__)
@@ -193,31 +193,41 @@ def safe_tool_name(value: str) -> str:
 
 
 class McpToolCatalog:
-    def __init__(self, mcp_client: StreamableHttpMcpClient):
+    def __init__(self, mcp_client: McpClient):
         self._mcp_client = mcp_client
 
     async def list_session_tools(
         self,
-        assignments: list[Any],
+        enabled_mcps: list[Any],
+        all_registries: list[Any],
         *,
         ignore_failures: bool = False,
     ) -> list[SessionToolDefinition]:
         tools: list[SessionToolDefinition] = []
-        for assignment in assignments:
+        registry_map = {r.name: r for r in all_registries}
+
+        for enabled_mcp in enabled_mcps:
+            if not enabled_mcp.enabled:
+                continue
+            registry = registry_map.get(enabled_mcp.mcp_name)
+            if registry is None:
+                continue
+
             normalized_url = normalize_mcp_server_url(
-                assignment.server_url, assignment.transport
+                registry.server_url, registry.transport
             )
             try:
                 tool_definitions = await self._mcp_client.list_tools(
                     normalized_url,
-                    headers=assignment.headers_json,
+                    registry.transport,
+                    headers=registry.headers_json,
                 )
             except McpClientError:
                 if not ignore_failures:
                     raise
                 logger.warning(
-                    "Skipping unreachable MCP assignment %s at %s during tool discovery",
-                    assignment.name,
+                    "Skipping unreachable MCP %s at %s during tool discovery",
+                    registry.name,
                     normalized_url,
                     exc_info=True,
                 )
@@ -226,12 +236,12 @@ class McpToolCatalog:
                 tools.append(
                     SessionToolDefinition(
                         exposed_name=safe_tool_name(
-                            f"{assignment.name}_{definition.name}"
+                            f"{registry.name}_{definition.name}"
                         ),
-                        assignment_name=assignment.name,
-                        transport=assignment.transport,
+                        assignment_name=registry.name,
+                        transport=registry.transport,
                         server_url=normalized_url,
-                        headers=dict(assignment.headers_json or {}),
+                        headers=dict(registry.headers_json or {}),
                         actual_name=definition.name,
                         description=definition.description,
                         parameters=definition.input_schema,
@@ -270,6 +280,7 @@ class McpToolCatalog:
         try:
             return await self._mcp_client.call_tool(
                 definition.server_url,
+                definition.transport,
                 definition.actual_name,
                 arguments,
                 headers=definition.headers,

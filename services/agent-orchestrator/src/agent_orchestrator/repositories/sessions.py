@@ -8,13 +8,45 @@ from agent_orchestrator.repositories.base import utc_now
 from agent_orchestrator.storage.models import (
     AgentSession,
     Job,
-    SessionMcpAssignment,
+    McpRegistry,
+    SessionEnabledMcp,
     SessionModelConfig,
-    SessionSkillAssignment,
+    SessionEnabledSkill,
+    SkillRegistry,
 )
 
 
 class SessionRepositoryMixin:
+    async def ensure_session_default_mcps(self, session_id: str) -> None:
+        async with self._session_factory() as session, session.begin():
+            if await session.get(AgentSession, session_id) is None:
+                return
+
+            registries_result = await session.execute(
+                select(McpRegistry).where(McpRegistry.custom.is_(False))
+            )
+            registries = list(registries_result.scalars().unique())
+            if not registries:
+                return
+
+            enabled_result = await session.execute(
+                select(SessionEnabledMcp.mcp_name).where(
+                    SessionEnabledMcp.session_id == session_id
+                )
+            )
+            enabled_names = set(enabled_result.scalars())
+
+            for registry in registries:
+                if registry.name in enabled_names:
+                    continue
+                session.add(
+                    SessionEnabledMcp(
+                        session_id=session_id,
+                        mcp_name=registry.name,
+                        enabled=True,
+                    )
+                )
+
     @staticmethod
     def _top_level_session_filter():
         return ~AgentSession.jobs.any(Job.parent_job_id.is_not(None))
@@ -39,6 +71,17 @@ class SessionRepositoryMixin:
             session.add(item)
             await session.flush()
             session_id = item.id
+            registries_result = await session.execute(
+                select(McpRegistry).where(McpRegistry.custom.is_(False))
+            )
+            for registry in registries_result.scalars().unique():
+                session.add(
+                    SessionEnabledMcp(
+                        session_id=session_id,
+                        mcp_name=registry.name,
+                        enabled=True,
+                    )
+                )
         loaded = await self.get_session(session_id)
         assert loaded is not None
         return loaded
@@ -50,6 +93,38 @@ class SessionRepositoryMixin:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[AgentSession], int]:
+        async with self._session_factory() as session, session.begin():
+            registries_result = await session.execute(
+                select(McpRegistry).where(McpRegistry.custom.is_(False))
+            )
+            registry_names = [
+                registry.name for registry in registries_result.scalars().unique()
+            ]
+            if registry_names:
+                sessions_result = await session.execute(
+                    select(AgentSession.id).where(self._top_level_session_filter())
+                )
+                session_ids = list(sessions_result.scalars())
+                if session_ids:
+                    enabled_result = await session.execute(
+                        select(
+                            SessionEnabledMcp.session_id,
+                            SessionEnabledMcp.mcp_name,
+                        ).where(SessionEnabledMcp.session_id.in_(session_ids))
+                    )
+                    enabled_pairs = set(enabled_result.all())
+                    for session_id in session_ids:
+                        for registry_name in registry_names:
+                            if (session_id, registry_name) in enabled_pairs:
+                                continue
+                            session.add(
+                                SessionEnabledMcp(
+                                    session_id=session_id,
+                                    mcp_name=registry_name,
+                                    enabled=True,
+                                )
+                            )
+
         async with self._session_factory() as session:
             top_level_filter = self._top_level_session_filter()
             query = self._session_query().where(top_level_filter)
@@ -150,107 +225,232 @@ class SessionRepositoryMixin:
         session_obj = await self.get_session(session_id)
         return None if session_obj is None else session_obj.model_config
 
-    async def add_skill_assignment(
-        self, session_id: str, skill_name: str, skill_path: str
-    ) -> SessionSkillAssignment | None:
+    async def add_skill_registry(
+        self,
+        *,
+        name: str,
+        skill_path: str,
+        description: str | None,
+        metadata_json: dict[str, Any] | None,
+    ) -> SkillRegistry:
         async with self._session_factory() as session, session.begin():
-            if await session.get(AgentSession, session_id) is None:
-                return None
-            result = await session.execute(
-                select(SessionSkillAssignment).where(
-                    SessionSkillAssignment.session_id == session_id,
-                    SessionSkillAssignment.skill_name == skill_name,
-                )
-            )
-            item = result.scalars().first()
+            item = await session.get(SkillRegistry, name)
             if item is None:
-                item = SessionSkillAssignment(
-                    session_id=session_id,
-                    skill_name=skill_name,
+                item = SkillRegistry(
+                    name=name,
                     skill_path=skill_path,
+                    description=description,
+                    metadata_json=metadata_json or {},
                 )
                 session.add(item)
             else:
                 item.skill_path = skill_path
-            await session.flush()
-            item_id = item.id
-        return await self.get_skill_assignment(item_id)
+                item.description = description
+                item.metadata_json = metadata_json or {}
+        return item
 
-    async def get_skill_assignment(
-        self, assignment_id: str
-    ) -> SessionSkillAssignment | None:
+    async def list_skill_registries(self) -> list[SkillRegistry]:
         async with self._session_factory() as session:
-            return await session.get(SessionSkillAssignment, assignment_id)
+            result = await session.execute(select(SkillRegistry))
+            return list(result.scalars().unique())
 
-    async def remove_skill_assignment(self, session_id: str, skill_name: str) -> bool:
+    async def remove_skill_registry(self, name: str) -> bool:
         async with self._session_factory() as session, session.begin():
-            result = await session.execute(
-                select(SessionSkillAssignment).where(
-                    SessionSkillAssignment.session_id == session_id,
-                    SessionSkillAssignment.skill_name == skill_name,
-                )
-            )
-            item = result.scalars().first()
+            item = await session.get(SkillRegistry, name)
             if item is None:
                 return False
             await session.delete(item)
             return True
 
-    async def add_mcp_assignment(
+    async def enable_skill_for_session(
+        self, session_id: str, skill_name: str, enabled: bool
+    ) -> SessionEnabledSkill | None:
+        async with self._session_factory() as session, session.begin():
+            if await session.get(AgentSession, session_id) is None:
+                return None
+            if await session.get(SkillRegistry, skill_name) is None:
+                return None
+            result = await session.execute(
+                select(SessionEnabledSkill).where(
+                    SessionEnabledSkill.session_id == session_id,
+                    SessionEnabledSkill.skill_name == skill_name,
+                )
+            )
+            item = result.scalars().first()
+            if item is None:
+                item = SessionEnabledSkill(
+                    session_id=session_id,
+                    skill_name=skill_name,
+                    enabled=enabled,
+                )
+                session.add(item)
+            else:
+                item.enabled = enabled
+                item.updated_at = utc_now()
+        return item
+
+    async def list_session_enabled_skills(
+        self, session_id: str
+    ) -> list[SessionEnabledSkill]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(SessionEnabledSkill).where(
+                    SessionEnabledSkill.session_id == session_id
+                )
+            )
+            return list(result.scalars().unique())
+
+    async def get_session_enabled_skill_state(
+        self, session_id: str, skill_name: str
+    ) -> SessionEnabledSkill | None:
+        async with self._session_factory() as session:
+            return await session.get(SessionEnabledSkill, (session_id, skill_name))
+
+    async def add_mcp_registry(
         self,
-        session_id: str,
         *,
         name: str,
         transport: str,
         server_url: str,
         headers_json: dict[str, Any] | None,
-    ) -> SessionMcpAssignment | None:
+        custom: bool = True,
+    ) -> McpRegistry:
+        if not server_url.endswith("/"):
+            server_url = server_url + "/"
         async with self._session_factory() as session, session.begin():
-            if await session.get(AgentSession, session_id) is None:
-                return None
-            result = await session.execute(
-                select(SessionMcpAssignment).where(
-                    SessionMcpAssignment.session_id == session_id,
-                    SessionMcpAssignment.name == name,
-                )
-            )
-            item = result.scalars().first()
+            item = await session.get(McpRegistry, name)
             if item is None:
-                item = SessionMcpAssignment(
-                    session_id=session_id,
+                item = McpRegistry(
                     name=name,
                     transport=transport,
                     server_url=server_url,
                     headers_json=headers_json or {},
+                    custom=custom,
                 )
                 session.add(item)
             else:
                 item.transport = transport
                 item.server_url = server_url
                 item.headers_json = headers_json or {}
-                item.updated_at = utc_now()
-            await session.flush()
-            item_id = item.id
-        return await self.get_mcp_assignment(item_id)
+                item.custom = custom
+        return item
 
-    async def get_mcp_assignment(
-        self, assignment_id: str
-    ) -> SessionMcpAssignment | None:
+    async def list_mcp_registries(self) -> list[McpRegistry]:
         async with self._session_factory() as session:
-            return await session.get(SessionMcpAssignment, assignment_id)
+            result = await session.execute(select(McpRegistry))
+            return list(result.scalars().unique())
 
-    async def remove_mcp_assignment(
-        self, session_id: str, assignment_name: str
-    ) -> bool:
+    async def get_mcp_registry(self, name: str) -> McpRegistry | None:
+        async with self._session_factory() as session:
+            return await session.get(McpRegistry, name)
+
+    async def remove_mcp_registry(self, name: str) -> bool:
         async with self._session_factory() as session, session.begin():
+            item = await session.get(McpRegistry, name)
+            if item is None:
+                return False
+            if not item.custom:
+                return False
+            enabled_result = await session.execute(
+                select(SessionEnabledMcp).where(SessionEnabledMcp.mcp_name == name)
+            )
+            for enabled_item in enabled_result.scalars().unique():
+                await session.delete(enabled_item)
+            await session.delete(item)
+            return True
+
+    async def enable_mcp_for_session(
+        self, session_id: str, mcp_name: str, enabled: bool
+    ) -> SessionEnabledMcp | None:
+        async with self._session_factory() as session, session.begin():
+            if await session.get(AgentSession, session_id) is None:
+                return None
+            if await session.get(McpRegistry, mcp_name) is None:
+                return None
             result = await session.execute(
-                select(SessionMcpAssignment).where(
-                    SessionMcpAssignment.session_id == session_id,
-                    SessionMcpAssignment.name == assignment_name,
+                select(SessionEnabledMcp).where(
+                    SessionEnabledMcp.session_id == session_id,
+                    SessionEnabledMcp.mcp_name == mcp_name,
                 )
             )
             item = result.scalars().first()
             if item is None:
+                item = SessionEnabledMcp(
+                    session_id=session_id,
+                    mcp_name=mcp_name,
+                    enabled=enabled,
+                )
+                session.add(item)
+            else:
+                item.enabled = enabled
+                item.updated_at = utc_now()
+        return item
+
+    async def list_session_enabled_mcps(
+        self, session_id: str
+    ) -> list[SessionEnabledMcp]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(SessionEnabledMcp).where(
+                    SessionEnabledMcp.session_id == session_id
+                )
+            )
+            return list(result.scalars().unique())
+
+    async def get_session_enabled_mcp_state(
+        self, session_id: str, mcp_name: str
+    ) -> SessionEnabledMcp | None:
+        async with self._session_factory() as session:
+            return await session.get(SessionEnabledMcp, (session_id, mcp_name))
+
+    # Backward-compatible methods for old skill assignment API
+    async def add_skill_assignment(
+        self, session_id: str, skill_name: str, skill_path: str
+    ) -> SessionEnabledSkill | None:
+        async with self._session_factory() as session, session.begin():
+            if await session.get(AgentSession, session_id) is None:
+                return None
+            existing = await session.get(SkillRegistry, skill_name)
+            if existing is None:
+                existing = SkillRegistry(
+                    name=skill_name,
+                    skill_path=skill_path,
+                    description=None,
+                    metadata_json={},
+                )
+                session.add(existing)
+            result = await session.execute(
+                select(SessionEnabledSkill).where(
+                    SessionEnabledSkill.session_id == session_id,
+                    SessionEnabledSkill.skill_name == skill_name,
+                )
+            )
+            item = result.scalars().first()
+            if item is None:
+                item = SessionEnabledSkill(
+                    session_id=session_id,
+                    skill_name=skill_name,
+                    enabled=True,
+                )
+                session.add(item)
+            else:
+                item.enabled = True
+                item.updated_at = utc_now()
+        return item
+
+    async def remove_skill_assignment(self, session_id: str, skill_name: str) -> bool:
+        async with self._session_factory() as session, session.begin():
+            item = await session.get(SessionEnabledSkill, (session_id, skill_name))
+            if item is None:
                 return False
             await session.delete(item)
             return True
+
+    async def get_skill_assignment(self, session_id: str) -> SessionEnabledSkill | None:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(SessionEnabledSkill).where(
+                    SessionEnabledSkill.session_id == session_id
+                )
+            )
+            return result.scalars().first()

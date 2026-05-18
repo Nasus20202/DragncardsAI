@@ -41,6 +41,7 @@ def get_job_event_stream(request: Request) -> JobEventStreamService:
 
 async def require_session(request: Request, session_id: str):
     repo = get_repository(request)
+    await repo.ensure_session_default_mcps(session_id)
     item = await repo.get_session(session_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Session not found")
