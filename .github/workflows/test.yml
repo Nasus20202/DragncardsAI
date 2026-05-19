@@ -81,12 +81,23 @@ jobs:
         uses: docker/bake-action@v7
         with:
           files: docker-compose.yaml
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: false
           set: |
             *.cache-from=type=gha
             *.cache-to=type=gha,mode=max
             *.output=type=docker
-            *.tags=dragncardsai-{{target.name}},ghcr.io/${{ github.repository }}/{{target.name}}:${{ github.sha }}
+            *.tags=dragncardsai-{{target.name}}
+
+      - name: Publish Docker images
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/bake-action@v7
+        with:
+          files: docker-compose.yaml
+          push: true
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+            *.tags=ghcr.io/${{ github.repository }}/{{target.name}}:${{ github.sha }},ghcr.io/${{ github.repository }}/{{target.name}}:latest
 
       - name: Start Docker stack
         env:
