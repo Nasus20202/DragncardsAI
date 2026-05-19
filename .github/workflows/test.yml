@@ -31,6 +31,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Normalize repository path for GHCR tags
+        run: echo "GHCR_REPOSITORY=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -127,12 +130,12 @@ jobs:
           set: |
             *.cache-from=type=gha
             *.cache-to=type=gha,mode=max
-            game-service.tags=ghcr.io/${{ github.repository }}/game-service:${{ github.sha }},ghcr.io/${{ github.repository }}/game-service:latest
-            agent-orchestrator.tags=ghcr.io/${{ github.repository }}/agent-orchestrator:${{ github.sha }},ghcr.io/${{ github.repository }}/agent-orchestrator:latest
-            dashboard.tags=ghcr.io/${{ github.repository }}/dashboard:${{ github.sha }},ghcr.io/${{ github.repository }}/dashboard:latest
-            dragncards-mc-plugin.tags=ghcr.io/${{ github.repository }}/dragncards-mc-plugin:${{ github.sha }},ghcr.io/${{ github.repository }}/dragncards-mc-plugin:latest
-            dragncards-backend.tags=ghcr.io/${{ github.repository }}/dragncards-backend:${{ github.sha }},ghcr.io/${{ github.repository }}/dragncards-backend:latest
-            dragncards-frontend.tags=ghcr.io/${{ github.repository }}/dragncards-frontend:${{ github.sha }},ghcr.io/${{ github.repository }}/dragncards-frontend:latest
+            game-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/game-service:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/game-service:latest
+            agent-orchestrator.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:latest
+            dashboard.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:latest
+            dragncards-mc-plugin.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-mc-plugin:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-mc-plugin:latest
+            dragncards-backend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-backend:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-backend:latest
+            dragncards-frontend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-frontend:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-frontend:latest
 
       - name: Dump container logs
         if: failure()
