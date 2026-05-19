@@ -32,7 +32,10 @@ jobs:
       - name: Normalize repository path for GHCR tags
         run: echo "GHCR_REPOSITORY=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
-      - name: Build and push Docker images (SHA + latest tags)
+      - name: Set short SHA for image tags
+        run: echo "SHORT_SHA=sha-${GITHUB_SHA::8}" >> "$GITHUB_ENV"
+
+      - name: Build and push Docker images
         uses: docker/bake-action@v7
         with:
           files: docker-compose.yaml
@@ -40,15 +43,15 @@ jobs:
           set: |
             *.cache-from=type=gha
             *.cache-to=type=gha,mode=max
-            game-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/game-service:${{ github.sha }}
+            game-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/game-service:${{ env.SHORT_SHA }}
             game-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/game-service:latest
-            agent-orchestrator.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:${{ github.sha }}
+            agent-orchestrator.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:${{ env.SHORT_SHA }}
             agent-orchestrator.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:latest
-            dashboard.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:${{ github.sha }}
+            dashboard.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:${{ env.SHORT_SHA }}
             dashboard.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:latest
-            dragncards-mc-plugin.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-mc-plugin:${{ github.sha }}
+            dragncards-mc-plugin.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-mc-plugin:${{ env.SHORT_SHA }}
             dragncards-mc-plugin.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-mc-plugin:latest
-            dragncards-backend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-backend:${{ github.sha }}
+            dragncards-backend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-backend:${{ env.SHORT_SHA }}
             dragncards-backend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-backend:latest
-            dragncards-frontend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-frontend:${{ github.sha }}
+            dragncards-frontend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-frontend:${{ env.SHORT_SHA }}
             dragncards-frontend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-frontend:latest

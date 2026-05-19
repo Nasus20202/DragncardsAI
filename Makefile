@@ -1,29 +1,30 @@
 
-.PHONY: help lint lint-fix test test-unit test-integration build up down down-clean \
+.PHONY: help lint lint-fix test test-unit test-integration build up up-registry down down-clean \
 	infra-up infra-down infra-restart smoke-up smoke-check smoke-model \
 	run run-game-service run-agent-orchestrator run-dashboard
 
 help:
 	@printf "%s\n" \
-		"make lint               # check formatting and lint" \
-		"make lint-fix           # apply formatter/lint fixes" \
-		"make test               # run all tests" \
-		"make test-unit          # run unit tests" \
-		"make test-integration   # run integration tests" \
-		"make build              # build docker images" \
-		"make up                 # start docker stack" \
-		"make down               # stop docker stack" \
-		"make down-clean         # stop stack and remove volumes" \
-		"make infra-up           # start infrastructure services only" \
-		"make infra-down         # stop infrastructure services only" \
-		"make infra-restart      # restart infrastructure services only" \
-		"make smoke-up           # start stack with compose-managed smoke model" \
-		"make smoke-check        # validate smoke dependencies" \
-		"make smoke-model        # start compose-managed llama.cpp smoke model" \
-		"make run                # run local services directly" \
-		"make run-game-service   # run game-service locally" \
-		"make run-agent-orchestrator" \
-		"make run-dashboard"
+		"make lint                       # check formatting and lint" \
+		"make lint-fix                   # apply formatter/lint fixes" \
+		"make test                       # run all tests" \
+		"make test-unit                  # run unit tests" \
+		"make test-integration           # run integration tests" \
+		"make build                      # build docker images" \
+		"make up                         # start docker stack" \
+		"make up-registry                # pull GHCR images and start stack" \
+		"make down                       # stop docker stack" \
+		"make down-clean                 # stop stack and remove volumes" \
+		"make infra-up                   # start infrastructure services only" \
+		"make infra-down                 # stop infrastructure services only" \
+		"make infra-restart              # restart infrastructure services only" \
+		"make smoke-up                   # start stack with compose-managed smoke model" \
+		"make smoke-check                # validate smoke dependencies" \
+		"make smoke-model                # start compose-managed llama.cpp smoke model" \
+		"make run                        # run local services directly" \
+		"make run-game-service           # run game-service locally" \
+		"make run-agent-orchestrator     # run agent-orchestrator locally" \
+		"make run-dashboard              # run dashboard locally"
 
 lint:
 	./scripts/lint.sh
@@ -45,6 +46,15 @@ build:
 
 up:
 	./scripts/docker.sh start
+
+up-registry:
+	GAME_SERVICE_IMAGE=ghcr.io/nasus20202/dragncardsai/game-service:latest \
+	AGENT_ORCHESTRATOR_IMAGE=ghcr.io/nasus20202/dragncardsai/agent-orchestrator:latest \
+	DASHBOARD_IMAGE=ghcr.io/nasus20202/dragncardsai/dashboard:latest \
+	DRAGNCARDS_MC_PLUGIN_IMAGE=ghcr.io/nasus20202/dragncardsai/dragncards-mc-plugin:latest \
+	DRAGNCARDS_BACKEND_IMAGE=ghcr.io/nasus20202/dragncardsai/dragncards-backend:latest \
+	DRAGNCARDS_FRONTEND_IMAGE=ghcr.io/nasus20202/dragncardsai/dragncards-frontend:latest \
+	IMAGE_PULL_POLICY=always ./scripts/docker.sh start
 
 down:
 	./scripts/docker.sh down
