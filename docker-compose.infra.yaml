@@ -38,12 +38,14 @@ services:
       - "1234"
       - --alias
       - "${SMOKE_MODEL_NAME:-qwen3.5-0.8b}"
+      # Keep llama.cpp smoke in single-slot mode; multi-slot startup has triggered GGML_ASSERT crashes in CI.
       - --parallel
       - "${LLAMA_CPP_PARALLEL:-1}"
       - --ctx-size
       - "${LLAMA_CPP_CTX_SIZE:-16384}"
       - --n-gpu-layers
       - "${LLAMA_CPP_N_GPU_LAYERS:-0}"
+      # Skip warmup to reduce smoke stack startup time; healthcheck validates readiness before tests run.
       - --no-warmup
     volumes:
       - "${LLAMA_CPP_MODEL_CACHE_DIR:-/tmp/dragncardsai-llama-cache}:/models:ro"
