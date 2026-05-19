@@ -40,9 +40,15 @@ jobs:
           set: |
             *.cache-from=type=gha
             *.cache-to=type=gha,mode=max
-            game-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/game-service:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/game-service:latest
-            agent-orchestrator.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:latest
-            dashboard.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:latest
-            dragncards-mc-plugin.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-mc-plugin:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-mc-plugin:latest
-            dragncards-backend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-backend:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-backend:latest
-            dragncards-frontend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-frontend:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-frontend:latest
+            game-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/game-service:${{ github.sha }}
+            game-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/game-service:latest
+            agent-orchestrator.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:${{ github.sha }}
+            agent-orchestrator.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:latest
+            dashboard.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:${{ github.sha }}
+            dashboard.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:latest
+            dragncards-mc-plugin.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-mc-plugin:${{ github.sha }}
+            dragncards-mc-plugin.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-mc-plugin:latest
+            dragncards-backend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-backend:${{ github.sha }}
+            dragncards-backend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-backend:latest
+            dragncards-frontend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-frontend:${{ github.sha }}
+            dragncards-frontend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-frontend:latest
