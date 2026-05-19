@@ -19,7 +19,7 @@ services:
       - dragncards-shared
 
   dragncards-mc-plugin:
-    image: dragncardsai-dragncards-mc-plugin
+    image: ${DRAGNCARDS_MC_PLUGIN_IMAGE_REPO:-dragncardsai-dragncards-mc-plugin}:${IMAGE_TAG:-latest}
     build:
       context: ../..
       dockerfile: external/docker/mc-plugin/Dockerfile
@@ -33,7 +33,7 @@ services:
       - dragncards-shared
 
   dragncards-backend:
-    image: dragncardsai-dragncards-backend
+    image: ${DRAGNCARDS_BACKEND_IMAGE_REPO:-dragncardsai-dragncards-backend}:${IMAGE_TAG:-latest}
     build:
       context: ../..
       dockerfile: external/docker/backend/Dockerfile
@@ -53,7 +53,7 @@ services:
       - dragncards-shared
 
   dragncards-frontend:
-    image: dragncardsai-dragncards-frontend
+    image: ${DRAGNCARDS_FRONTEND_IMAGE_REPO:-dragncardsai-dragncards-frontend}:${IMAGE_TAG:-latest}
     build:
       context: ../..
       dockerfile: external/docker/frontend/Dockerfile
