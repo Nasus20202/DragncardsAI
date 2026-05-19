@@ -78,7 +78,6 @@ jobs:
             *.cache-from=type=gha
             *.cache-to=type=gha,mode=max
             *.output=type=docker
-            *.tags=dragncardsai-{{target.name}}
 
       - name: Start Docker stack
         env:
