@@ -4,7 +4,8 @@ include:
 
 services:
   game-service:
-    image: dragncardsai-game-service
+    image: ${GAME_SERVICE_IMAGE:-dragncardsai-game-service:latest}
+    pull_policy: ${IMAGE_PULL_POLICY:-never}
     build:
       context: .
       dockerfile: services/game-service/docker/Dockerfile
@@ -32,7 +33,8 @@ services:
       - dragncards-shared
 
   agent-orchestrator:
-    image: dragncardsai-agent-orchestrator
+    image: ${AGENT_ORCHESTRATOR_IMAGE:-dragncardsai-agent-orchestrator:latest}
+    pull_policy: ${IMAGE_PULL_POLICY:-never}
     build:
       context: .
       dockerfile: services/agent-orchestrator/docker/Dockerfile
@@ -74,7 +76,8 @@ services:
       - dragncards-shared
 
   dashboard:
-    image: dragncardsai-dashboard
+    image: ${DASHBOARD_IMAGE:-dragncardsai-dashboard:latest}
+    pull_policy: ${IMAGE_PULL_POLICY:-never}
     build:
       context: .
       dockerfile: services/dashboard/docker/Dockerfile
