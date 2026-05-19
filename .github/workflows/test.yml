@@ -118,7 +118,7 @@ jobs:
           GAME_SERVICE_SMOKE_URL: http://127.0.0.1:4001
         run: services/smoketest/smoke.sh test
 
-      - name: Push Docker images (commit tag)
+      - name: Build and push Docker images (commit tag)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/bake-action@v7
         env:
@@ -136,23 +136,22 @@ jobs:
             *.cache-from=type=gha
             *.cache-to=type=gha,mode=max
 
-      - name: Push Docker images (latest tag)
+      - name: Promote Docker images to latest tag
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/bake-action@v7
         env:
-          IMAGE_TAG: latest
-          GAME_SERVICE_IMAGE_REPO: ghcr.io/${{ github.repository }}/game-service
-          AGENT_ORCHESTRATOR_IMAGE_REPO: ghcr.io/${{ github.repository }}/agent-orchestrator
-          DASHBOARD_IMAGE_REPO: ghcr.io/${{ github.repository }}/dashboard
-          DRAGNCARDS_MC_PLUGIN_IMAGE_REPO: ghcr.io/${{ github.repository }}/dragncards-mc-plugin
-          DRAGNCARDS_BACKEND_IMAGE_REPO: ghcr.io/${{ github.repository }}/dragncards-backend
-          DRAGNCARDS_FRONTEND_IMAGE_REPO: ghcr.io/${{ github.repository }}/dragncards-frontend
-        with:
-          files: docker-compose.yaml
-          push: true
-          set: |
-            *.cache-from=type=gha
-            *.cache-to=type=gha,mode=max
+          IMAGE_REPOS: |
+            ghcr.io/${{ github.repository }}/game-service
+            ghcr.io/${{ github.repository }}/agent-orchestrator
+            ghcr.io/${{ github.repository }}/dashboard
+            ghcr.io/${{ github.repository }}/dragncards-mc-plugin
+            ghcr.io/${{ github.repository }}/dragncards-backend
+            ghcr.io/${{ github.repository }}/dragncards-frontend
+        run: |
+          for image in $IMAGE_REPOS; do
+            docker buildx imagetools create \
+              --tag "${image}:latest" \
+              "${image}:${GITHUB_SHA}"
+          done
 
       - name: Dump container logs
         if: failure()
