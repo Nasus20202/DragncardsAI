@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   run-tests:
@@ -22,17 +21,6 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Normalize repository path for GHCR tags
-        run: echo "GHCR_REPOSITORY=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -120,22 +108,6 @@ jobs:
           AGENT_ORCHESTRATOR_SMOKE_URL: http://127.0.0.1:4002
           GAME_SERVICE_SMOKE_URL: http://127.0.0.1:4001
         run: services/smoketest/smoke.sh test
-
-      - name: Build and push Docker images (SHA + latest tags)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/bake-action@v7
-        with:
-          files: docker-compose.yaml
-          push: true
-          set: |
-            *.cache-from=type=gha
-            *.cache-to=type=gha,mode=max
-            game-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/game-service:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/game-service:latest
-            agent-orchestrator.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:latest
-            dashboard.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:latest
-            dragncards-mc-plugin.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-mc-plugin:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-mc-plugin:latest
-            dragncards-backend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-backend:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-backend:latest
-            dragncards-frontend.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-frontend:${{ github.sha }},ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-frontend:latest
 
       - name: Dump container logs
         if: failure()
