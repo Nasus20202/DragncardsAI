@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,7 +37,7 @@ class SkillAssignmentRequest(BaseModel):
 
 class McpRegistryRequest(BaseModel):
     name: str
-    transport: str = "streamable-http"
+    transport: Literal["streamable-http", "sse"] = "streamable-http"
     server_url: str
     headers: dict[str, str] = Field(default_factory=dict)
 

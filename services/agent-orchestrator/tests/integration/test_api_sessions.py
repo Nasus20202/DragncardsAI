@@ -153,6 +153,24 @@ async def test_set_model_config_rejects_unsupported_provider(app):
 
 
 @pytest.mark.asyncio
+async def test_mcp_registry_rejects_unsupported_transport(app):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/mcps",
+            json={
+                "name": "invalid-transport-mcp",
+                "transport": "websocket",
+                "server_url": "http://example/mcp",
+            },
+        )
+
+    assert response.status_code == 422
+    assert "transport" in str(response.json()["detail"]).lower()
+
+
+@pytest.mark.asyncio
 async def test_assign_skill_rejects_unknown_skill(app):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
