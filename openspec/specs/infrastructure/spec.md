@@ -106,7 +106,7 @@ The Agent Orchestrator Dockerfile SHALL live alongside its source under `service
 - **THEN** configured local skill roots using the shape `skills/<skill_name>` SHALL be copied into the image so runtime skill discovery can resolve bundled skills
 
 ### Requirement: Bifrost gateway configuration
-The infrastructure compose configuration in `docker-compose.infra.yaml` SHALL define a Bifrost AI gateway service using image `maximhq/bifrost:v1.5.0` and configured through non-committed runtime secrets and provider environment variables.
+The infrastructure compose configuration in `docker-compose.infra.yaml` SHALL define a Bifrost AI gateway service using image `maximhq/bifrost` and configured through non-committed runtime secrets and provider environment variables.
 
 #### Scenario: Bifrost starts with supported providers
 - **WHEN** `docker compose up` is run with the required provider environment available
@@ -115,6 +115,21 @@ The infrastructure compose configuration in `docker-compose.infra.yaml` SHALL de
 #### Scenario: Provider secrets remain external
 - **WHEN** repository files are inspected
 - **THEN** provider API keys and access tokens SHALL NOT be committed in compose files, default env files, tests, or source code
+
+#### Scenario: LM Studio traffic routes through lmstudio-proxy
+- **WHEN** Bifrost sends a request to the `lmstudio` provider
+- **THEN** the request SHALL be forwarded to `lmstudio-proxy` inside the Docker network rather than using `host.docker.internal` directly
+
+### Requirement: LM Studio proxy
+The infrastructure compose configuration SHALL define an `lmstudio-proxy` service using `alpine/socat` that forwards TCP connections from within the Docker network to the LM Studio server running on the host machine.
+
+#### Scenario: Proxy forwards to host LM Studio
+- **WHEN** any Docker service connects to `lmstudio-proxy` on port 80
+- **THEN** the connection SHALL be forwarded to the host machine on `LMSTUDIO_HOST_PORT` (default: 1234)
+
+#### Scenario: No service uses host.docker.internal for LM Studio
+- **WHEN** compose files and service environment variables are inspected
+- **THEN** no service SHALL reference `host.docker.internal` for LM Studio connectivity; all local model traffic SHALL route through `lmstudio-proxy`
 
 ### Requirement: Orchestrator PostgreSQL configuration
 The infrastructure compose configuration in `docker-compose.infra.yaml` SHALL define a dedicated PostgreSQL service for the agent-orchestrator that is not shared with DragnCards or other services.

@@ -98,7 +98,6 @@ def create_app(
                 settings.bifrost_url,
                 settings.bifrost_api_key,
                 settings.provider_prefixes,
-                lmstudio_base_url=settings.lmstudio_base_url,
                 models_cache_ttl_seconds=settings.provider_models_cache_ttl_seconds,
             )
             app.state.bifrost_client = created_bifrost

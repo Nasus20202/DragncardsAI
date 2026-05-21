@@ -98,21 +98,26 @@
         }
       }
     },
-    "local-openai": {
+    "lmstudio": {
       "keys": [
         {
-          "name": "local-openai-primary",
+          "name": "lmstudio-primary",
           "value": "dummy",
           "models": ["*"],
           "weight": 1.0
         }
       ],
       "network_config": {
-        "base_url": "http://host.docker.internal:1234/v1"
+        "base_url": "http://lmstudio-proxy",
+        "default_request_timeout_in_seconds": 300,
+        "max_retries": 3,
+        "retry_backoff_initial": 1000,
+        "retry_backoff_max": 10000
       },
       "custom_provider_config": {
         "base_provider_type": "openai",
         "allowed_requests": {
+          "list_models": true,
           "chat_completion": true,
           "chat_completion_stream": true
         }

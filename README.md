@@ -41,12 +41,13 @@ flowchart LR
     OtelLGTM["otel-lgtm<br/>port 3004"]
     Valkey1["game-service-valkey<br/>port 6380"]
     Valkey2["agent-orchestrator-valkey<br/>port 6381"]
-    HostLM["LMStudio<br/>host.docker.internal:1234"]
+    LMProxy["lmstudio-proxy<br/>(socat, port 80)"]
+    HostLM["LM Studio<br/>host port 1234"]
     ExtAI["External AI Providers"]
 
     class Frontend,Backend,PG1 dragncards
     class GameSvc,AgentOrch,Dashboard ai
-    class Bifrost,OtelLGTM,Valkey1,Valkey2,OrcPg infra
+    class Bifrost,OtelLGTM,Valkey1,Valkey2,OrcPg,LMProxy infra
     class HostLM,ExtAI external
 
     Frontend --> Backend --> PG1
@@ -61,7 +62,7 @@ flowchart LR
     GameSvc --> Backend
     GameSvc --> Valkey1
 
-    Bifrost --> HostLM
+    Bifrost --> LMProxy --> HostLM
     Bifrost --> ExtAI
 
     OtelLGTM -.- GameSvc
@@ -70,7 +71,7 @@ flowchart LR
     OtelLGTM -.- Bifrost
 ```
 
-The system runs DragnCards (frontend + backend) with PostgreSQL. The game-service connects to DragnCards via HTTP/WebSocket to automate Marvel Champions gameplay. The agent-orchestrator manages AI sessions with its own PostgreSQL and Valkey, using Bifrost as an AI gateway that routes to local LMStudio or external providers. The dashboard provides a UI for interacting with both services. All services send telemetry to otel-lgtm for observability.
+The system runs DragnCards (frontend + backend) with PostgreSQL. The game-service connects to DragnCards via HTTP/WebSocket to automate Marvel Champions gameplay. The agent-orchestrator manages AI sessions with its own PostgreSQL and Valkey, using Bifrost as an AI gateway that routes to local LM Studio (via `lmstudio-proxy`, a socat container that forwards Docker-internal traffic to the host) or external providers. The dashboard provides a UI for interacting with both services. All services send telemetry to otel-lgtm for observability.
 
 ## Development
 

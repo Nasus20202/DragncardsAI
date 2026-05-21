@@ -21,6 +21,7 @@ help:
 		"make smoke-up                   # start stack with compose-managed smoke model" \
 		"make smoke-check                # validate smoke dependencies" \
 		"make smoke-model                # start compose-managed llama.cpp smoke model" \
+		"make smoke-test                 # run smoke tests against running stack" \
 		"make run                        # run local services directly" \
 		"make run-game-service           # run game-service locally" \
 		"make run-agent-orchestrator     # run agent-orchestrator locally" \
@@ -79,6 +80,9 @@ smoke-check:
 
 smoke-model:
 	./services/smoketest/smoke.sh model
+
+smoke-test:
+	./services/smoketest/smoke.sh test
 
 run:
 	./scripts/run.sh start
