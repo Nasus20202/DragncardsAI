@@ -199,6 +199,17 @@ export function aggregateEvents(
   events: JobEventResponse[],
   isCompactionJob: boolean
 ): AggEvent[] {
+  // When a job has multiple attempts (retry), intermediate failure events are
+  // followed by another progress event. Keep only the last failure per job so
+  // the UI doesn't show duplicate error cards.
+  const lastFailureIndex = events.reduce<number>(
+    (acc, event, i) => (event.event_type === "failure" ? i : acc),
+    -1
+  );
+  const filteredEvents = events.filter(
+    (event, i) => event.event_type !== "failure" || i === lastFailureIndex
+  );
+
   let reasoningText = "";
   let modelText = "";
   const result: AggEvent[] = [];
@@ -217,7 +228,7 @@ export function aggregateEvents(
     }
   }
 
-  for (const event of events) {
+  for (const event of filteredEvents) {
     switch (event.event_type) {
       case "progress":
         break;

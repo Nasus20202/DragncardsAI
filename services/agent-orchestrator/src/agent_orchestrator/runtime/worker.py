@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient
@@ -40,6 +41,7 @@ class WorkerService:
         self._skill_registry = skill_registry
         self._stop_event = asyncio.Event()
         self.is_running = False
+        self._child_tasks: set[asyncio.Task[None]] = set()
         self._transcript_service = SessionTranscriptService(repository)
         self._prompt_run_service = PromptRunService(
             dependencies=PromptRunDependencies(
@@ -69,7 +71,9 @@ class WorkerService:
                         await asyncio.sleep(self._settings.worker_poll_interval_seconds)
                         continue
                     logger.info("Claimed job %s", job.id)
-                    await self._run_job(job)
+                    task = asyncio.create_task(self._run_job(job), name=f"job-{job.id}")
+                    self._child_tasks.add(task)
+                    task.add_done_callback(self._child_tasks.discard)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -89,6 +93,14 @@ class WorkerService:
 
     async def run_child_job(self, job_id: str) -> None:
         """Claim and run a specific child job by ID, used by spawn_subagent to run the child concurrently."""
+        task = asyncio.create_task(
+            self._run_child_job(job_id), name=f"child-job-{job_id}"
+        )
+        self._child_tasks.add(task)
+        task.add_done_callback(self._child_tasks.discard)
+
+    async def _run_child_job(self, job_id: str) -> None:
+        """Internal: claim and execute the child job."""
         job = await self._repository.get_job(job_id)
         if job is None or job.status != "queued":
             return
@@ -114,6 +126,12 @@ class WorkerService:
     async def stop(self) -> None:
         self._stop_event.set()
         logger.info("Worker stop requested")
+        if self._child_tasks:
+            logger.info("Waiting for %d child job(s) to finish", len(self._child_tasks))
+            for task in list(self._child_tasks):
+                task.cancel()
+            await asyncio.gather(*self._child_tasks, return_exceptions=True)
+            logger.info("All child jobs finished")
 
     async def _record_failure(self, job: Job, failure: dict[str, Any]) -> None:
         await self._prompt_run_service.record_failure(job, failure)

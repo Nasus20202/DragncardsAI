@@ -19,6 +19,8 @@ const config: DashboardConfig = {
   defaultSkills: ["demo-skill"],
   defaultCustomMcps: [],
   dragncardsFrontendUrl: "http://localhost:4000",
+  defaultReasoningEnabled: false,
+  defaultReasoningEffort: "medium",
 };
 
 const session: SessionDetail = {

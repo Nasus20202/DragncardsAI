@@ -150,6 +150,7 @@ export function SubagentOutputModal({
                     agg={agg}
                     isStreaming={!done}
                     hasOutput={hasOutput}
+                    isLast={i === aggEvents.length - 1}
                   />
                 ))}
               </div>

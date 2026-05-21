@@ -334,6 +334,41 @@ def _reconstruct_job_replay_items(
                 )
 
     flush_current_round()
+
+    # For jobs that did not complete normally, append a synthetic assistant
+    # note so the model knows the prior run was cut short and can continue
+    # from what was already done rather than starting over.
+    job_status = getattr(job, "status", "completed")
+    if job_status == "interrupted":
+        conversation_messages.append(
+            _ConversationMessage(
+                order=order,
+                message={
+                    "role": "assistant",
+                    "content": (
+                        "[Previous turn was interrupted by the tool round limit. "
+                        "The partial work above is preserved. Continue from where this left off.]"
+                    ),
+                },
+            )
+        )
+        order += 1
+    elif job_status == "failed":
+        conversation_messages.append(
+            _ConversationMessage(
+                order=order,
+                message={
+                    "role": "assistant",
+                    "content": (
+                        "[Previous turn failed before completing. "
+                        "Partial tool calls above may be incomplete. "
+                        "Resume the task taking the partial work into account.]"
+                    ),
+                },
+            )
+        )
+        order += 1
+
     return conversation_messages, tool_exchanges, order
 
 

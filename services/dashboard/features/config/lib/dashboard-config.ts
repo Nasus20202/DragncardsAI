@@ -34,6 +34,13 @@ function parseCustomMcps(raw: string | undefined): CustomMcpDraft[] {
   }
 }
 
+function parseReasoningEffort(
+  raw: string | undefined
+): "low" | "medium" | "high" {
+  if (raw === "low" || raw === "high") return raw;
+  return "medium";
+}
+
 export function getServerConfig() {
   const orchestratorUrl =
     process.env.AGENT_ORCHESTRATOR_URL ?? "http://localhost:4002";
@@ -74,6 +81,13 @@ export function getServerConfig() {
       defaultSkills: splitCsv(process.env.DEFAULT_SKILLS),
       defaultCustomMcps: parseCustomMcps(process.env.DEFAULT_CUSTOM_MCPS_JSON),
       dragncardsFrontendUrl,
+      defaultReasoningEnabled: parseBoolean(
+        process.env.DEFAULT_REASONING_ENABLED,
+        true
+      ),
+      defaultReasoningEffort: parseReasoningEffort(
+        process.env.DEFAULT_REASONING_EFFORT
+      ),
     } satisfies DashboardConfig,
   };
 }

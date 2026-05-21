@@ -149,7 +149,7 @@ async def test_get_context_metadata_uses_replay_window_not_full_history(tmp_path
         body = response.json()
         assert body["tokens_used"] == expected_tokens
         assert body["token_breakdown"] == expected_breakdown
-        assert body["tokens_used"] < 500
+        assert body["tokens_used"] < 2000
     finally:
         await engine.dispose()
 

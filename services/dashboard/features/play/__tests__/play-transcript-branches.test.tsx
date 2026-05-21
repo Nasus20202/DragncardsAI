@@ -160,7 +160,9 @@ describe("PlayTranscript branches", () => {
 
     expect(screen.getByText("Prompt")).toBeInTheDocument();
     expect(screen.getByTestId("play-job-state")).toHaveTextContent("Completed");
+    // Reasoning block starts collapsed when it is not the last event
     expect(screen.getByText("Reasoning")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /expand reasoning/i }));
     expect(screen.getByText("Think 1. Think 2.")).toBeInTheDocument();
     expect(screen.getByText("Context compaction")).toBeInTheDocument();
     expect(screen.getByText("Error")).toBeInTheDocument();

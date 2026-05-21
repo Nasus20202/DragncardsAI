@@ -200,9 +200,9 @@ async def test_worker_fails_when_tool_round_limit_is_exceeded(
 
     stored = await repository.get_job(job.id)
     assert stored is not None
-    assert stored.status == "failed"
-    assert stored.error_code == "execution_error"
-    assert stored.error_message == "tool round limit exceeded"
+    assert stored.status == "interrupted"
+    assert stored.error_code == "tool_round_limit"
+    assert stored.error_message == "Tool round limit reached"
 
 
 @pytest.mark.asyncio

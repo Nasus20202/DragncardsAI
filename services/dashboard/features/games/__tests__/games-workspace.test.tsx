@@ -23,6 +23,8 @@ const mockConfig: DashboardConfig = {
   defaultSkills: [],
   defaultCustomMcps: [],
   dragncardsFrontendUrl: "http://localhost:4000",
+  defaultReasoningEnabled: false,
+  defaultReasoningEffort: "medium",
 };
 
 const mockGames: GameSession[] = [

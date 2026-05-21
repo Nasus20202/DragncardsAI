@@ -225,6 +225,8 @@ export const baseConfig: DashboardConfig = {
   defaultSkills: ["skill-a"],
   defaultCustomMcps: [],
   dragncardsFrontendUrl: "http://localhost:4000",
+  defaultReasoningEnabled: false,
+  defaultReasoningEffort: "medium",
 };
 
 export const providers: ProviderResponse[] = [

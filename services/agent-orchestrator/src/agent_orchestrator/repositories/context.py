@@ -16,26 +16,6 @@ from agent_orchestrator.storage.models import (
     JobEvent,
 )
 
-COMPACTION_SYSTEM_PROMPT = """\
-You are summarizing a Marvel Champions card game session history for context compression.
-
-Produce a concise but complete summary that MUST preserve:
-- Hero identity, current HP, and max HP
-- Villain name, current HP, max HP, and stage
-- Current threat level on each scheme
-- All cards currently in play (hero side and villain side)
-- Encounter deck status (number of cards, any face-up cards)
-- What the agent did in the most recent turn and the outcome
-- Any notable game state flags (e.g., confused, stunned, toughness tokens)
-
-Do NOT include:
-- Step-by-step reasoning about past decisions
-- Verbose tool call details
-- Intermediate game states that have since changed
-
-Output plain text. Be concise but complete. A future AI agent will use this summary as its only memory of prior turns.
-"""
-
 
 class ContextRepositoryMixin:
     # ------------------------------------------------------------------
@@ -149,8 +129,10 @@ class ContextRepositoryMixin:
         current_job_id: str,
         after_job_id: str | None,
     ) -> list[Job]:
-        """Return completed jobs for this session in chronological order.
+        """Return jobs for this session in chronological order for context replay.
 
+        Includes completed, interrupted, and failed jobs so that partial work
+        from interrupted/failed runs is visible to the next job's context.
         Excludes current_job_id.  If after_job_id is set, only returns jobs
         created strictly after that job (compaction checkpoint).
         """
@@ -163,7 +145,7 @@ class ContextRepositoryMixin:
                 .where(
                     Job.session_id == session_id,
                     Job.id != current_job_id,
-                    Job.status == "completed",
+                    Job.status.in_(["completed", "interrupted", "failed"]),
                     Job.job_type != "compaction",
                 )
             )
@@ -190,11 +172,11 @@ class ContextRepositoryMixin:
     async def get_tokens_used_since_compaction(
         self, session_id: str, *, after_job_id: str | None
     ) -> int:
-        """Sum tokens_used across completed jobs since the last compaction checkpoint."""
+        """Sum tokens_used across completed and interrupted jobs since the last compaction checkpoint."""
         async with self._session_factory() as session:
             query = select(func.sum(Job.tokens_used)).where(
                 Job.session_id == session_id,
-                Job.status == "completed",
+                Job.status.in_(["completed", "interrupted"]),
                 Job.job_type != "compaction",
             )
             if after_job_id:
@@ -205,13 +187,13 @@ class ContextRepositoryMixin:
             return int(total or 0)
 
     async def get_latest_completed_job_id(self, session_id: str) -> str | None:
-        """Return the id of the most recently completed job for this session."""
+        """Return the id of the most recently completed or interrupted job for this session."""
         async with self._session_factory() as session:
             result = await session.execute(
                 select(Job.id)
                 .where(
                     Job.session_id == session_id,
-                    Job.status == "completed",
+                    Job.status.in_(["completed", "interrupted"]),
                     Job.job_type != "compaction",
                 )
                 .order_by(Job.completed_at.desc())

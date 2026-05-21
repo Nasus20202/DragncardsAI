@@ -174,10 +174,10 @@ def _make_worker(
 async def test_auto_compact_fires_above_threshold(
     repository: Repository, skill_registry: SkillRegistry
 ):
-    """When tokens_used exceeds threshold, compaction is triggered before history."""
+    """When replay token estimate exceeds threshold, compaction is triggered before history."""
     session = await _prepare_session(repository)
-    # Add enough token usage to exceed threshold (128000 * 0.8 = 102400)
-    await _make_completed_job(repository, session.id, tokens=110000)
+    # Use threshold=0.0 so any replay content triggers compaction regardless of size
+    await _make_completed_job(repository, session.id, tokens=10)
 
     bifrost = FakeBifrost(
         responses=[
@@ -193,7 +193,16 @@ async def test_auto_compact_fires_above_threshold(
             ),
         ]
     )
-    worker = _make_worker(repository, bifrost, skill_registry)
+    worker = _make_worker(
+        repository,
+        bifrost,
+        skill_registry,
+        settings=Settings(
+            SKILL_ROOTS="/tmp",
+            ENABLED_PROVIDER_IDS="openai,gemini",
+            CONTEXT_COMPACTION_THRESHOLD=0.0,
+        ),
+    )
 
     # Enqueue and run the new job
     await repository.enqueue_prompt_job(
@@ -218,7 +227,7 @@ async def test_auto_compact_publishes_live_compaction_event(
     repository: Repository, skill_registry: SkillRegistry
 ):
     session = await _prepare_session(repository)
-    await _make_completed_job(repository, session.id, tokens=110000)
+    await _make_completed_job(repository, session.id, tokens=10)
 
     live_event_bus = InMemoryLiveEventBus()
     bifrost = FakeBifrost(
@@ -234,7 +243,15 @@ async def test_auto_compact_publishes_live_compaction_event(
         ]
     )
     worker = _make_worker(
-        repository, bifrost, skill_registry, live_event_bus=live_event_bus
+        repository,
+        bifrost,
+        skill_registry,
+        live_event_bus=live_event_bus,
+        settings=Settings(
+            SKILL_ROOTS="/tmp",
+            ENABLED_PROVIDER_IDS="openai,gemini",
+            CONTEXT_COMPACTION_THRESHOLD=0.0,
+        ),
     )
 
     current_job = await repository.enqueue_prompt_job(
@@ -265,9 +282,11 @@ async def test_auto_compact_publishes_live_compaction_event(
 async def test_auto_compact_does_not_fire_below_threshold(
     repository: Repository, skill_registry: SkillRegistry
 ):
-    """When tokens_used is below threshold, no compaction happens."""
+    """When replay token estimate is below threshold, no compaction happens."""
     session = await _prepare_session(repository)
-    # Add token usage well below threshold
+    # Token usage on the job is irrelevant; the threshold check now uses actual replay
+    # message estimation. With a default threshold of 0.8 and tiny replay content,
+    # compaction should not fire.
     await _make_completed_job(repository, session.id, tokens=500)
 
     bifrost = FakeBifrost(

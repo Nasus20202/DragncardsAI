@@ -34,7 +34,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("skill_roots_raw", "SKILL_ROOTS"),
     )
     worker_poll_interval_seconds: float = 0.2
-    worker_max_tool_rounds: int = 32
+    worker_max_tool_rounds: int = 64
     default_job_max_attempts: int = 2
     game_service_mcp_url: str = Field(
         default="http://localhost:4001/mcp/",

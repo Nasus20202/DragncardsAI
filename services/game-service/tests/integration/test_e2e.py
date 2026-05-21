@@ -98,7 +98,11 @@ async def test_e2e_http_game_lifecycle(app, manager):
                 json={"type": "next_step"},
             )
             assert action_resp.status_code == 200
-            state_after = action_resp.json()["state"]
+            assert action_resp.json()["success"] is True
+
+            state_after_resp = await client.get(f"/games/{session_id}/state")
+            assert state_after_resp.status_code == 200
+            state_after = state_after_resp.json()["state"]
             assert state_after is not None
             assert "game" in state_after
 
@@ -154,7 +158,11 @@ async def test_e2e_mcp_game_lifecycle(app, mcp):
                 )
                 action_data = json.loads(action_result.content[0].text)
                 assert action_data["session_id"] == session_id
-                assert "game" in action_data["state"]
+                assert action_data["success"] is True
+
+                state_after_resp = await http_client.get(f"/games/{session_id}/state")
+                assert state_after_resp.status_code == 200
+                assert "game" in state_after_resp.json()["state"]
 
             finally:
                 # 4. Delete
@@ -198,7 +206,8 @@ async def test_e2e_concurrent_http_and_mcp(app, mcp, manager):
                         "execute_action",
                         {"session_id": session_id, "action": {"type": "next_step"}},
                     )
-                    return json.loads(result.content[0].text)["state"]
+                    resp = await http_client.get(f"/games/{session_id}/state")
+                    return resp.json()["state"]
 
                 http_state, mcp_state = await asyncio.gather(http_query(), mcp_query())
 

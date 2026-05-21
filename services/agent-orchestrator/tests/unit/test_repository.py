@@ -317,3 +317,45 @@ async def test_session_replay_limits_can_be_created_and_updated(repository: Repo
     assert updated is not None
     assert updated.context_recent_message_limit == 4
     assert updated.context_recent_tool_exchange_limit is None
+
+
+@pytest.mark.asyncio
+async def test_request_cancel_propagates_to_child_jobs(repository: Repository):
+    """Cancelling a parent job must also cancel its active child jobs."""
+    session = await _create_session_with_model(repository)
+
+    parent_job = await repository.enqueue_prompt_job(
+        session.id, prompt="parent", metadata_json={}, max_attempts=1
+    )
+    # Claim so parent is running
+    await repository.claim_next_job()
+
+    # Enqueue two child jobs – one queued, one running
+    queued_child = await repository.enqueue_prompt_job(
+        session.id, prompt="child queued", metadata_json={}, max_attempts=1
+    )
+    await repository.set_parent_job_id(queued_child.id, parent_job.id)
+
+    running_child = await repository.enqueue_prompt_job(
+        session.id, prompt="child running", metadata_json={}, max_attempts=1
+    )
+    await repository.set_parent_job_id(running_child.id, parent_job.id)
+    await repository.claim_next_job()  # moves queued_child → running (oldest first)
+
+    # Cancel the parent
+    cancelled_parent = await repository.request_cancel(parent_job.id)
+    assert cancelled_parent is not None
+    assert cancelled_parent.cancellation_requested_at is not None
+
+    # Queued child must be immediately cancelled
+    cancelled_queued = await repository.get_job(running_child.id)
+    assert cancelled_queued is not None
+    # running_child was never claimed so it's still queued → immediately cancelled
+    assert cancelled_queued.status == "cancelled"
+    assert cancelled_queued.cancellation_requested_at is not None
+
+    # Running child must have cancellation requested (worker will pick it up)
+    cancelled_running = await repository.get_job(queued_child.id)
+    assert cancelled_running is not None
+    assert cancelled_running.cancellation_requested_at is not None
+    assert await repository.get_job_cancellation_requested(queued_child.id) is True

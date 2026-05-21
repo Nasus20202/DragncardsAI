@@ -76,9 +76,6 @@ export function SubagentCard({
       "tool_call",
       "tool_result",
       "skill_loaded",
-      "subagent_started",
-      "subagent_completed",
-      "subagent_failed",
       "completion",
       "failure",
       "cancellation",
@@ -135,6 +132,7 @@ export function SubagentCard({
                 agg={agg}
                 isStreaming={streaming}
                 hasOutput={hasOutput}
+                isLast={i === aggregated.length - 1}
               />
             ))
           )}
