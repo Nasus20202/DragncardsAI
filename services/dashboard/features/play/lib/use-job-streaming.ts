@@ -125,10 +125,12 @@ export function useJobStreaming({
           }
         };
 
+        // Named listeners only — no source.onmessage to avoid duplicates.
+        // (The server sends each event with its event_type as the SSE event
+        // name, so onmessage would fire a second time for the same payload.)
         for (const eventType of STREAM_EVENT_TYPES) {
           source.addEventListener(eventType, handleEvent as EventListener);
         }
-        source.onmessage = handleEvent;
         source.onerror = () => {
           source.close();
           if (eventSourceRef.current === source) {

@@ -15,7 +15,10 @@ from agent_orchestrator.runtime.compaction import perform_compaction
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
 from agent_orchestrator.runtime.skills import SkillRegistry
-from agent_orchestrator.runtime.system_prompts import build_system_prompt
+from agent_orchestrator.runtime.system_prompts import (
+    build_subagent_system_prompt,
+    build_system_prompt,
+)
 from agent_orchestrator.runtime.tokens import (
     estimate_tokens_for_messages,
     extract_tokens_from_response,
@@ -107,6 +110,11 @@ class PromptRunService:
             job_span.set_attribute("provider.id", model_config.provider_id)
             job_span.set_attribute("model.name", model_config.model_name)
 
+            context_length = await self._bifrost_client.get_model_context_length(
+                model_config.provider_id, model_config.model_name
+            )
+            context_window_size = context_length or self._settings.context_window_size
+
             try:
                 logger.info(
                     "Starting job %s for session %s with provider=%s model=%s",
@@ -115,9 +123,15 @@ class PromptRunService:
                     model_config.provider_id,
                     model_config.model_name,
                 )
-                system_prompt = build_system_prompt(
-                    self._skill_registry, session.enabled_skills
-                )
+                is_subagent = job.parent_job_id is not None
+                if is_subagent:
+                    system_prompt = build_subagent_system_prompt(
+                        self._skill_registry, session.enabled_skills
+                    )
+                else:
+                    system_prompt = build_system_prompt(
+                        self._skill_registry, session.enabled_skills
+                    )
                 all_registries = await self._repository.list_mcp_registries()
                 tool_definitions = await self._mcp_tool_catalog.list_session_tools(
                     session.enabled_mcps, all_registries, ignore_failures=True
@@ -440,8 +454,28 @@ class PromptRunService:
                 await self._repository.update_job_tokens_used(
                     job.id, accumulated_job_tokens
                 )
-                job_span.set_attribute("job.status", "failed")
-                raise RuntimeError("tool round limit exceeded")
+                job_span.set_attribute("job.status", "interrupted")
+                interrupt_message = (
+                    "I reached the tool round limit before completing this task. "
+                    "My partial work above is preserved in context. "
+                    "Please send a follow-up message to continue."
+                )
+                await self._repository.append_event(
+                    job.id,
+                    session.id,
+                    "completion",
+                    {"text": interrupt_message},
+                )
+                await self._live_event_bus.publish(
+                    job.id,
+                    "completion",
+                    {"text": interrupt_message},
+                )
+                await self._repository.mark_job_interrupted(
+                    job.id, result_text=interrupt_message
+                )
+                await self._maybe_terminate_child_session(full_job)
+                return
             except BifrostError as exc:
                 failure = self.classify_execution_failure(exc)
                 logger.warning(
@@ -564,12 +598,14 @@ class PromptRunService:
             )
             context_window_size = context_length or self._settings.context_window_size
 
-            compaction = await self._repository.get_latest_compaction_record(session_id)
-            after_job_id = compaction.covers_up_to_job_id if compaction else None
-            tokens_used = await self._repository.get_tokens_used_since_compaction(
-                session_id, after_job_id=after_job_id
-            )
             threshold = self._settings.context_compaction_threshold
+
+            # Estimate actual replay size (same logic as context metadata endpoint)
+            # so the threshold fires before the LLM receives an oversized request.
+            replay_messages = await self._transcript_service.build_message_history(
+                session_id, current_job_id=job_id
+            )
+            tokens_used = estimate_tokens_for_messages(replay_messages)
             ratio = (
                 tokens_used / context_window_size if context_window_size > 0 else 0.0
             )

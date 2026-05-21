@@ -313,7 +313,7 @@ def make_spawn_subagent_handler(
 
         # Schedule the child job to run concurrently.
         if schedule_child_fn is not None:
-            asyncio.create_task(schedule_child_fn(child_job_id))
+            await schedule_child_fn(child_job_id)
 
         # Return immediately — the parent agent continues without waiting.
         return _text_result(f'{{"child_job_id": "{child_job_id}", "name": "{name}"}}')
@@ -451,9 +451,17 @@ def build_builtin_registry(
             BuiltinToolDefinition(
                 name="spawn_subagent",
                 description=(
-                    "Spawn a child agent with a given prompt. Returns immediately with "
-                    "child_job_id and name; the child runs in parallel. You may spawn "
-                    "multiple subagents and continue working without waiting."
+                    "Spawn a child agent to handle a task in parallel. "
+                    "ONLY available to top-level jobs — subagents do not have this tool and must "
+                    "call MCP tools directly. "
+                    "IMPORTANT: You MUST use this tool instead of calling large-payload tools "
+                    "directly. Any use of search_cards_marvel_champions, get_game_state, "
+                    "export_game_state_snapshot, load_game_state_snapshot, reset_game, or any "
+                    "tool that returns a card list or full board JSON must be delegated here — "
+                    "direct calls inject thousands of tokens into your context permanently. "
+                    "Write a fully self-contained prompt (include session ID, any known card IDs, "
+                    "group IDs, and exactly what to return). Returns immediately with child_job_id; "
+                    "the child runs concurrently. Spawn multiple subagents before waiting for any."
                 ),
                 parameters={
                     "type": "object",

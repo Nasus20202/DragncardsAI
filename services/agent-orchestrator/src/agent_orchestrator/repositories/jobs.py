@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from agent_orchestrator.repositories.base import utc_now
 from agent_orchestrator.storage.models import (
@@ -112,7 +112,38 @@ class JobRepositoryMixin:
                 job.completed_at = now
             job.updated_at = now
             session_id = job.session_id
+
+            # Propagate cancellation to all active child jobs.
+            child_result = await session.execute(
+                select(Job.id, Job.session_id, Job.status).where(
+                    Job.parent_job_id == job_id,
+                    Job.status.in_(["queued", "running"]),
+                )
+            )
+            child_rows = child_result.all()
+
+            if child_rows:
+                child_ids = [r.id for r in child_rows]
+                queued_child_ids = [r.id for r in child_rows if r.status == "queued"]
+                await session.execute(
+                    update(Job)
+                    .where(Job.id.in_(child_ids))
+                    .values(cancellation_requested_at=now, updated_at=now)
+                )
+                if queued_child_ids:
+                    await session.execute(
+                        update(Job)
+                        .where(Job.id.in_(queued_child_ids))
+                        .values(status="cancelled", completed_at=now)
+                    )
+
         await self.append_event(job_id, session_id, "cancellation", {"requested": True})
+
+        for row in child_rows:
+            await self.append_event(
+                row.id, row.session_id, "cancellation", {"requested": True}
+            )
+
         return await self.get_job(job_id)
 
     async def append_event(
@@ -195,6 +226,30 @@ class JobRepositoryMixin:
             else:
                 job.status = "failed"
                 job.completed_at = now
+        return await self.get_job(job_id)
+
+    async def mark_job_interrupted(
+        self,
+        job_id: str,
+        *,
+        result_text: str,
+    ) -> Job | None:
+        """Mark a job as interrupted (tool round limit hit).
+
+        Interrupted jobs are terminal but distinct from failures — they contain
+        valid partial work that should be replayed into the next job's context.
+        """
+        async with self._session_factory() as session, session.begin():
+            job = await session.get(Job, job_id)
+            if job is None:
+                return None
+            now = utc_now()
+            job.status = "interrupted"
+            job.error_code = "tool_round_limit"
+            job.error_message = "Tool round limit reached"
+            job.result_text = result_text
+            job.completed_at = now
+            job.updated_at = now
         return await self.get_job(job_id)
 
     async def mark_job_cancelled(self, job_id: str, *, reason: str) -> Job | None:

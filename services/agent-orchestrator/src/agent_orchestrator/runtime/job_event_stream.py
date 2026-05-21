@@ -9,7 +9,7 @@ from agent_orchestrator.schemas.jobs import JobEventResponse
 from agent_orchestrator.storage.repository import Repository
 
 TERMINAL_EVENT_TYPES = {"completion", "failure", "cancellation"}
-TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
+TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 
 
 def serialize_live_event(event: LiveJobEvent) -> JobEventResponse:
@@ -118,7 +118,13 @@ class JobEventStreamService:
                 )
                 if live_event.event_type in TERMINAL_EVENT_TYPES:
                     terminal_received = True
-        except asyncio.CancelledError:
+        except asyncio.CancelledError, GeneratorExit:
             return
         finally:
-            await live_subscriber.aclose()
+            # Use shield so the subscriber cleanup is not interrupted by
+            # GeneratorExit or CancelledError thrown by Starlette when a client
+            # disconnects mid-stream.
+            try:
+                await asyncio.shield(live_subscriber.aclose())
+            except asyncio.CancelledError, GeneratorExit:
+                pass

@@ -185,11 +185,16 @@ async def test_attach_game_shares_room_state(app, manager):
                 json={"type": "next_step"},
             )
             assert action_resp.status_code == 200
-            expected_step_id = action_resp.json()["state"]["game"]["stepId"]
 
             state_resp = await client.get(f"/games/{attached_session_id}/state")
             assert state_resp.status_code == 200
-            assert state_resp.json()["state"]["game"]["stepId"] == expected_step_id
+            expected_step_id = state_resp.json()["state"]["game"]["stepId"]
+
+            primary_state_resp = await client.get(f"/games/{primary_session_id}/state")
+            assert primary_state_resp.status_code == 200
+            assert (
+                primary_state_resp.json()["state"]["game"]["stepId"] == expected_step_id
+            )
         finally:
             if attached_session_id is not None:
                 await manager.delete_session(attached_session_id)
@@ -385,7 +390,7 @@ async def test_execute_action_next_step(app, manager):
         assert resp.status_code == 200
         body = resp.json()
         assert body["session_id"] == session.session_id
-        assert body["state"] is not None
+        assert body["success"] is True
     finally:
         await manager.delete_session(session.session_id)
 

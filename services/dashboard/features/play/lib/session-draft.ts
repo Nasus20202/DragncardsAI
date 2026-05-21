@@ -30,10 +30,10 @@ function isRecord(
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function buildDefaultReasoningDraft(): ReasoningDraft {
+function buildDefaultReasoningDraft(config: DashboardConfig): ReasoningDraft {
   return {
-    enabled: false,
-    effort: "medium",
+    enabled: config.defaultReasoningEnabled,
+    effort: config.defaultReasoningEffort,
     maxTokens: "",
   };
 }
@@ -61,11 +61,12 @@ export function parseOptionalPositiveInteger(
 }
 
 function extractReasoningDraft(
-  options: Record<string, JsonValue>
+  options: Record<string, JsonValue>,
+  config: DashboardConfig
 ): ReasoningDraft {
   const raw = options.reasoning;
   if (!isRecord(raw)) {
-    return buildDefaultReasoningDraft();
+    return buildDefaultReasoningDraft(config);
   }
 
   const effort = raw.effort;
@@ -115,7 +116,7 @@ export function createDefaultDraft(config: DashboardConfig): SessionDraft {
     modelName: config.defaultModelName,
     recentMessageLimit: "",
     recentToolExchangeLimit: "",
-    reasoning: buildDefaultReasoningDraft(),
+    reasoning: buildDefaultReasoningDraft(config),
     gatewayOptionsText: safeJsonStringify({}),
     providerOptionsText: safeJsonStringify({}),
     selectedSkills: config.defaultSkills,
@@ -140,7 +141,8 @@ export function buildDraftFromSession(
       session.context_recent_tool_exchange_limit
     ),
     reasoning: extractReasoningDraft(
-      session.model_config?.gateway_options ?? {}
+      session.model_config?.gateway_options ?? {},
+      config
     ),
     gatewayOptionsText: safeJsonStringify(
       session.model_config?.gateway_options ?? {}

@@ -145,6 +145,8 @@ export interface DashboardConfig {
   defaultSkills: string[];
   defaultCustomMcps: CustomMcpDraft[];
   dragncardsFrontendUrl: string;
+  defaultReasoningEnabled: boolean;
+  defaultReasoningEffort: "low" | "medium" | "high";
 }
 
 export interface CustomMcpDraft {

@@ -31,13 +31,17 @@ function ReasoningBlock({
   text,
   isStreaming,
   hasOutput,
+  isLast,
 }: {
   text: string;
   isStreaming: boolean;
   hasOutput: boolean;
+  isLast: boolean;
 }) {
-  // Start open; collapse automatically when the response arrives.
-  const [open, setOpen] = useState(true);
+  // Start collapsed if:
+  //   - The job is already done (not streaming and has output), OR
+  //   - This is not the last/active reasoning block (there are more events after it)
+  const [open, setOpen] = useState(isLast && (!hasOutput || isStreaming));
   const prevHasOutput = useRef(hasOutput);
 
   useEffect(() => {
@@ -183,10 +187,13 @@ export function AggEventRow({
   agg,
   isStreaming,
   hasOutput,
+  isLast = false,
 }: {
   agg: AggEvent;
   isStreaming: boolean;
   hasOutput: boolean;
+  /** Whether this is the last event in the list — used to keep the active reasoning block open. */
+  isLast?: boolean;
 }) {
   switch (agg.kind) {
     case "reasoning":
@@ -195,6 +202,7 @@ export function AggEventRow({
           text={agg.text}
           isStreaming={isStreaming}
           hasOutput={hasOutput}
+          isLast={isLast}
         />
       );
     case "model_output":
@@ -300,6 +308,7 @@ function JobThread({
               agg={agg}
               isStreaming={isStreaming}
               hasOutput={hasOutput}
+              isLast={i === aggEvents.length - 1}
             />
           ))}
         </div>

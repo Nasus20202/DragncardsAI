@@ -26,6 +26,8 @@ describe("session draft helpers", () => {
       defaultSkills: ["demo-skill"],
       defaultCustomMcps: [],
       dragncardsFrontendUrl: "http://localhost:4000",
+      defaultReasoningEnabled: false,
+      defaultReasoningEffort: "medium",
     });
 
     expect(draft.providerId).toBe("openai");
