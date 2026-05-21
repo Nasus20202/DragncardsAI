@@ -27,7 +27,6 @@ class Settings(BaseSettings):
     )
     bifrost_url: str = "http://localhost:4003"
     bifrost_api_key: str = "dummy"
-    lmstudio_base_url: str = "http://localhost:1234/v1"
     http_host: str = "0.0.0.0"
     http_port: int = 4002
     skill_roots_raw: str = Field(
@@ -35,7 +34,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("skill_roots_raw", "SKILL_ROOTS"),
     )
     worker_poll_interval_seconds: float = 0.2
-    worker_max_tool_rounds: int = 8
+    worker_max_tool_rounds: int = 32
     default_job_max_attempts: int = 2
     game_service_mcp_url: str = Field(
         default="http://localhost:4001/mcp/",

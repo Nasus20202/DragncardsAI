@@ -126,20 +126,28 @@ services:
     networks:
       - dragncards-shared
 
+  lmstudio-proxy:
+    image: alpine/socat:1.8.0.3
+    restart: unless-stopped
+    command: TCP-LISTEN:80,fork,reuseaddr TCP:host-gateway:${LMSTUDIO_HOST_PORT:-1234}
+    extra_hosts:
+      - "host-gateway:host-gateway"
+    networks:
+      - dragncards-shared
+
   bifrost:
     image: maximhq/bifrost:v1.5.3
     restart: unless-stopped
     depends_on:
+      lmstudio-proxy:
+        condition: service_started
       otel-lgtm:
         condition: service_healthy
     env_file:
       - path: services/bifrost/.env
         required: false
     environment:
-      LMSTUDIO_BASE_URL: ${LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.namespace=dragncardsai
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./services/bifrost/config.json:/app/data/config.json:ro
     ports:

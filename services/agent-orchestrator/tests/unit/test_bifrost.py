@@ -394,17 +394,17 @@ async def test_list_models_refreshes_cache_after_ttl_expiry():
 
 
 @pytest.mark.asyncio
-async def test_list_models_uses_direct_lmstudio_endpoint():
+async def test_list_models_routes_lmstudio_through_bifrost():
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url == httpx.URL("http://lmstudio.local/v1/models")
+        assert request.url == httpx.URL("http://bifrost/openai/v1/models")
+        assert request.headers.get("x-bf-list-models-provider") == "lmstudio"
         return httpx.Response(
             200,
             json={
                 "data": [
                     {
-                        "id": "qwen3.5-0.8b",
+                        "id": "lmstudio/qwen3.5-0.8b",
                         "name": "qwen3.5-0.8b",
-                        "meta": {"n_ctx": 4096},
                     }
                 ]
             },
@@ -415,28 +415,23 @@ async def test_list_models_uses_direct_lmstudio_endpoint():
         "http://bifrost",
         "",
         {"openai": "openai", "lmstudio": "lmstudio"},
-        lmstudio_base_url="http://lmstudio.local/v1",
     )
     await client._http_client.aclose()
     client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
         models = await client.list_models("lmstudio")
-        context_length = await client.get_model_context_length(
-            "lmstudio", "qwen3.5-0.8b"
-        )
     finally:
         await client.aclose()
 
-    assert [model.id for model in models] == ["qwen3.5-0.8b"]
-    assert context_length == 4096
+    assert [model.id for model in models] == ["lmstudio/qwen3.5-0.8b"]
 
 
 @pytest.mark.asyncio
-async def test_chat_completion_uses_direct_lmstudio_endpoint():
+async def test_chat_completion_routes_lmstudio_through_bifrost():
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url == httpx.URL("http://lmstudio.local/v1/chat/completions")
+        assert request.url == httpx.URL("http://bifrost/openai/chat/completions")
         payload = json.loads(request.content.decode("utf-8"))
-        assert payload["model"] == "qwen3.5-0.8b"
+        assert payload["model"] == "lmstudio/qwen3.5-0.8b"
         return httpx.Response(
             200,
             json={
@@ -456,7 +451,6 @@ async def test_chat_completion_uses_direct_lmstudio_endpoint():
         "http://bifrost",
         "",
         {"openai": "openai", "lmstudio": "lmstudio"},
-        lmstudio_base_url="http://lmstudio.local/v1",
     )
     await client._http_client.aclose()
     client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))

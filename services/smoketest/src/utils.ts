@@ -181,7 +181,7 @@ export async function waitForSessionSetup(
     )
     .toEqual({
       providerId: smokeModelProviderId,
-      modelName: smokeModelName,
+      modelName: `${smokeModelProviderId}/${smokeModelName}`,
       mcps: ["game-service"],
     });
 

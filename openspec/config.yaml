@@ -15,17 +15,19 @@ context: |
   ## Architecture
 
   ```
-  LLM Client (MCP)
+  Dashboard (Next.js)
        │
        ▼
-  Game Service  ──HTTP──▶  (scripts / tests / future UI)
-  (Python)
-       │
-       ▼ Phoenix Channels (WebSocket)
-  DragnCards Backend (Elixir/Phoenix)
-       │
-       ▼
-  PostgreSQL
+  Agent Orchestrator ──────────────────▶ Bifrost AI Gateway
+  (Python/FastAPI)                            │
+       │                               ┌──────┴──────┐
+       ▼                               ▼             ▼
+  Game Service  ──HTTP──▶  DragnCards  lmstudio-proxy  External AI Providers
+  (Python)       WebSocket  Backend    (socat)          (OpenAI, Gemini, …)
+       │          (Elixir)     │            │
+       ▼                       ▼            ▼
+   Valkey              PostgreSQL      LM Studio
+  (events)                           (host:1234)
   ```
 
   ## Components
@@ -35,6 +37,18 @@ context: |
     - HTTP REST API: session lifecycle, state queries, action execution
     - MCP tools/resources: same capabilities for LLM clients
     Both interfaces share a single `SessionManager` and WebSocket session pool.
+  - **agent-orchestrator** (`services/agent-orchestrator/`): Python/FastAPI service.
+    Manages LLM sessions, job queues, skill assignment, and MCP wiring. Persists
+    state in a dedicated PostgreSQL and fans out SSE events via Valkey.
+  - **dashboard** (`services/dashboard/`): Next.js UI for interacting with the
+    agent-orchestrator and game-service.
+  - **bifrost** (`services/bifrost/`): Maximilian AI gateway (`maximhq/bifrost`).
+    Routes LLM requests to configured providers. Local LM Studio traffic is routed
+    via `lmstudio-proxy` (see below).
+  - **lmstudio-proxy**: `alpine/socat` container in `docker-compose.infra.yaml`.
+    Listens on port 80 inside the Docker network (`dragncards-shared`) and forwards
+    connections to the host machine's LM Studio server (default host port 1234).
+    Eliminates the need for `host.docker.internal` in any service config.
   - **DragnCards backend** (`external/dragncards/backend/`): Upstream Elixir/Phoenix app,
     tracked as a git submodule. Manages all game state, DragnLang automation, phase/round logic.
     Runs in Docker. We never modify it.
@@ -43,9 +57,6 @@ context: |
     artifacts mounted into the backend.
   - **External Docker config** (`external/docker/`): Dockerfiles and compose file for
     DragnCards backend, frontend, and mc-plugin.
-  - **Docker Compose** (`docker-compose.yml` at repo root): Orchestrates all services via
-    `include: external/docker/docker-compose.yml` (postgres, mc-plugin, backend, frontend)
-    plus game-service defined inline.
 
   ## Tech Stack
 

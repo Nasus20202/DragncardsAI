@@ -68,15 +68,11 @@ class BifrostClient:
         api_key: str,
         provider_prefixes: dict[str, str],
         *,
-        lmstudio_base_url: str | None = None,
         models_cache_ttl_seconds: float = 60.0,
     ):
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._provider_prefixes = provider_prefixes
-        self._lmstudio_base_url = (
-            lmstudio_base_url.rstrip("/") if lmstudio_base_url else None
-        )
         self._models_cache_ttl_seconds = models_cache_ttl_seconds
         self._models_cache: dict[str, CachedModelListing] = {}
         self._all_models_cache: CachedModelListing | None = None
@@ -96,9 +92,6 @@ class BifrostClient:
         cached = self._models_cache.get(provider_id)
         if cached is not None and cached.expires_at > monotonic():
             return cached.models
-
-        if provider_id == "lmstudio" and self._lmstudio_base_url:
-            return await self._list_lmstudio_models()
 
         headers = {"x-bf-list-models-provider": self._provider_prefixes[provider_id]}
         if self._api_key:
@@ -205,15 +198,6 @@ class BifrostClient:
         self, provider_id: str, model_name: str
     ) -> int | None:
         """Return context_length for the given model from /v1/models, or None if unknown."""
-        if provider_id == "lmstudio" and self._lmstudio_base_url:
-            try:
-                for model in await self._list_lmstudio_models():
-                    if model.id == model_name:
-                        return model.context_length
-            except BifrostError:
-                return None
-            return None
-
         resolved = self._resolve_model(provider_id, model_name)
         try:
             all_models = await self._fetch_all_models()
@@ -234,16 +218,6 @@ class BifrostClient:
         provider_options: dict[str, Any],
         on_delta: Callable[[ChatDelta], Awaitable[None]] | None = None,
     ) -> ChatResponse:
-        if provider_id == "lmstudio" and self._lmstudio_base_url:
-            return await self._lmstudio_chat_completion(
-                model_name,
-                messages,
-                tools,
-                gateway_options,
-                provider_options,
-                on_delta,
-            )
-
         payload: dict[str, Any] = {
             "model": self._resolve_model(provider_id, model_name),
             "messages": messages,
@@ -285,197 +259,6 @@ class BifrostClient:
                     parts.append(str(item.get("text", "")))
             return "\n".join(part for part in parts if part)
         return str(content)
-
-    async def _list_lmstudio_models(self) -> list[ModelInfo]:
-        assert self._lmstudio_base_url is not None
-        try:
-            response = await self._http_client.get(f"{self._lmstudio_base_url}/models")
-        except httpx.TimeoutException as exc:
-            raise BifrostError(
-                "timeout", "Local model listing timed out", retryable=True
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise BifrostError(
-                "network_error", "Local model listing failed", retryable=True
-            ) from exc
-
-        if response.status_code >= 400:
-            raise BifrostError(
-                "gateway_error",
-                self._extract_error_message(response),
-                retryable=response.status_code >= 500 or response.status_code == 429,
-            )
-
-        payload = response.json()
-        items = payload.get("data") or payload.get("models") or []
-        result: list[ModelInfo] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            model_id = item.get("id") or item.get("model") or item.get("name")
-            if not model_id:
-                continue
-            meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
-            result.append(
-                ModelInfo(
-                    id=str(model_id),
-                    name=(None if item.get("name") is None else str(item.get("name"))),
-                    supported_methods=["chat_completion", "chat_completion_stream"],
-                    context_length=(
-                        int(meta["n_ctx"])
-                        if isinstance(meta.get("n_ctx"), int)
-                        else None
-                    ),
-                )
-            )
-
-        if self._models_cache_ttl_seconds > 0:
-            self._models_cache["lmstudio"] = CachedModelListing(
-                expires_at=monotonic() + self._models_cache_ttl_seconds,
-                models=result,
-            )
-        return result
-
-    async def _lmstudio_chat_completion(
-        self,
-        model_name: str,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None,
-        gateway_options: dict[str, Any],
-        provider_options: dict[str, Any],
-        on_delta: Callable[[ChatDelta], Awaitable[None]] | None = None,
-    ) -> ChatResponse:
-        assert self._lmstudio_base_url is not None
-        payload: dict[str, Any] = {
-            "model": model_name,
-            "messages": messages,
-        }
-        payload.update(gateway_options)
-        payload.update(provider_options)
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-        if on_delta is not None:
-            payload["stream"] = True
-
-        if on_delta is None:
-            response = await self._post_local_chat_completion(payload)
-            return self._parse_chat_response(response.json())
-
-        return await self._stream_local_chat_completion(payload, on_delta)
-
-    async def _post_local_chat_completion(
-        self,
-        payload: dict[str, Any],
-    ) -> httpx.Response:
-        assert self._lmstudio_base_url is not None
-        try:
-            response = await self._http_client.post(
-                f"{self._lmstudio_base_url}/chat/completions",
-                json=payload,
-            )
-        except httpx.TimeoutException as exc:
-            raise BifrostError(
-                "timeout", "Local model request timed out", retryable=True
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise BifrostError(
-                "network_error", "Local model request failed", retryable=True
-            ) from exc
-
-        if response.status_code >= 400:
-            raise BifrostError(
-                "gateway_error",
-                self._extract_error_message(response),
-                retryable=response.status_code >= 500 or response.status_code == 429,
-            )
-        return response
-
-    async def _stream_local_chat_completion(
-        self,
-        payload: dict[str, Any],
-        on_delta: Callable[[ChatDelta], Awaitable[None]],
-    ) -> ChatResponse:
-        assert self._lmstudio_base_url is not None
-        reasoning_buffers: dict[int, dict[str, Any]] = {}
-        tool_call_buffers: dict[int, dict[str, Any]] = {}
-        content_parts: list[str] = []
-        reasoning_parts: list[str] = []
-        raw_chunks: list[dict[str, Any]] = []
-
-        try:
-            async with self._http_client.stream(
-                "POST",
-                f"{self._lmstudio_base_url}/chat/completions",
-                json=payload,
-            ) as response:
-                if response.status_code >= 400:
-                    await response.aread()
-                    raise BifrostError(
-                        "gateway_error",
-                        self._extract_error_message(response),
-                        retryable=response.status_code >= 500
-                        or response.status_code == 429,
-                    )
-
-                async for raw_event in self._iter_sse_data(response):
-                    if raw_event == "[DONE]":
-                        break
-                    chunk = json.loads(raw_event)
-                    raw_chunks.append(chunk)
-                    delta = self._extract_delta(chunk)
-                    content = self._normalize_content(delta.get("content"))
-                    reasoning = self._normalize_content(delta.get("reasoning"))
-                    reasoning_details = self._parse_reasoning_details(
-                        delta.get("reasoning_details") or []
-                    )
-                    tool_calls = delta.get("tool_calls") or []
-                    if not reasoning and reasoning_details:
-                        reasoning = "".join(
-                            detail.text for detail in reasoning_details if detail.text
-                        )
-
-                    if content:
-                        content_parts.append(content)
-                    if reasoning:
-                        reasoning_parts.append(reasoning)
-                    if reasoning_details:
-                        self._merge_reasoning_details(
-                            reasoning_buffers, reasoning_details
-                        )
-                    if tool_calls:
-                        self._merge_tool_call_deltas(tool_call_buffers, tool_calls)
-
-                    if content or reasoning or reasoning_details:
-                        callback_result = on_delta(
-                            ChatDelta(
-                                content=content,
-                                reasoning=reasoning,
-                                reasoning_details=reasoning_details,
-                            )
-                        )
-                        if isawaitable(callback_result):
-                            await callback_result
-        except json.JSONDecodeError as exc:
-            raise BifrostError(
-                "invalid_response", "Local model returned an invalid streamed response"
-            ) from exc
-        except httpx.TimeoutException as exc:
-            raise BifrostError(
-                "timeout", "Local model request timed out", retryable=True
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise BifrostError(
-                "network_error", "Local model request failed", retryable=True
-            ) from exc
-
-        return ChatResponse(
-            content="".join(content_parts),
-            tool_calls=self._finalize_streamed_tool_calls(tool_call_buffers),
-            raw={"chunks": raw_chunks},
-            reasoning="".join(reasoning_parts),
-            reasoning_details=self._finalize_reasoning_details(reasoning_buffers),
-        )
 
     async def _post_chat_completion(
         self,
