@@ -162,6 +162,109 @@ class SessionManager:
             )
             return session
 
+    async def _auto_seat(self, session: GameSession, user_id: int) -> None:
+        try:
+            state = await session.get_state()
+        except SessionError as exc:
+            logger.warning(
+                "auto_seat: session_id=%s state unavailable: %s",
+                session.session_id,
+                exc,
+            )
+            return
+
+        if not isinstance(state, dict):
+            logger.warning(
+                "auto_seat: session_id=%s invalid state payload", session.session_id
+            )
+            return
+
+        game = state.get("game")
+        if not isinstance(game, dict):
+            logger.warning(
+                "auto_seat: session_id=%s missing game payload", session.session_id
+            )
+            return
+
+        def _seat_key(item: tuple[str, object]) -> tuple[int, str]:
+            player_n = item[0]
+            suffix = player_n[6:] if player_n.startswith("player") else player_n
+            try:
+                return (int(suffix), player_n)
+            except ValueError:
+                return (10_000, player_n)
+
+        player_info = game.get("playerInfo")
+        if isinstance(player_info, dict):
+            for info in player_info.values():
+                if isinstance(info, dict) and info.get("id") == user_id:
+                    logger.info(
+                        "auto_seat: session_id=%s user already seated",
+                        session.session_id,
+                    )
+                    return
+
+            ordered_seats = sorted(player_info.items(), key=_seat_key)
+            for player_n, info in ordered_seats:
+                if info is None or not isinstance(info, dict) or info.get("id") is None:
+                    try:
+                        await session.set_seat(player_index=player_n, user_id=user_id)
+                        logger.info(
+                            "auto_seat: session_id=%s assigned user=%s to %s",
+                            session.session_id,
+                            user_id,
+                            player_n,
+                        )
+                        return
+                    except Exception as exc:
+                        logger.warning(
+                            "auto_seat: session_id=%s seat %s failed: %s",
+                            session.session_id,
+                            player_n,
+                            exc,
+                        )
+
+            logger.info("auto_seat: session_id=%s no vacant seats", session.session_id)
+            return
+
+        player_data = game.get("playerData")
+        if not isinstance(player_data, dict):
+            logger.warning(
+                "auto_seat: session_id=%s missing playerInfo and playerData",
+                session.session_id,
+            )
+            return
+
+        for info in player_data.values():
+            if isinstance(info, dict) and info.get("user_id") == user_id:
+                logger.info(
+                    "auto_seat: session_id=%s user already seated",
+                    session.session_id,
+                )
+                return
+
+        ordered_seats = sorted(player_data.items(), key=_seat_key)
+        for player_n, info in ordered_seats:
+            if not isinstance(info, dict) or info.get("user_id") is None:
+                try:
+                    await session.set_seat(player_index=player_n, user_id=user_id)
+                    logger.info(
+                        "auto_seat: session_id=%s assigned user=%s to %s",
+                        session.session_id,
+                        user_id,
+                        player_n,
+                    )
+                    return
+                except Exception as exc:
+                    logger.warning(
+                        "auto_seat: session_id=%s seat %s failed: %s",
+                        session.session_id,
+                        player_n,
+                        exc,
+                    )
+
+        logger.info("auto_seat: session_id=%s no vacant seats", session.session_id)
+
     async def create_session(self, plugin_name: str) -> GameSession:
         with tracer.start_as_current_span(
             "game_service.create_session",
@@ -203,6 +306,7 @@ class SessionManager:
                 initial_state=initial_state,
             )
             await self._register_session(session)
+            await self._auto_seat(session, user_id)
 
             logger.info("Session %s created (room=%s)", session_id, room_slug)
             return session
@@ -211,6 +315,7 @@ class SessionManager:
         plugin_info = self._get_plugin_info(plugin_name)
 
         auth_token = await get_auth_token(self._http_url, self._email, self._password)
+        user_id = await get_user_id(self._http_url, auth_token)
         ws_client, channel, initial_state = await self._connect_room_channel(
             room_slug, auth_token
         )
@@ -227,6 +332,7 @@ class SessionManager:
             initial_state=initial_state,
         )
         await self._register_session(session)
+        await self._auto_seat(session, user_id)
 
         logger.info("Session %s attached to existing room %s", session_id, room_slug)
         return session

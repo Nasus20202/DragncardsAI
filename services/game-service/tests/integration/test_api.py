@@ -22,6 +22,7 @@ from fastmcp import Client
 pytestmark = pytest.mark.live
 
 from game_service.api.app import create_app
+from game_service.dragncards.http_client import get_auth_token, get_user_id
 from game_service.logic.session_manager import SessionManager
 from game_service.mcp.server import create_mcp_server
 
@@ -144,6 +145,34 @@ async def test_create_game(app, manager):
 
 
 @pytest.mark.asyncio
+async def test_create_game_auto_seats_user(app, manager):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/games", json={"plugin_name": "marvel-champions"})
+    assert resp.status_code == 201
+    session_id = resp.json()["session"]["session_id"]
+    try:
+        session = await manager.get_session(session_id)
+        state = await session.get_state()
+        game = state["game"]
+        player_info = game.get("playerInfo")
+        if player_info is None:
+            player_info = game.get("playerData")
+        auth_token = await get_auth_token(
+            DRAGNCARDS_HTTP_URL, DEV_USER_EMAIL, DEV_USER_PASSWORD
+        )
+        expected_user = await get_user_id(DRAGNCARDS_HTTP_URL, auth_token)
+        assert any(
+            info
+            and (info.get("id") == expected_user or info.get("user_id") == expected_user)
+            for info in player_info.values()
+        )
+    finally:
+        await manager.delete_session(session_id)
+
+
+@pytest.mark.asyncio
 async def test_create_game_unknown_plugin(app):
     """POST /games with an unknown plugin returns 400."""
     async with httpx.AsyncClient(
@@ -194,6 +223,54 @@ async def test_attach_game_shares_room_state(app, manager):
             assert primary_state_resp.status_code == 200
             assert (
                 primary_state_resp.json()["state"]["game"]["stepId"] == expected_step_id
+            )
+        finally:
+            if attached_session_id is not None:
+                await manager.delete_session(attached_session_id)
+            await manager.delete_session(primary_session_id)
+
+
+@pytest.mark.asyncio
+async def test_attach_game_auto_seats_user(app, manager):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        create_resp = await client.post(
+            "/games", json={"plugin_name": "marvel-champions"}
+        )
+        assert create_resp.status_code == 201
+        room_slug = create_resp.json()["session"]["room_slug"]
+        primary_session_id = create_resp.json()["session"]["session_id"]
+
+        attached_session_id = None
+        try:
+            attach_resp = await client.post(
+                "/games/attach",
+                json={
+                    "plugin_name": "marvel-champions",
+                    "room_slug": room_slug,
+                },
+            )
+            assert attach_resp.status_code == 201
+            attached_session_id = attach_resp.json()["session"]["session_id"]
+
+            attached_session = await manager.get_session(attached_session_id)
+            state = await attached_session.get_state()
+            game = state["game"]
+            player_info = game.get("playerInfo")
+            if player_info is None:
+                player_info = game.get("playerData")
+            auth_token = await get_auth_token(
+                DRAGNCARDS_HTTP_URL, DEV_USER_EMAIL, DEV_USER_PASSWORD
+            )
+            expected_user = await get_user_id(DRAGNCARDS_HTTP_URL, auth_token)
+            assert any(
+                info
+                and (
+                    info.get("id") == expected_user
+                    or info.get("user_id") == expected_user
+                )
+                for info in player_info.values()
             )
         finally:
             if attached_session_id is not None:
@@ -315,6 +392,21 @@ async def test_mcp_does_not_expose_snapshot_tools(mcp):
     names = {tool.name for tool in tools}
     assert "export_game_state_snapshot" not in names
     assert "load_game_state_snapshot" not in names
+
+
+@pytest.mark.asyncio
+async def test_mcp_does_not_expose_room_control_tools(mcp):
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    names = {tool.name for tool in tools}
+    assert "reset_game" not in names
+    assert "set_seat" not in names
+    assert "set_spectator" not in names
+    assert "send_alert" not in names
+    assert "save_replay" not in names
+    assert "set_player_count" not in names
+    assert "get_alerts" not in names
+    assert "get_gui_update" not in names
 
 
 def test_list_actions_catalog(sync_client):

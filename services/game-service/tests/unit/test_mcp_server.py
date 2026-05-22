@@ -75,14 +75,6 @@ EXPECTED_TOOL_NAMES = {
     "get_session_actions",
     "delete_game",
     "get_game_state",
-    "reset_game",
-    "set_seat",
-    "set_spectator",
-    "send_alert",
-    "save_replay",
-    "set_player_count",
-    "get_alerts",
-    "get_gui_update",
 }
 EXPECTED_TOOL_NAMES |= {
     f"search_cards_{re.sub(r'[^a-zA-Z0-9]+', '_', provider).strip('_')}"
@@ -147,12 +139,19 @@ async def test_create_game_has_no_required_fields():
     assert tool.inputSchema.get("required", []) == []
 
 
-async def test_set_player_count_requires_num_players():
+async def test_room_control_tools_not_exposed():
     mcp = _make_mcp()
     async with Client(mcp) as client:
         tools = await client.list_tools()
-    tool = next(t for t in tools if t.name == "set_player_count")
-    assert "num_players" in tool.inputSchema.get("required", [])
+    names = {t.name for t in tools}
+    assert "reset_game" not in names
+    assert "set_seat" not in names
+    assert "set_spectator" not in names
+    assert "send_alert" not in names
+    assert "save_replay" not in names
+    assert "set_player_count" not in names
+    assert "get_alerts" not in names
+    assert "get_gui_update" not in names
 
 
 async def test_snapshot_endpoints_not_exposed_as_tools():

@@ -4,7 +4,7 @@
 
 It does two things:
 - exposes an HTTP API for creating and controlling game sessions
-- exposes the same capabilities over MCP so LLM clients can call tools directly
+- exposes a focused subset of those capabilities over MCP so LLM clients can call tools directly
 
 The service talks to DragnCards over Phoenix Channels and keeps a local session pool.
 
@@ -56,10 +56,12 @@ Use these first when integrating a client.
 Use these to create, attach, list, and remove active game sessions.
 
 - `POST /games`
-  Create a new game session for a plugin.
+  Create a new game session for a plugin. The requesting user is seated in the
+  first available player slot.
 
 - `POST /games/attach`
-  Attach to an existing DragnCards room.
+  Attach to an existing DragnCards room. The requesting user is seated in the
+  first available player slot.
 
 - `GET /games`
   List active sessions managed by this service.
@@ -105,6 +107,7 @@ Common action types include:
 ### Room Control
 
 Use these when you want to control the room rather than perform a normal game action.
+These endpoints are HTTP-only and are not exposed through MCP.
 
 - `POST /games/{session_id}/reset`
 - `POST /games/{session_id}/seat`
@@ -148,6 +151,22 @@ Example local MCP URL:
 ```text
 http://localhost:4001/mcp
 ```
+
+MCP tools expose a minimal game-control surface:
+
+- `create_game`
+- `attach_game`
+- `list_games`
+- `delete_game`
+- `get_game_state`
+- `get_session_actions`
+- `execute_action`
+- `list_actions`
+- `list_card_providers`
+- `search_cards_<provider>`
+
+Room control and observability endpoints (reset, seat assignment, spectator, alerts,
+replay, player count, alert buffers, GUI updates) are HTTP-only.
 
 ## Typical Workflow
 

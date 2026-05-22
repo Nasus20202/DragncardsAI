@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import json
+from html import escape
+
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse
+from fastmcp import Client
 
 from game_service.logic.action_catalog import build_action_catalog_entries
 from game_service.api.models import (
@@ -12,6 +17,7 @@ from game_service.api.models import (
     HealthResponse,
     ListActionsResponse,
 )
+from game_service.mcp.server import create_mcp_server
 
 router = APIRouter(tags=["meta"])
 
@@ -579,3 +585,31 @@ async def list_actions():
     """
     actions, raw_ops = build_generic_action_catalog()
     return ListActionsResponse(actions=actions, raw_ops=raw_ops)
+
+
+@router.get("/tools", response_class=HTMLResponse, include_in_schema=False)
+async def tools_doc(request: Request):
+    """HTML view of MCP list_tools output."""
+    session_manager = request.app.state.session_manager
+    mcp = create_mcp_server(session_manager=session_manager, fastapi_app=request.app)
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    payload = [tool.model_dump() for tool in tools]
+    body = escape(json.dumps(payload, indent=2))
+    html = f"""<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset=\"utf-8\" />
+    <title>MCP Tools</title>
+    <style>
+      body {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 24px; }}
+      pre {{ white-space: pre-wrap; }}
+    </style>
+  </head>
+  <body>
+    <h1>MCP Tools</h1>
+    <pre>{body}</pre>
+  </body>
+</html>
+"""
+    return HTMLResponse(content=html)
