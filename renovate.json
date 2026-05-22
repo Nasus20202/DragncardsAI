@@ -3,13 +3,19 @@
   "extends": ["config:recommended"],
   "packageRules": [
     {
-      "matchUpdateTypes": [
-        "minor",
-        "patch"
-      ],
+      "description": "Update llama.cpp smoke image weekly",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/ggml-org/llama.cpp"],
+      "matchCurrentValue": "^server-b\\d+$",
+      "versioning": "regex:^(?<compatibility>server-b)(?<build>\\d+)$",
+      "schedule": ["before 4am on monday"],
+      "automerge": true
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch"],
       "automerge": true
     }
-  ], 
+  ],
   "lockFileMaintenance": {
     "enabled": true,
     "automerge": true

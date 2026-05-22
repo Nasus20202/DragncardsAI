@@ -137,4 +137,25 @@ describe("session draft helper branches", () => {
       )
     ).toThrow("Reasoning max tokens must be a positive integer");
   });
+
+  it("returns disabled reasoning when session has no reasoning config", () => {
+    const sessionWithoutReasoning: SessionDetail = {
+      ...session,
+      model_config: {
+        provider_id: session.model_config!.provider_id,
+        model_name: session.model_config!.model_name,
+        gateway_options: {},
+        provider_options: session.model_config!.provider_options,
+        updated_at: session.model_config!.updated_at,
+      },
+    };
+
+    const draft = buildDraftFromSession(config, sessionWithoutReasoning);
+
+    expect(draft.reasoning).toEqual({
+      enabled: false,
+      effort: "medium",
+      maxTokens: "",
+    });
+  });
 });

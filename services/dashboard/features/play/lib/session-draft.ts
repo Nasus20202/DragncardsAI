@@ -66,7 +66,11 @@ function extractReasoningDraft(
 ): ReasoningDraft {
   const raw = options.reasoning;
   if (!isRecord(raw)) {
-    return buildDefaultReasoningDraft(config);
+    return {
+      enabled: false,
+      effort: config.defaultReasoningEffort,
+      maxTokens: "",
+    };
   }
 
   const effort = raw.effort;
