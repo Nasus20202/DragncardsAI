@@ -1,7 +1,7 @@
 services:
   llama-cpp-smoke-model-cache:
     profiles: ["smoke"]
-    image: curlimages/curl
+    image: curlimages/curl:8.20.0
     user: "0:0"
     restart: "no"
     entrypoint:
@@ -22,7 +22,7 @@ services:
 
   llama-cpp-smoke:
     profiles: ["smoke"]
-    image: ghcr.io/ggml-org/llama.cpp:server
+    image: ghcr.io/ggml-org/llama.cpp:server-b9246
     restart: unless-stopped
     depends_on:
       llama-cpp-smoke-model-cache:
