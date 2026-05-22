@@ -6,9 +6,9 @@
       "description": "Update llama.cpp smoke image weekly",
       "matchDatasources": ["docker"],
       "matchPackageNames": ["ghcr.io/ggml-org/llama.cpp"],
-      "matchCurrentValue": "^server-b\\d+$",
-      "versioning": "regex:^(?<compatibility>server-b)(?<build>\\d+)$",
-      "schedule": ["before 4am on monday"],
+      "matchCurrentValue": "/^server-b\\d+$/",
+      "versioning": "regex:^server-b(?<major>\\d+)$",
+      "schedule": ["* 0-3 * * 1"],
       "automerge": true
     },
     {
