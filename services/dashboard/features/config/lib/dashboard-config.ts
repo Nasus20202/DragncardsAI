@@ -62,8 +62,9 @@ export function getServerConfig() {
       process.env.GAME_SERVICE_OPENAPI_PATH ?? "/openapi.json",
     publicConfig: {
       appName: process.env.APP_NAME ?? DEFAULT_APP_NAME,
-      defaultProviderId: process.env.DEFAULT_PROVIDER_ID ?? "openai",
-      defaultModelName: process.env.DEFAULT_MODEL_NAME ?? "gpt-4o-mini",
+      defaultProviderId: process.env.DEFAULT_PROVIDER_ID ?? "openrouter",
+      defaultModelName:
+        process.env.DEFAULT_MODEL_NAME ?? "openrouter/openrouter/free",
       defaultGameServiceMcpEnabled: parseBoolean(
         process.env.DEFAULT_GAME_SERVICE_MCP_ENABLED,
         true

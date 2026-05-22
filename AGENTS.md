@@ -41,6 +41,12 @@ Service-specific AGENTS.md files override these instructions:
 - Use `scripts/docker.sh build` when a rebuild is needed.
 - Follow existing structure inside each service instead of forcing one pattern across the monorepo.
 
+## Data Storage
+
+- Services must NOT store any state in memory.
+- Use PostgreSQL for persistent data.
+- Use Valkey for ephemeral/stateful data that doesn't require persistence.
+
 ## Agent Guidance
 
 - Start by reading `README.md` and the files closest to the requested change.
