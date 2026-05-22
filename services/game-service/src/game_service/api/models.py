@@ -75,7 +75,7 @@ class GameStateResponse(BaseModel):
 
 class ExecuteActionResponse(BaseModel):
     session_id: str
-    success: Literal[True] = True
+    success: Literal[True]
 
 
 class DeleteGameResponse(BaseModel):

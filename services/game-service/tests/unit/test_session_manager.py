@@ -395,11 +395,10 @@ async def test_close_room_pushes_close_room():
 async def test_close_room_removes_from_manager():
     session = _make_session()
     session.channel.push = AsyncMock(return_value={})
-    mock_manager = MagicMock()
-    mock_manager._remove_session = AsyncMock()
-    session._manager = mock_manager
+    on_close = AsyncMock()
+    session.on_close = on_close
     await session.close_room()
-    mock_manager._remove_session.assert_awaited_once_with("test-session")
+    on_close.assert_awaited_once_with()
 
 
 async def test_send_alert_pushes_send_alert():

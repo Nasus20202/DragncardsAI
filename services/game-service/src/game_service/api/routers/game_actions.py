@@ -41,7 +41,7 @@ async def execute_action(
         session = await manager.get_session(session_id)
         await session.execute_action(action)
     logger.info("execute_action: session_id=%s -> success", session_id)
-    return ExecuteActionResponse(session_id=session_id)
+    return ExecuteActionResponse(session_id=session_id, success=True)
 
 
 @router.get(
