@@ -15,7 +15,11 @@ The Game Service SHALL provide HTTP endpoints and MCP tools to create, query, an
 
 #### Scenario: Create a new game session via MCP
 - **WHEN** an MCP client invokes the `create_game` tool with a plugin name parameter
-- **THEN** the Game Service SHALL create a new DragnCards game room via WebSocket, load the specified plugin, and return the session ID and initial game info
+- **THEN** the Game Service SHALL create a new DragnCards game room via WebSocket, load the specified plugin, assign the model to the first available player seat, and return the session ID and initial game info
+
+#### Scenario: Attach to an existing game session via MCP
+- **WHEN** an MCP client invokes the `attach_game` tool with a room slug parameter
+- **THEN** the Game Service SHALL join the existing room via WebSocket, assign the model to the first available player seat, and return the session ID and initial game info
 
 #### Scenario: Delete a game session
 - **WHEN** a client sends `DELETE /games/{id}` or invokes the `delete_game` MCP tool
@@ -157,6 +161,10 @@ The Game Service SHALL implement the Model Context Protocol, exposing game capab
 #### Scenario: Tool discovery
 - **WHEN** an MCP client requests the list of available tools
 - **THEN** the server SHALL return tool definitions for game session management (`create_game`, `list_games`, `delete_game`), state observation (`get_game_state`), and action execution (`execute_action`), each with proper JSON Schema parameter descriptions
+
+#### Scenario: Tool discovery excludes room-control operations
+- **WHEN** an MCP client requests the list of available tools
+- **THEN** the server SHALL NOT expose room-control tools including reset, seat assignment, spectator toggles, player-count changes, replay saves, alert broadcasting, or room closure
 
 #### Scenario: MCP error handling
 - **WHEN** the Game Service encounters an error processing an MCP tool call
@@ -355,29 +363,4 @@ The Game Service SHALL capture `gui_update` events from the DragnCards room chan
 - **WHEN** a client sends `GET /games/{id}/gui-update`
 - **THEN** the Game Service SHALL return a JSON object keyed by `player_n` with the latest GUI hint payload for each player
 
-### Requirement: Room control MCP tools
-The Game Service SHALL expose each room-control operation as an MCP tool.
 
-#### Scenario: MCP reset_game tool
-- **WHEN** an MCP client invokes `reset_game` with `session_id` and optional `save` / `reload_plugin` flags
-- **THEN** the Game Service SHALL perform the reset and return the updated state as text content
-
-#### Scenario: MCP set_seat tool
-- **WHEN** an MCP client invokes `set_seat` with `session_id`, `player_index`, and `user_id`
-- **THEN** the Game Service SHALL push `set_seat` and return a confirmation message
-
-#### Scenario: MCP set_spectator tool
-- **WHEN** an MCP client invokes `set_spectator` with `session_id`, `user_id`, and `spectating`
-- **THEN** the Game Service SHALL push `set_spectator` and return a confirmation message
-
-#### Scenario: MCP send_alert tool
-- **WHEN** an MCP client invokes `send_alert` with `session_id` and `message`
-- **THEN** the Game Service SHALL push `send_alert` on the room channel and return a confirmation message
-
-#### Scenario: MCP save_replay tool
-- **WHEN** an MCP client invokes `save_replay` with `session_id`
-- **THEN** the Game Service SHALL push `save_replay` and return a confirmation message
-
-#### Scenario: MCP set_player_count tool
-- **WHEN** an MCP client invokes `set_player_count` with `session_id`, `num_players`, and optional `layout_id`
-- **THEN** the Game Service SHALL push the game actions and return the updated state as text content
