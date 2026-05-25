@@ -117,6 +117,14 @@ class CatalogProvider(ABC):
     @abstractmethod
     def search_cards(self, filters: dict[str, Any]) -> list[CatalogCardRecord]: ...
 
+    def load_sets(self) -> list[dict[str, Any]]:
+        return []
+
+    def search_sets(
+        self, name: str | None = None, type: str | None = None
+    ) -> list[dict[str, Any]]:
+        return []
+
     def get_load_groups(self) -> list[str]:
         return []
 

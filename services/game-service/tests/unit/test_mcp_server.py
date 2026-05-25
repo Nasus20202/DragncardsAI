@@ -68,6 +68,7 @@ def _make_mcp(manager=None):
 EXPECTED_TOOL_NAMES = {
     "list_actions",
     "list_card_providers",
+    "list_prebuilt_sets_marvel_champions",
     "create_game",
     "attach_game",
     "list_games",
@@ -161,6 +162,14 @@ async def test_snapshot_endpoints_not_exposed_as_tools():
     names = {t.name for t in tools}
     assert "export_game_state_snapshot" not in names
     assert "load_game_state_snapshot" not in names
+
+
+async def test_prebuilt_set_tools_are_exposed():
+    mcp = _make_mcp()
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    names = {t.name for t in tools}
+    assert "list_prebuilt_sets_marvel_champions" in names
 
 
 # ---------------------------------------------------------------------------

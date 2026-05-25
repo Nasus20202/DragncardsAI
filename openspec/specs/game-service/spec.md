@@ -98,6 +98,34 @@ The Game Service SHALL expose card search responses that include the relevant ga
 - **WHEN** a new plugin provider is registered with its own card metadata mapping
 - **THEN** the Game Service SHALL expose that provider's normalized card metadata through the same card search contract without requiring router-specific behavior
 
+### Requirement: Prebuilt set catalog discovery
+The Game Service SHALL expose a read-only prebuilt set catalog for the Marvel Champions plugin through HTTP and MCP.
+
+#### Scenario: List all prebuilt sets via HTTP
+- **WHEN** a client sends `GET /prebuilt-sets/marvel-champions` without filters
+- **THEN** the Game Service SHALL return all available prebuilt sets sourced from the plugin's `sets.json`
+- **AND** each returned set SHALL include at least its `id`, `name`, and `type`
+
+#### Scenario: Filter prebuilt sets by name or type
+- **WHEN** a client sends `GET /prebuilt-sets/marvel-champions` with a name or type filter
+- **THEN** the Game Service SHALL return only sets matching the requested filter values
+
+#### Scenario: MCP exposes the Marvel Champions set catalog tool
+- **WHEN** an MCP client requests the list of available tools
+- **THEN** the server SHALL expose `list_prebuilt_sets_marvel_champions` as a discovery tool for the Marvel Champions set catalog
+
+#### Scenario: Empty result set
+- **WHEN** no prebuilt sets match the requested filters
+- **THEN** the Game Service SHALL return an empty list instead of an error
+
+### Requirement: Prebuilt set catalog is read-only
+The Game Service SHALL treat the prebuilt set catalog as discovery data only and SHALL NOT mutate DragnCards state when serving it.
+
+#### Scenario: Catalog request does not change game state
+- **WHEN** a client requests the prebuilt set catalog for any plugin
+- **THEN** the Game Service SHALL not create, modify, or destroy any game session
+- **AND** SHALL not send any DragnCards room events
+
 ### Requirement: Global action catalog exposes generic DragnCards actions
 The Game Service SHALL make `GET /actions` return only the generic action surface supported by the game-service and `@external/dragncards/`, independent of any specific plugin session.
 
@@ -160,7 +188,7 @@ The Game Service SHALL implement the Model Context Protocol, exposing game capab
 
 #### Scenario: Tool discovery
 - **WHEN** an MCP client requests the list of available tools
-- **THEN** the server SHALL return tool definitions for game session management (`create_game`, `list_games`, `delete_game`), state observation (`get_game_state`), and action execution (`execute_action`), each with proper JSON Schema parameter descriptions
+- **THEN** the server SHALL return tool definitions for game session management (`create_game`, `list_games`, `delete_game`), state observation (`get_game_state`), action execution (`execute_action`), card catalog discovery (`list_card_providers`, `search_cards_<provider>`), and prebuilt set catalog discovery (`list_prebuilt_sets_marvel_champions`), each with proper JSON Schema parameter descriptions
 
 #### Scenario: Tool discovery excludes room-control operations
 - **WHEN** an MCP client requests the list of available tools
@@ -362,5 +390,4 @@ The Game Service SHALL capture `gui_update` events from the DragnCards room chan
 #### Scenario: Retrieve GUI update via HTTP
 - **WHEN** a client sends `GET /games/{id}/gui-update`
 - **THEN** the Game Service SHALL return a JSON object keyed by `player_n` with the latest GUI hint payload for each player
-
 

@@ -347,6 +347,17 @@ class ListCardProvidersResponse(BaseModel):
     providers: list[CardProviderMetadataResponse]
 
 
+class PrebuiltSetSummary(BaseModel):
+    id: str = Field(description="Stable identifier for the prebuilt set")
+    name: str = Field(description="Human-readable set name")
+    type: str = Field(description="Set type, such as hero set or modular set")
+
+
+class ListPrebuiltSetsResponse(BaseModel):
+    total: int = Field(description="Number of matching prebuilt sets")
+    sets: list[PrebuiltSetSummary]
+
+
 # ---------------------------------------------------------------------------
 # Per-session actions model
 # ---------------------------------------------------------------------------

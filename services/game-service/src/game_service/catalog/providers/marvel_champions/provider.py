@@ -13,6 +13,7 @@ from game_service.catalog.providers.base import (
 
 from .cards import FILTERS, load_card_db, search_cards
 from .plugin_metadata import build_action_catalog, load_groups
+from .sets import load_sets, search_sets
 
 
 class MarvelChampionsProvider(CatalogProvider):
@@ -39,3 +40,9 @@ class MarvelChampionsProvider(CatalogProvider):
 
     def get_action_catalog(self) -> PluginActionCatalog:
         return build_action_catalog()
+
+    def load_sets(self):
+        return load_sets()
+
+    def search_sets(self, name: str | None = None, type: str | None = None):
+        return search_sets(name=name, type=type)

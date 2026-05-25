@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from game_service.api.exception_handlers import register_exception_handlers
 from game_service.api.routers import cards as cards_router
+from game_service.api.routers import prebuilt_sets as prebuilt_sets_router
 from game_service.api.routers import (
     game_actions,
     game_lifecycle,
@@ -61,5 +62,6 @@ def create_app(session_manager: SessionManager | None = None) -> FastAPI:
     app.include_router(game_actions.router)
     app.include_router(game_room.router)
     app.include_router(cards_router.router)
+    app.include_router(prebuilt_sets_router.router)
 
     return app

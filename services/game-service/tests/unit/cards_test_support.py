@@ -14,6 +14,7 @@ from game_service.catalog.providers.base import (
     PluginActionCatalog,
     TouchBarAction,
 )
+from game_service.catalog.providers.marvel_champions.sets import clear_sets_cache
 from game_service.catalog.providers.registry import PROVIDERS
 from game_service.logic.session_manager import SessionNotFoundError
 
@@ -177,10 +178,20 @@ def stub_plugin_action_catalog() -> PluginActionCatalog:
     )
 
 
+def stub_set_records() -> list[dict[str, str]]:
+    return [
+        {"id": "set-001", "name": "Spider-Verse", "type": "Hero Set"},
+        {"id": "set-002", "name": "Sinister Syndicate", "type": "Modular Set"},
+        {"id": "set-003", "name": "Valkyrie Nemesis", "type": "Nemesis Set"},
+    ]
+
+
 def install_stub_marvel_provider(monkeypatch) -> None:
+    clear_sets_cache()
     records = stub_card_records()
     provider = PROVIDERS["marvel-champions"]
     action_catalog = stub_plugin_action_catalog()
+    set_records = stub_set_records()
 
     def fake_search_cards(filters):
         normalized_name = str(filters.get("name", "")).lower()
@@ -212,3 +223,18 @@ def install_stub_marvel_provider(monkeypatch) -> None:
         provider, "get_load_groups", lambda: list(action_catalog.load_groups)
     )
     monkeypatch.setattr(provider, "get_action_catalog", lambda: action_catalog)
+    monkeypatch.setattr(provider, "load_sets", lambda: list(set_records))
+
+    def fake_search_sets(name=None, type=None):
+        normalized_name = str(name or "").lower()
+        normalized_type = str(type or "").lower()
+        results = []
+        for record in set_records:
+            if normalized_name and normalized_name not in record["name"].lower():
+                continue
+            if normalized_type and record["type"].lower() != normalized_type:
+                continue
+            results.append(record)
+        return results
+
+    monkeypatch.setattr(provider, "search_sets", fake_search_sets)

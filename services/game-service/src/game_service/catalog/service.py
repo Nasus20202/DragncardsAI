@@ -88,6 +88,26 @@ def get_plugin_action_catalog(provider_name: str | None) -> PluginActionCatalog:
     return provider.get_action_catalog()
 
 
+def list_prebuilt_sets(provider_name: str | None = None) -> list[ProviderMetadata]:
+    resolved_name = provider_name or DEFAULT_PROVIDER_NAME
+    provider = PROVIDERS.get(resolved_name)
+    if provider is None:
+        return []
+    return provider.load_sets()
+
+
+def search_prebuilt_sets(
+    name: str | None = None,
+    type: str | None = None,
+    provider_name: str | None = None,
+) -> list[ProviderMetadata]:
+    resolved_name = provider_name or DEFAULT_PROVIDER_NAME
+    provider = PROVIDERS.get(resolved_name)
+    if provider is None:
+        return []
+    return provider.search_sets(name=name, type=type)
+
+
 def _coerce_boolean(name: str, value: Any) -> bool:
     if isinstance(value, bool):
         return value
