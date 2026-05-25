@@ -13,6 +13,7 @@ from game_service.catalog.providers.base import (
 
 from .cards import FILTERS, load_card_db, search_cards
 from .plugin_metadata import build_action_catalog, load_groups
+from .prebuilt_decks import get_prebuilt_deck_by_id, load_prebuilt_decks
 from .sets import load_sets, search_sets
 
 
@@ -46,3 +47,9 @@ class MarvelChampionsProvider(CatalogProvider):
 
     def search_sets(self, name: str | None = None, type: str | None = None):
         return search_sets(name=name, type=type)
+
+    def load_prebuilt_deck(self, deck_id: str):
+        return get_prebuilt_deck_by_id(deck_id)
+
+    def load_prebuilt_decks(self):
+        return load_prebuilt_decks()

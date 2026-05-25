@@ -301,6 +301,56 @@ async def test_get_game_state(app, manager):
         await manager.delete_session(session.session_id)
 
 
+@pytest.mark.asyncio
+async def test_load_prebuilt_deck_loads_spider_man(app, manager):
+    """Loading the Spider-Man preset should put Spider-Man into session state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            load_resp = await client.post(
+                f"/games/{session.session_id}/load-prebuilt-deck",
+                params={"deck_id": "fe0f49aa-d3b4-4604-a43c-eaa18bbe1601"},
+            )
+            assert load_resp.status_code == 200
+
+            state_resp = await client.get(f"/games/{session.session_id}/state")
+            assert state_resp.status_code == 200
+            state = state_resp.json()["state"]
+            assert any(
+                entry.get("loadCode") == ["LOAD_CARDS", "Spider-Man (Hero)"]
+                for entry in state["game"]["loadCardsHistory"]
+            )
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_load_prebuilt_deck_rhino_requires_hero_first(app, manager):
+    """Loading Rhino before a hero deck should return the engine error."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            load_resp = await client.post(
+                f"/games/{session.session_id}/load-prebuilt-deck",
+                params={"deck_id": "ea7258fb-8521-4bb5-afda-cd207ed9782f"},
+            )
+            assert load_resp.status_code == 400
+            body = load_resp.json()
+            assert body["error"]["type"] == "session_error"
+            assert "Load all player decks before loading the scenario" in body["error"]["message"]
+
+            state_resp = await client.get(f"/games/{session.session_id}/state")
+            assert state_resp.status_code == 200
+            state = state_resp.json()["state"]
+            assert state["game"]["loadedCardIds"] == []
+    finally:
+        await manager.delete_session(session.session_id)
+
+
 def test_get_game_state_not_found(sync_client):
     """GET /games/{id}/state with unknown ID returns 404."""
     resp = sync_client.get("/games/00000000-0000-0000-0000-000000000000/state")

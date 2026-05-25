@@ -20,6 +20,8 @@ from typing import Any, Awaitable, Callable
 
 from game_service.logic.actions import (
     GameAction,
+    LoadCardsAction,
+    RawAction,
     SetPlayerCountAction,
     translate_action,
 )
@@ -196,6 +198,25 @@ class GameSession:
                 raise SessionError(
                     "Timed out waiting for state update after action"
                 ) from exc
+
+    async def load_prebuilt_deck(self, deck_id: str, timeout: float = 15.0) -> Any:
+        load_action = LoadCardsAction(cards=[], description=f"Loaded prebuilt deck {deck_id}")
+        payload = translate_action(
+            RawAction(
+                action_list=["LOAD_CARDS", deck_id],
+                description=load_action.description,
+                player_n="player1",
+            )
+        )
+        try:
+            await self.room.execute_game_action(payload, timeout=timeout)
+            await self.room.wait_for_state_change(timeout=timeout)
+            self._check_state_flags()
+            return await self._request_fresh_state(timeout=timeout)
+        except PhoenixChannelError as exc:
+            raise SessionError(f"load_prebuilt_deck rejected: {exc}") from exc
+        except asyncio.TimeoutError as exc:
+            raise SessionError("Timed out waiting for state after load_prebuilt_deck") from exc
 
     async def export_state(self) -> GameStateSnapshot:
         state = await self.get_state()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 
@@ -14,6 +14,8 @@ from game_service.catalog.providers.base import (
     PluginActionCatalog,
     TouchBarAction,
 )
+from game_service.catalog.providers.marvel_champions import prebuilt_decks as prebuilt_decks_module
+from game_service.catalog.providers.marvel_champions import sets as sets_module
 from game_service.catalog.providers.marvel_champions.sets import clear_sets_cache
 from game_service.catalog.providers.registry import PROVIDERS
 from game_service.logic.session_manager import SessionNotFoundError
@@ -40,6 +42,7 @@ def mock_manager(session=None) -> MagicMock:
 
     manager.get_session = get_session
     manager.list_sessions = MagicMock(return_value=[])
+    manager.load_prebuilt_deck = AsyncMock()
     return manager
 
 
@@ -186,12 +189,38 @@ def stub_set_records() -> list[dict[str, str]]:
     ]
 
 
+def stub_prebuilt_decks() -> dict[str, dict[str, object]]:
+    return {
+        "deck-001": {
+            "label": "Spider-Man Starter",
+            "cards": [
+                {
+                    "databaseId": "11111111-1111-1111-1111-111111111111",
+                    "loadGroupId": "playerNDeck",
+                    "quantity": 1,
+                }
+            ],
+            "postLoadActionList": None,
+        }
+    }
+
+
 def install_stub_marvel_provider(monkeypatch) -> None:
     clear_sets_cache()
+    prebuilt_decks_module.load_prebuilt_decks.cache_clear()
     records = stub_card_records()
     provider = PROVIDERS["marvel-champions"]
     action_catalog = stub_plugin_action_catalog()
     set_records = stub_set_records()
+    prebuilt_decks = {
+        record["id"]: {
+            "id": record["id"],
+            "deck_id": f'{record["name"]} ({record["type"].replace(" Set", "")})',
+            "label": record["name"],
+            "type": record["type"],
+        }
+        for record in set_records
+    }
 
     def fake_search_cards(filters):
         normalized_name = str(filters.get("name", "")).lower()
@@ -224,6 +253,20 @@ def install_stub_marvel_provider(monkeypatch) -> None:
     )
     monkeypatch.setattr(provider, "get_action_catalog", lambda: action_catalog)
     monkeypatch.setattr(provider, "load_sets", lambda: list(set_records))
+    monkeypatch.setattr(sets_module, "load_sets", lambda: list(set_records))
+    monkeypatch.setattr(
+        prebuilt_decks_module, "load_sets", lambda: list(set_records)
+    )
+    monkeypatch.setattr(
+        prebuilt_decks_module,
+        "load_prebuilt_decks",
+        lambda: dict(prebuilt_decks),
+    )
+    monkeypatch.setattr(
+        prebuilt_decks_module,
+        "get_prebuilt_deck_by_id",
+        lambda deck_id: prebuilt_decks.get(deck_id),
+    )
 
     def fake_search_sets(name=None, type=None):
         normalized_name = str(name or "").lower()

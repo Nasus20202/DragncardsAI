@@ -125,6 +125,9 @@ class CatalogProvider(ABC):
     ) -> list[dict[str, Any]]:
         return []
 
+    def load_prebuilt_deck(self, deck_id: str) -> dict[str, Any] | None:
+        return None
+
     def get_load_groups(self) -> list[str]:
         return []
 

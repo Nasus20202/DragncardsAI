@@ -83,6 +83,11 @@ class DeleteGameResponse(BaseModel):
     deleted: Literal[True] = True
 
 
+class LoadPrebuiltDeckResponse(BaseModel):
+    session_id: str
+    success: Literal[True] = True
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
 

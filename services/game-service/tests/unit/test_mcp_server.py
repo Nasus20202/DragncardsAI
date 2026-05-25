@@ -68,6 +68,7 @@ def _make_mcp(manager=None):
 EXPECTED_TOOL_NAMES = {
     "list_actions",
     "list_card_providers",
+    "load_prebuilt_deck",
     "list_prebuilt_sets_marvel_champions",
     "create_game",
     "attach_game",
@@ -170,6 +171,14 @@ async def test_prebuilt_set_tools_are_exposed():
         tools = await client.list_tools()
     names = {t.name for t in tools}
     assert "list_prebuilt_sets_marvel_champions" in names
+
+
+async def test_load_prebuilt_deck_tool_is_exposed():
+    mcp = _make_mcp()
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    names = {t.name for t in tools}
+    assert "load_prebuilt_deck" in names
 
 
 # ---------------------------------------------------------------------------

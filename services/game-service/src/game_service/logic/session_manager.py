@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from game_service.dragncards.http_client import create_room, get_auth_token, get_user_id
+from game_service.catalog.service import load_prebuilt_deck
 from game_service.logic.exceptions import (
     BadGameStateError,
     SessionError,
@@ -398,6 +399,35 @@ class SessionManager:
             logger.warning("Error disconnecting session %s: %s", session_id, exc)
         await self._session_store.delete_session(session_id)
         logger.info("Session %s deleted", session_id)
+
+    async def load_prebuilt_deck(self, session_id: str, deck_id: str) -> Any:
+        async with self.session_operation_lock(session_id):
+            session = await self.get_session(session_id)
+            deck = load_prebuilt_deck(deck_id, session.plugin_name)
+            if deck is None:
+                raise SessionError(
+                    f"Prebuilt deck {deck_id!r} not found for plugin {session.plugin_name!r}"
+                )
+            before_state = await session.get_state()
+            result = await session.load_prebuilt_deck(deck.get("deck_id", deck_id))
+
+            await asyncio.sleep(0.5)
+            for _ in range(10):
+                after_state = await session.get_state()
+                if isinstance(after_state, dict):
+                    game = after_state.get("game")
+                    if isinstance(game, dict) and isinstance(game.get("messages"), list):
+                        messages = game["messages"]
+                        for message in reversed(messages):
+                            if not isinstance(message, str):
+                                continue
+                            if "ABORT:" in message or "Error in Marvel Champions triggered" in message:
+                                raise SessionError(message)
+                        if game.get("loadedCardIds") or game.get("loadCardsHistory"):
+                            return result
+                await asyncio.sleep(0.2)
+
+            return result
 
     async def list_sessions(self) -> list[dict]:
         records = await self._session_store.list_sessions()

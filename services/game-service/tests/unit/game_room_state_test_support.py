@@ -16,6 +16,7 @@ UNKNOWN_ID = "00000000-0000-0000-0000-000000000000"
 def mock_session(**kwargs) -> MagicMock:
     session = MagicMock()
     session.session_id = SESSION_ID
+    session.plugin_name = "marvel-champions"
     session.reset_game = AsyncMock(return_value={"game": {"stepId": 0}})
     session.set_seat = AsyncMock()
     session.set_spectator = AsyncMock()
@@ -35,6 +36,7 @@ def mock_session(**kwargs) -> MagicMock:
         return_value={"player1": {"player_n": "player1", "prompt": "choose"}}
     )
     session.get_state = AsyncMock(return_value={"game": {"roundNumber": 1}})
+    session.load_prebuilt_deck = AsyncMock(return_value=None)
     for key, value in kwargs.items():
         setattr(session, key, value)
     return session
@@ -50,6 +52,7 @@ def mock_manager(session=None) -> MagicMock:
         raise SessionNotFoundError(f"Session {sid!r} not found")
 
     manager.get_session = get_session
+    manager.load_prebuilt_deck = AsyncMock(return_value=None)
     manager.delete_session = AsyncMock()
     manager.list_sessions = MagicMock(return_value=[])
 
