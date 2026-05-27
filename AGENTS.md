@@ -44,6 +44,7 @@ Service-specific AGENTS.md files override these instructions:
 ## Data Storage
 
 - Services must NOT store any state in memory.
+- Avoid in-memory caches for shared or ephemeral state (including provider model catalogs); use Valkey instead.
 - Use PostgreSQL for persistent data.
 - Use Valkey for ephemeral/stateful data that doesn't require persistence.
 

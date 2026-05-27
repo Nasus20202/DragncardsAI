@@ -36,6 +36,21 @@ The system SHALL allow each agent session to configure the model provider, model
 - **WHEN** a client configures a session with an unknown provider identifier
 - **THEN** the system SHALL reject the request with a validation error and SHALL NOT change the session model configuration
 
+### Requirement: Provider model catalog cache
+The agent-orchestrator SHALL cache provider model listings from Bifrost in Valkey so that repeated catalog reads do not rely on in-memory state and are shared across replicas.
+
+Cache entries SHALL expire after `provider_models_cache_ttl_seconds` and SHALL be refreshed from Bifrost on expiry or cache miss.
+
+#### Scenario: Serve provider model list from Valkey
+- **GIVEN** a provider model list is cached in Valkey and has not expired
+- **WHEN** a client requests the model catalog for that provider
+- **THEN** the agent-orchestrator SHALL return the cached listing without calling Bifrost
+
+#### Scenario: Refresh provider model list on cache miss or expiry
+- **GIVEN** no valid Valkey cache entry exists for the provider model list
+- **WHEN** a client requests the model catalog
+- **THEN** the agent-orchestrator SHALL fetch the list from Bifrost and write it back to Valkey with the configured TTL
+
 ### Requirement: Smoke-model provider configuration
 The agent-orchestrator SHALL support a local smoke-test model configuration that can target a repo-local `llama.cpp` server through the same session model configuration flow used for other providers.
 
