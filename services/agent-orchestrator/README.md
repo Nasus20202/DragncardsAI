@@ -111,13 +111,13 @@ This returns only enabled provider IDs, the model prefix used when routing throu
 
 Supported provider IDs include `nvidia`, `openrouter`, `mistral`, `claude`, `openai`, `lmstudio`, and `gemini`.
 
-To avoid hitting Bifrost on every provider-picker refresh, agent-orchestrator keeps an in-memory TTL cache for provider model lists. Configure it with:
+To avoid hitting Bifrost on every provider-picker refresh, agent-orchestrator keeps a Valkey-backed TTL cache for provider model lists. Configure it with:
 
 ```text
 PROVIDER_MODELS_CACHE_TTL_SECONDS=600
 ```
 
-Set it to `0` to disable caching.
+The cache is stored in Valkey configured via `VALKEY_URL`. Set it to `0` to disable caching.
 
 The exact response depends on `ENABLED_PROVIDER_IDS`.
 

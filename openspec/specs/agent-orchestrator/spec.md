@@ -37,7 +37,7 @@ The system SHALL allow each agent session to configure the model provider, model
 - **THEN** the system SHALL reject the request with a validation error and SHALL NOT change the session model configuration
 
 ### Requirement: Provider model catalog cache
-The agent-orchestrator SHALL cache provider model listings from Bifrost in Valkey so that repeated catalog reads do not rely on in-memory state and are shared across replicas.
+The agent-orchestrator SHALL cache provider model listings from Bifrost in Valkey so that repeated catalog reads are shared across replicas.
 
 Cache entries SHALL expire after `provider_models_cache_ttl_seconds` and SHALL be refreshed from Bifrost on expiry or cache miss.
 

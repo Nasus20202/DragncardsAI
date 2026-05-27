@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from time import monotonic
 
 import httpx
 import pytest
@@ -8,9 +9,33 @@ import pytest
 from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError
 
 
-async def _build_client(handler, *, api_key: str = "") -> BifrostClient:
+class FakeValkeyCache:
+    def __init__(self) -> None:
+        self._entries: dict[str, tuple[object, float | None]] = {}
+
+    async def get_json(self, key: str):
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        payload, expires_at = entry
+        if expires_at is not None and expires_at <= monotonic():
+            self._entries.pop(key, None)
+            return None
+        return payload
+
+    async def set_json(self, key: str, value: object, ttl_seconds: float):
+        expires_at = monotonic() + ttl_seconds if ttl_seconds > 0 else None
+        self._entries[key] = (value, expires_at)
+
+
+async def _build_client(
+    handler, *, api_key: str = "", model_cache=None
+) -> BifrostClient:
     client = BifrostClient(
-        "http://bifrost", api_key, {"openai": "openai", "openrouter": "openrouter"}
+        "http://bifrost",
+        api_key,
+        {"openai": "openai", "openrouter": "openrouter"},
+        model_cache=model_cache,
     )
     await client._http_client.aclose()
     client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -333,7 +358,7 @@ async def test_chat_completion_parses_invalid_tool_call_arguments_as_raw_string(
 
 
 @pytest.mark.asyncio
-async def test_list_models_uses_in_memory_cache_within_ttl():
+async def test_list_models_uses_valkey_cache_within_ttl():
     call_count = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -349,7 +374,8 @@ async def test_list_models_uses_in_memory_cache_within_ttl():
             request=request,
         )
 
-    client = await _build_client(handler)
+    cache = FakeValkeyCache()
+    client = await _build_client(handler, model_cache=cache)
     client._models_cache_ttl_seconds = 60.0
     try:
         first = await client.list_models("openrouter")
@@ -379,7 +405,8 @@ async def test_list_models_refreshes_cache_after_ttl_expiry():
             request=request,
         )
 
-    client = await _build_client(handler)
+    cache = FakeValkeyCache()
+    client = await _build_client(handler, model_cache=cache)
     client._models_cache_ttl_seconds = 0.01
     try:
         first = await client.list_models("openrouter")

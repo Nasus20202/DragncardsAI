@@ -99,6 +99,7 @@ def create_app(
                 settings.bifrost_api_key,
                 settings.provider_prefixes,
                 models_cache_ttl_seconds=settings.provider_models_cache_ttl_seconds,
+                valkey_url=settings.valkey_url,
             )
             app.state.bifrost_client = created_bifrost
         else:
