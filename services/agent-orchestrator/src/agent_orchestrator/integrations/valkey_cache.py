@@ -125,7 +125,9 @@ class _RespConnection:
 
 
 class ValkeyJsonCache:
-    def __init__(self, url: str, *, key_prefix: str = "agent-orchestrator:model-cache:"):
+    def __init__(
+        self, url: str, *, key_prefix: str = "agent-orchestrator:model-cache:"
+    ):
         parsed = urlparse(url)
         if parsed.scheme not in {"redis", "valkey"}:
             raise ValueError(f"Unsupported Valkey URL scheme: {parsed.scheme!r}")

@@ -12,6 +12,7 @@ from agent_orchestrator.integrations.valkey_cache import ValkeyJsonCache
 
 logger = logging.getLogger(__name__)
 
+
 class BifrostError(RuntimeError):
     def __init__(self, code: str, message: str, *, retryable: bool = False):
         super().__init__(message)
