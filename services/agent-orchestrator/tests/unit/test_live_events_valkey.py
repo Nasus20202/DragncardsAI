@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_orchestrator.runtime.live_events import _RespConnection
+from agent_orchestrator.storage.valkey import RespConnection
 
 
 class _ExplodingReader:
@@ -38,11 +38,11 @@ async def test_resp_connection_skips_wait_closed_during_generator_exit(monkeypat
         return _ExplodingReader(), writer
 
     monkeypatch.setattr(
-        "agent_orchestrator.runtime.live_events.asyncio.open_connection",
+        "agent_orchestrator.storage.valkey.asyncio.open_connection",
         fake_open_connection,
     )
 
-    conn = _RespConnection("localhost", 6379)
+    conn = RespConnection("localhost", 6379)
 
     with pytest.raises(GeneratorExit):
         await conn.execute("PING")
