@@ -55,6 +55,7 @@ Jobs are prompt executions:
 - Use Pydantic models for request/response validation
 - Keep job event streaming consistent across replicas
 - Cache provider models to reduce Bifrost load
+- **Never store state in instance variables.** Use PostgreSQL for persistent data and Valkey for ephemeral shared state. Example: `BifrostClient` model-listing cache lives in Valkey under `agent-orchestrator:model-cache:*`, not in `self._models_cache`.
 
 ## Provider Configuration
 

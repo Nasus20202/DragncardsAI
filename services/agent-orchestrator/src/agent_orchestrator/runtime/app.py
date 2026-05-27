@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +25,7 @@ from agent_orchestrator.runtime.worker import WorkerService
 from agent_orchestrator.storage.db import create_engine, create_session_factory
 from agent_orchestrator.storage.migrations import ensure_schema
 from agent_orchestrator.storage.repository import Repository
+from agent_orchestrator.storage.valkey import RespConnection
 from agent_orchestrator.telemetry import instrument_fastapi_app, shutdown_telemetry
 
 logger = logging.getLogger(__name__)
@@ -78,6 +80,7 @@ def create_app(
         created_engine = None
         created_bifrost = None
         created_live_event_bus = None
+        created_valkey_conn = None
         worker_task = None
 
         if repository is None:
@@ -94,11 +97,20 @@ def create_app(
 
         if bifrost_client is None:
             logger.info("Initializing Bifrost client for %s", settings.bifrost_url)
+            parsed = urlparse(settings.valkey_url)
+            # A dedicated RespConnection is created for BifrostClient's model cache.
+            # ValkeyLiveEventBus manages its own internal connection.  Both point at
+            # the same Valkey server; they are kept separate because the two subsystems
+            # have independent lifecycles and RespConnection is stateless (per-command TCP).
+            created_valkey_conn = RespConnection(
+                parsed.hostname or "localhost", parsed.port or 6379
+            )
             created_bifrost = BifrostClient(
                 settings.bifrost_url,
                 settings.bifrost_api_key,
                 settings.provider_prefixes,
                 models_cache_ttl_seconds=settings.provider_models_cache_ttl_seconds,
+                valkey=created_valkey_conn,
             )
             app.state.bifrost_client = created_bifrost
         else:
@@ -155,6 +167,8 @@ def create_app(
                     pass
             if created_bifrost is not None:
                 await created_bifrost.aclose()
+            if created_valkey_conn is not None:
+                await created_valkey_conn.aclose()
             if created_live_event_bus is not None:
                 await created_live_event_bus.aclose()
             if created_engine is not None:
