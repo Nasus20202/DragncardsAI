@@ -809,8 +809,7 @@ When listing models for a provider, the orchestrator SHALL filter the raw Bifros
 
 The filter rules SHALL be:
 - A model whose `id` starts with `<provider_prefix>/` is always accepted.
-- A model whose `id` contains `/` but does not start with `<provider_prefix>/` is accepted only if `provider_id` is `openrouter`, because OpenRouter legitimately resells models from other cloud providers (e.g. `openai/gpt-4o-mini`).
-- A model whose `id` contains no `/` is accepted for `openai` and `lmstudio` providers (which return unprefixed IDs), and for any provider whose `id` or prefix matches the model `id` prefix.
+- A model whose `id` does not start with `<provider_prefix>/` is excluded, even if the model ID is otherwise plausible for that provider.
 
 #### Scenario: Same-provider prefixed model accepted
 - **WHEN** Bifrost returns a model id starting with `<provider_prefix>/` for that provider
@@ -818,12 +817,16 @@ The filter rules SHALL be:
 
 #### Scenario: Cross-provider model accepted for openrouter
 - **WHEN** Bifrost returns a model id such as `openai/gpt-4o-mini` for the `openrouter` provider
-- **THEN** the orchestrator SHALL include it because OpenRouter legitimately resells cross-provider models
+- **THEN** the orchestrator SHALL exclude it because only `openrouter/...` IDs are surfaced in the provider catalog
 
 #### Scenario: Cross-provider model rejected for non-openrouter provider
 - **WHEN** Bifrost returns a model id containing `/` that does not start with the provider's own prefix, for a provider that is not `openrouter`
 - **THEN** the orchestrator SHALL exclude it from that provider's model list
 
+#### Scenario: Unprefixed model rejected
+- **WHEN** Bifrost returns a model id without `/`, such as `gpt-4o-mini` or `qwen3.5-0.8b`
+- **THEN** the orchestrator SHALL exclude it from the provider's model list because the catalog only surfaces prefixed model IDs
+
 #### Scenario: Bifrost fallback leaks lmstudio models into openrouter
 - **WHEN** `openrouter` has no API key configured and Bifrost falls back to returning lmstudio models
-- **THEN** those `lmstudio/...` models SHALL still appear under `openrouter` (accepted by the cross-provider rule) until a valid OpenRouter API key is configured — the correct fix is the environment, not the filter
+- **THEN** those `lmstudio/...` models SHALL be excluded from the `openrouter` provider catalog because they do not start with `openrouter/`

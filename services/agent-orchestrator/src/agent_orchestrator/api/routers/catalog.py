@@ -22,9 +22,7 @@ async def _build_provider_response(
     try:
         model_infos = await bifrost_client.list_models(provider_id)
         models = [
-            model.id
-            for model in model_infos
-            if _matches_provider_model(provider_id, model.id, model_prefix)
+            model.id for model in model_infos if model.id.startswith(f"{model_prefix}/")
         ]
         return ProviderResponse(
             provider_id=provider_id,
@@ -49,18 +47,6 @@ async def _build_provider_response(
             available=False,
             error="Failed to list models",
         )
-
-
-def _matches_provider_model(provider_id: str, model_id: str, model_prefix: str) -> bool:
-    if model_id.startswith(f"{model_prefix}/"):
-        return True
-    if "/" in model_id:
-        if provider_id == "openrouter":
-            return True
-        return False
-    if provider_id in {"openai", "lmstudio"}:
-        return True
-    return model_id.startswith(provider_id) or model_id.startswith(model_prefix)
 
 
 @router.get("/providers")
