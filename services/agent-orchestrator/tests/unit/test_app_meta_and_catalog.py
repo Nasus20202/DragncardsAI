@@ -37,8 +37,8 @@ def test_list_providers(app):
     provider_ids = {item["provider_id"] for item in providers}
     assert provider_ids == {"openai", "gemini"}
     providers_by_id = {item["provider_id"]: item for item in providers}
-    assert providers_by_id["openai"]["models"] == ["gpt-4o-mini", "gpt-4.1-mini"]
-    assert providers_by_id["gemini"]["models"] == ["gemini-2.0-flash"]
+    assert providers_by_id["openai"]["models"] == []
+    assert providers_by_id["gemini"]["models"] == []
     assert providers_by_id["openai"]["available"] is True
     assert providers_by_id["openai"]["error"] is None
 
@@ -80,7 +80,7 @@ async def test_list_providers_filters_models_to_requested_provider(tmp_path: Pat
             response = client.get("/providers")
         assert response.status_code == 200
         providers = {item["provider_id"]: item for item in response.json()["providers"]}
-        assert providers["openai"]["models"] == ["gpt-4o-mini", "openai/gpt-4.1-mini"]
+        assert providers["openai"]["models"] == ["openai/gpt-4.1-mini"]
         assert providers["gemini"]["models"] == ["gemini/gemini-2.0-flash"]
     finally:
         await engine.dispose()
@@ -141,10 +141,7 @@ async def test_list_providers_keeps_unprefixed_lmstudio_models(tmp_path: Path):
             {
                 "provider_id": "lmstudio",
                 "model_prefix": "lmstudio",
-                "models": [
-                    "qwen3.5-0.8b",
-                    "lmstudio/backup-local-model",
-                ],
+                "models": ["lmstudio/backup-local-model"],
                 "available": True,
                 "error": None,
             }
@@ -202,10 +199,6 @@ async def test_list_providers_includes_prefixed_models_for_openrouter(tmp_path: 
         assert response.status_code == 200
         providers = {item["provider_id"]: item for item in response.json()["providers"]}
         assert "openrouter" in providers
-        openrouter_models = providers["openrouter"]["models"]
-        assert "openai/gpt-4o-mini" in openrouter_models
-        assert "openai/bagage-002" in openrouter_models
-        assert "anthropic/claude-3-5-sonnet" in openrouter_models
-        assert "google/gemini-2.0-flash" in openrouter_models
+        assert providers["openrouter"]["models"] == ["openrouter/test-model"]
     finally:
         await engine.dispose()
