@@ -1,5 +1,5 @@
 # Stage 1: Build the MC plugin (Rust CLI that generates TSV + JSON)
-FROM rust:1.95-alpine AS builder
+FROM rust:1.96-alpine AS builder
 
 RUN apk add --no-cache pkgconf openssl-dev openssl-libs-static musl-dev
 
