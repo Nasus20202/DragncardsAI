@@ -132,7 +132,8 @@ async def save_replay(
     "/games/{session_id}/player-count",
     response_model=SetPlayerCountResponse,
     summary="Set the number of players",
-    operation_id="set_player_count",
+    # Use a distinct operation_id to avoid colliding with the per-action helper
+    operation_id="set_player_count_room",
 )
 async def set_player_count(
     session_id: str,

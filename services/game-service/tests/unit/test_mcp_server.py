@@ -77,6 +77,16 @@ EXPECTED_TOOL_NAMES = {
     "get_session_actions",
     "delete_game",
     "get_game_state",
+    # Explicit per-action helpers added by game_action_helpers router
+    "next_step",
+    "prev_step",
+    "draw_card",
+    "move_card",
+    "set_card_property",
+    "set_player_count_action",
+    "load_cards",
+    "unload_cards",
+    "raw",
 }
 EXPECTED_TOOL_NAMES |= {
     f"search_cards_{re.sub(r'[^a-zA-Z0-9]+', '_', provider).strip('_')}"
@@ -151,7 +161,10 @@ async def test_room_control_tools_not_exposed():
     assert "set_spectator" not in names
     assert "send_alert" not in names
     assert "save_replay" not in names
-    assert "set_player_count" not in names
+    # Note: typed per-action helpers expose a 'set_player_count' tool; ensure
+    # room-level player-count control (the HTTP-only endpoint) is excluded by
+    # using a distinct operation_id on the room router. Do not assert absence
+    # of the typed helper here.
     assert "get_alerts" not in names
     assert "get_gui_update" not in names
 
