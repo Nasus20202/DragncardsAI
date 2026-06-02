@@ -159,8 +159,8 @@ def test_move_card_action_list_basic():
         "player1Hand",
         -1,
     ]
-    # No player_n set → no player_ui
-    assert "player_ui" not in payload["options"]
+    # Destination is a player-scoped group so we infer player_n and include player_ui
+    assert payload["options"]["player_ui"] == {"playerN": "player1"}
 
 
 def test_move_card_with_player_n_sets_player_ui():
@@ -174,7 +174,8 @@ def test_move_card_with_player_n_sets_player_ui():
 
 def test_move_card_no_extra_index_when_dest_card_index_is_zero():
     action = MoveCardAction(
-        card_id="c1", dest_group_id="g1", dest_stack_index=2, dest_card_index=0
+        # use a concrete GroupId from the plugin metadata
+        card_id="c1", dest_group_id="player1Play1", dest_stack_index=2, dest_card_index=0
     )
     payload = translate_action(action)
     assert len(payload["options"]["action_list"]) == 4
@@ -182,18 +183,20 @@ def test_move_card_no_extra_index_when_dest_card_index_is_zero():
 
 def test_move_card_appends_dest_card_index_when_nonzero():
     action = MoveCardAction(
-        card_id="c1", dest_group_id="g1", dest_stack_index=0, dest_card_index=3
+        # use a concrete GroupId from the plugin metadata
+        card_id="c1", dest_group_id="player1Play1", dest_stack_index=0, dest_card_index=3
     )
     payload = translate_action(action)
-    assert payload["options"]["action_list"] == ["MOVE_CARD", "c1", "g1", 0, 3]
+    assert payload["options"]["action_list"] == ["MOVE_CARD", "c1", "player1Play1", 0, 3]
 
 
 def test_move_card_description_mentions_card_and_group():
-    action = MoveCardAction(card_id="card-abc", dest_group_id="sharedDiscard")
+    action = MoveCardAction(card_id="card-abc", dest_group_id="sharedEncounterDiscard")
     payload = translate_action(action)
     desc = payload["options"]["description"]
     assert "card-abc" in desc
-    assert "sharedDiscard" in desc
+    # Expect the exact group id from plugin metadata to appear in the description
+    assert "sharedEncounterDiscard" in desc
 
 
 # ---------------------------------------------------------------------------

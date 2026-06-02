@@ -14,7 +14,9 @@ from game_service.catalog.providers.base import (
     PluginActionCatalog,
     TouchBarAction,
 )
-from game_service.catalog.providers.marvel_champions import prebuilt_decks as prebuilt_decks_module
+from game_service.catalog.providers.marvel_champions import (
+    prebuilt_decks as prebuilt_decks_module,
+)
 from game_service.catalog.providers.marvel_champions import sets as sets_module
 from game_service.catalog.providers.marvel_champions.sets import clear_sets_cache
 from game_service.catalog.providers.registry import PROVIDERS
@@ -254,9 +256,7 @@ def install_stub_marvel_provider(monkeypatch) -> None:
     monkeypatch.setattr(provider, "get_action_catalog", lambda: action_catalog)
     monkeypatch.setattr(provider, "load_sets", lambda: list(set_records))
     monkeypatch.setattr(sets_module, "load_sets", lambda: list(set_records))
-    monkeypatch.setattr(
-        prebuilt_decks_module, "load_sets", lambda: list(set_records)
-    )
+    monkeypatch.setattr(prebuilt_decks_module, "load_sets", lambda: list(set_records))
     monkeypatch.setattr(
         prebuilt_decks_module,
         "load_prebuilt_decks",

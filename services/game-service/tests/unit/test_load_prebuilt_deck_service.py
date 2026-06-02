@@ -23,10 +23,13 @@ def _make_manager(session=None):
         dragncards_ws_url="ws://test/socket",
         email="dev@example.com",
         password="password",
-        plugin_registry={"marvel-champions": {"id": 1, "version": 1, "name": "Marvel Champions"}},
+        plugin_registry={
+            "marvel-champions": {"id": 1, "version": 1, "name": "Marvel Champions"}
+        },
     )
     current_session = session or mock_session()
     manager.get_session = AsyncMock(return_value=current_session)
+
     @asynccontextmanager
     async def session_operation_lock(session_id: str, **kwargs):
         del session_id, kwargs

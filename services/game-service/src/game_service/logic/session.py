@@ -200,7 +200,9 @@ class GameSession:
                 ) from exc
 
     async def load_prebuilt_deck(self, deck_id: str, timeout: float = 15.0) -> Any:
-        load_action = LoadCardsAction(cards=[], description=f"Loaded prebuilt deck {deck_id}")
+        load_action = LoadCardsAction(
+            cards=[], description=f"Loaded prebuilt deck {deck_id}"
+        )
         payload = translate_action(
             RawAction(
                 action_list=["LOAD_CARDS", deck_id],
@@ -216,7 +218,9 @@ class GameSession:
         except PhoenixChannelError as exc:
             raise SessionError(f"load_prebuilt_deck rejected: {exc}") from exc
         except asyncio.TimeoutError as exc:
-            raise SessionError("Timed out waiting for state after load_prebuilt_deck") from exc
+            raise SessionError(
+                "Timed out waiting for state after load_prebuilt_deck"
+            ) from exc
 
     async def export_state(self) -> GameStateSnapshot:
         state = await self.get_state()

@@ -23,6 +23,19 @@ import time
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from pydantic import field_validator
+import re
+
+from game_service.catalog.providers.marvel_champions import plugin_metadata
+from game_service.api.enums import GroupId
+
+# Import enum-like Literal types exposed at the API/schema layer so internal
+# action models validate common plugin-scoped fields (group IDs, player ids,
+# layout ids) while remaining tied to the same source of truth used for OpenAPI
+# schemas.
+# Keep internal action models permissive (string-typed). Schema-level enums are
+# exposed in game_service.api.* so OpenAPI/clients see allowed values without
+# coupling runtime models to plugin metadata.
 
 
 class MoveCardAction(BaseModel):
@@ -30,7 +43,7 @@ class MoveCardAction(BaseModel):
 
     type: Literal["move_card"] = "move_card"
     card_id: str = Field(..., description="ID of the card to move")
-    dest_group_id: str = Field(
+    dest_group_id: GroupId = Field(
         ..., description="ID of the destination group (e.g. 'player1Hand')"
     )
     dest_stack_index: int = Field(
@@ -51,7 +64,6 @@ class MoveCardAction(BaseModel):
         ),
     )
 
-
 class DrawCardAction(BaseModel):
     """Draw one or more cards from a player's deck to their hand."""
 
@@ -60,6 +72,15 @@ class DrawCardAction(BaseModel):
         default="player1",
         description="Player identifier (e.g. 'player1')",
     )
+
+    @field_validator("player_n")
+    @classmethod
+    def _validate_player_n(cls, v: str) -> str:
+        allowed = {"player1", "player2", "player3", "player4", "shared"}
+        if v not in allowed:
+            raise ValueError(f"Invalid player_n: {v}")
+        return v
+
     count: int = Field(default=1, ge=1, description="Number of cards to draw")
 
 
@@ -143,7 +164,7 @@ class LoadCardItem(BaseModel):
             "Use GET /cards to search for cards and retrieve their databaseId."
         ),
     )
-    load_group_id: str = Field(
+    load_group_id: GroupId = Field(
         ...,
         alias="loadGroupId",
         description=(
@@ -151,6 +172,7 @@ class LoadCardItem(BaseModel):
             "Use 'playerNDeck' for the active player's deck (N is substituted at runtime)."
         ),
     )
+
     quantity: int = Field(default=1, ge=1, description="Number of copies to load")
 
     model_config = {"populate_by_name": True}
@@ -186,6 +208,15 @@ class LoadCardsAction(BaseModel):
             "templates are substituted correctly (e.g. 'playerNDeck' → 'player1Deck')."
         ),
     )
+
+    @field_validator("player_n")
+    @classmethod
+    def _validate_player_n_loads(cls, v: str) -> str:
+        allowed = {"player1", "player2", "player3", "player4", "shared"}
+        if v not in allowed:
+            raise ValueError(f"Invalid player_n: {v}")
+        return v
+
     description: str = Field(
         default="Load cards",
         description="Human-readable description logged in the game history",
@@ -208,6 +239,17 @@ class UnloadCardsAction(BaseModel):
             "Whose cards to remove: 'player1', 'player2', 'player3', 'player4', or 'shared'."
         ),
     )
+
+    @field_validator("player_n")
+    @classmethod
+    def _validate_player_n_unload(cls, v: str) -> str:
+        allowed = {"player1", "player2", "player3", "player4", "shared"}
+        if v not in allowed:
+            raise ValueError(f"Invalid player_n: {v}")
+        return v
+
+    # Player identifier validation is intentionally permissive here; request
+    # level APIs may tighten allowed values via schema enums.
 
 
 GameAction = (
@@ -266,10 +308,20 @@ def _to_dragncards(action: GameAction) -> tuple[list, str, str | None]:
         ]
         if action.dest_card_index != 0:
             args.append(action.dest_card_index)
+        # If the action did not explicitly set player_n but the destination
+        # group is a player-scoped group (e.g. 'player1Play1'), infer and
+        # inject the player context so DragnCards automation rules that
+        # reference $PLAYER_N resolve correctly.
+        player_n = action.player_n
+        if player_n is None:
+            m = re.match(r"^(player[1-4])", str(action.dest_group_id))
+            if m:
+                player_n = m.group(1)
+
         return (
             args,
             f"Move card {action.card_id} to {action.dest_group_id}[{action.dest_stack_index}]",
-            action.player_n,
+            player_n,
         )
 
     if isinstance(action, DrawCardAction):

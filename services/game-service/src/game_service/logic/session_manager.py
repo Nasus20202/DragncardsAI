@@ -416,12 +416,17 @@ class SessionManager:
                 after_state = await session.get_state()
                 if isinstance(after_state, dict):
                     game = after_state.get("game")
-                    if isinstance(game, dict) and isinstance(game.get("messages"), list):
+                    if isinstance(game, dict) and isinstance(
+                        game.get("messages"), list
+                    ):
                         messages = game["messages"]
                         for message in reversed(messages):
                             if not isinstance(message, str):
                                 continue
-                            if "ABORT:" in message or "Error in Marvel Champions triggered" in message:
+                            if (
+                                "ABORT:" in message
+                                or "Error in Marvel Champions triggered" in message
+                            ):
                                 raise SessionError(message)
                         if game.get("loadedCardIds") or game.get("loadCardsHistory"):
                             return result

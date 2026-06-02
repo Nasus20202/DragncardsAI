@@ -25,7 +25,9 @@ _DEFAULT_SETS_JSON_PATH = os.path.join(
     "cerebro",
     "sets.json",
 )
-SETS_JSON_PATH = os.environ.get("DRAGNCARDS_MC_PLUGIN_SETS_JSON", _DEFAULT_SETS_JSON_PATH)
+SETS_JSON_PATH = os.environ.get(
+    "DRAGNCARDS_MC_PLUGIN_SETS_JSON", _DEFAULT_SETS_JSON_PATH
+)
 
 SetSummary = dict[str, str]
 

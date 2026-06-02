@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from game_service.api.enums import LayoutId, PlayerN
 
 from game_service.logic.actions import GameAction
 from game_service.logic.snapshots import GameStateSnapshot
@@ -210,7 +211,7 @@ class GuiUpdateResponse(BaseModel):
 
 class SetPlayerCountRequest(BaseModel):
     num_players: int = Field(..., ge=1, description="Number of players (1 or more)")
-    layout_id: str | None = Field(
+    layout_id: LayoutId | None = Field(
         default=None,
         description=(
             "Optional plugin-specific layout ID to apply alongside the player count change, "
@@ -313,7 +314,7 @@ class PluginDefaultAction(BaseModel):
 class PluginPlayerCountLayout(BaseModel):
     label: str = Field(description="Plugin label for the player-count option")
     num_players: int = Field(description="Number of active players")
-    layout_id: str | None = Field(
+    layout_id: LayoutId | None = Field(
         default=None, description="Plugin layout ID associated with the player count"
     )
 

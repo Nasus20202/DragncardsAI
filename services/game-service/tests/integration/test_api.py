@@ -165,7 +165,9 @@ async def test_create_game_auto_seats_user(app, manager):
         expected_user = await get_user_id(DRAGNCARDS_HTTP_URL, auth_token)
         assert any(
             info
-            and (info.get("id") == expected_user or info.get("user_id") == expected_user)
+            and (
+                info.get("id") == expected_user or info.get("user_id") == expected_user
+            )
             for info in player_info.values()
         )
     finally:
@@ -341,7 +343,10 @@ async def test_load_prebuilt_deck_rhino_requires_hero_first(app, manager):
             assert load_resp.status_code == 400
             body = load_resp.json()
             assert body["error"]["type"] == "session_error"
-            assert "Load all player decks before loading the scenario" in body["error"]["message"]
+            assert (
+                "Load all player decks before loading the scenario"
+                in body["error"]["message"]
+            )
 
             state_resp = await client.get(f"/games/{session.session_id}/state")
             assert state_resp.status_code == 200

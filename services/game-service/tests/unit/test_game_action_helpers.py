@@ -31,6 +31,7 @@ def _mock_session(before_state=None, after_state=None):
 
 def _mock_manager(session):
     manager = MagicMock()
+
     # session_operation_lock used as async context manager; provide a callable
     class Ctx:
         async def __aenter__(self):
@@ -48,18 +49,74 @@ def _mock_manager(session):
 @pytest.mark.parametrize(
     "helper, action_cls, before, after, expected_type",
     [
-        (helpers.next_step, NextStepAction, {"game": {"step": 1}}, {"game": {"step": 2}}, NextStepAction),
-        (helpers.prev_step, PrevStepAction, {"game": {"step": 2}}, {"game": {"step": 1}}, PrevStepAction),
-        (helpers.draw_card, DrawCardAction, {"game": {"hands": {"player1": []}}}, {"game": {"hands": {"player1": ["cardA"]}}}, DrawCardAction),
-        (helpers.move_card, MoveCardAction, {"game": {"zones": {"hand": ["c1"]}}}, {"game": {"zones": {"play": ["c1"]}}}, MoveCardAction),
-        (helpers.set_card_property, SetCardPropertyAction, {"game": {"cardById": {"c1": {"currentSide": "A"}}}}, {"game": {"cardById": {"c1": {"currentSide": "B"}}}}, SetCardPropertyAction),
-        (helpers.set_player_count, SetPlayerCountAction, {"game": {"numPlayers": 1}}, {"game": {"numPlayers": 2}}, SetPlayerCountAction),
-        (helpers.load_cards, LoadCardsAction, {"game": {"loadCardsHistory": []}}, {"game": {"loadCardsHistory": ["loaded"]}}, LoadCardsAction),
-        (helpers.unload_cards, UnloadCardsAction, {"game": {"player1": {"cards": ["c1"]}}}, {"game": {"player1": {"cards": []}}}, UnloadCardsAction),
-        (helpers.raw_action, RawAction, {"game": {"x": 0}}, {"game": {"x": 1}}, RawAction),
+        (
+            helpers.next_step,
+            NextStepAction,
+            {"game": {"step": 1}},
+            {"game": {"step": 2}},
+            NextStepAction,
+        ),
+        (
+            helpers.prev_step,
+            PrevStepAction,
+            {"game": {"step": 2}},
+            {"game": {"step": 1}},
+            PrevStepAction,
+        ),
+        (
+            helpers.draw_card,
+            DrawCardAction,
+            {"game": {"hands": {"player1": []}}},
+            {"game": {"hands": {"player1": ["cardA"]}}},
+            DrawCardAction,
+        ),
+        (
+            helpers.move_card,
+            MoveCardAction,
+            {"game": {"zones": {"hand": ["c1"]}}},
+            {"game": {"zones": {"play": ["c1"]}}},
+            MoveCardAction,
+        ),
+        (
+            helpers.set_card_property,
+            SetCardPropertyAction,
+            {"game": {"cardById": {"c1": {"currentSide": "A"}}}},
+            {"game": {"cardById": {"c1": {"currentSide": "B"}}}},
+            SetCardPropertyAction,
+        ),
+        (
+            helpers.set_player_count,
+            SetPlayerCountAction,
+            {"game": {"numPlayers": 1}},
+            {"game": {"numPlayers": 2}},
+            SetPlayerCountAction,
+        ),
+        (
+            helpers.load_cards,
+            LoadCardsAction,
+            {"game": {"loadCardsHistory": []}},
+            {"game": {"loadCardsHistory": ["loaded"]}},
+            LoadCardsAction,
+        ),
+        (
+            helpers.unload_cards,
+            UnloadCardsAction,
+            {"game": {"player1": {"cards": ["c1"]}}},
+            {"game": {"player1": {"cards": []}}},
+            UnloadCardsAction,
+        ),
+        (
+            helpers.raw_action,
+            RawAction,
+            {"game": {"x": 0}},
+            {"game": {"x": 1}},
+            RawAction,
+        ),
     ],
 )
-async def test_action_helpers_call_execute_and_change_state(helper, action_cls, before, after, expected_type):
+async def test_action_helpers_call_execute_and_change_state(
+    helper, action_cls, before, after, expected_type
+):
     session = _mock_session(before_state=before, after_state=after)
     manager = _mock_manager(session)
 
@@ -73,10 +130,14 @@ async def test_action_helpers_call_execute_and_change_state(helper, action_cls, 
         action = DrawCardAction()
         resp = await helper("sess-1", action, manager=manager)
     elif action_cls is MoveCardAction:
-        action = MoveCardAction(card_id="c1", dest_group_id="play")
+        # Use a concrete GroupId value from the Marvel Champions plugin
+        # (the test only cares that state changes; 'player1Play1' is a valid group)
+        action = MoveCardAction(card_id="c1", dest_group_id="player1Play1")
         resp = await helper("sess-1", action, manager=manager)
     elif action_cls is SetCardPropertyAction:
-        action = SetCardPropertyAction(card_id="c1", property_path="currentSide", value="B")
+        action = SetCardPropertyAction(
+            card_id="c1", property_path="currentSide", value="B"
+        )
         resp = await helper("sess-1", action, manager=manager)
     elif action_cls is SetPlayerCountAction:
         action = SetPlayerCountAction(num_players=2)

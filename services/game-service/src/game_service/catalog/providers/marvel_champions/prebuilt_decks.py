@@ -8,7 +8,6 @@ from typing import Any
 from .cards import load_card_db
 from .sets import load_sets
 
-
 _SET_TYPE_LABELS = {
     "Campaign Set": "Campaign",
     "Hero Set": "Hero",
@@ -27,7 +26,15 @@ def _deck_id_for_set(set_record: dict[str, Any]) -> str:
 
 def _load_group_for_card(card: Any) -> str:
     type_code = getattr(card, "type_code", None) or ""
-    rules = ((getattr(card, "attributes", None) or {}).get("rules") if isinstance(getattr(card, "attributes", None), dict) else None) or getattr(getattr(card, "attributes", None), "rules", None) or ""
+    rules = (
+        (
+            (getattr(card, "attributes", None) or {}).get("rules")
+            if isinstance(getattr(card, "attributes", None), dict)
+            else None
+        )
+        or getattr(getattr(card, "attributes", None), "rules", None)
+        or ""
+    )
     if type_code == "obligation":
         return "sharedEncounterDeck"
     if type_code in {"minion", "side_scheme", "treachery"}:

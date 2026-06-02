@@ -63,6 +63,7 @@ def create_app(session_manager: SessionManager | None = None) -> FastAPI:
     app.include_router(game_actions.router)
     # Explicit per-action helper endpoints (typed helpers)
     from game_service.api.routers import game_action_helpers
+
     app.include_router(game_action_helpers.router)
     app.include_router(game_room.router)
     app.include_router(cards_router.router)

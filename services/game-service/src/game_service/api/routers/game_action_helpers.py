@@ -56,7 +56,9 @@ async def prev_step(session_id: str, manager: SessionManager = Depends(get_manag
     operation_id="draw_card",
 )
 async def draw_card(
-    session_id: str, action: DrawCardAction, manager: SessionManager = Depends(get_manager)
+    session_id: str,
+    action: DrawCardAction,
+    manager: SessionManager = Depends(get_manager),
 ):
     async with manager.session_operation_lock(session_id):
         session = await manager.get_session(session_id)
@@ -70,7 +72,9 @@ async def draw_card(
     operation_id="move_card",
 )
 async def move_card(
-    session_id: str, action: MoveCardAction, manager: SessionManager = Depends(get_manager)
+    session_id: str,
+    action: MoveCardAction,
+    manager: SessionManager = Depends(get_manager),
 ):
     async with manager.session_operation_lock(session_id):
         session = await manager.get_session(session_id)
@@ -119,7 +123,9 @@ async def set_player_count(
     operation_id="load_cards",
 )
 async def load_cards(
-    session_id: str, action: LoadCardsAction, manager: SessionManager = Depends(get_manager)
+    session_id: str,
+    action: LoadCardsAction,
+    manager: SessionManager = Depends(get_manager),
 ):
     async with manager.session_operation_lock(session_id):
         session = await manager.get_session(session_id)
@@ -133,7 +139,9 @@ async def load_cards(
     operation_id="unload_cards",
 )
 async def unload_cards(
-    session_id: str, action: UnloadCardsAction, manager: SessionManager = Depends(get_manager)
+    session_id: str,
+    action: UnloadCardsAction,
+    manager: SessionManager = Depends(get_manager),
 ):
     async with manager.session_operation_lock(session_id):
         session = await manager.get_session(session_id)
