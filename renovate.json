@@ -3,12 +3,11 @@
   "extends": ["config:recommended"],
   "packageRules": [
     {
-      "description": "Update llama.cpp smoke image weekly",
+      "description": "Update llama.cpp server image",
       "matchDatasources": ["docker"],
       "matchPackageNames": ["ghcr.io/ggml-org/llama.cpp"],
       "matchCurrentValue": "/^server-b\\d+$/",
       "versioning": "regex:^server-b(?<major>\\d+)$",
-      "schedule": ["* 0-3 * * 1"],
       "automerge": true
     },
     {
@@ -21,6 +20,7 @@
     "automerge": true
   },
   "git-submodules": {
-    "enabled": true
+    "enabled": true,
+    "automerge": true
   }
 }

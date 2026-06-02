@@ -22,7 +22,7 @@ services:
 
   llama-cpp-smoke:
     profiles: ["smoke"]
-    image: ghcr.io/ggml-org/llama.cpp:server-b9246
+    image: ghcr.io/ggml-org/llama.cpp:server-b9468
     restart: unless-stopped
     depends_on:
       llama-cpp-smoke-model-cache:
@@ -140,7 +140,7 @@ services:
       - dragncards-shared
 
   bifrost:
-    image: maximhq/bifrost:v1.5.4
+    image: maximhq/bifrost:v1.5.7
     restart: unless-stopped
     depends_on:
       lmstudio-proxy:

@@ -2,7 +2,7 @@
   "name": "dashboard",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@11.2.2",
+  "packageManager": "pnpm@11.5.1",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -20,8 +20,8 @@
     "@opentelemetry/instrumentation": "^0.218.0",
     "@opentelemetry/sdk-logs": "^0.218.0",
     "@vercel/otel": "^2.0.0",
-    "@heroui/react": "3.0.5",
-    "@heroui/styles": "3.0.5",
+    "@heroui/react": "3.1.0",
+    "@heroui/styles": "3.1.0",
     "next": "16.2.6",
     "next-themes": "0.4.6",
     "react": "19.2.6",
@@ -46,6 +46,6 @@
     "prettier": "3.8.3",
     "tailwindcss": "4.3.0",
     "typescript": "6.0.3",
-    "vitest": "4.1.7"
+    "vitest": "4.1.8"
   }
 }

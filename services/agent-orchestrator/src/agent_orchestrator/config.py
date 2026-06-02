@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     http_host: str = "0.0.0.0"
     http_port: int = 4002
     skill_roots_raw: str = Field(
-        default="../../skills,../../.opencode/skills",
+        default="../../skills",
         validation_alias=AliasChoices("skill_roots_raw", "SKILL_ROOTS"),
     )
     worker_poll_interval_seconds: float = 0.2

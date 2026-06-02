@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
-from time import monotonic
 from inspect import isawaitable
 from typing import Any, Awaitable, Callable
 
 import httpx
+
+from agent_orchestrator.storage.valkey import RespConnection
+
+logger = logging.getLogger(__name__)
 
 
 class BifrostError(RuntimeError):
@@ -55,13 +59,9 @@ class ModelInfo:
     context_length: int | None = None
 
 
-@dataclass(frozen=True)
-class CachedModelListing:
-    expires_at: float
-    models: list[ModelInfo]
-
-
 class BifrostClient:
+    _CACHE_KEY_PREFIX = "agent-orchestrator:model-cache:"
+
     def __init__(
         self,
         base_url: str,
@@ -69,13 +69,14 @@ class BifrostClient:
         provider_prefixes: dict[str, str],
         *,
         models_cache_ttl_seconds: float = 60.0,
+        valkey: RespConnection | None = None,
     ):
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._provider_prefixes = provider_prefixes
         self._models_cache_ttl_seconds = models_cache_ttl_seconds
-        self._models_cache: dict[str, CachedModelListing] = {}
-        self._all_models_cache: CachedModelListing | None = None
+        self._models_cache_ttl_int: int = round(models_cache_ttl_seconds)
+        self._valkey = valkey
         self._http_client = httpx.AsyncClient(timeout=60.0)
 
     async def aclose(self) -> None:
@@ -88,10 +89,42 @@ class BifrostClient:
             return False
         return response.status_code == 200
 
+    async def _cache_get(self, key: str) -> list[Any] | None:
+        if self._valkey is None:
+            return None
+        try:
+            raw = await self._valkey.execute("GET", key)
+            if raw is None:
+                return None
+            return json.loads(raw)
+        except Exception:
+            logger.warning("Valkey cache GET failed for key %r", key, exc_info=True)
+            return None
+
+    async def _cache_set(self, key: str, data: list[Any], ttl: int) -> None:
+        if self._valkey is None:
+            return
+        try:
+            await self._valkey.execute("SETEX", key, str(ttl), json.dumps(data))
+        except Exception:
+            logger.warning("Valkey cache SETEX failed for key %r", key, exc_info=True)
+
+    @staticmethod
+    def _model_info_from_dict(item: dict) -> ModelInfo:
+        return ModelInfo(
+            id=item["id"],
+            name=item.get("name"),
+            supported_methods=item.get("supported_methods") or [],
+            context_length=item.get("context_length"),
+        )
+
     async def list_models(self, provider_id: str) -> list[ModelInfo]:
-        cached = self._models_cache.get(provider_id)
-        if cached is not None and cached.expires_at > monotonic():
-            return cached.models
+        ttl = self._models_cache_ttl_int
+        if ttl > 0:
+            cache_key = f"{self._CACHE_KEY_PREFIX}provider:{provider_id}"
+            cached = await self._cache_get(cache_key)
+            if cached is not None:
+                return [self._model_info_from_dict(item) for item in cached]
 
         headers = {"x-bf-list-models-provider": self._provider_prefixes[provider_id]}
         if self._api_key:
@@ -133,18 +166,29 @@ class BifrostClient:
                     supported_methods=list(item.get("supported_methods") or []),
                 )
             )
-        if self._models_cache_ttl_seconds > 0:
-            self._models_cache[provider_id] = CachedModelListing(
-                expires_at=monotonic() + self._models_cache_ttl_seconds,
-                models=result,
+        if ttl > 0:
+            await self._cache_set(
+                f"{self._CACHE_KEY_PREFIX}provider:{provider_id}",
+                [
+                    {
+                        "id": m.id,
+                        "name": m.name,
+                        "supported_methods": m.supported_methods,
+                    }
+                    for m in result
+                ],
+                ttl,
             )
         return result
 
     async def _fetch_all_models(self) -> list[ModelInfo]:
         """Fetch the rich /v1/models listing (includes context_length per model)."""
-        cached = self._all_models_cache
-        if cached is not None and cached.expires_at > monotonic():
-            return cached.models
+        ttl = self._models_cache_ttl_int
+        cache_key = f"{self._CACHE_KEY_PREFIX}all"
+        if ttl > 0:
+            cached = await self._cache_get(cache_key)
+            if cached is not None:
+                return [self._model_info_from_dict(item) for item in cached]
 
         headers = {}
         if self._api_key:
@@ -187,10 +231,19 @@ class BifrostClient:
                     context_length=item.get("context_length"),
                 )
             )
-        if self._models_cache_ttl_seconds > 0:
-            self._all_models_cache = CachedModelListing(
-                expires_at=monotonic() + self._models_cache_ttl_seconds,
-                models=result,
+        if ttl > 0:
+            await self._cache_set(
+                cache_key,
+                [
+                    {
+                        "id": m.id,
+                        "name": m.name,
+                        "supported_methods": m.supported_methods,
+                        "context_length": m.context_length,
+                    }
+                    for m in result
+                ],
+                ttl,
             )
         return result
 
