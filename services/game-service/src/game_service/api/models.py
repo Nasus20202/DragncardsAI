@@ -4,7 +4,7 @@ Pydantic request/response models for the Game Service HTTP API.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 from game_service.api.enums import LayoutId, PlayerN
@@ -69,9 +69,38 @@ class ListGamesResponse(BaseModel):
     sessions: list[SessionMetadata]
 
 
+class SimplifiedCard(BaseModel):
+    """A simplified card representation for LLM consumption."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str = "Unknown"
+    instanceId: str = "Unknown"
+    name: str = "Unknown"
+    currentSide: str = "A"
+    exhausted: bool = False
+    tokens: dict = Field(default_factory=dict)
+    stackSize: int = 1
+
+
+class SimplifiedGameState(BaseModel):
+    """Simplified Marvel Champions game state for LLM consumption."""
+
+    model_config = ConfigDict(extra="allow")
+
+    roundNumber: int = 0
+    mode: str = "unknown"
+    villainHitPoints: int = 0
+    stepId: str | int | None = None
+    players: dict[str, dict[str, int]] = Field(default_factory=dict)
+    zones: dict[str, list[SimplifiedCard]] = Field(default_factory=dict)
+
+
 class GameStateResponse(BaseModel):
     session_id: str
-    state: Any = Field(description="Current DragnCards game state object")
+    state: Union[SimplifiedGameState, dict[str, Any]] = Field(
+        description="Current DragnCards game state object. Simplified format for Marvel Champions (flat keys), raw format for other plugins."
+    )
 
 
 class ExecuteActionResponse(BaseModel):
@@ -192,7 +221,9 @@ class SendAlertRequest(BaseModel):
 
 class ResetGameResponse(BaseModel):
     session_id: str
-    state: Any = Field(description="Game state after the reset")
+    state: Union[SimplifiedGameState, dict[str, Any]] = Field(
+        description="Game state after the reset"
+    )
 
 
 class AlertsResponse(BaseModel):
@@ -222,7 +253,9 @@ class SetPlayerCountRequest(BaseModel):
 
 class SetPlayerCountResponse(BaseModel):
     session_id: str
-    state: Any = Field(description="Game state after the player count was changed")
+    state: Union[SimplifiedGameState, dict[str, Any]] = Field(
+        description="Game state after the player count was changed"
+    )
 
 
 # ---------------------------------------------------------------------------

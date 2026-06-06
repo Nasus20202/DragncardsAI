@@ -64,6 +64,7 @@ class MoveCardAction(BaseModel):
         ),
     )
 
+
 class DrawCardAction(BaseModel):
     """Draw one or more cards from a player's deck to their hand."""
 

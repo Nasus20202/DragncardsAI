@@ -47,6 +47,13 @@ async def reset_game(
         new_state = await session.reset_game(
             save=body.save, reload_plugin=body.reload_plugin
         )
+
+    # Apply simplified state for Marvel Champions
+    if session.plugin_name == "marvel-champions":
+        from game_service.api.routers.game_state import _simplify_marvel_state
+
+        new_state = _simplify_marvel_state(new_state)
+
     logger.info("reset_game: session_id=%s -> success", session_id)
     return ResetGameResponse(session_id=session_id, state=new_state)
 
@@ -151,6 +158,13 @@ async def set_player_count(
         new_state = await session.set_player_count(
             num_players=body.num_players, layout_id=body.layout_id
         )
+
+    # Apply simplified state for Marvel Champions
+    if session.plugin_name == "marvel-champions":
+        from game_service.api.routers.game_state import _simplify_marvel_state
+
+        new_state = _simplify_marvel_state(new_state)
+
     logger.info("set_player_count: session_id=%s -> success", session_id)
     return SetPlayerCountResponse(session_id=session_id, state=new_state)
 

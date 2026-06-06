@@ -46,7 +46,7 @@ The Game Service SHALL provide HTTP endpoints and MCP tools to create, query, an
 - **THEN** the Game Service SHALL reject the request with a descriptive client error and SHALL NOT mutate the session
 
 ### Requirement: Game state observation
-The Game Service SHALL provide endpoints and MCP tools to query the current game state for a given session.
+The Game Service SHALL provide endpoints and MCP tools to query the current game state for a given session, returning a simplified representation for Marvel Champions sessions.
 
 #### Scenario: Get current game state via HTTP
 - **WHEN** a client sends `GET /games/{id}/state`
@@ -63,6 +63,14 @@ The Game Service SHALL provide endpoints and MCP tools to query the current game
 #### Scenario: State reflects latest game changes
 - **WHEN** an action is executed on a session and then the state is queried
 - **THEN** the returned state SHALL reflect the result of the most recent action, including any automated effects triggered by the DragnCards engine
+
+#### Scenario: Get simplified state for Marvel Champions via HTTP
+- **WHEN** a client sends `GET /games/{id}/state` for a Marvel Champions session
+- **THEN** the Game Service SHALL return a flattened representation containing only `roundNumber`, `mode`, `villainHitPoints`, `players` (hitPoints/handSize), and `zones` with visible cards (id, instanceId, name, currentSide, exhausted, tokens)
+
+#### Scenario: Simplified state omits attachment hierarchy
+- **WHEN** a client requests state for a Marvel Champions session
+- **THEN** the Game Service SHALL exclude cards that are attachments tucked under other cards from zone listings
 
 ### Requirement: Game action execution
 The Game Service SHALL provide endpoints and MCP tools to execute game actions within a session.

@@ -12,7 +12,7 @@ This makes it hard to efficiently prompt LLMs without excessive token usage or c
 **Goals:**
 - Provide a simplified, flat representation of Marvel Champions game state
 - Include only information relevant for LLM decision-making (players, zones with visible cards, round/mode, key counters)
-- Maintain backward compatibility - existing `get_game_state` behavior unchanged
+- Always simplified for Marvel Champions (no opt-in needed)
 
 **Non-Goals:**
 - Do NOT modify the DragnCards backend or plugin
@@ -22,20 +22,20 @@ This makes it hard to efficiently prompt LLMs without excessive token usage or c
 ## Decisions
 
 ### D1: Add simplified state transformer function
-- **Choice**: Add `_simplify_marvel_state(raw_state: dict) -> dict` private utility function directly in `game_service/logic/game_state.py`
+- **Choice**: Add `_simplify_marvel_state(raw_state: dict) -> dict` private utility function directly in `game_service/api/routers/game_state.py`
 - **Rationale**: No new file needed; keeps transformation close to where state is consumed; straightforward for this small function
 - **Alternatives rejected**:
   - Dedicated module (`state_simplifier.py`) - unnecessary indirection for a single function
 
-### D2: Expose via query parameter on existing endpoint
-- **Choice**: Add `?format=simplified` parameter to `GET /games/{id}/state`
-- **Rationale**: No new endpoints; existing clients unaffected; clear opt-in
+### D2: Always simplified for Marvel Champions
+- **Choice**: Transform state automatically for Marvel Champions sessions (no query parameter needed)
+- **Rationale**: The simplified output is the desired behavior for LLM agents; no reason to expose raw nest structure
 - **Alternatives rejected**:
-  - New separate endpoint (`GET /games/{id}/state/simple`) - adds surface area
-  - Always simplified - would be breaking change for existing clients
+  - Query parameter `?format=simplified` - adds API surface for no benefit
+  - Raw state for everyone - defeats purpose of the simplification
 
 ### D3: Filter to visible top-level cards only
-- **Choice**: Only include cards whose `stackId` ends with their own `card_id` (no tucked attachments)
+- **Choice**: Only include cards whose `stackId` equals their own `card_id` (no tucked attachments)
 - **Rationale**: LLMs need to reason about visible game objects; attachment hierarchy is rarely relevant for strategic decisions
 - **Alternatives rejected**:
   - Include all cards with attachment relationships - increases token count, adds complexity

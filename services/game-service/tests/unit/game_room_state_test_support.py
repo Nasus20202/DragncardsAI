@@ -22,7 +22,9 @@ def mock_session(**kwargs) -> MagicMock:
     session.set_spectator = AsyncMock()
     session.send_alert = AsyncMock()
     session.save_replay = AsyncMock()
-    session.set_player_count = AsyncMock(return_value={"game": {"playerCount": 2}})
+    session.set_player_count = AsyncMock(
+        return_value={"game": {"playerCount": 2, "roundNumber": 1}}
+    )
     session.export_state = AsyncMock(
         return_value=GameStateSnapshot(
             schema_version=1,

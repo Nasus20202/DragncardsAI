@@ -14,6 +14,7 @@ from game_service.catalog.providers.marvel_champions import plugin_metadata
 # Canonical group IDs (playerN used instead of player1..player4 where applicable)
 _CANONICAL_GROUP_IDS = plugin_metadata.load_groups()
 
+
 # Expand canonical 'playerN' placeholders into concrete player1..player4 values
 def _expand_player_n(ids: list[str]) -> list[str]:
     out: list[str] = []
@@ -24,6 +25,7 @@ def _expand_player_n(ids: list[str]) -> list[str]:
         else:
             out.append(gid)
     return out
+
 
 _GROUP_IDS = _expand_player_n(_CANONICAL_GROUP_IDS)
 GroupId = Literal[tuple(_GROUP_IDS)]

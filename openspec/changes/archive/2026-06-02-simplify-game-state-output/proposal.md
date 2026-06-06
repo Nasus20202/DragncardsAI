@@ -5,7 +5,7 @@ The current `get_game_state` output is verbose and deeply nested, making it diff
 ## What Changes
 
 - **New response model**: Create a simplified schema that extracts essential Marvel Champions state (players, zones with cards, round/mode, HP) while dropping internal fields
-- **Non-breaking**: Add as an optional transformation layer; existing `get_game_state` behavior unchanged for backward compatibility
+- **Always simplified for Marvel Champions**: The endpoint returns the streamlined format automatically for MC sessions (no opt-in required)
 - **Zone mapping**: Map cards into their zone arrays directly (hand, play, deck, discard, encounter) instead of requiring LLM to join `cardById` with group lookups
 - **Visible cards only**: Filter out attachment tucked-under relationships to present only cards visible as top-level cards
 
@@ -15,11 +15,11 @@ The current `get_game_state` output is verbose and deeply nested, making it diff
 - `simplified-game-state`: Provide a streamlined representation of Marvel Champions game state for LLM consumption
 
 ### Modified Capabilities
-- `game-service`: Extend state observation to support simplified output format for Marvel Champions sessions
+- `game-service`: Transform state observation to always return simplified format for Marvel Champions sessions
 
 ## Impact
 
-- **Affected code**: `game_service/logic/actions.py` and/or new `game_service/logic/state_simplifier.py`
-- **APIs**: New optional query parameter or separate endpoint for simplified output
-- **MCP tools**: `get_game_state_marvel_champions` variant with simplified schema
+- **Affected code**: `game_service/api/routers/game_state.py`
+- **APIs**: `GET /games/{id}/state` returns simplified state for Marvel Champions (breaking change for clients expecting raw state)
+- **MCP tools**: `get_game_state` returns simplified format for Marvel Champions sessions
 - **Dependencies**: None (uses existing plugin metadata and state structures)

@@ -175,7 +175,10 @@ def test_move_card_with_player_n_sets_player_ui():
 def test_move_card_no_extra_index_when_dest_card_index_is_zero():
     action = MoveCardAction(
         # use a concrete GroupId from the plugin metadata
-        card_id="c1", dest_group_id="player1Play1", dest_stack_index=2, dest_card_index=0
+        card_id="c1",
+        dest_group_id="player1Play1",
+        dest_stack_index=2,
+        dest_card_index=0,
     )
     payload = translate_action(action)
     assert len(payload["options"]["action_list"]) == 4
@@ -184,10 +187,19 @@ def test_move_card_no_extra_index_when_dest_card_index_is_zero():
 def test_move_card_appends_dest_card_index_when_nonzero():
     action = MoveCardAction(
         # use a concrete GroupId from the plugin metadata
-        card_id="c1", dest_group_id="player1Play1", dest_stack_index=0, dest_card_index=3
+        card_id="c1",
+        dest_group_id="player1Play1",
+        dest_stack_index=0,
+        dest_card_index=3,
     )
     payload = translate_action(action)
-    assert payload["options"]["action_list"] == ["MOVE_CARD", "c1", "player1Play1", 0, 3]
+    assert payload["options"]["action_list"] == [
+        "MOVE_CARD",
+        "c1",
+        "player1Play1",
+        0,
+        3,
+    ]
 
 
 def test_move_card_description_mentions_card_and_group():
