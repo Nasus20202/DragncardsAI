@@ -42,7 +42,10 @@ class MoveCardAction(BaseModel):
     """Move a card to a different group/position on the table."""
 
     type: Literal["move_card"] = "move_card"
-    card_id: str = Field(..., description="ID of the card to move")
+    instance_id: str = Field(
+        ...,
+        description="Instance ID of the card to move (corresponds to instanceId in game state)",
+    )
     dest_group_id: GroupId = Field(
         ..., description="ID of the destination group (e.g. 'player1Hand')"
     )
@@ -101,7 +104,10 @@ class SetCardPropertyAction(BaseModel):
     """Set an arbitrary property on a card (e.g. flip face-up/face-down)."""
 
     type: Literal["set_card_property"] = "set_card_property"
-    card_id: str = Field(..., description="ID of the card")
+    instance_id: str = Field(
+        ...,
+        description="Instance ID of the card (corresponds to instanceId in game state)",
+    )
     property_path: str = Field(
         ...,
         description="Slash-separated path relative to the card object, e.g. 'currentSide'",
@@ -303,7 +309,7 @@ def _to_dragncards(action: GameAction) -> tuple[list, str, str | None]:
     if isinstance(action, MoveCardAction):
         args: list = [
             "MOVE_CARD",
-            action.card_id,
+            action.instance_id,
             action.dest_group_id,
             action.dest_stack_index,
         ]
@@ -321,7 +327,7 @@ def _to_dragncards(action: GameAction) -> tuple[list, str, str | None]:
 
         return (
             args,
-            f"Move card {action.card_id} to {action.dest_group_id}[{action.dest_stack_index}]",
+            f"Move card {action.instance_id} to {action.dest_group_id}[{action.dest_stack_index}]",
             player_n,
         )
 
@@ -339,10 +345,10 @@ def _to_dragncards(action: GameAction) -> tuple[list, str, str | None]:
         return ["PREV_STEP"], "Go back to previous step", None
 
     if isinstance(action, SetCardPropertyAction):
-        path = f"/cardById/{action.card_id}/{action.property_path}"
+        path = f"/cardById/{action.instance_id}/{action.property_path}"
         return (
             ["SET", path, action.value],
-            f"Set {action.property_path} on card {action.card_id}",
+            f"Set {action.property_path} on card {action.instance_id}",
             None,
         )
 

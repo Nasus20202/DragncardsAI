@@ -132,11 +132,11 @@ async def test_action_helpers_call_execute_and_change_state(
     elif action_cls is MoveCardAction:
         # Use a concrete GroupId value from the Marvel Champions plugin
         # (the test only cares that state changes; 'player1Play1' is a valid group)
-        action = MoveCardAction(card_id="c1", dest_group_id="player1Play1")
+        action = MoveCardAction(instance_id="c1", dest_group_id="player1Play1")
         resp = await helper("sess-1", action, manager=manager)
     elif action_cls is SetCardPropertyAction:
         action = SetCardPropertyAction(
-            card_id="c1", property_path="currentSide", value="B"
+            instance_id="c1", property_path="currentSide", value="B"
         )
         resp = await helper("sess-1", action, manager=manager)
     elif action_cls is SetPlayerCountAction:

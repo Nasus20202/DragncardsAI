@@ -151,7 +151,7 @@ def test_draw_card_count_must_be_at_least_one():
 
 
 def test_move_card_action_list_basic():
-    action = MoveCardAction(card_id="card-123", dest_group_id="player1Hand")
+    action = MoveCardAction(instance_id="card-123", dest_group_id="player1Hand")
     payload = translate_action(action)
     assert payload["options"]["action_list"] == [
         "MOVE_CARD",
@@ -166,7 +166,7 @@ def test_move_card_action_list_basic():
 def test_move_card_with_player_n_sets_player_ui():
     """player_n on MoveCardAction injects player_ui so automation rules resolve $PLAYER_N."""
     action = MoveCardAction(
-        card_id="card-xyz", dest_group_id="player1Hand", player_n="player1"
+        instance_id="card-xyz", dest_group_id="player1Hand", player_n="player1"
     )
     payload = translate_action(action)
     assert payload["options"]["player_ui"] == {"playerN": "player1"}
@@ -175,7 +175,7 @@ def test_move_card_with_player_n_sets_player_ui():
 def test_move_card_no_extra_index_when_dest_card_index_is_zero():
     action = MoveCardAction(
         # use a concrete GroupId from the plugin metadata
-        card_id="c1",
+        instance_id="c1",
         dest_group_id="player1Play1",
         dest_stack_index=2,
         dest_card_index=0,
@@ -187,7 +187,7 @@ def test_move_card_no_extra_index_when_dest_card_index_is_zero():
 def test_move_card_appends_dest_card_index_when_nonzero():
     action = MoveCardAction(
         # use a concrete GroupId from the plugin metadata
-        card_id="c1",
+        instance_id="c1",
         dest_group_id="player1Play1",
         dest_stack_index=0,
         dest_card_index=3,
@@ -203,7 +203,9 @@ def test_move_card_appends_dest_card_index_when_nonzero():
 
 
 def test_move_card_description_mentions_card_and_group():
-    action = MoveCardAction(card_id="card-abc", dest_group_id="sharedEncounterDiscard")
+    action = MoveCardAction(
+        instance_id="card-abc", dest_group_id="sharedEncounterDiscard"
+    )
     payload = translate_action(action)
     desc = payload["options"]["description"]
     assert "card-abc" in desc
@@ -217,19 +219,25 @@ def test_move_card_description_mentions_card_and_group():
 
 
 def test_set_card_property_action_list():
-    action = SetCardPropertyAction(card_id="c1", property_path="currentSide", value="B")
+    action = SetCardPropertyAction(
+        instance_id="c1", property_path="currentSide", value="B"
+    )
     payload = translate_action(action)
     assert payload["options"]["action_list"] == ["SET", "/cardById/c1/currentSide", "B"]
 
 
 def test_set_card_property_with_numeric_value():
-    action = SetCardPropertyAction(card_id="c2", property_path="tokens/damage", value=3)
+    action = SetCardPropertyAction(
+        instance_id="c2", property_path="tokens/damage", value=3
+    )
     payload = translate_action(action)
     assert payload["options"]["action_list"] == ["SET", "/cardById/c2/tokens/damage", 3]
 
 
 def test_set_card_property_description():
-    action = SetCardPropertyAction(card_id="c1", property_path="currentSide", value="B")
+    action = SetCardPropertyAction(
+        instance_id="c1", property_path="currentSide", value="B"
+    )
     payload = translate_action(action)
     desc = payload["options"]["description"]
     assert "currentSide" in desc

@@ -15,7 +15,7 @@ from game_service.logic.actions import (
 def test_move_card_invalid_group_id_raises():
     # Use an obviously invalid group id
     with pytest.raises(ValidationError):
-        MoveCardAction(card_id="c1", dest_group_id="not_a_group")
+        MoveCardAction(instance_id="c1", dest_group_id="not_a_group")
 
 
 def test_draw_card_invalid_player_n_raises():

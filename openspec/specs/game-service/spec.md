@@ -79,6 +79,14 @@ The Game Service SHALL provide endpoints and MCP tools to execute game actions w
 - **WHEN** a client sends `POST /games/{id}/actions` or invokes the `execute_action` MCP tool with an action to move a card from one group to another (e.g., play a card from hand to the play area)
 - **THEN** the Game Service SHALL translate the action into the appropriate DragnCards WebSocket message, execute it, and return a success acknowledgment (`session_id` + `success: true`); the caller must use `get_game_state` to observe the updated state
 
+#### Scenario: Execute a card movement action with instance_id parameter
+- **WHEN** a client sends `POST /games/{id}/actions` or invokes the `execute_action` MCP tool with an action to move a card from one group to another (e.g., play a card from hand to the play area)
+- **THEN** the Game Service SHALL accept `instance_id` as the parameter name for the card identifier, consistent with the `instanceId` naming in the game state JSON
+
+#### Scenario: Execute card property action with instance_id parameter
+- **WHEN** a client sends `POST /games/{id}/actions` or invokes the `execute_action` MCP tool with an action to set a card property
+- **THEN** the Game Service SHALL accept `instance_id` as the parameter name for the card identifier, consistent with the `instanceId` naming in the game state JSON
+
 #### Scenario: Execute a game phase action
 - **WHEN** a client requests a phase-related action (e.g., end the player phase, advance to the next round)
 - **THEN** the Game Service SHALL execute the phase transition via WebSocket and return a success acknowledgment; the caller must use `get_game_state` to observe the updated state

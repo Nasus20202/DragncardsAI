@@ -18,7 +18,7 @@ from game_service.logic.actions import (
 
 def test_translate_move_card():
     action = MoveCardAction(
-        card_id="card-1", dest_group_id="player1Hand", dest_stack_index=-1
+        instance_id="card-1", dest_group_id="player1Hand", dest_stack_index=-1
     )
     payload = translate_action(action)
     assert payload["action"] == "evaluate"
