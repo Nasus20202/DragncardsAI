@@ -27,6 +27,7 @@ from game_service.logic.actions import (
     MultipleDoubleSidedVillainsAction,
     DiscardMinionAction,
     DiscardSideSchemeAction,
+    ModifyTokensAction,
     translate_action,
 )
 
@@ -207,3 +208,25 @@ def test_translate_discard_side_scheme():
     payload = translate_action(action)
     assert payload["action"] == "evaluate"
     assert payload["options"]["action_list"] == ["ACTION_LIST", "discardSideScheme"]
+
+
+def test_translate_modify_tokens_add():
+    action = ModifyTokensAction(instance_id="card-123", token_type="threat", amount=2)
+    payload = translate_action(action)
+    assert payload["action"] == "evaluate"
+    assert payload["options"]["action_list"] == [
+        "INCREASE_VAL",
+        "/cardById/card-123/tokens/threat",
+        2,
+    ]
+
+
+def test_translate_modify_tokens_remove():
+    action = ModifyTokensAction(instance_id="card-456", token_type="damage", amount=-1)
+    payload = translate_action(action)
+    assert payload["action"] == "evaluate"
+    assert payload["options"]["action_list"] == [
+        "INCREASE_VAL",
+        "/cardById/card-456/tokens/damage",
+        -1,
+    ]

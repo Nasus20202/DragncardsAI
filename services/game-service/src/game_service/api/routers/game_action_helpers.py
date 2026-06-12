@@ -35,6 +35,7 @@ from game_service.logic.actions import (
     MultipleDoubleSidedVillainsAction,
     DiscardMinionAction,
     DiscardSideSchemeAction,
+    ModifyTokensAction,
 )
 from game_service.logic.session_manager import SessionManager
 
@@ -456,6 +457,24 @@ async def discard_minion(
 async def discard_side_scheme(
     session_id: str,
     action: DiscardSideSchemeAction,
+    manager: SessionManager = Depends(get_manager),
+):
+    async with manager.session_operation_lock(session_id):
+        session = await manager.get_session(session_id)
+        await session.execute_action(action)
+    return ExecuteActionResponse(
+        session_id=session_id, success=True, error=session.get_action_error()
+    )
+
+
+@router.post(
+    "/games/{session_id}/actions/modify_tokens",
+    response_model=ExecuteActionResponse,
+    operation_id="modify_tokens",
+)
+async def modify_tokens(
+    session_id: str,
+    action: ModifyTokensAction,
     manager: SessionManager = Depends(get_manager),
 ):
     async with manager.session_operation_lock(session_id):

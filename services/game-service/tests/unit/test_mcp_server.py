@@ -104,6 +104,7 @@ EXPECTED_TOOL_NAMES = {
     "multiple_double_sided_villains",
     "discard_minion",
     "discard_side_scheme",
+    "modify_tokens",
 }
 EXPECTED_TOOL_NAMES |= {
     f"search_cards_{re.sub(r'[^a-zA-Z0-9]+', '_', provider).strip('_')}"

@@ -31,6 +31,7 @@ from game_service.logic.actions import (
     MultipleDoubleSidedVillainsAction,
     DiscardMinionAction,
     DiscardSideSchemeAction,
+    ModifyTokensAction,
 )
 from game_service.logic.session_manager import SessionManager
 
@@ -310,6 +311,20 @@ async def test_discard_side_scheme_action(manager):
     try:
         new_state = await session.execute_action(
             DiscardSideSchemeAction(player_n="player1")
+        )
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_modify_tokens_action(manager):
+    """MODIFY_TOKENS action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(
+            ModifyTokensAction(instance_id="test-card-1", token_type="threat", amount=1)
         )
         assert new_state is not None
         assert "game" in new_state or "createdAt" in new_state

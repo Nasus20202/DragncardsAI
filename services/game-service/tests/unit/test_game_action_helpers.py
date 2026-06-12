@@ -14,6 +14,7 @@ from game_service.logic.actions import (
     ShuffleIntoDeckAction,
     ZeroTokensAction,
     MulliganDrawHandAction,
+    ModifyTokensAction,
     MoveCardAction,
     NextStepAction,
     PrevStepAction,
@@ -176,6 +177,13 @@ def _mock_manager(session):
             {"game": {"hands": {"player1": ["cardA", "cardB"]}}},
             MulliganDrawHandAction,
         ),
+        (
+            helpers.modify_tokens,
+            ModifyTokensAction,
+            {"game": {"cardById": {"c1": {"tokens": {"threat": 2}}}}},
+            {"game": {"cardById": {"c1": {"tokens": {"threat": 4}}}}},
+            ModifyTokensAction,
+        ),
     ],
 )
 async def test_action_helpers_call_execute_and_change_state(
@@ -239,6 +247,9 @@ async def test_action_helpers_call_execute_and_change_state(
         resp = await helper("sess-1", action, manager=manager)
     elif action_cls is MulliganDrawHandAction:
         action = MulliganDrawHandAction(player_n="player1")
+        resp = await helper("sess-1", action, manager=manager)
+    elif action_cls is ModifyTokensAction:
+        action = ModifyTokensAction(instance_id="c1", token_type="threat", amount=2)
         resp = await helper("sess-1", action, manager=manager)
     else:
         pytest.skip("Unsupported action type in test")

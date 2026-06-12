@@ -421,6 +421,19 @@ class DiscardSideSchemeAction(BaseModel):
         return v
 
 
+class ModifyTokensAction(BaseModel):
+    """Add or remove tokens from a card."""
+
+    type: Literal["modify_tokens"] = "modify_tokens"
+    instance_id: str = Field(..., description="Instance ID of the card")
+    token_type: Literal[
+        "damage", "threat", "generic", "acceleration", "confused", "stunned", "tough"
+    ] = Field(..., description="Type of token to modify")
+    amount: int = Field(
+        ..., description="Amount to add (positive) or remove (negative)"
+    )
+
+
 GameAction = (
     MoveCardAction
     | DrawCardAction
@@ -446,6 +459,7 @@ GameAction = (
     | MultipleDoubleSidedVillainsAction
     | DiscardMinionAction
     | DiscardSideSchemeAction
+    | ModifyTokensAction
 )
 
 ACTION_TYPES = (
@@ -472,6 +486,7 @@ ACTION_TYPES = (
     MultipleDoubleSidedVillainsAction,
     DiscardMinionAction,
     DiscardSideSchemeAction,
+    ModifyTokensAction,
 )
 
 
@@ -752,6 +767,17 @@ def _to_dragncards(action: GameAction) -> tuple[list, str, str | None]:
             ["ACTION_LIST", "discardSideScheme"],
             f"Discard until side scheme for {action.player_n}",
             action.player_n,
+        )
+
+    if isinstance(action, ModifyTokensAction):
+        return (
+            [
+                "INCREASE_VAL",
+                f"/cardById/{action.instance_id}/tokens/{action.token_type}",
+                action.amount,
+            ],
+            f"Modify {action.token_type} on card {action.instance_id} by {action.amount}",
+            None,
         )
 
     raise ValueError(f"Unknown action type: {type(action)}")
