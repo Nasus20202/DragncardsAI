@@ -44,6 +44,15 @@ logger = logging.getLogger(__name__)
 tracer = get_tracer(__name__)
 
 
+def _extract_alert_text(alert: dict) -> str | None:
+    """Extract error text from an alert dict."""
+    if alert.get("level") == "error":
+        return alert.get("text", str(alert))
+    if "error" in alert:
+        return str(alert.get("error"))
+    return None
+
+
 @dataclass
 class GameSession:
     """Represents a single active game session."""
@@ -65,6 +74,7 @@ class GameSession:
     _state_unavailable: bool = field(default=False, init=False)
     _alerts: deque = field(default_factory=lambda: deque(maxlen=50), init=False)
     _gui_updates: dict = field(default_factory=dict, init=False)
+    _action_error: str | None = field(default=None, init=False)
 
     def __post_init__(self):
         self.room = PhoenixRoom(client=self.client, channel=self.channel)
@@ -98,6 +108,10 @@ class GameSession:
 
     def _on_alert(self, payload: Any) -> None:
         self._alerts.append(payload)
+        if isinstance(payload, dict):
+            text = _extract_alert_text(payload)
+            if text:
+                self._action_error = text
 
     def _on_gui_update(self, payload: Any) -> None:
         player_n = payload.get("player_n") if isinstance(payload, dict) else None
@@ -156,6 +170,8 @@ class GameSession:
             attributes={"game.action.name": action_name},
         ):
             self._check_state_flags()
+            # Clear any previous action error before executing
+            self._action_error = None
             payload = translate_action(action)
             logger.info(
                 "execute_action: session_id=%s payload=%r", self.session_id, payload
@@ -349,6 +365,10 @@ class GameSession:
 
     def get_alerts(self) -> list[dict]:
         return list(self._alerts)
+
+    def get_action_error(self) -> str | None:
+        """Return the error from the most recent action execution, if any."""
+        return self._action_error
 
     def get_gui_updates(self) -> dict[str, Any]:
         return dict(self._gui_updates)

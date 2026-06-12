@@ -67,6 +67,7 @@ def _make_mcp(manager=None):
 
 EXPECTED_TOOL_NAMES = {
     "list_actions",
+    "get_raw_game_state_games",
     "list_card_providers",
     "load_prebuilt_deck",
     "list_prebuilt_sets_marvel_champions",
@@ -87,6 +88,22 @@ EXPECTED_TOOL_NAMES = {
     "load_cards",
     "unload_cards",
     "raw",
+    # Marvel Champions action helpers
+    "exhaust_card",
+    "ready_card",
+    "flip_card",
+    "deal_encounter",
+    "draw_boost",
+    "shuffle_into_deck",
+    "zero_tokens",
+    "mulligan_draw_hand",
+    "shadows_of_the_past",
+    "player_end_phase",
+    "villain_encounter_phase",
+    "villain_end_phase",
+    "multiple_double_sided_villains",
+    "discard_minion",
+    "discard_side_scheme",
 }
 EXPECTED_TOOL_NAMES |= {
     f"search_cards_{re.sub(r'[^a-zA-Z0-9]+', '_', provider).strip('_')}"

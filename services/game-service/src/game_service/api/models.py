@@ -106,6 +106,10 @@ class GameStateResponse(BaseModel):
 class ExecuteActionResponse(BaseModel):
     session_id: str
     success: Literal[True]
+    error: str | None = Field(
+        default=None,
+        description="Error message from action execution, if any",
+    )
 
 
 class DeleteGameResponse(BaseModel):

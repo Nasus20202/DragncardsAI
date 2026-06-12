@@ -6,6 +6,14 @@ import pytest
 from game_service.api.routers import game_action_helpers as helpers
 from game_service.logic.actions import (
     DrawCardAction,
+    ExhaustCardAction,
+    ReadyCardAction,
+    FlipCardAction,
+    DealEncounterAction,
+    DrawBoostAction,
+    ShuffleIntoDeckAction,
+    ZeroTokensAction,
+    MulliganDrawHandAction,
     MoveCardAction,
     NextStepAction,
     PrevStepAction,
@@ -20,7 +28,7 @@ from game_service.logic.actions import (
 def _mock_session(before_state=None, after_state=None):
     session = MagicMock()
     session.execute_action = AsyncMock()
-    # get_state will return before_state, then after_state when called twice
+    session.get_action_error = MagicMock(return_value=None)
     if before_state is None:
         before_state = {"game": {}}
     if after_state is None:
@@ -112,6 +120,62 @@ def _mock_manager(session):
             {"game": {"x": 1}},
             RawAction,
         ),
+        (
+            helpers.exhaust_card,
+            ExhaustCardAction,
+            {"game": {"cardById": {"c1": {"exhausted": False}}}},
+            {"game": {"cardById": {"c1": {"exhausted": True}}}},
+            ExhaustCardAction,
+        ),
+        (
+            helpers.ready_card,
+            ReadyCardAction,
+            {"game": {"cardById": {"c1": {"exhausted": True}}}},
+            {"game": {"cardById": {"c1": {"exhausted": False}}}},
+            ReadyCardAction,
+        ),
+        (
+            helpers.flip_card,
+            FlipCardAction,
+            {"game": {"cardById": {"c1": {"currentSide": "A"}}}},
+            {"game": {"cardById": {"c1": {"currentSide": "B"}}}},
+            FlipCardAction,
+        ),
+        (
+            helpers.deal_encounter,
+            DealEncounterAction,
+            {"game": {"encounterDeck": ["cardA"]}},
+            {"game": {"encounterDeck": [], "player1Engaged": ["cardA"]}},
+            DealEncounterAction,
+        ),
+        (
+            helpers.draw_boost,
+            DrawBoostAction,
+            {"game": {"encounterDeck": ["boostA"]}},
+            {"game": {"encounterDeck": [], "player1EncounterDeck": ["boostA"]}},
+            DrawBoostAction,
+        ),
+        (
+            helpers.shuffle_into_deck,
+            ShuffleIntoDeckAction,
+            {"game": {"player1Discard": ["c1"]}},
+            {"game": {"player1Discard": [], "player1Deck": ["c1"]}},
+            ShuffleIntoDeckAction,
+        ),
+        (
+            helpers.zero_tokens,
+            ZeroTokensAction,
+            {"game": {"cardById": {"c1": {"tokens": {"threat": 2}}}}},
+            {"game": {"cardById": {"c1": {"tokens": {}}}}},
+            ZeroTokensAction,
+        ),
+        (
+            helpers.mulligan_draw_hand,
+            MulliganDrawHandAction,
+            {"game": {"hands": {"player1": []}}},
+            {"game": {"hands": {"player1": ["cardA", "cardB"]}}},
+            MulliganDrawHandAction,
+        ),
     ],
 )
 async def test_action_helpers_call_execute_and_change_state(
@@ -151,6 +215,30 @@ async def test_action_helpers_call_execute_and_change_state(
         resp = await helper("sess-1", action, manager=manager)
     elif action_cls is RawAction:
         action = RawAction(action_list=["SET", "/game/x", 1])
+        resp = await helper("sess-1", action, manager=manager)
+    elif action_cls is ExhaustCardAction:
+        action = ExhaustCardAction(instance_id="c1")
+        resp = await helper("sess-1", action, manager=manager)
+    elif action_cls is ReadyCardAction:
+        action = ReadyCardAction(instance_id="c1")
+        resp = await helper("sess-1", action, manager=manager)
+    elif action_cls is FlipCardAction:
+        action = FlipCardAction(instance_id="c1")
+        resp = await helper("sess-1", action, manager=manager)
+    elif action_cls is DealEncounterAction:
+        action = DealEncounterAction(player_n="player1")
+        resp = await helper("sess-1", action, manager=manager)
+    elif action_cls is DrawBoostAction:
+        action = DrawBoostAction(player_n="player1")
+        resp = await helper("sess-1", action, manager=manager)
+    elif action_cls is ShuffleIntoDeckAction:
+        action = ShuffleIntoDeckAction(instance_id="c1")
+        resp = await helper("sess-1", action, manager=manager)
+    elif action_cls is ZeroTokensAction:
+        action = ZeroTokensAction(instance_id="c1")
+        resp = await helper("sess-1", action, manager=manager)
+    elif action_cls is MulliganDrawHandAction:
+        action = MulliganDrawHandAction(player_n="player1")
         resp = await helper("sess-1", action, manager=manager)
     else:
         pytest.skip("Unsupported action type in test")

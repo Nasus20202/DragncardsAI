@@ -13,7 +13,25 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-from game_service.logic.actions import DrawCardAction, NextStepAction
+from game_service.logic.actions import (
+    DrawCardAction,
+    NextStepAction,
+    ExhaustCardAction,
+    ReadyCardAction,
+    FlipCardAction,
+    DealEncounterAction,
+    DrawBoostAction,
+    ShuffleIntoDeckAction,
+    ZeroTokensAction,
+    MulliganDrawHandAction,
+    ShadowsOfThePastAction,
+    PlayerEndPhaseAction,
+    VillainEncounterPhaseAction,
+    VillainEndPhaseAction,
+    MultipleDoubleSidedVillainsAction,
+    DiscardMinionAction,
+    DiscardSideSchemeAction,
+)
 from game_service.logic.session_manager import SessionManager
 
 DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:4000")
@@ -78,6 +96,222 @@ async def test_draw_card_changes_hand(manager):
         )
         assert new_state is not None
         # State shape should still be valid
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_exhaust_card_action(manager):
+    """EXHAUST_CARD action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(
+            ExhaustCardAction(instance_id="test-card-1")
+        )
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_ready_card_action(manager):
+    """READY_CARD action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(
+            ReadyCardAction(instance_id="test-card-1")
+        )
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_flip_card_action(manager):
+    """FLIP_CARD action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(
+            FlipCardAction(instance_id="test-card-1")
+        )
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_deal_encounter_action(manager):
+    """DEAL_ENCOUNTER_CARD action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(
+            DealEncounterAction(player_n="player1")
+        )
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_deal_second_encounter_action(manager):
+    """DEAL_SECOND_ENCOUNTER_CARD action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(
+            DealEncounterAction(
+                player_n="player1", deck_group_id="sharedEncounter2Deck"
+            )
+        )
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_draw_boost_action(manager):
+    """DRAW_BOOST_CARD action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(DrawBoostAction(player_n="player1"))
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_shuffle_into_deck_action(manager):
+    """SHUFFLE_INTO_DECK action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(
+            ShuffleIntoDeckAction(instance_id="test-card-1")
+        )
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_zero_tokens_action(manager):
+    """ZERO_TOKENS action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(
+            ZeroTokensAction(instance_id="test-card-1")
+        )
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_mulligan_draw_hand_action(manager):
+    """MULLIGAN_DRAW_HAND action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(
+            MulliganDrawHandAction(player_n="player1")
+        )
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_shadows_of_the_past_action(manager):
+    """SHADOWS_OF_THE_PAST action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(
+            ShadowsOfThePastAction(player_n="player1")
+        )
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_player_end_phase_action(manager):
+    """PLAYER_END_PHASE action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(PlayerEndPhaseAction())
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_villain_encounter_phase_action(manager):
+    """VILLAIN_ENCOUNTER_PHASE action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(VillainEncounterPhaseAction())
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_villain_end_phase_action(manager):
+    """VILLAIN_END_PHASE action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(VillainEndPhaseAction())
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_multiple_double_sided_villains_action(manager):
+    """MULTIPLE_DOUBLE_SIDED_VILLAINS action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(MultipleDoubleSidedVillainsAction())
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_discard_minion_action(manager):
+    """DISCARD_MINION action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(
+            DiscardMinionAction(player_n="player1")
+        )
+        assert new_state is not None
+        assert "game" in new_state or "createdAt" in new_state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_discard_side_scheme_action(manager):
+    """DISCARD_SIDE_SCHEME action should execute and return a valid state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        new_state = await session.execute_action(
+            DiscardSideSchemeAction(player_n="player1")
+        )
+        assert new_state is not None
         assert "game" in new_state or "createdAt" in new_state
     finally:
         await manager.delete_session(session.session_id)

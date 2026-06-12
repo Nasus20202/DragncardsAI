@@ -9,6 +9,8 @@ from game_service.logic.actions import (
     LoadCardsAction,
     UnloadCardsAction,
     LoadCardItem,
+    DealEncounterAction,
+    DrawBoostAction,
 )
 
 
@@ -32,3 +34,13 @@ def test_load_cards_invalid_load_group_raises():
 def test_unload_cards_invalid_player_n_raises():
     with pytest.raises(ValidationError):
         UnloadCardsAction(player_n="nobody")
+
+
+def test_deal_encounter_invalid_player_n_raises():
+    with pytest.raises(ValidationError):
+        DealEncounterAction(player_n="shared")
+
+
+def test_draw_boost_invalid_player_n_raises():
+    with pytest.raises(ValidationError):
+        DrawBoostAction(player_n="shared")

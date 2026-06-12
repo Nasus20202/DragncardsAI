@@ -259,6 +259,168 @@ class UnloadCardsAction(BaseModel):
     # level APIs may tighten allowed values via schema enums.
 
 
+class ExhaustCardAction(BaseModel):
+    """Exhaust a card (turn it sideways)."""
+
+    type: Literal["exhaust_card"] = "exhaust_card"
+    instance_id: str = Field(..., description="Instance ID of the card to exhaust")
+
+
+class ReadyCardAction(BaseModel):
+    """Ready a card (remove exhaustion)."""
+
+    type: Literal["ready_card"] = "ready_card"
+    instance_id: str = Field(..., description="Instance ID of the card to ready")
+
+
+class FlipCardAction(BaseModel):
+    """Flip a card to the next side (A → B → C → A)."""
+
+    type: Literal["flip_card"] = "flip_card"
+    instance_id: str = Field(..., description="Instance ID of the card to flip")
+
+
+class DealEncounterAction(BaseModel):
+    """Deal an encounter card to a player."""
+
+    type: Literal["deal_encounter"] = "deal_encounter"
+    player_n: str = Field(..., description="Player to deal to (e.g., 'player1')")
+    facedown: bool = Field(
+        default=False, description="Deal facedown if true, faceup if false"
+    )
+    deck_group_id: str | None = Field(
+        default=None,
+        description="Optional encounter deck to draw from (e.g., 'sharedEncounter2Deck')",
+    )
+
+    @field_validator("player_n")
+    @classmethod
+    def _validate_player_n_deal(cls, v: str) -> str:
+        allowed = {"player1", "player2", "player3", "player4"}
+        if v not in allowed:
+            raise ValueError(f"Invalid player_n: {v}")
+        return v
+
+
+class DrawBoostAction(BaseModel):
+    """Draw a boost card from the encounter deck."""
+
+    type: Literal["draw_boost"] = "draw_boost"
+    player_n: str = Field(..., description="Player to draw boost for (e.g., 'player1')")
+
+    @field_validator("player_n")
+    @classmethod
+    def _validate_player_n_boost(cls, v: str) -> str:
+        allowed = {"player1", "player2", "player3", "player4"}
+        if v not in allowed:
+            raise ValueError(f"Invalid player_n: {v}")
+        return v
+
+
+class ShuffleIntoDeckAction(BaseModel):
+    """Move a card to its deck and shuffle that deck."""
+
+    type: Literal["shuffle_into_deck"] = "shuffle_into_deck"
+    instance_id: str = Field(
+        ..., description="Instance ID of the card to shuffle into its deck"
+    )
+
+
+class ZeroTokensAction(BaseModel):
+    """Remove all tokens from a card."""
+
+    type: Literal["zero_tokens"] = "zero_tokens"
+    instance_id: str = Field(
+        ..., description="Instance ID of the card to clear tokens from"
+    )
+
+
+class MulliganDrawHandAction(BaseModel):
+    """Perform mulligan - redraw starting hand if round 0."""
+
+    type: Literal["mulligan_draw_hand"] = "mulligan_draw_hand"
+    player_n: str = Field(
+        ..., description="Player performing mulligan (e.g., 'player1')"
+    )
+
+    @field_validator("player_n")
+    @classmethod
+    def _validate_player_n_mulligan(cls, v: str) -> str:
+        allowed = {"player1", "player2", "player3", "player4"}
+        if v not in allowed:
+            raise ValueError(f"Invalid player_n: {v}")
+        return v
+
+
+class ShadowsOfThePastAction(BaseModel):
+    """Resolve Shadows of the Past - move nemesis minions and side schemes."""
+
+    type: Literal["shadows_of_the_past"] = "shadows_of_the_past"
+    player_n: str = Field(..., description="Player resolving Shadows of the Past")
+
+    @field_validator("player_n")
+    @classmethod
+    def _validate_player_n_shadows(cls, v: str) -> str:
+        allowed = {"player1", "player2", "player3", "player4"}
+        if v not in allowed:
+            raise ValueError(f"Invalid player_n: {v}")
+        return v
+
+
+class PlayerEndPhaseAction(BaseModel):
+    """End the player phase and begin villain phase."""
+
+    type: Literal["player_end_phase"] = "player_end_phase"
+
+
+class VillainEncounterPhaseAction(BaseModel):
+    """Execute villain encounter phase (deal facedown to all players)."""
+
+    type: Literal["villain_encounter_phase"] = "villain_encounter_phase"
+
+
+class VillainEndPhaseAction(BaseModel):
+    """End the villain phase and return to player phase."""
+
+    type: Literal["villain_end_phase"] = "villain_end_phase"
+
+
+class MultipleDoubleSidedVillainsAction(BaseModel):
+    """Handle multiple double-sided villains setup."""
+
+    type: Literal["multiple_double_sided_villains"] = "multiple_double_sided_villains"
+
+
+class DiscardMinionAction(BaseModel):
+    """Discard cards until a minion is found."""
+
+    type: Literal["discard_minion"] = "discard_minion"
+    player_n: str = Field(..., description="Player to discard for (e.g., 'player1')")
+
+    @field_validator("player_n")
+    @classmethod
+    def _validate_player_n_discard_minion(cls, v: str) -> str:
+        allowed = {"player1", "player2", "player3", "player4"}
+        if v not in allowed:
+            raise ValueError(f"Invalid player_n: {v}")
+        return v
+
+
+class DiscardSideSchemeAction(BaseModel):
+    """Discard cards until a side scheme is found."""
+
+    type: Literal["discard_side_scheme"] = "discard_side_scheme"
+    player_n: str = Field(..., description="Player to discard for (e.g., 'player1')")
+
+    @field_validator("player_n")
+    @classmethod
+    def _validate_player_n_discard_side_scheme(cls, v: str) -> str:
+        allowed = {"player1", "player2", "player3", "player4"}
+        if v not in allowed:
+            raise ValueError(f"Invalid player_n: {v}")
+        return v
+
+
 GameAction = (
     MoveCardAction
     | DrawCardAction
@@ -269,6 +431,21 @@ GameAction = (
     | LoadCardsAction
     | UnloadCardsAction
     | RawAction
+    | ExhaustCardAction
+    | ReadyCardAction
+    | FlipCardAction
+    | DealEncounterAction
+    | DrawBoostAction
+    | ShuffleIntoDeckAction
+    | ZeroTokensAction
+    | MulliganDrawHandAction
+    | ShadowsOfThePastAction
+    | PlayerEndPhaseAction
+    | VillainEncounterPhaseAction
+    | VillainEndPhaseAction
+    | MultipleDoubleSidedVillainsAction
+    | DiscardMinionAction
+    | DiscardSideSchemeAction
 )
 
 ACTION_TYPES = (
@@ -281,6 +458,20 @@ ACTION_TYPES = (
     LoadCardsAction,
     UnloadCardsAction,
     RawAction,
+    ExhaustCardAction,
+    ReadyCardAction,
+    FlipCardAction,
+    DealEncounterAction,
+    DrawBoostAction,
+    ShuffleIntoDeckAction,
+    ZeroTokensAction,
+    ShadowsOfThePastAction,
+    PlayerEndPhaseAction,
+    VillainEncounterPhaseAction,
+    VillainEndPhaseAction,
+    MultipleDoubleSidedVillainsAction,
+    DiscardMinionAction,
+    DiscardSideSchemeAction,
 )
 
 
@@ -385,5 +576,182 @@ def _to_dragncards(action: GameAction) -> tuple[list, str, str | None]:
 
     if isinstance(action, RawAction):
         return action.action_list, action.description, action.player_n
+
+    if isinstance(action, ExhaustCardAction):
+        return (
+            ["EXHAUST_CARD", action.instance_id],
+            f"Exhaust card {action.instance_id}",
+            None,
+        )
+
+    if isinstance(action, ReadyCardAction):
+        return (
+            ["READY_CARD", action.instance_id],
+            f"Ready card {action.instance_id}",
+            None,
+        )
+
+    if isinstance(action, FlipCardAction):
+        # Implement flip logic directly since Marvel Champions flipCard action list
+        # expects $ACTIVE_CARD context from UI selection which isn't available here.
+        # Cycle sides: A -> B -> C -> A (using multi-condition COND)
+        card_id = action.instance_id
+        return (
+            [
+                "COND",
+                ["DEFINED", f"$GAME.cardById.{card_id}.sides.C"],
+                [
+                    [
+                        "COND",
+                        ["EQUAL", f"$GAME.cardById.{card_id}.currentSide", "A"],
+                        ["SET", f"/cardById/{card_id}/currentSide", "B"],
+                        ["EQUAL", f"$GAME.cardById.{card_id}.currentSide", "B"],
+                        ["SET", f"/cardById/{card_id}/currentSide", "C"],
+                        True,
+                        ["SET", f"/cardById/{card_id}/currentSide", "A"],
+                    ]
+                ],
+                True,
+                [
+                    [
+                        "COND",
+                        ["EQUAL", f"$GAME.cardById.{card_id}.currentSide", "A"],
+                        ["SET", f"/cardById/{card_id}/currentSide", "B"],
+                        True,
+                        ["SET", f"/cardById/{card_id}/currentSide", "A"],
+                    ]
+                ],
+            ],
+            f"Flip card {action.instance_id}",
+            None,
+        )
+
+    if isinstance(action, DealEncounterAction):
+        action_name = (
+            "dealEncounterFaceup" if not action.facedown else "dealEncounterFacedown"
+        )
+        if action.deck_group_id is not None:
+            # Use specific deck for second/third encounter
+            action_name = (
+                f"dealSecondFaceup"
+                if action.deck_group_id == "sharedEncounter2Deck"
+                and not action.facedown
+                else (
+                    f"dealSecondFacedown"
+                    if action.deck_group_id == "sharedEncounter2Deck"
+                    else (
+                        f"dealThirdFaceup"
+                        if action.deck_group_id == "sharedEncounter3Deck"
+                        and not action.facedown
+                        else "dealThirdFacedown"
+                    )
+                )
+            )
+            return (
+                ["ACTION_LIST", action_name],
+                f"Deal encounter card from {action.deck_group_id} to {action.player_n}",
+                action.player_n,
+            )
+        return (
+            ["ACTION_LIST", action_name],
+            f"Deal encounter card to {action.player_n}",
+            action.player_n,
+        )
+
+    if isinstance(action, DrawBoostAction):
+        return (
+            ["ACTION_LIST", "drawBoost"],
+            f"Draw boost for {action.player_n}",
+            action.player_n,
+        )
+
+    if isinstance(action, ShuffleIntoDeckAction):
+        # Marvel Champions shuffleIntoDeck action list expects $ACTIVE_CARD context.
+        # Implement inline: read card's deckGroupId, move card there, shuffle.
+        return (
+            [
+                [
+                    "VAR",
+                    "$DECK_GROUP_ID",
+                    f"/cardById/{action.instance_id}/deckGroupId",
+                ],
+                ["MOVE_CARD", action.instance_id, "$DECK_GROUP_ID", 0],
+                ["SHUFFLE_GROUP", "$DECK_GROUP_ID"],
+            ],
+            f"Shuffle card {action.instance_id} into its deck",
+            None,
+        )
+
+    if isinstance(action, ZeroTokensAction):
+        # zeroTokens action list just does SET on tokens - we can do this directly
+        return (
+            [["SET", f"/cardById/{action.instance_id}/tokens", {}]],
+            f"Clear tokens from card {action.instance_id}",
+            None,
+        )
+
+    if isinstance(action, MulliganDrawHandAction):
+        # mulliganDrawHand draws a new hand if roundNumber is 0
+        return (
+            [
+                [
+                    "COND",
+                    ["EQUAL", "$GAME.roundNumber", 0],
+                    [["LOG", f"{action.player_n} mulliganed."]],
+                ],
+                ["DRAW_HAND", action.player_n, action.player_n],
+            ],
+            f"Mulligan for {action.player_n}",
+            action.player_n,
+        )
+
+    if isinstance(action, ShadowsOfThePastAction):
+        return (
+            ["ACTION_LIST", "shadowsOfThePast"],
+            f"Shadows of the Past for {action.player_n}",
+            action.player_n,
+        )
+
+    if isinstance(action, PlayerEndPhaseAction):
+        return (
+            ["ACTION_LIST", "playerEndPhase"],
+            "End player phase",
+            None,
+        )
+
+    if isinstance(action, VillainEncounterPhaseAction):
+        return (
+            ["ACTION_LIST", "villainEncounterPhase"],
+            "Villain encounter phase",
+            None,
+        )
+
+    if isinstance(action, VillainEndPhaseAction):
+        return (
+            ["ACTION_LIST", "villainEndPhase"],
+            "End villain phase",
+            None,
+        )
+
+    if isinstance(action, MultipleDoubleSidedVillainsAction):
+        return (
+            ["ACTION_LIST", "multipleDoubleSidedVillains"],
+            "Multiple double-sided villains setup",
+            None,
+        )
+
+    if isinstance(action, DiscardMinionAction):
+        return (
+            ["ACTION_LIST", "discardMinion"],
+            f"Discard until minion for {action.player_n}",
+            action.player_n,
+        )
+
+    if isinstance(action, DiscardSideSchemeAction):
+        return (
+            ["ACTION_LIST", "discardSideScheme"],
+            f"Discard until side scheme for {action.player_n}",
+            action.player_n,
+        )
 
     raise ValueError(f"Unknown action type: {type(action)}")
