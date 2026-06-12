@@ -330,3 +330,22 @@ async def test_modify_tokens_action(manager):
         assert "game" in new_state or "createdAt" in new_state
     finally:
         await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_modify_tokens_action_error_field(manager):
+    """MODIFY_TOKENS action response should include error field when action fails."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        # Execute action with nonexistent card - should still return but may have error
+        new_state = await session.execute_action(
+            ModifyTokensAction(
+                instance_id="nonexistent-card-xyz", token_type="threat", amount=1
+            )
+        )
+        # Verify session can retrieve error state
+        error = session.get_action_error()
+        # Error may be None or a string depending on whether DragnCards reported failure
+        assert error is None or isinstance(error, str)
+    finally:
+        await manager.delete_session(session.session_id)

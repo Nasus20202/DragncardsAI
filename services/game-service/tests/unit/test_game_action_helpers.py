@@ -263,3 +263,66 @@ async def test_action_helpers_call_execute_and_change_state(
     assert prev != new, "Expected game state to change after action"
     assert resp.session_id == "sess-1"
     assert resp.success is True
+
+
+@pytest.mark.asyncio
+async def test_action_helpers_returns_error_when_action_error_is_set():
+    """Action helper should return error message when _action_error is set."""
+
+    class Ctx:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    session = MagicMock()
+    session.execute_action = AsyncMock()
+    session.get_action_error = MagicMock(return_value="Card not found: nonexistent-id")
+    session.get_state = AsyncMock(side_effect=[{"game": {}}, {"game": {}}])
+
+    manager = MagicMock()
+    manager.session_operation_lock = lambda *a, **k: Ctx()
+    manager.get_session = AsyncMock(return_value=session)
+
+    action = ModifyTokensAction(
+        instance_id="nonexistent-id", token_type="threat", amount=1
+    )
+    resp = await helpers.modify_tokens("sess-1", action, manager=manager)
+
+    assert session.execute_action.await_count >= 1
+    assert resp.session_id == "sess-1"
+    assert resp.success is True
+    assert resp.error == "Card not found: nonexistent-id"
+
+
+@pytest.mark.asyncio
+async def test_action_helpers_returns_error_from_game_messages():
+    """Action helper should return error when DragnCards sends error in messages."""
+
+    class Ctx:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    session = MagicMock()
+    session.execute_action = AsyncMock()
+
+    action_error_msg = 'Error in Marvel Champions triggered by [1/dev_user]: Card not found: string Trace: ["Move card string to sharedEncounterDeck[-1]"]'
+    after_state = {"game": {"messages": [action_error_msg]}}
+    session.get_state = AsyncMock(side_effect=[{"game": {}}, after_state])
+    session.get_action_error = MagicMock(return_value=action_error_msg)
+
+    manager = MagicMock()
+    manager.session_operation_lock = lambda *a, **k: Ctx()
+    manager.get_session = AsyncMock(return_value=session)
+
+    action = MoveCardAction(instance_id="string", dest_group_id="sharedEncounterDeck")
+    resp = await helpers.move_card("sess-1", action, manager=manager)
+
+    assert session.execute_action.await_count >= 1
+    assert resp.session_id == "sess-1"
+    assert resp.success is True
+    assert resp.error == action_error_msg

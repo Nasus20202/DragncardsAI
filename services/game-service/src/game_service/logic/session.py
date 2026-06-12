@@ -181,6 +181,8 @@ class GameSession:
                 await self.room.wait_for_state_change(timeout=timeout)
                 self._check_state_flags()
                 new_state = await self._request_fresh_state(timeout=timeout)
+                # Check for action errors in game messages
+                self._check_action_messages(new_state)
                 logger.info(
                     "execute_action: session_id=%s -> state updated", self.session_id
                 )
@@ -200,6 +202,7 @@ class GameSession:
                     new_state = await self._request_fresh_state(
                         timeout=recovery_timeout
                     )
+                    self._check_action_messages(new_state)
                     logger.info(
                         "execute_action: session_id=%s recovered via request_state",
                         self.session_id,
@@ -214,6 +217,23 @@ class GameSession:
                 raise SessionError(
                     "Timed out waiting for state update after action"
                 ) from exc
+
+    def _check_action_messages(self, state: Any) -> None:
+        """Check game messages for action errors and populate _action_error if found."""
+        if not isinstance(state, dict):
+            return
+        game = state.get("game")
+        if not isinstance(game, dict):
+            return
+        messages = game.get("messages")
+        if not isinstance(messages, list):
+            return
+        for message in reversed(messages):
+            if not isinstance(message, str):
+                continue
+            if "ABORT:" in message or "Error in Marvel Champions triggered" in message:
+                self._action_error = message
+                break
 
     async def load_prebuilt_deck(self, deck_id: str, timeout: float = 15.0) -> Any:
         load_action = LoadCardsAction(
