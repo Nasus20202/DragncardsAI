@@ -147,7 +147,8 @@ def _simplify_marvel_state(raw_state: dict) -> SimplifiedGameState:
 
 @router.get(
     "/games/{session_id}/state/raw",
-    # include_in_schema=False,
+    summary="DEBUG ONLY: Get raw game state without simplification",
+    operation_id="get_raw_game_state_games",
 )
 async def get_raw_game_state(
     session_id: str,

@@ -36,6 +36,14 @@ def create_mcp_server(session_manager, fastapi_app) -> FastMCP:
             RouteMap(pattern=r"^/games/[^/]+/player-count$", mcp_type=MCPType.EXCLUDE),
             RouteMap(pattern=r"^/games/[^/]+/alerts$", mcp_type=MCPType.EXCLUDE),
             RouteMap(pattern=r"^/games/[^/]+/gui-update$", mcp_type=MCPType.EXCLUDE),
+            # debug endpoints are HTTP-only (raw state, generic actions, raw DragnLang)
+            RouteMap(pattern=r"^/games/[^/]+/state/raw$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(
+                pattern=r"^/games/[^/]+/actions$",
+                methods=["POST"],
+                mcp_type=MCPType.EXCLUDE,
+            ),
+            RouteMap(pattern=r"^/games/[^/]+/actions/raw$", mcp_type=MCPType.EXCLUDE),
             RouteMap(
                 pattern=r"^/games/[^/]+/load-prebuilt-deck$", mcp_type=MCPType.TOOL
             ),

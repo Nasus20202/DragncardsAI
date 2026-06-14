@@ -115,10 +115,9 @@ class LiveGameServiceBifrost:
                 tool_calls=[
                     ToolCall(
                         id="call-step",
-                        name="game-service_execute_action",
+                        name="game-service_next_step",
                         arguments={
                             "session_id": session_id,
-                            "action": {"type": "next_step"},
                         },
                     )
                 ],

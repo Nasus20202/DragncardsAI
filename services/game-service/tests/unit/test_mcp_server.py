@@ -67,14 +67,12 @@ def _make_mcp(manager=None):
 
 EXPECTED_TOOL_NAMES = {
     "list_actions",
-    "get_raw_game_state_games",
     "list_card_providers",
     "load_prebuilt_deck",
     "list_prebuilt_sets_marvel_champions",
     "create_game",
     "attach_game",
     "list_games",
-    "execute_action",
     "get_session_actions",
     "delete_game",
     "get_game_state",
@@ -87,7 +85,6 @@ EXPECTED_TOOL_NAMES = {
     "set_player_count_action",
     "load_cards",
     "unload_cards",
-    "raw",
     # Marvel Champions action helpers
     "exhaust_card",
     "ready_card",
@@ -147,10 +144,12 @@ async def test_execute_action_requires_session_id_and_action():
     mcp = _make_mcp()
     async with Client(mcp) as client:
         tools = await client.list_tools()
-    tool = next(t for t in tools if t.name == "execute_action")
+    # Typed per-action helpers expose set_card_property, etc. with specific schemas
+    tool = next(t for t in tools if t.name == "set_card_property")
     required = tool.inputSchema.get("required", [])
     assert "session_id" in required
-    assert "action" in required
+    assert "instance_id" in required
+    assert "property_path" in required
 
 
 async def test_get_game_state_exposed_as_tool():
@@ -194,6 +193,17 @@ async def test_snapshot_endpoints_not_exposed_as_tools():
     names = {t.name for t in tools}
     assert "export_game_state_snapshot" not in names
     assert "load_game_state_snapshot" not in names
+
+
+async def test_debug_endpoints_not_exposed_as_tools():
+    """Debug-only endpoints should be excluded from MCP tool discovery."""
+    mcp = _make_mcp()
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    names = {t.name for t in tools}
+    assert "get_raw_game_state_games" not in names
+    assert "execute_action" not in names
+    assert "raw_action" not in names
 
 
 async def test_prebuilt_set_tools_are_exposed():

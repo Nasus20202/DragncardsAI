@@ -184,7 +184,8 @@ async def unload_cards(
 @router.post(
     "/games/{session_id}/actions/raw",
     response_model=ExecuteActionResponse,
-    operation_id="raw",
+    summary="DEBUG ONLY: Execute raw DragnLang action list",
+    operation_id="raw_action",
 )
 async def raw_action(
     session_id: str, action: RawAction, manager: SessionManager = Depends(get_manager)

@@ -24,7 +24,7 @@ router = APIRouter(tags=["game-actions"])
 @router.post(
     "/games/{session_id}/actions",
     response_model=ExecuteActionResponse,
-    summary="Execute a game action",
+    summary="DEBUG ONLY: Execute a game action (generic endpoint)",
     operation_id="execute_action",
 )
 async def execute_action(

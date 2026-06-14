@@ -153,8 +153,8 @@ async def test_e2e_mcp_game_lifecycle(app, mcp):
 
                 # 3. Execute next_step
                 action_result = await client.call_tool(
-                    "execute_action",
-                    {"session_id": session_id, "action": {"type": "next_step"}},
+                    "next_step",
+                    {"session_id": session_id},
                 )
                 action_data = json.loads(action_result.content[0].text)
                 assert action_data["session_id"] == session_id
@@ -205,8 +205,8 @@ async def test_e2e_concurrent_http_and_mcp(app, mcp, manager):
 
                 async def mcp_query():
                     result = await mcp_client.call_tool(
-                        "execute_action",
-                        {"session_id": session_id, "action": {"type": "next_step"}},
+                        "next_step",
+                        {"session_id": session_id},
                     )
                     resp = await http_client.get(f"/games/{session_id}/state")
                     return resp.json()["state"]
