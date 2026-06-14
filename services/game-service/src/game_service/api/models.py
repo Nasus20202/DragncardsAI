@@ -92,6 +92,7 @@ class SimplifiedGameState(BaseModel):
     mode: str = "unknown"
     villainHitPoints: int = 0
     stepId: str | int | None = None
+    stepDescription: str | None = None
     players: dict[str, dict[str, int]] = Field(default_factory=dict)
     zones: dict[str, list[SimplifiedCard]] = Field(default_factory=dict)
 

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-from game_service.api.routers.game_state import _simplify_marvel_state
+from game_service.api.routers.game_state import (
+    _simplify_marvel_state,
+    _get_step_description,
+)
 from game_service.logic.session_manager import BadGameStateError, StateUnavailableError
 
 from .game_room_state_test_support import (
@@ -105,6 +108,7 @@ def test_simplify_marvel_state_extracts_essential_fields():
             "roundNumber": 3,
             "mode": "villain",
             "villainHitPoints": 8,
+            "stepId": "1.1",
             "playerData": {
                 "player1": {"alias": "Spider-Man", "hitPoints": 10, "handSize": 5},
                 "player2": {"alias": None, "hitPoints": 8, "handSize": 3},
@@ -137,6 +141,8 @@ def test_simplify_marvel_state_extracts_essential_fields():
     assert result_dict["roundNumber"] == 3
     assert result_dict["mode"] == "villain"
     assert result_dict["villainHitPoints"] == 8
+    assert result_dict["stepId"] == "1.1"
+    assert result_dict["stepDescription"] == "Player Turn"
     assert "player1" in result_dict["players"]
     assert "player2" not in result_dict["players"]  # null alias filtered out
     assert result_dict["players"]["player1"]["hitPoints"] == 10
@@ -153,6 +159,45 @@ def test_simplify_marvel_state_extracts_essential_fields():
     assert card["exhausted"] is False
     assert card["tokens"] == {"damage": 1}
     assert card["stackSize"] == 1
+
+
+def test_get_step_description_known_steps():
+    assert _get_step_description("0.0") == "Beginning of Round"
+    assert _get_step_description("0.1") == "End of Round"
+    assert _get_step_description("1.1") == "Player Turn"
+    assert _get_step_description("1.2") == "End of Player Phase"
+    assert _get_step_description("2.1") == "Place threat on the main scheme."
+    assert (
+        _get_step_description("2.2")
+        == "The villain activates once per player, along with any eligible minions"
+    )
+    assert _get_step_description("2.3") == "Deal one encounter card to each player."
+    assert _get_step_description("2.4") == "Reveal encounter cards."
+    assert (
+        _get_step_description("2.5") == "Pass the first player token and end the round."
+    )
+
+
+def test_get_step_description_unknown_step():
+    assert _get_step_description("9.9") is None
+    assert _get_step_description(None) is None
+
+
+def test_simplify_marvel_state_without_step_id():
+    raw = {
+        "game": {
+            "roundNumber": 1,
+            "mode": "hero",
+            "villainHitPoints": 0,
+            "playerData": {},
+            "cardById": {},
+        }
+    }
+    result = _simplify_marvel_state(raw)
+    result_dict = result.model_dump() if hasattr(result, "model_dump") else result
+
+    assert result_dict["stepId"] is None
+    assert result_dict["stepDescription"] is None
 
 
 def test_simplify_marvel_state_filters_tucked_attachments():

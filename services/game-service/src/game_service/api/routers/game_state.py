@@ -18,6 +18,26 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["game-state"])
 
+STEP_DESCRIPTIONS: dict[str, str] = {
+    "step-0.0": "Beginning of Round",
+    "step-0.1": "End of Round",
+    "step-1.1": "Player Turn",
+    "step-1.2": "End of Player Phase",
+    "step-2.1": "Place threat on the main scheme.",
+    "step-2.2": "The villain activates once per player, along with any eligible minions",
+    "step-2.3": "Deal one encounter card to each player.",
+    "step-2.4": "Reveal encounter cards.",
+    "step-2.5": "Pass the first player token and end the round.",
+}
+
+
+def _get_step_description(step_id: str | int | None) -> str | None:
+    """Convert a step ID to its human-readable description."""
+    if step_id is None:
+        return None
+    step_key = f"step-{step_id}"
+    return STEP_DESCRIPTIONS.get(step_key)
+
 
 def _simplify_marvel_state(raw_state: dict) -> SimplifiedGameState:
     """Transform raw DragnCards Marvel Champions state into a simplified representation."""
@@ -140,6 +160,7 @@ def _simplify_marvel_state(raw_state: dict) -> SimplifiedGameState:
         mode=game.get("mode", "unknown"),
         villainHitPoints=game.get("villainHitPoints", 0),
         stepId=game.get("stepId"),
+        stepDescription=_get_step_description(game.get("stepId")),
         players=players,
         zones=zones,
     )
