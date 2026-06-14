@@ -69,7 +69,7 @@ EXPECTED_TOOL_NAMES = {
     "list_actions",
     "list_card_providers",
     "load_prebuilt_deck",
-    "list_prebuilt_sets_marvel_champions",
+    "search_prebuilt_sets_marvel_champions",
     "create_game",
     "attach_game",
     "list_games",
@@ -211,7 +211,7 @@ async def test_prebuilt_set_tools_are_exposed():
     async with Client(mcp) as client:
         tools = await client.list_tools()
     names = {t.name for t in tools}
-    assert "list_prebuilt_sets_marvel_champions" in names
+    assert "search_prebuilt_sets_marvel_champions" in names
 
 
 async def test_load_prebuilt_deck_tool_is_exposed():

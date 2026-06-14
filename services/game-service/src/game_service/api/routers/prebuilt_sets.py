@@ -23,12 +23,12 @@ def _search_prebuilt_sets_response(name: str | None, type: str | None):
 @router.get(
     "/prebuilt-sets/marvel-champions",
     response_model=ListPrebuiltSetsResponse,
-    operation_id="list_prebuilt_sets_marvel_champions",
-    summary="List prebuilt Marvel Champions sets",
+    operation_id="search_prebuilt_sets_marvel_champions",
+    summary="Search prebuilt Marvel Champions sets",
 )
 async def list_available_prebuilt_sets(
     name: str | None = Query(default=None, description="Substring match on set name"),
     type: str | None = Query(default=None, description="Exact match on set type"),
 ):
-    logger.info("list_prebuilt_sets_marvel_champions: name=%r type=%r", name, type)
+    logger.info("search_prebuilt_sets_marvel_champions: name=%r type=%r", name, type)
     return _search_prebuilt_sets_response(name, type)

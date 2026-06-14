@@ -16,7 +16,7 @@ router = APIRouter(tags=["prebuilt-deck"])
 @router.post(
     "/games/{session_id}/load-prebuilt-deck",
     response_model=LoadPrebuiltDeckResponse,
-    summary="Load a prebuilt deck into a session",
+    summary="Load a prebuilt deck into a session. Use during setup to load a prebuilt deck into a session. Find a deck ID using the search_prebuilt_sets_marvel_champions endpoint.",
     operation_id="load_prebuilt_deck",
 )
 async def load_prebuilt_deck(
