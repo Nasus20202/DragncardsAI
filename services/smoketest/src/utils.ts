@@ -339,7 +339,7 @@ export async function waitForCreatedGameState(
           return null;
         }
         const payload = (await response.json()) as {
-          game?: unknown
+          game?: unknown;
         };
         if (!payload.game && (attempts === 1 || attempts % 5 === 0)) {
           logSmokeStatus(
