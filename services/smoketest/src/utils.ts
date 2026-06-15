@@ -328,7 +328,7 @@ export async function waitForCreatedGameState(
       async () => {
         attempts += 1;
         const response = await request.get(
-          `${gameServiceBaseUrl}/games/${gameSessionId}/state`,
+          `${gameServiceBaseUrl}/games/${gameSessionId}/state/raw`,
         );
         if (!response.ok()) {
           if (attempts === 1 || attempts % 5 === 0) {
