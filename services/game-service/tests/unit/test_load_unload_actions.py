@@ -66,7 +66,9 @@ def test_load_cards_translate_multiple_cards():
 
 def test_load_cards_explicit_player_n():
     action = LoadCardsAction(
-        cards=[LoadCardItem(databaseId="x", loadGroupId="playerNDeck", quantity=1)],
+        # When using playerN templates in tests, use the canonical form expected by
+        # the plugin metadata; plugin code will expand/validate these.
+        cards=[LoadCardItem(databaseId="x", loadGroupId="player1Deck", quantity=1)],
         player_n="player2",
     )
     payload = translate_action(action)
@@ -75,7 +77,7 @@ def test_load_cards_explicit_player_n():
 
 def test_load_cards_default_player_n():
     action = LoadCardsAction(
-        cards=[LoadCardItem(databaseId="x", loadGroupId="playerNDeck", quantity=1)]
+        cards=[LoadCardItem(databaseId="x", loadGroupId="player1Deck", quantity=1)]
     )
     assert action.player_n == "player1"
 

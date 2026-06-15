@@ -68,21 +68,40 @@ def _make_mcp(manager=None):
 EXPECTED_TOOL_NAMES = {
     "list_actions",
     "list_card_providers",
+    "load_prebuilt_deck",
+    "search_prebuilt_sets_marvel_champions",
     "create_game",
     "attach_game",
     "list_games",
-    "execute_action",
     "get_session_actions",
     "delete_game",
     "get_game_state",
-    "reset_game",
-    "set_seat",
-    "set_spectator",
-    "send_alert",
-    "save_replay",
-    "set_player_count",
-    "get_alerts",
-    "get_gui_update",
+    # Explicit per-action helpers added by game_action_helpers router
+    "next_step",
+    "prev_step",
+    "draw_card",
+    "move_card",
+    "set_card_property",
+    "set_player_count_action",
+    "load_cards",
+    "unload_cards",
+    # Marvel Champions action helpers
+    "exhaust_card",
+    "ready_card",
+    "flip_card",
+    "deal_encounter",
+    "draw_boost",
+    "shuffle_into_deck",
+    "zero_tokens",
+    "mulligan_draw_hand",
+    "shadows_of_the_past",
+    "player_end_phase",
+    "villain_encounter_phase",
+    "villain_end_phase",
+    "multiple_double_sided_villains",
+    "discard_minion",
+    "discard_side_scheme",
+    "modify_tokens",
 }
 EXPECTED_TOOL_NAMES |= {
     f"search_cards_{re.sub(r'[^a-zA-Z0-9]+', '_', provider).strip('_')}"
@@ -125,10 +144,12 @@ async def test_execute_action_requires_session_id_and_action():
     mcp = _make_mcp()
     async with Client(mcp) as client:
         tools = await client.list_tools()
-    tool = next(t for t in tools if t.name == "execute_action")
+    # Typed per-action helpers expose set_card_property, etc. with specific schemas
+    tool = next(t for t in tools if t.name == "set_card_property")
     required = tool.inputSchema.get("required", [])
     assert "session_id" in required
-    assert "action" in required
+    assert "instance_id" in required
+    assert "property_path" in required
 
 
 async def test_get_game_state_exposed_as_tool():
@@ -147,12 +168,22 @@ async def test_create_game_has_no_required_fields():
     assert tool.inputSchema.get("required", []) == []
 
 
-async def test_set_player_count_requires_num_players():
+async def test_room_control_tools_not_exposed():
     mcp = _make_mcp()
     async with Client(mcp) as client:
         tools = await client.list_tools()
-    tool = next(t for t in tools if t.name == "set_player_count")
-    assert "num_players" in tool.inputSchema.get("required", [])
+    names = {t.name for t in tools}
+    assert "reset_game" not in names
+    assert "set_seat" not in names
+    assert "set_spectator" not in names
+    assert "send_alert" not in names
+    assert "save_replay" not in names
+    # Note: typed per-action helpers expose a 'set_player_count' tool; ensure
+    # room-level player-count control (the HTTP-only endpoint) is excluded by
+    # using a distinct operation_id on the room router. Do not assert absence
+    # of the typed helper here.
+    assert "get_alerts" not in names
+    assert "get_gui_update" not in names
 
 
 async def test_snapshot_endpoints_not_exposed_as_tools():
@@ -162,6 +193,33 @@ async def test_snapshot_endpoints_not_exposed_as_tools():
     names = {t.name for t in tools}
     assert "export_game_state_snapshot" not in names
     assert "load_game_state_snapshot" not in names
+
+
+async def test_debug_endpoints_not_exposed_as_tools():
+    """Debug-only endpoints should be excluded from MCP tool discovery."""
+    mcp = _make_mcp()
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    names = {t.name for t in tools}
+    assert "get_raw_game_state_games" not in names
+    assert "execute_action" not in names
+    assert "raw_action" not in names
+
+
+async def test_prebuilt_set_tools_are_exposed():
+    mcp = _make_mcp()
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    names = {t.name for t in tools}
+    assert "search_prebuilt_sets_marvel_champions" in names
+
+
+async def test_load_prebuilt_deck_tool_is_exposed():
+    mcp = _make_mcp()
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    names = {t.name for t in tools}
+    assert "load_prebuilt_deck" in names
 
 
 # ---------------------------------------------------------------------------

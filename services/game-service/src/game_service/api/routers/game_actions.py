@@ -24,7 +24,7 @@ router = APIRouter(tags=["game-actions"])
 @router.post(
     "/games/{session_id}/actions",
     response_model=ExecuteActionResponse,
-    summary="Execute a game action",
+    summary="DEBUG ONLY: Execute a game action (generic endpoint)",
     operation_id="execute_action",
 )
 async def execute_action(
@@ -40,8 +40,16 @@ async def execute_action(
     async with manager.session_operation_lock(session_id):
         session = await manager.get_session(session_id)
         await session.execute_action(action)
+
+        # Check for error alerts from the action execution
+        alerts = session.get_alerts()
+        error: str | None = None
+        for alert in alerts:
+            if isinstance(alert, dict) and alert.get("level") == "error":
+                error = alert.get("text", str(alert))
+
     logger.info("execute_action: session_id=%s -> success", session_id)
-    return ExecuteActionResponse(session_id=session_id)
+    return ExecuteActionResponse(session_id=session_id, success=True, error=error)
 
 
 @router.get(

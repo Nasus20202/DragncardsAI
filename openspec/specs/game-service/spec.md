@@ -15,7 +15,11 @@ The Game Service SHALL provide HTTP endpoints and MCP tools to create, query, an
 
 #### Scenario: Create a new game session via MCP
 - **WHEN** an MCP client invokes the `create_game` tool with a plugin name parameter
-- **THEN** the Game Service SHALL create a new DragnCards game room via WebSocket, load the specified plugin, and return the session ID and initial game info
+- **THEN** the Game Service SHALL create a new DragnCards game room via WebSocket, load the specified plugin, assign the model to the first available player seat, and return the session ID and initial game info
+
+#### Scenario: Attach to an existing game session via MCP
+- **WHEN** an MCP client invokes the `attach_game` tool with a room slug parameter
+- **THEN** the Game Service SHALL join the existing room via WebSocket, assign the model to the first available player seat, and return the session ID and initial game info
 
 #### Scenario: Delete a game session
 - **WHEN** a client sends `DELETE /games/{id}` or invokes the `delete_game` MCP tool
@@ -42,7 +46,7 @@ The Game Service SHALL provide HTTP endpoints and MCP tools to create, query, an
 - **THEN** the Game Service SHALL reject the request with a descriptive client error and SHALL NOT mutate the session
 
 ### Requirement: Game state observation
-The Game Service SHALL provide endpoints and MCP tools to query the current game state for a given session.
+The Game Service SHALL provide endpoints and MCP tools to query the current game state for a given session, returning a simplified representation for Marvel Champions sessions.
 
 #### Scenario: Get current game state via HTTP
 - **WHEN** a client sends `GET /games/{id}/state`
@@ -60,12 +64,28 @@ The Game Service SHALL provide endpoints and MCP tools to query the current game
 - **WHEN** an action is executed on a session and then the state is queried
 - **THEN** the returned state SHALL reflect the result of the most recent action, including any automated effects triggered by the DragnCards engine
 
+#### Scenario: Get simplified state for Marvel Champions via HTTP
+- **WHEN** a client sends `GET /games/{id}/state` for a Marvel Champions session
+- **THEN** the Game Service SHALL return a flattened representation containing only `roundNumber`, `mode`, `villainHitPoints`, `players` (hitPoints/handSize), and `zones` with visible cards (id, instanceId, name, currentSide, exhausted, tokens)
+
+#### Scenario: Simplified state omits attachment hierarchy
+- **WHEN** a client requests state for a Marvel Champions session
+- **THEN** the Game Service SHALL exclude cards that are attachments tucked under other cards from zone listings
+
 ### Requirement: Game action execution
 The Game Service SHALL provide endpoints and MCP tools to execute game actions within a session.
 
 #### Scenario: Execute a card movement action
 - **WHEN** a client sends `POST /games/{id}/actions` or invokes the `execute_action` MCP tool with an action to move a card from one group to another (e.g., play a card from hand to the play area)
 - **THEN** the Game Service SHALL translate the action into the appropriate DragnCards WebSocket message, execute it, and return a success acknowledgment (`session_id` + `success: true`); the caller must use `get_game_state` to observe the updated state
+
+#### Scenario: Execute a card movement action with instance_id parameter
+- **WHEN** a client sends `POST /games/{id}/actions` or invokes the `execute_action` MCP tool with an action to move a card from one group to another (e.g., play a card from hand to the play area)
+- **THEN** the Game Service SHALL accept `instance_id` as the parameter name for the card identifier, consistent with the `instanceId` naming in the game state JSON
+
+#### Scenario: Execute card property action with instance_id parameter
+- **WHEN** a client sends `POST /games/{id}/actions` or invokes the `execute_action` MCP tool with an action to set a card property
+- **THEN** the Game Service SHALL accept `instance_id` as the parameter name for the card identifier, consistent with the `instanceId` naming in the game state JSON
 
 #### Scenario: Execute a game phase action
 - **WHEN** a client requests a phase-related action (e.g., end the player phase, advance to the next round)
@@ -93,6 +113,34 @@ The Game Service SHALL expose card search responses that include the relevant ga
 #### Scenario: Card catalog remains provider-defined
 - **WHEN** a new plugin provider is registered with its own card metadata mapping
 - **THEN** the Game Service SHALL expose that provider's normalized card metadata through the same card search contract without requiring router-specific behavior
+
+### Requirement: Prebuilt set catalog discovery
+The Game Service SHALL expose a read-only prebuilt set catalog for the Marvel Champions plugin through HTTP and MCP.
+
+#### Scenario: List all prebuilt sets via HTTP
+- **WHEN** a client sends `GET /prebuilt-sets/marvel-champions` without filters
+- **THEN** the Game Service SHALL return all available prebuilt sets sourced from the plugin's `sets.json`
+- **AND** each returned set SHALL include at least its `id`, `name`, and `type`
+
+#### Scenario: Filter prebuilt sets by name or type
+- **WHEN** a client sends `GET /prebuilt-sets/marvel-champions` with a name or type filter
+- **THEN** the Game Service SHALL return only sets matching the requested filter values
+
+#### Scenario: MCP exposes the Marvel Champions set catalog tool
+- **WHEN** an MCP client requests the list of available tools
+- **THEN** the server SHALL expose `search_prebuilt_sets_marvel_champions` as a discovery tool for the Marvel Champions set catalog
+
+#### Scenario: Empty result set
+- **WHEN** no prebuilt sets match the requested filters
+- **THEN** the Game Service SHALL return an empty list instead of an error
+
+### Requirement: Prebuilt set catalog is read-only
+The Game Service SHALL treat the prebuilt set catalog as discovery data only and SHALL NOT mutate DragnCards state when serving it.
+
+#### Scenario: Catalog request does not change game state
+- **WHEN** a client requests the prebuilt set catalog for any plugin
+- **THEN** the Game Service SHALL not create, modify, or destroy any game session
+- **AND** SHALL not send any DragnCards room events
 
 ### Requirement: Global action catalog exposes generic DragnCards actions
 The Game Service SHALL make `GET /actions` return only the generic action surface supported by the game-service and `@external/dragncards/`, independent of any specific plugin session.
@@ -156,7 +204,15 @@ The Game Service SHALL implement the Model Context Protocol, exposing game capab
 
 #### Scenario: Tool discovery
 - **WHEN** an MCP client requests the list of available tools
-- **THEN** the server SHALL return tool definitions for game session management (`create_game`, `list_games`, `delete_game`), state observation (`get_game_state`), and action execution (`execute_action`), each with proper JSON Schema parameter descriptions
+- **THEN** the server SHALL return tool definitions for game session management (`create_game`, `list_games`, `delete_game`), state observation (`get_game_state`), action execution (`execute_action`), card catalog discovery (`list_card_providers`, `search_cards_<provider>`), and prebuilt set catalog discovery (`search_prebuilt_sets_marvel_champions`), each with proper JSON Schema parameter descriptions
+
+#### Scenario: Tool discovery excludes room-control operations
+- **WHEN** an MCP client requests the list of available tools
+- **THEN** the server SHALL NOT expose room-control tools including reset, seat assignment, spectator toggles, player-count changes, replay saves, alert broadcasting, or room closure
+
+#### Scenario: Tool discovery excludes debug endpoints
+- **WHEN** an MCP client requests the list of available tools
+- **THEN** the server SHALL NOT expose tools for `get_raw_game_state`, `execute_action` (generic), or `raw_action` endpoints
 
 #### Scenario: MCP error handling
 - **WHEN** the Game Service encounters an error processing an MCP tool call
@@ -165,6 +221,52 @@ The Game Service SHALL implement the Model Context Protocol, exposing game capab
 #### Scenario: Setup import and export excluded from MCP
 - **WHEN** an MCP client requests the list of available tools
 - **THEN** the Game Service SHALL NOT expose game-state export or load-state operations through MCP discovery
+
+### Requirement: Debug endpoints are HTTP-only
+The Game Service SHALL expose raw state access, generic action execution, and raw DragnLang action execution endpoints as HTTP-only for debugging purposes.
+
+#### Scenario: Raw state endpoint accessible via HTTP
+- **WHEN** a client sends `GET /games/{session_id}/state/raw` via HTTP
+- **THEN** the Game Service SHALL return the raw, untransformed game state
+
+#### Scenario: Raw state endpoint not exposed via MCP
+- **WHEN** an MCP client queries available tools
+- **THEN** the Game Service SHALL NOT include a tool for accessing raw game state
+
+#### Scenario: Generic action endpoint accessible via HTTP
+- **WHEN** a client sends `POST /games/{session_id}/actions` with an action payload via HTTP
+- **THEN** the Game Service SHALL execute the action and return a success acknowledgment
+
+#### Scenario: Generic action endpoint not exposed via MCP
+- **WHEN** an MCP client queries available tools
+- **THEN** the Game Service SHALL NOT include a tool for generic action execution
+
+#### Scenario: Raw action endpoint accessible via HTTP
+- **WHEN** a client sends `POST /games/{session_id}/actions/raw` with a DragnLang action list via HTTP
+- **THEN** the Game Service SHALL execute the raw action list and return a success acknowledgment
+
+#### Scenario: Raw action endpoint not exposed via MCP
+- **WHEN** an MCP client queries available tools
+- **THEN** the Game Service SHALL NOT include a tool for raw DragnLang action execution
+
+#### Scenario: Debug endpoints marked in documentation
+- **WHEN** a developer views the OpenAPI schema or API documentation
+- **THEN** the three debug endpoints SHALL be annotated with "DEBUG ONLY" markers indicating they are intended for development and debugging purposes
+
+### Requirement: Action helper endpoints have descriptive summaries
+The Game Service SHALL provide descriptive summaries for all explicit action handler endpoints to improve MCP tool discoverability.
+
+#### Scenario: Action helper endpoints have summaries
+- **WHEN** an MCP client queries available tools
+- **THEN** each action tool SHALL include a descriptive summary explaining its purpose and when to use it
+
+#### Scenario: Summaries warn about preferred alternatives
+- **WHEN** an agent views tool descriptions in their MCP client
+- **THEN** low-level tools SHALL include warnings about better-typed alternatives (e.g., `set_card_property` warns to use `flip_card` instead)
+
+#### Scenario: Drawing to hand limit has clear guidance
+- **WHEN** an agent needs to draw cards up to hand limit
+- **THEN** the `mulligan_draw_hand` tool description SHALL clarify it is the preferred tool for this use case over `draw_card`
 
 ### Requirement: Plugin management
 The Game Service SHALL support loading DragnCards-compatible plugins for game initialization.
@@ -354,30 +456,3 @@ The Game Service SHALL capture `gui_update` events from the DragnCards room chan
 #### Scenario: Retrieve GUI update via HTTP
 - **WHEN** a client sends `GET /games/{id}/gui-update`
 - **THEN** the Game Service SHALL return a JSON object keyed by `player_n` with the latest GUI hint payload for each player
-
-### Requirement: Room control MCP tools
-The Game Service SHALL expose each room-control operation as an MCP tool.
-
-#### Scenario: MCP reset_game tool
-- **WHEN** an MCP client invokes `reset_game` with `session_id` and optional `save` / `reload_plugin` flags
-- **THEN** the Game Service SHALL perform the reset and return the updated state as text content
-
-#### Scenario: MCP set_seat tool
-- **WHEN** an MCP client invokes `set_seat` with `session_id`, `player_index`, and `user_id`
-- **THEN** the Game Service SHALL push `set_seat` and return a confirmation message
-
-#### Scenario: MCP set_spectator tool
-- **WHEN** an MCP client invokes `set_spectator` with `session_id`, `user_id`, and `spectating`
-- **THEN** the Game Service SHALL push `set_spectator` and return a confirmation message
-
-#### Scenario: MCP send_alert tool
-- **WHEN** an MCP client invokes `send_alert` with `session_id` and `message`
-- **THEN** the Game Service SHALL push `send_alert` on the room channel and return a confirmation message
-
-#### Scenario: MCP save_replay tool
-- **WHEN** an MCP client invokes `save_replay` with `session_id`
-- **THEN** the Game Service SHALL push `save_replay` and return a confirmation message
-
-#### Scenario: MCP set_player_count tool
-- **WHEN** an MCP client invokes `set_player_count` with `session_id`, `num_players`, and optional `layout_id`
-- **THEN** the Game Service SHALL push the game actions and return the updated state as text content

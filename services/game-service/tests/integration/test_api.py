@@ -22,6 +22,7 @@ from fastmcp import Client
 pytestmark = pytest.mark.live
 
 from game_service.api.app import create_app
+from game_service.dragncards.http_client import get_auth_token, get_user_id
 from game_service.logic.session_manager import SessionManager
 from game_service.mcp.server import create_mcp_server
 
@@ -144,6 +145,36 @@ async def test_create_game(app, manager):
 
 
 @pytest.mark.asyncio
+async def test_create_game_auto_seats_user(app, manager):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/games", json={"plugin_name": "marvel-champions"})
+    assert resp.status_code == 201
+    session_id = resp.json()["session"]["session_id"]
+    try:
+        session = await manager.get_session(session_id)
+        state = await session.get_state()
+        game = state["game"]
+        player_info = game.get("playerInfo")
+        if player_info is None:
+            player_info = game.get("playerData")
+        auth_token = await get_auth_token(
+            DRAGNCARDS_HTTP_URL, DEV_USER_EMAIL, DEV_USER_PASSWORD
+        )
+        expected_user = await get_user_id(DRAGNCARDS_HTTP_URL, auth_token)
+        assert any(
+            info
+            and (
+                info.get("id") == expected_user or info.get("user_id") == expected_user
+            )
+            for info in player_info.values()
+        )
+    finally:
+        await manager.delete_session(session_id)
+
+
+@pytest.mark.asyncio
 async def test_create_game_unknown_plugin(app):
     """POST /games with an unknown plugin returns 400."""
     async with httpx.AsyncClient(
@@ -188,12 +219,58 @@ async def test_attach_game_shares_room_state(app, manager):
 
             state_resp = await client.get(f"/games/{attached_session_id}/state")
             assert state_resp.status_code == 200
-            expected_step_id = state_resp.json()["state"]["game"]["stepId"]
+            expected_step_id = state_resp.json()["state"]["stepId"]
 
             primary_state_resp = await client.get(f"/games/{primary_session_id}/state")
             assert primary_state_resp.status_code == 200
-            assert (
-                primary_state_resp.json()["state"]["game"]["stepId"] == expected_step_id
+            assert primary_state_resp.json()["state"]["stepId"] == expected_step_id
+        finally:
+            if attached_session_id is not None:
+                await manager.delete_session(attached_session_id)
+            await manager.delete_session(primary_session_id)
+
+
+@pytest.mark.asyncio
+async def test_attach_game_auto_seats_user(app, manager):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        create_resp = await client.post(
+            "/games", json={"plugin_name": "marvel-champions"}
+        )
+        assert create_resp.status_code == 201
+        room_slug = create_resp.json()["session"]["room_slug"]
+        primary_session_id = create_resp.json()["session"]["session_id"]
+
+        attached_session_id = None
+        try:
+            attach_resp = await client.post(
+                "/games/attach",
+                json={
+                    "plugin_name": "marvel-champions",
+                    "room_slug": room_slug,
+                },
+            )
+            assert attach_resp.status_code == 201
+            attached_session_id = attach_resp.json()["session"]["session_id"]
+
+            attached_session = await manager.get_session(attached_session_id)
+            state = await attached_session.get_state()
+            game = state["game"]
+            player_info = game.get("playerInfo")
+            if player_info is None:
+                player_info = game.get("playerData")
+            auth_token = await get_auth_token(
+                DRAGNCARDS_HTTP_URL, DEV_USER_EMAIL, DEV_USER_PASSWORD
+            )
+            expected_user = await get_user_id(DRAGNCARDS_HTTP_URL, auth_token)
+            assert any(
+                info
+                and (
+                    info.get("id") == expected_user
+                    or info.get("user_id") == expected_user
+                )
+                for info in player_info.values()
             )
         finally:
             if attached_session_id is not None:
@@ -219,7 +296,61 @@ async def test_get_game_state(app, manager):
         body = resp.json()
         assert body["session_id"] == session.session_id
         assert body["state"] is not None
-        assert "game" in body["state"]
+        # Marvel Champions returns simplified flat structure
+        assert "roundNumber" in body["state"]
+        assert "game" not in body["state"]
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_load_prebuilt_deck_loads_spider_man(app, manager):
+    """Loading the Spider-Man preset should put Spider-Man into session state."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            load_resp = await client.post(
+                f"/games/{session.session_id}/load-prebuilt-deck",
+                params={"deck_id": "fe0f49aa-d3b4-4604-a43c-eaa18bbe1601"},
+            )
+            assert load_resp.status_code == 200
+
+            state_resp = await client.get(f"/games/{session.session_id}/state")
+            assert state_resp.status_code == 200
+            body = state_resp.json()
+            # Verify simplified state has roundNumber and zones structure
+            assert "roundNumber" in body["state"]
+            assert "zones" in body["state"]
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_load_prebuilt_deck_rhino_requires_hero_first(app, manager):
+    """Loading Rhino before a hero deck should return the engine error."""
+    session = await manager.create_session("marvel-champions")
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            load_resp = await client.post(
+                f"/games/{session.session_id}/load-prebuilt-deck",
+                params={"deck_id": "ea7258fb-8521-4bb5-afda-cd207ed9782f"},
+            )
+            assert load_resp.status_code == 400
+            body = load_resp.json()
+            assert body["error"]["type"] == "session_error"
+            assert (
+                "Load all player decks before loading the scenario"
+                in body["error"]["message"]
+            )
+
+            state_resp = await client.get(f"/games/{session.session_id}/state")
+            assert state_resp.status_code == 200
+            # Simplified state still returns, just no loaded cards
+            assert "roundNumber" in state_resp.json()["state"]
     finally:
         await manager.delete_session(session.session_id)
 
@@ -252,11 +383,11 @@ async def test_snapshot_export_and_load_round_trip(app, manager):
                 json=mutated,
             )
             assert load_resp.status_code == 200
-            assert load_resp.json()["state"]["game"]["roundNumber"] == 13
+            assert load_resp.json()["state"]["roundNumber"] == 13
 
             state_resp = await client.get(f"/games/{session.session_id}/state")
             assert state_resp.status_code == 200
-            assert state_resp.json()["state"]["game"]["roundNumber"] == 13
+            assert state_resp.json()["state"]["roundNumber"] == 13
     finally:
         await manager.delete_session(session.session_id)
 
@@ -315,6 +446,23 @@ async def test_mcp_does_not_expose_snapshot_tools(mcp):
     names = {tool.name for tool in tools}
     assert "export_game_state_snapshot" not in names
     assert "load_game_state_snapshot" not in names
+
+
+@pytest.mark.asyncio
+async def test_mcp_does_not_expose_room_control_tools(mcp):
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    names = {tool.name for tool in tools}
+    assert "reset_game" not in names
+    assert "set_seat" not in names
+    assert "set_spectator" not in names
+    assert "send_alert" not in names
+    assert "save_replay" not in names
+    # The room-level HTTP endpoint remains excluded; typed per-action helpers
+    # may exist under different tool names. Ensure room control endpoints are
+    # not exposed by name (we changed the room router op id to avoid collisions).
+    assert "get_alerts" not in names
+    assert "get_gui_update" not in names
 
 
 def test_list_actions_catalog(sync_client):
@@ -405,7 +553,7 @@ async def test_room_control_http_flows(app, manager):
         ) as client:
             initial_state_resp = await client.get(f"/games/{session.session_id}/state")
             assert initial_state_resp.status_code == 200
-            initial_round = initial_state_resp.json()["state"]["game"]["roundNumber"]
+            initial_round = initial_state_resp.json()["state"]["roundNumber"]
 
             player_count_resp = await client.post(
                 f"/games/{session.session_id}/player-count",
@@ -414,7 +562,8 @@ async def test_room_control_http_flows(app, manager):
             assert player_count_resp.status_code == 200
             player_count_body = player_count_resp.json()
             assert player_count_body["session_id"] == session.session_id
-            assert "game" in player_count_body["state"]
+            # Simplified state for Marvel Champions
+            assert "roundNumber" in player_count_body["state"]
 
             alert_resp = await client.post(
                 f"/games/{session.session_id}/alert",
@@ -438,15 +587,13 @@ async def test_room_control_http_flows(app, manager):
             assert reset_resp.status_code == 200
             reset_body = reset_resp.json()
             assert reset_body["session_id"] == session.session_id
-            assert "game" in reset_body["state"]
+            assert "roundNumber" in reset_body["state"]
 
             refreshed_state_resp = await client.get(
                 f"/games/{session.session_id}/state"
             )
             assert refreshed_state_resp.status_code == 200
-            refreshed_round = refreshed_state_resp.json()["state"]["game"][
-                "roundNumber"
-            ]
+            refreshed_round = refreshed_state_resp.json()["state"]["roundNumber"]
             assert refreshed_round <= initial_round
     finally:
         await manager.delete_session(session.session_id)

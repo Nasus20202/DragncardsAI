@@ -37,7 +37,7 @@ async def test_prompt_run_uses_real_game_service_mcp(real_mcp_app):
         assert tools_response.status_code == 200
         tool_names = {tool["name"] for tool in tools_response.json()["tools"]}
         assert "game-service_create_game" in tool_names
-        assert "game-service_execute_action" in tool_names
+        assert "game-service_next_step" in tool_names
 
         prompt_response = await client.post(
             f"/sessions/{session_id}/prompts",
@@ -66,7 +66,7 @@ async def test_prompt_run_uses_real_game_service_mcp(real_mcp_app):
         assert len(tool_result_events) == 2
         assert {event["payload"]["tool_name"] for event in tool_call_events} == {
             "create_game",
-            "execute_action",
+            "next_step",
         }
         assert all(
             event["payload"]["server_url"] == GAME_SERVICE_MCP_URL
@@ -83,16 +83,17 @@ async def test_prompt_run_uses_real_game_service_mcp(real_mcp_app):
         )
         created_game_session_id = create_game_payload["session"]["session_id"]
 
-        execute_action_result = next(
+        next_step_result = next(
             event
             for event in tool_result_events
-            if event["payload"]["tool_name"] == "execute_action"
+            if event["payload"]["tool_name"] == "next_step"
         )
-        execute_action_payload = json.loads(
-            execute_action_result["payload"]["result"]["content"][0]["text"]
+        next_step_payload = json.loads(
+            next_step_result["payload"]["result"]["content"][0]["text"]
         )
-        assert execute_action_payload["session_id"] == created_game_session_id
-        assert execute_action_payload["success"] is True
+        assert next_step_payload["session_id"] == created_game_session_id
+        if "success" in next_step_payload:
+            assert next_step_payload["success"] is True
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as live_client:

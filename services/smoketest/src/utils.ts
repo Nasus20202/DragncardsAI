@@ -328,7 +328,7 @@ export async function waitForCreatedGameState(
       async () => {
         attempts += 1;
         const response = await request.get(
-          `${gameServiceBaseUrl}/games/${gameSessionId}/state`,
+          `${gameServiceBaseUrl}/games/${gameSessionId}/state/raw`,
         );
         if (!response.ok()) {
           if (attempts === 1 || attempts % 5 === 0) {
@@ -339,14 +339,14 @@ export async function waitForCreatedGameState(
           return null;
         }
         const payload = (await response.json()) as {
-          state?: { game?: unknown };
+          game?: unknown;
         };
-        if (!payload.state?.game && (attempts === 1 || attempts % 5 === 0)) {
+        if (!payload.game && (attempts === 1 || attempts % 5 === 0)) {
           logSmokeStatus(
             `game ${gameSessionId} exists but state is still empty`,
           );
         }
-        return payload.state?.game ? "ready" : null;
+        return payload.game ? "ready" : null;
       },
       { timeout: 30_000, intervals: [500, 1000, 2000] },
     )

@@ -20,6 +20,8 @@ from typing import Any, Awaitable, Callable
 
 from game_service.logic.actions import (
     GameAction,
+    LoadCardsAction,
+    RawAction,
     SetPlayerCountAction,
     translate_action,
 )
@@ -40,6 +42,15 @@ from game_service.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
 tracer = get_tracer(__name__)
+
+
+def _extract_alert_text(alert: dict) -> str | None:
+    """Extract error text from an alert dict."""
+    if alert.get("level") == "error":
+        return alert.get("text", str(alert))
+    if "error" in alert:
+        return str(alert.get("error"))
+    return None
 
 
 @dataclass
@@ -63,6 +74,7 @@ class GameSession:
     _state_unavailable: bool = field(default=False, init=False)
     _alerts: deque = field(default_factory=lambda: deque(maxlen=50), init=False)
     _gui_updates: dict = field(default_factory=dict, init=False)
+    _action_error: str | None = field(default=None, init=False)
 
     def __post_init__(self):
         self.room = PhoenixRoom(client=self.client, channel=self.channel)
@@ -96,6 +108,10 @@ class GameSession:
 
     def _on_alert(self, payload: Any) -> None:
         self._alerts.append(payload)
+        if isinstance(payload, dict):
+            text = _extract_alert_text(payload)
+            if text:
+                self._action_error = text
 
     def _on_gui_update(self, payload: Any) -> None:
         player_n = payload.get("player_n") if isinstance(payload, dict) else None
@@ -154,6 +170,8 @@ class GameSession:
             attributes={"game.action.name": action_name},
         ):
             self._check_state_flags()
+            # Clear any previous action error before executing
+            self._action_error = None
             payload = translate_action(action)
             logger.info(
                 "execute_action: session_id=%s payload=%r", self.session_id, payload
@@ -163,6 +181,8 @@ class GameSession:
                 await self.room.wait_for_state_change(timeout=timeout)
                 self._check_state_flags()
                 new_state = await self._request_fresh_state(timeout=timeout)
+                # Check for action errors in game messages
+                self._check_action_messages(new_state)
                 logger.info(
                     "execute_action: session_id=%s -> state updated", self.session_id
                 )
@@ -182,6 +202,7 @@ class GameSession:
                     new_state = await self._request_fresh_state(
                         timeout=recovery_timeout
                     )
+                    self._check_action_messages(new_state)
                     logger.info(
                         "execute_action: session_id=%s recovered via request_state",
                         self.session_id,
@@ -196,6 +217,46 @@ class GameSession:
                 raise SessionError(
                     "Timed out waiting for state update after action"
                 ) from exc
+
+    def _check_action_messages(self, state: Any) -> None:
+        """Check game messages for action errors and populate _action_error if found."""
+        if not isinstance(state, dict):
+            return
+        game = state.get("game")
+        if not isinstance(game, dict):
+            return
+        messages = game.get("messages")
+        if not isinstance(messages, list):
+            return
+        for message in reversed(messages):
+            if not isinstance(message, str):
+                continue
+            if "ABORT:" in message or "Error in Marvel Champions triggered" in message:
+                self._action_error = message
+                break
+
+    async def load_prebuilt_deck(self, deck_id: str, timeout: float = 15.0) -> Any:
+        load_action = LoadCardsAction(
+            cards=[], description=f"Loaded prebuilt deck {deck_id}"
+        )
+        payload = translate_action(
+            RawAction(
+                action_list=["LOAD_CARDS", deck_id],
+                description=load_action.description,
+                player_n="player1",
+            )
+        )
+        try:
+            await self.room.execute_game_action(payload, timeout=timeout)
+            await self.room.wait_for_state_change(timeout=timeout)
+            self._check_state_flags()
+            return await self._request_fresh_state(timeout=timeout)
+        except PhoenixChannelError as exc:
+            raise SessionError(f"load_prebuilt_deck rejected: {exc}") from exc
+        except asyncio.TimeoutError as exc:
+            raise SessionError(
+                "Timed out waiting for state after load_prebuilt_deck"
+            ) from exc
 
     async def export_state(self) -> GameStateSnapshot:
         state = await self.get_state()
@@ -324,6 +385,10 @@ class GameSession:
 
     def get_alerts(self) -> list[dict]:
         return list(self._alerts)
+
+    def get_action_error(self) -> str | None:
+        """Return the error from the most recent action execution, if any."""
+        return self._action_error
 
     def get_gui_updates(self) -> dict[str, Any]:
         return dict(self._gui_updates)

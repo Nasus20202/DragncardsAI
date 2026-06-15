@@ -4,9 +4,10 @@ Pydantic request/response models for the Game Service HTTP API.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
+from game_service.api.enums import LayoutId, PlayerN
 
 from game_service.logic.actions import GameAction
 from game_service.logic.snapshots import GameStateSnapshot
@@ -68,19 +69,58 @@ class ListGamesResponse(BaseModel):
     sessions: list[SessionMetadata]
 
 
+class SimplifiedCard(BaseModel):
+    """A simplified card representation for LLM consumption."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str = "Unknown"
+    instanceId: str = "Unknown"
+    name: str = "Unknown"
+    currentSide: str = "A"
+    exhausted: bool = False
+    tokens: dict = Field(default_factory=dict)
+    stackSize: int = 1
+
+
+class SimplifiedGameState(BaseModel):
+    """Simplified Marvel Champions game state for LLM consumption."""
+
+    model_config = ConfigDict(extra="allow")
+
+    roundNumber: int = 0
+    mode: str = "unknown"
+    villainHitPoints: int = 0
+    stepId: str | int | None = None
+    stepDescription: str | None = None
+    players: dict[str, dict[str, int]] = Field(default_factory=dict)
+    zones: dict[str, list[SimplifiedCard]] = Field(default_factory=dict)
+
+
 class GameStateResponse(BaseModel):
     session_id: str
-    state: Any = Field(description="Current DragnCards game state object")
+    state: Union[SimplifiedGameState, dict[str, Any]] = Field(
+        description="Current DragnCards game state object. Simplified format for Marvel Champions (flat keys), raw format for other plugins."
+    )
 
 
 class ExecuteActionResponse(BaseModel):
     session_id: str
-    success: Literal[True] = True
+    success: Literal[True]
+    error: str | None = Field(
+        default=None,
+        description="Error message from action execution, if any",
+    )
 
 
 class DeleteGameResponse(BaseModel):
     session_id: str
     deleted: Literal[True] = True
+
+
+class LoadPrebuiltDeckResponse(BaseModel):
+    session_id: str
+    success: Literal[True] = True
 
 
 class HealthResponse(BaseModel):
@@ -186,7 +226,9 @@ class SendAlertRequest(BaseModel):
 
 class ResetGameResponse(BaseModel):
     session_id: str
-    state: Any = Field(description="Game state after the reset")
+    state: Union[SimplifiedGameState, dict[str, Any]] = Field(
+        description="Game state after the reset"
+    )
 
 
 class AlertsResponse(BaseModel):
@@ -205,7 +247,7 @@ class GuiUpdateResponse(BaseModel):
 
 class SetPlayerCountRequest(BaseModel):
     num_players: int = Field(..., ge=1, description="Number of players (1 or more)")
-    layout_id: str | None = Field(
+    layout_id: LayoutId | None = Field(
         default=None,
         description=(
             "Optional plugin-specific layout ID to apply alongside the player count change, "
@@ -216,7 +258,9 @@ class SetPlayerCountRequest(BaseModel):
 
 class SetPlayerCountResponse(BaseModel):
     session_id: str
-    state: Any = Field(description="Game state after the player count was changed")
+    state: Union[SimplifiedGameState, dict[str, Any]] = Field(
+        description="Game state after the player count was changed"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +352,7 @@ class PluginDefaultAction(BaseModel):
 class PluginPlayerCountLayout(BaseModel):
     label: str = Field(description="Plugin label for the player-count option")
     num_players: int = Field(description="Number of active players")
-    layout_id: str | None = Field(
+    layout_id: LayoutId | None = Field(
         default=None, description="Plugin layout ID associated with the player count"
     )
 
@@ -345,6 +389,17 @@ class CardProviderMetadataResponse(BaseModel):
 
 class ListCardProvidersResponse(BaseModel):
     providers: list[CardProviderMetadataResponse]
+
+
+class PrebuiltSetSummary(BaseModel):
+    id: str = Field(description="Stable identifier for the prebuilt set")
+    name: str = Field(description="Human-readable set name")
+    type: str = Field(description="Set type, such as hero set or modular set")
+
+
+class ListPrebuiltSetsResponse(BaseModel):
+    total: int = Field(description="Number of matching prebuilt sets")
+    sets: list[PrebuiltSetSummary]
 
 
 # ---------------------------------------------------------------------------

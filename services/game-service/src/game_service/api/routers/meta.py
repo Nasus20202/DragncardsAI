@@ -1,7 +1,5 @@
 """Router: meta endpoints (liveness check, action catalogue)."""
 
-from __future__ import annotations
-
 from fastapi import APIRouter
 
 from game_service.logic.action_catalog import build_action_catalog_entries

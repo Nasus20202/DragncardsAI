@@ -88,6 +88,47 @@ def get_plugin_action_catalog(provider_name: str | None) -> PluginActionCatalog:
     return provider.get_action_catalog()
 
 
+def list_prebuilt_sets(provider_name: str | None = None) -> list[ProviderMetadata]:
+    resolved_name = provider_name or DEFAULT_PROVIDER_NAME
+    provider = PROVIDERS.get(resolved_name)
+    if provider is None:
+        return []
+    return provider.load_sets()
+
+
+def search_prebuilt_sets(
+    name: str | None = None,
+    type: str | None = None,
+    provider_name: str | None = None,
+) -> list[ProviderMetadata]:
+    resolved_name = provider_name or DEFAULT_PROVIDER_NAME
+    provider = PROVIDERS.get(resolved_name)
+    if provider is None:
+        return []
+    return provider.search_sets(name=name, type=type)
+
+
+def load_prebuilt_deck(
+    deck_id: str, provider_name: str | None = None
+) -> ProviderMetadata | None:
+    resolved_name = provider_name or DEFAULT_PROVIDER_NAME
+    provider = PROVIDERS.get(resolved_name)
+    if provider is None:
+        return None
+    return provider.load_prebuilt_deck(deck_id)
+
+
+def load_prebuilt_decks(provider_name: str | None = None) -> list[ProviderMetadata]:
+    resolved_name = provider_name or DEFAULT_PROVIDER_NAME
+    provider = PROVIDERS.get(resolved_name)
+    if provider is None:
+        return []
+    decks = provider.load_prebuilt_decks()
+    if isinstance(decks, dict):
+        return [dict(id=deck_id, **deck) for deck_id, deck in decks.items()]
+    return list(decks)
+
+
 def _coerce_boolean(name: str, value: Any) -> bool:
     if isinstance(value, bool):
         return value

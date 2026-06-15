@@ -27,5 +27,25 @@ def create_mcp_server(session_manager, fastapi_app) -> FastMCP:
             RouteMap(pattern=r"^/health$", mcp_type=MCPType.EXCLUDE),
             # snapshot import/export are privileged HTTP-only operations
             RouteMap(pattern=r"^/games/[^/]+/snapshot$", mcp_type=MCPType.EXCLUDE),
+            # room control and room observability endpoints are HTTP-only
+            RouteMap(pattern=r"^/games/[^/]+/reset$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(pattern=r"^/games/[^/]+/seat$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(pattern=r"^/games/[^/]+/spectator$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(pattern=r"^/games/[^/]+/alert$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(pattern=r"^/games/[^/]+/replay$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(pattern=r"^/games/[^/]+/player-count$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(pattern=r"^/games/[^/]+/alerts$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(pattern=r"^/games/[^/]+/gui-update$", mcp_type=MCPType.EXCLUDE),
+            # debug endpoints are HTTP-only (raw state, generic actions, raw DragnLang)
+            RouteMap(pattern=r"^/games/[^/]+/state/raw$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(
+                pattern=r"^/games/[^/]+/actions$",
+                methods=["POST"],
+                mcp_type=MCPType.EXCLUDE,
+            ),
+            RouteMap(pattern=r"^/games/[^/]+/actions/raw$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(
+                pattern=r"^/games/[^/]+/load-prebuilt-deck$", mcp_type=MCPType.TOOL
+            ),
         ],
     )
