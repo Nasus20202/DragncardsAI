@@ -52,7 +52,7 @@ importers:
         version: 4.0.1
       swagger-ui:
         specifier: ^5.32.5
-        version: 5.32.6(@types/react@19.2.17)
+        version: 5.32.7(@types/react@19.2.17)
       swagger-ui-react:
         specifier: 5.32.6
         version: 5.32.6(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -3365,8 +3365,8 @@ packages:
       react: '>=16.8.0 <20'
       react-dom: '>=16.8.0 <20'
 
-  swagger-ui@5.32.6:
-    resolution: {integrity: sha512-Kju+1XSjjnzm6X9JBW4eRXX8+5NIxELDagrzRh5BnvnWu91+6aA7IpAlVqLVfJrKYkY7w4+NIfD+ad18tGqyGQ==}
+  swagger-ui@5.32.7:
+    resolution: {integrity: sha512-upzxW4Z6nlY/ADc+3vXkJE1NVXWixgTwRgWq/es86QTy7Z/cOWXbBGtDk3Q8hJQSFJn+vSvHeLZxYU17oR3+YQ==}
 
   symbol-tree@3.2.4:
     resolution: {integrity: sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==}
@@ -7803,7 +7803,7 @@ snapshots:
       - debug
       - supports-color
 
-  swagger-ui@5.32.6(@types/react@19.2.17):
+  swagger-ui@5.32.7(@types/react@19.2.17):
     dependencies:
       '@babel/runtime-corejs3': 7.29.7
       '@scarf/scarf': 1.4.0
@@ -7816,7 +7816,7 @@ snapshots:
       ieee754: 1.2.1
       immutable: 3.8.3
       js-file-download: 0.4.12
-      js-yaml: 4.1.1
+      js-yaml: 4.2.0
       lodash: 4.18.1
       prop-types: 15.8.1
       randexp: 0.5.3
