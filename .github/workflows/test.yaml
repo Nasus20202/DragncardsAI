@@ -45,7 +45,7 @@ jobs:
             services/smoketest/pnpm-lock.yaml
 
       - name: Cache llama.cpp smoke model
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/dragncardsai/llama.cpp
           key: llama-cpp-smoke-qwen3.5-0.8b-q4km-v1
