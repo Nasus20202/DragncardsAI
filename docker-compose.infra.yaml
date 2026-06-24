@@ -1,7 +1,7 @@
 services:
   llama-cpp-smoke-model-cache:
     profiles: ["smoke"]
-    image: curlimages/curl:8.20.0
+    image: curlimages/curl:8.21.0
     user: "0:0"
     restart: "no"
     entrypoint:
