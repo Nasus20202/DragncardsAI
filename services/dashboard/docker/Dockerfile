@@ -1,5 +1,5 @@
 # ── Stage 1: deps ────────────────────────────────────────────────────────────
-FROM node:24.17-alpine AS deps
+FROM node:24.18-alpine AS deps
 
 ENV CI=true
 
@@ -13,7 +13,7 @@ COPY services/dashboard/package.json \
 RUN pnpm install --frozen-lockfile
 
 # ── Stage 2: builder ─────────────────────────────────────────────────────────
-FROM node:24.17-alpine AS builder
+FROM node:24.18-alpine AS builder
 
 ENV CI=true
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -31,7 +31,7 @@ COPY services/dashboard/ ./
 RUN pnpm build
 
 # ── Stage 3: runner ──────────────────────────────────────────────────────────
-FROM node:24.17-alpine AS runner
+FROM node:24.18-alpine AS runner
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
