@@ -1,6 +1,6 @@
 FROM python:3.14.6-alpine
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.24 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.25 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
