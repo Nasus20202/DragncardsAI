@@ -22,7 +22,7 @@ services:
 
   llama-cpp-smoke:
     profiles: ["smoke"]
-    image: ghcr.io/ggml-org/llama.cpp:server-b9828
+    image: ghcr.io/ggml-org/llama.cpp:server-b9837
     restart: unless-stopped
     depends_on:
       llama-cpp-smoke-model-cache:
