@@ -299,8 +299,7 @@ export function extractCreatedGameSessionId(
       continue;
     }
     const result = event.payload.result as
-      | { content?: Array<{ text?: string }> }
-      | undefined;
+      { content?: Array<{ text?: string }> } | undefined;
     const rawText = result?.content?.[0]?.text;
     if (typeof rawText !== "string") {
       continue;
