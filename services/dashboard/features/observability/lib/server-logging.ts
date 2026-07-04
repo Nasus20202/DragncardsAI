@@ -67,13 +67,13 @@ export function createLogRecordProcessors(): LogRecordProcessor[] {
   }
 
   return [
-    new BatchLogRecordProcessor(new OTLPLogExporter()),
-    new SimpleLogRecordProcessor(
-      new MinSeverityExporter(
+    new BatchLogRecordProcessor({ exporter: new OTLPLogExporter() }),
+    new SimpleLogRecordProcessor({
+      exporter: new MinSeverityExporter(
         new ConsoleLogRecordExporter(),
         SeverityNumber.WARN
-      )
-    ),
+      ),
+    }),
   ];
 }
 
