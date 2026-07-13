@@ -1,37 +1,44 @@
 # ── Stage 1: deps ────────────────────────────────────────────────────────────
-FROM node:24.18-alpine AS deps
+FROM node:24.18.0-alpine AS deps
 
 ENV CI=true
 
-RUN npm install -g pnpm@11.0.9 --no-fund --quiet
+RUN corepack enable
 
 WORKDIR /app
 
 COPY services/dashboard/package.json \
      services/dashboard/pnpm-lock.yaml \
      services/dashboard/pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+
+RUN corepack install
+
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 # ── Stage 2: builder ─────────────────────────────────────────────────────────
-FROM node:24.18-alpine AS builder
+FROM node:24.18.0-alpine AS builder
 
 ENV CI=true
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN npm install -g pnpm@11.0.9 --no-fund --quiet
+RUN corepack enable
 
 WORKDIR /app
 
 COPY services/dashboard/package.json \
      services/dashboard/pnpm-lock.yaml \
      services/dashboard/pnpm-workspace.yaml ./
+
+RUN corepack install
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY services/dashboard/ ./
 
 RUN pnpm build
 
 # ── Stage 3: runner ──────────────────────────────────────────────────────────
-FROM node:24.18-alpine AS runner
+FROM node:24.18.0-alpine AS runner
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
