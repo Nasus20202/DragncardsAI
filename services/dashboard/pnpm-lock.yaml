@@ -52,7 +52,7 @@ importers:
         version: 4.0.1
       swagger-ui:
         specifier: ^5.32.5
-        version: 5.32.8(@types/react@19.2.17)
+        version: 5.32.9(@types/react@19.2.17)
       swagger-ui-react:
         specifier: 5.32.8
         version: 5.32.8(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -3018,6 +3018,11 @@ packages:
     peerDependencies:
       react: ^15.3.0 || 16 || 17 || 18
 
+  react-copy-to-clipboard@5.1.1:
+    resolution: {integrity: sha512-s+HrzLyJBxrpGTYXF15dTgMjAJpEPZT/Yp6NytAtZMRngejxt6Pt5WrfFxLAcsqUDU6sY1Jz6tyHwIicE1U2Xg==}
+    peerDependencies:
+      react: '>=15.3.0'
+
   react-debounce-input@3.3.0:
     resolution: {integrity: sha512-VEqkvs8JvY/IIZvh71Z0TC+mdbxERvYF33RcebnodlsUZ8RSgyKe2VWaHXv4+/8aoOgXLxWrdsYs2hDhcwbUgA==}
     peerDependencies:
@@ -3349,8 +3354,8 @@ packages:
       react: '>=16.8.0 <20'
       react-dom: '>=16.8.0 <20'
 
-  swagger-ui@5.32.8:
-    resolution: {integrity: sha512-bDlODY/g1mvqamQweCZMpWR1CzX+xgbF1raMYS8j9zQOVtsUiE0kVyVoX2/SpdEsMffS7VKBLAKdOotE6Z4e+Q==}
+  swagger-ui@5.32.9:
+    resolution: {integrity: sha512-F+RBm5bswwJ3oxlYkcyH5EkM6hHZsJEiSPi8zWw66ncBpuue3sz9dmiXepWYv8BiHqnK82TAHyjoyYLHkEVm+w==}
 
   symbol-tree@3.2.4:
     resolution: {integrity: sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==}
@@ -7255,6 +7260,12 @@ snapshots:
       prop-types: 15.8.1
       react: 19.2.7
 
+  react-copy-to-clipboard@5.1.1(react@19.2.7):
+    dependencies:
+      copy-to-clipboard: 3.3.3
+      prop-types: 15.8.1
+      react: 19.2.7
+
   react-debounce-input@3.3.0(react@19.2.7):
     dependencies:
       lodash.debounce: 4.0.8
@@ -7771,7 +7782,7 @@ snapshots:
       - debug
       - supports-color
 
-  swagger-ui@5.32.8(@types/react@19.2.17):
+  swagger-ui@5.32.9(@types/react@19.2.17):
     dependencies:
       '@babel/runtime-corejs3': 7.29.7
       '@scarf/scarf': 1.4.0
@@ -7790,7 +7801,7 @@ snapshots:
       randexp: 0.5.3
       randombytes: 2.1.0
       react: 19.2.7
-      react-copy-to-clipboard: 5.1.0(react@19.2.7)
+      react-copy-to-clipboard: 5.1.1(react@19.2.7)
       react-debounce-input: 3.3.0(react@19.2.7)
       react-dom: 19.2.7(react@19.2.7)
       react-immutable-proptypes: 2.2.0(immutable@3.8.3)
