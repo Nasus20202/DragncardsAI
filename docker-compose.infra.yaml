@@ -84,7 +84,7 @@ services:
       - dragncards-shared
 
   game-service-valkey:
-    image: valkey/valkey:9.1.0-alpine
+    image: valkey/valkey:9.1.1-alpine
     restart: unless-stopped
     command: ["valkey-server", "--save", "", "--appendonly", "no"]
     ports:
@@ -98,7 +98,7 @@ services:
       - dragncards-shared
 
   agent-orchestrator-valkey:
-    image: valkey/valkey:9.1.0-alpine
+    image: valkey/valkey:9.1.1-alpine
     restart: unless-stopped
     command: ["valkey-server", "--save", "", "--appendonly", "no"]
     ports:
