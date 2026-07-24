@@ -140,7 +140,7 @@ services:
       - dragncards-shared
 
   bifrost:
-    image: maximhq/bifrost:v1.6.5
+    image: maximhq/bifrost:v1.6.6
     restart: unless-stopped
     depends_on:
       lmstudio-proxy:
