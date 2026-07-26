@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "game-service": {
+      "type": "http",
+      "url": "http://localhost:4001/mcp/"
+    },
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp"
+    },
+    "playwright": {
+      "command": "pnpx",
+      "args": ["@playwright/mcp@latest", "--browser", "chromium", "--headless"]
+    },
+    "grep": {
+      "type": "http",
+      "url": "https://mcp.grep.app"
+    }
+  }
+}

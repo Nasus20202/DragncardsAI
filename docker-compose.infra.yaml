@@ -130,6 +130,44 @@ services:
     networks:
       - dragncards-shared
 
+  history-postgres:
+    image: postgres:18.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: history_service
+    ports:
+      - "${HISTORY_POSTGRES_HOST_PORT:-5442}:5432"
+    volumes:
+      - history-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d history_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - dragncards-shared
+
+  eval-postgres:
+    image: postgres:18.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: eval_service
+    ports:
+      - "${EVAL_POSTGRES_HOST_PORT:-5443}:5432"
+    volumes:
+      - eval-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d eval_service"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - dragncards-shared
+
   lmstudio-proxy:
     image: alpine/socat:1.8.1.3
     restart: unless-stopped
@@ -179,4 +217,6 @@ networks:
 
 volumes:
   agent-orchestrator-postgres-data:
+  history-postgres-data:
+  eval-postgres-data:
   otel-lgtm-data:

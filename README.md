@@ -16,6 +16,8 @@ docker compose up -d
 | Backend API        | http://localhost:4000           |
 | Game Service       | http://localhost:4001           |
 | Agent Orchestrator | http://localhost:4002           |
+| History Service    | http://localhost:4004           |
+| Eval Service       | http://localhost:4005           |
 | Dashboard          | http://localhost:3001           |
 | Bifrost AI-Gateway | http://localhost:4003           |
 | Grafana            | http://localhost:3004           |
@@ -36,6 +38,10 @@ flowchart LR
     GameSvc["game-service<br/>port 4001"]
     OrcPg["agent-orchestrator-postgres<br/>port 5441"]
     AgentOrch["agent-orchestrator<br/>port 4002"]
+    HistorySvc["history-service<br/>port 4004"]
+    HistPg["history-postgres<br/>port 5442"]
+    EvalSvc["eval-service<br/>port 4005"]
+    EvalPg["eval-postgres<br/>port 5443"]
     Dashboard["dashboard<br/>port 3001"]
     Bifrost["bifrost<br/>port 4003"]
     OtelLGTM["otel-lgtm<br/>port 3004"]
@@ -46,13 +52,15 @@ flowchart LR
     ExtAI["External AI Providers"]
 
     class Frontend,Backend,PG1 dragncards
-    class GameSvc,AgentOrch,Dashboard ai
-    class Bifrost,OtelLGTM,Valkey1,Valkey2,OrcPg,LMProxy infra
+    class GameSvc,AgentOrch,HistorySvc,EvalSvc,Dashboard ai
+    class Bifrost,OtelLGTM,Valkey1,Valkey2,OrcPg,HistPg,EvalPg,LMProxy infra
     class HostLM,ExtAI external
 
     Frontend --> Backend --> PG1
     Dashboard --> AgentOrch
     Dashboard --> GameSvc
+    Dashboard --> HistorySvc
+    Dashboard --> EvalSvc
 
     AgentOrch --> GameSvc
     AgentOrch --> Bifrost
@@ -62,16 +70,32 @@ flowchart LR
     GameSvc --> Backend
     GameSvc --> Valkey1
 
+    GameSvc -- "history:ingest" --> Valkey2
+    HistorySvc --> Valkey2
+    HistorySvc --> HistPg
+    HistorySvc --> GameSvc
+    HistorySvc --> AgentOrch
+
+    EvalSvc --> EvalPg
+    EvalSvc --> HistorySvc
+    EvalSvc --> Bifrost
+
     Bifrost --> LMProxy --> HostLM
     Bifrost --> ExtAI
 
     OtelLGTM -.- GameSvc
     OtelLGTM -.- AgentOrch
+    OtelLGTM -.- HistorySvc
+    OtelLGTM -.- EvalSvc
     OtelLGTM -.- Dashboard
     OtelLGTM -.- Bifrost
 ```
 
-The system runs DragnCards (frontend + backend) with PostgreSQL. The game-service connects to DragnCards via HTTP/WebSocket to automate Marvel Champions gameplay. The agent-orchestrator manages AI sessions with its own PostgreSQL and Valkey, using Bifrost as an AI gateway that routes to local LM Studio (via `lmstudio-proxy`, a socat container that forwards Docker-internal traffic to the host) or external providers. The dashboard provides a UI for interacting with both services. All services send telemetry to otel-lgtm for observability.
+The system runs DragnCards (frontend + backend) with PostgreSQL. The game-service connects to DragnCards via HTTP/WebSocket to automate Marvel Champions gameplay. The agent-orchestrator manages AI sessions with its own PostgreSQL and Valkey, using Bifrost as an AI gateway that routes to local LM Studio (via `lmstudio-proxy`, a socat container that forwards Docker-internal traffic to the host) or external providers.
+
+The game-service and agent-orchestrator publish game/agent events onto a Valkey `history:ingest` stream. The **history-service** ingests that stream into its own PostgreSQL as an ordered, per-game event store with periodic snapshots (fetched from the game-service), and can restore a session to any past moment (seeding a resumed agent-orchestrator session). The **eval-service** reads recorded games from the history-service and produces hierarchical per-player move/round/game evaluations, judging via Bifrost and writing verdicts back to the history-service; it uses its own dedicated PostgreSQL. The dashboard provides a UI over all of these — live play, game history, and evaluations.
+
+The Python services (agent-orchestrator, history-service, eval-service) share the internal **dragncards-common** library (schema-migration runner, RESP/Valkey client, typed Bifrost errors, and an httpx base client). All services send telemetry to otel-lgtm for observability.
 
 ## Development
 

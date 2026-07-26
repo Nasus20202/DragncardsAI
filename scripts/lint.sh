@@ -43,7 +43,7 @@ echo ">>> $JS_LABEL smoketest formatting..."
     pnpm typecheck
 )
 
-for service in game-service agent-orchestrator; do
+for service in shared game-service agent-orchestrator history-service eval-service; do
     echo ">>> $PYTHON_LABEL Python formatting ($service)..."
     (
         cd "$ROOT_DIR/services/$service"

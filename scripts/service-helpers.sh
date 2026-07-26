@@ -1,10 +1,21 @@
 #!/bin/bash
 
+# Deployable, runnable services (own HTTP port + start command).
 list_services() {
     printf '%s\n' \
         "game-service" \
         "agent-orchestrator" \
+        "history-service" \
+        "eval-service" \
         "dashboard"
+}
+
+
+# Everything with a test suite. Includes the non-runnable `shared` library
+# (dragncards-common) so its unit tests run under `test.sh` and in CI.
+list_test_services() {
+    list_services
+    printf '%s\n' "shared"
 }
 
 
@@ -17,7 +28,7 @@ resolve_services() {
         return
     fi
 
-    list_services
+    list_test_services
 }
 
 
@@ -90,6 +101,38 @@ service_test_command() {
                     ;;
             esac
             ;;
+        history-service)
+            case "$mode" in
+                unit)
+                    printf 'cd "%s/services/history-service" && exec uv run pytest tests/unit/ -n auto -v' "$root_dir"
+                    ;;
+                integration)
+                    printf 'cd "%s/services/history-service" && exec uv run%s pytest tests/integration/ -n auto -v' "$root_dir" "$env_args"
+                    ;;
+                all)
+                    printf 'cd "%s/services/history-service" && exec uv run%s pytest tests/ -n auto -v' "$root_dir" "$env_args"
+                    ;;
+                *)
+                    return 1
+                    ;;
+            esac
+            ;;
+        eval-service)
+            case "$mode" in
+                unit)
+                    printf 'cd "%s/services/eval-service" && exec uv run pytest tests/unit/ -n auto -v' "$root_dir"
+                    ;;
+                integration)
+                    printf 'cd "%s/services/eval-service" && exec uv run%s pytest tests/integration/ -n auto -v' "$root_dir" "$env_args"
+                    ;;
+                all)
+                    printf 'cd "%s/services/eval-service" && exec uv run%s pytest tests/ -n auto -v' "$root_dir" "$env_args"
+                    ;;
+                *)
+                    return 1
+                    ;;
+            esac
+            ;;
         dashboard)
             case "$mode" in
                 unit|all)
@@ -97,6 +140,19 @@ service_test_command() {
                     ;;
                 integration)
                     echo "Integration tests not defined for dashboard service" >&2
+                    ;;
+                *)
+                    return 1
+                    ;;
+            esac
+            ;;
+        shared)
+            case "$mode" in
+                unit|all)
+                    printf 'cd "%s/services/shared" && exec uv run pytest tests/ -v' "$root_dir"
+                    ;;
+                integration)
+                    echo "Integration tests not defined for shared library" >&2
                     ;;
                 *)
                     return 1
@@ -121,7 +177,7 @@ validate_service() {
             known="yes"
             break
         fi
-    done < <(list_services)
+    done < <(list_test_services)
 
     if [ "$known" != "yes" ]; then
         echo "Unknown service: $service" >&2
@@ -150,6 +206,12 @@ service_start_command() {
         agent-orchestrator)
             printf 'cd "%s/services/agent-orchestrator" && exec uv run%s agent-orchestrator' "$root_dir" "$env_args"
             ;;
+        history-service)
+            printf 'cd "%s/services/history-service" && exec uv run%s history-service' "$root_dir" "$env_args"
+            ;;
+        eval-service)
+            printf 'cd "%s/services/eval-service" && exec uv run%s eval-service' "$root_dir" "$env_args"
+            ;;
         dashboard)
             printf 'cd "%s/services/dashboard" && exec pnpm dev --hostname 0.0.0.0 --port 3001' "$root_dir"
             ;;
@@ -169,6 +231,12 @@ service_http_port() {
             ;;
         agent-orchestrator)
             printf '%s' '4002'
+            ;;
+        history-service)
+            printf '%s' '4004'
+            ;;
+        eval-service)
+            printf '%s' '4005'
             ;;
         dashboard)
             printf '%s' '3001'
