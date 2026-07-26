@@ -5,7 +5,7 @@ set -e
 
 ACTION="${1:-start}"
 
-INFRA_SERVICES="dragncards-backend dragncards-frontend game-service-valkey agent-orchestrator-valkey agent-orchestrator-postgres bifrost"
+INFRA_SERVICES="dragncards-backend dragncards-frontend game-service-valkey agent-orchestrator-valkey agent-orchestrator-postgres history-postgres eval-postgres bifrost"
 APP_COMPOSE_FILE="docker-compose.yaml"
 
 case "$ACTION" in

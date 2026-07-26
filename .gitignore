@@ -1,1 +1,10 @@
 .env
+
+# Claude Code local settings (personal, not shared)
+.claude/settings.local.json
+
+# Claude Code agent worktrees (transient)
+.claude/worktrees/
+
+# Playwright MCP scratch output
+.playwright-mcp/

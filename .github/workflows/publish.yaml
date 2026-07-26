@@ -47,6 +47,10 @@ jobs:
             game-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/game-service:latest
             agent-orchestrator.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:${{ env.SHORT_SHA }}
             agent-orchestrator.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/agent-orchestrator:latest
+            history-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/history-service:${{ env.SHORT_SHA }}
+            history-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/history-service:latest
+            eval-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/eval-service:${{ env.SHORT_SHA }}
+            eval-service.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/eval-service:latest
             dashboard.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:${{ env.SHORT_SHA }}
             dashboard.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dashboard:latest
             dragncards-mc-plugin.tags=ghcr.io/${{ env.GHCR_REPOSITORY }}/dragncards-mc-plugin:${{ env.SHORT_SHA }}

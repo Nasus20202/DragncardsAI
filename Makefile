@@ -1,7 +1,7 @@
 
 .PHONY: help lint lint-fix test test-unit test-integration build up up-registry down down-clean \
 	infra-up infra-down infra-restart smoke-up smoke-check smoke-model \
-	run run-game-service run-agent-orchestrator run-dashboard
+	run run-game-service run-agent-orchestrator run-history-service run-eval-service run-dashboard
 
 help:
 	@printf "%s\n" \
@@ -25,6 +25,8 @@ help:
 		"make run                        # run local services directly" \
 		"make run-game-service           # run game-service locally" \
 		"make run-agent-orchestrator     # run agent-orchestrator locally" \
+		"make run-history-service        # run history-service locally" \
+		"make run-eval-service           # run eval-service locally" \
 		"make run-dashboard              # run dashboard locally"
 
 lint:
@@ -51,6 +53,8 @@ up:
 up-registry:
 	GAME_SERVICE_IMAGE=ghcr.io/nasus20202/dragncardsai/game-service:latest \
 	AGENT_ORCHESTRATOR_IMAGE=ghcr.io/nasus20202/dragncardsai/agent-orchestrator:latest \
+	HISTORY_SERVICE_IMAGE=ghcr.io/nasus20202/dragncardsai/history-service:latest \
+	EVAL_SERVICE_IMAGE=ghcr.io/nasus20202/dragncardsai/eval-service:latest \
 	DASHBOARD_IMAGE=ghcr.io/nasus20202/dragncardsai/dashboard:latest \
 	DRAGNCARDS_MC_PLUGIN_IMAGE=ghcr.io/nasus20202/dragncardsai/dragncards-mc-plugin:latest \
 	DRAGNCARDS_BACKEND_IMAGE=ghcr.io/nasus20202/dragncardsai/dragncards-backend:latest \
@@ -92,6 +96,12 @@ run-game-service:
 
 run-agent-orchestrator:
 	./scripts/run.sh start agent-orchestrator
+
+run-history-service:
+	./scripts/run.sh start history-service
+
+run-eval-service:
+	./scripts/run.sh start eval-service
 
 run-dashboard:
 	./scripts/run.sh start dashboard
