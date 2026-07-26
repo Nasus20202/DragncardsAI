@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "eval-service"
+version = "0.1.0"
+description = "DragnCards on-demand LLM move-evaluation service (the judge)"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "httpx>=0.28.1",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.10",
+    "sqlalchemy>=2.0.41",
+    "asyncpg>=0.30.0",
+    "aiosqlite>=0.21.0",
+    "dragncards-common",
+]
+
+[tool.uv.sources]
+dragncards-common = { path = "../shared", editable = true }
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+    "black>=26.0.0",
+    "httpx2>=2.3.0",
+]
+
+[project.scripts]
+eval-service = "eval_service.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eval_service"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = ["--import-mode=importlib"]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "postgres: requires a reachable PostgreSQL database (skipped automatically when unavailable)",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
+    "black>=26.0.0",
+    "httpx2>=2.3.0",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py314"]
