@@ -9,10 +9,12 @@ COPY services/eval-service/pyproject.toml ./pyproject.toml
 RUN uv sync --no-dev --no-install-project
 
 COPY services/eval-service/src ./src
+COPY skills ./skills
 RUN uv sync --no-dev
 
 ENV PYTHONPATH=/app/src
 ENV PATH=/app/.venv/bin:$PATH
+ENV SKILL_ROOTS=/app/skills
 ENV HTTP_PORT=4005
 
 EXPOSE 4005

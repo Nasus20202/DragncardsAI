@@ -9,7 +9,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # (services/eval-service/src/eval_service/config.py -> repo root / skills).
 # This is the SAME directory the agent-orchestrator discovers skills from, so a
 # skill name selected in the dashboard resolves to the same file here.
-_DEFAULT_SKILL_ROOT = Path(__file__).resolve().parents[4] / "skills"
+#
+# Only ``src/`` is copied into the container (to ``/app/src``), a shallower tree
+# where ``parents[4]`` would not exist -- indexing it at import time crash-loops
+# the service. Guard the lookup; the Dockerfile sets ``SKILL_ROOTS=/app/skills``
+# explicitly, so this default only ever applies to the dev (repo) layout.
+_MODULE_PARENTS = Path(__file__).resolve().parents
+_DEFAULT_SKILL_ROOT = (
+    _MODULE_PARENTS[4] / "skills" if len(_MODULE_PARENTS) > 4 else Path("skills")
+)
 
 
 class Settings(BaseSettings):
