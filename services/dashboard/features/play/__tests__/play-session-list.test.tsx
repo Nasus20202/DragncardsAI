@@ -73,14 +73,16 @@ describe("PlaySessionList", () => {
         onCreate={vi.fn()}
         onToggleCollapsed={vi.fn()}
         onSelect={vi.fn()}
+        onRemove={vi.fn()}
       />
     );
 
     expect(screen.getByText("Sessions")).toBeInTheDocument();
     expect(screen.getByTestId("new-session-button")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /session-1234567890123456789012345/i })
-    ).toHaveAttribute("aria-current", "true");
+    expect(screen.getByTestId("play-session-session-1")).toHaveAttribute(
+      "aria-current",
+      "true"
+    );
     expect(screen.getByText(/free · active/i)).toBeInTheDocument();
     expect(screen.getByText("Untitled")).toBeInTheDocument();
     expect(screen.getByText(/No model · terminated/i)).toBeInTheDocument();
@@ -102,6 +104,7 @@ describe("PlaySessionList", () => {
         onCreate={onCreate}
         onToggleCollapsed={onToggleCollapsed}
         onSelect={onSelect}
+        onRemove={vi.fn()}
       />
     );
 
@@ -126,10 +129,34 @@ describe("PlaySessionList", () => {
         onCreate={vi.fn()}
         onToggleCollapsed={vi.fn()}
         onSelect={vi.fn()}
+        onRemove={vi.fn()}
       />
     );
 
     expect(screen.getByRole("button", { name: /new session/i })).toBeDisabled();
     expect(screen.getByText("No sessions yet.")).toBeInTheDocument();
+  });
+
+  it("invokes onRemove with the session id from the remove control", () => {
+    const onRemove = vi.fn();
+
+    render(
+      <PlaySessionList
+        sessions={sessions}
+        selectedSessionId="session-1"
+        streamingSessionId={null}
+        isBusy={false}
+        canCreate={true}
+        isCollapsed={false}
+        onCreate={vi.fn()}
+        onToggleCollapsed={vi.fn()}
+        onSelect={vi.fn()}
+        onRemove={onRemove}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("remove-session-session-1"));
+
+    expect(onRemove).toHaveBeenCalledWith("session-1");
   });
 });

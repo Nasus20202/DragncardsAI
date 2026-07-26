@@ -5,6 +5,8 @@ import { MergedOpenApiResult, JsonValue } from "@/features/shared/lib/types";
 const SERVICE_PREFIX: Record<ServiceKey, string> = {
   orchestrator: "/orchestrator",
   game: "/game",
+  history: "/history",
+  eval: "/eval",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

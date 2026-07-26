@@ -2,10 +2,27 @@ import {
   CustomMcpDraft,
   DashboardConfig,
   JsonValue,
+  ProviderResponse,
   ReasoningDraft,
   SessionDetail,
   SessionDraft,
+  SessionSummary,
 } from "@/features/shared/lib/types";
+
+/**
+ * Whether a session should appear in the sidebar and be eligible for
+ * (re)selection: not terminated and not a subagent-child session. Shared
+ * between the sidebar render filter and post-removal reselection so the two
+ * cannot drift.
+ */
+export function isSelectableSession(
+  session: SessionSummary,
+  subagentChildSessionIds: Set<string>
+): boolean {
+  return (
+    session.status !== "terminated" && !subagentChildSessionIds.has(session.id)
+  );
+}
 
 export function buildDefaultSessionName(now = new Date()): string {
   return now
@@ -125,6 +142,105 @@ export function createDefaultDraft(config: DashboardConfig): SessionDraft {
     providerOptionsText: safeJsonStringify({}),
     selectedSkills: config.defaultSkills,
   };
+}
+
+/**
+ * A provider the user can actually select right now: marked available and
+ * exposing at least one model.
+ */
+export function isWorking(provider: ProviderResponse): boolean {
+  return provider.available !== false && provider.models.length > 0;
+}
+
+/**
+ * Clamp a model name to the provider's offered models, falling back to the
+ * provider's first model when the requested name is no longer offered.
+ */
+export function clampModelToProvider(
+  provider: ProviderResponse,
+  modelName: string
+): string {
+  return provider.models.includes(modelName) ? modelName : provider.models[0];
+}
+
+/**
+ * Pick a usable default provider/model for an initial draft. Prefers the
+ * configured default provider when it is working, then any other working
+ * provider that exposes models, so that the selectors default to a provider
+ * the user can actually use even when some providers are unavailable.
+ */
+export function pickDefaultProviderModel(
+  config: DashboardConfig,
+  providers: ProviderResponse[]
+): { providerId: string; modelName: string } {
+  const fallback = {
+    providerId: config.defaultProviderId,
+    modelName: config.defaultModelName,
+  };
+
+  const configured = providers.find(
+    (provider) => provider.provider_id === config.defaultProviderId
+  );
+  if (configured && isWorking(configured)) {
+    return {
+      providerId: configured.provider_id,
+      modelName: clampModelToProvider(configured, config.defaultModelName),
+    };
+  }
+
+  const working = providers.find(isWorking);
+  if (working) {
+    return {
+      providerId: working.provider_id,
+      modelName: working.models[0],
+    };
+  }
+
+  return fallback;
+}
+
+/**
+ * Build the draft for a brand-new session. Carries forward the user's
+ * last-used settings (provider, model, reasoning, skills, replay limits, and
+ * advanced/MCP options) from {@link lastUsed} when available, falling back to
+ * the configuration defaults when there is no prior draft to copy from. Only
+ * the session name is always freshly generated.
+ *
+ * The carried provider/model is validated against the currently available
+ * {@link providers}: when the prior provider is now unavailable or exposes no
+ * usable model, the provider/model fall back to {@link pickDefaultProviderModel}
+ * so a new session is never pinned to a broken provider.
+ */
+export function createNewSessionDraft(
+  config: DashboardConfig,
+  lastUsed: SessionDraft | null,
+  providers: ProviderResponse[] = []
+): SessionDraft {
+  if (!lastUsed) {
+    return createDefaultDraft(config);
+  }
+
+  const carried: SessionDraft = {
+    ...lastUsed,
+    name: buildDefaultSessionName(),
+    reasoning: { ...lastUsed.reasoning },
+    selectedSkills: [...lastUsed.selectedSkills],
+  };
+
+  const carriedProvider = providers.find(
+    (provider) => provider.provider_id === carried.providerId
+  );
+  if (carriedProvider !== undefined && isWorking(carriedProvider)) {
+    // Clamp the carried model so a stale name the provider no longer offers
+    // can't pass through.
+    return {
+      ...carried,
+      modelName: clampModelToProvider(carriedProvider, carried.modelName),
+    };
+  }
+
+  const { providerId, modelName } = pickDefaultProviderModel(config, providers);
+  return { ...carried, providerId, modelName };
 }
 
 export function buildDraftFromSession(

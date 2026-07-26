@@ -17,7 +17,8 @@ import {
   applyReasoningToGatewayOptions,
   buildDefaultSessionName,
   buildDraftFromSession,
-  createDefaultDraft,
+  createNewSessionDraft,
+  isSelectableSession,
   parseJsonObject,
   parseOptionalPositiveInteger,
 } from "@/features/play/lib/session-draft";
@@ -25,20 +26,25 @@ import {
   ContextMetadata,
   DashboardConfig,
   JobDetail,
+  ProviderResponse,
   SessionDetail,
   SessionDraft,
+  SessionSummary,
 } from "@/features/shared/lib/types";
 import { Dispatch, RefObject, SetStateAction, useCallback } from "react";
 
 interface UsePlaySessionActionsOptions {
   config: DashboardConfig | null;
   draft: SessionDraft | null;
+  providers: ProviderResponse[];
+  subagentChildSessionIds: Set<string>;
   selectedSession: SessionDetail | null;
+  selectedSessionId: string | null;
   jobsCount: number;
   prompt: string;
   streamingJobId: string | null;
   cancelPending: boolean;
-  refreshSessions: (preserveSelected?: boolean) => Promise<void>;
+  refreshSessions: (preserveSelected?: boolean) => Promise<SessionSummary[]>;
   persistSelectedSessionId: (id: string | null) => void;
   loadAllJobs: (sessionId: string) => Promise<JobDetail[]>;
   refreshContextMetadata: (sessionId: string) => Promise<void>;
@@ -61,7 +67,10 @@ interface UsePlaySessionActionsOptions {
 export function usePlaySessionActions({
   config,
   draft,
+  providers,
+  subagentChildSessionIds,
   selectedSession,
+  selectedSessionId,
   jobsCount,
   prompt,
   streamingJobId,
@@ -87,20 +96,24 @@ export function usePlaySessionActions({
       return;
     }
 
-    const nextDraft = createDefaultDraft(config);
+    // Carry forward the user's last-used settings instead of resetting to
+    // configuration defaults; fall back to defaults only when there is no
+    // prior draft to copy from. Pass the current providers so a carried
+    // provider that is now unavailable falls back to a working one.
+    const nextDraft = createNewSessionDraft(config, draft, providers);
 
     setIsBusy(true);
     setErrorText(null);
     setStatusText("Creating session...");
 
     try {
-      const created = await createSession(buildDefaultSessionName(), {
+      const created = await createSession(nextDraft.name, {
         context_recent_message_limit: parseOptionalPositiveInteger(
-          draft.recentMessageLimit,
+          nextDraft.recentMessageLimit,
           "Recent message limit"
         ),
         context_recent_tool_exchange_limit: parseOptionalPositiveInteger(
-          draft.recentToolExchangeLimit,
+          nextDraft.recentToolExchangeLimit,
           "Recent tool exchange limit"
         ),
       });
@@ -138,6 +151,7 @@ export function usePlaySessionActions({
     config,
     draft,
     persistSelectedSessionId,
+    providers,
     refreshSessions,
     setErrorText,
     setIsBusy,
@@ -272,6 +286,52 @@ export function usePlaySessionActions({
     setStatusText,
   ]);
 
+  const removeSession = useCallback(
+    async (sessionId: string) => {
+      setIsBusy(true);
+      setErrorText(null);
+      setStatusText("Removing session...");
+
+      try {
+        await terminateSession(sessionId);
+        // Refresh the shared sessions state so the terminated session actually
+        // leaves the sidebar; reuse refreshSessions rather than fetching and
+        // setting state separately.
+        const remaining = await refreshSessions();
+        if (sessionId === selectedSessionId) {
+          // Reselect using the SAME predicate the sidebar uses (exclude
+          // terminated sessions and subagent-child sessions) so selection never
+          // lands on a session the sidebar hides.
+          const nextSelectable = remaining.find((session) =>
+            isSelectableSession(session, subagentChildSessionIds)
+          );
+          persistSelectedSessionId(nextSelectable?.id ?? null);
+          if (!nextSelectable) {
+            setSelectedSession(null);
+          }
+        }
+        setStatusText("Session removed");
+      } catch (error) {
+        setErrorText(
+          error instanceof Error ? error.message : "Failed to remove session"
+        );
+        setStatusText("Remove failed");
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [
+      persistSelectedSessionId,
+      refreshSessions,
+      selectedSessionId,
+      setErrorText,
+      setIsBusy,
+      setSelectedSession,
+      setStatusText,
+      subagentChildSessionIds,
+    ]
+  );
+
   const compactPlaySession = useCallback(async () => {
     if (!selectedSession) {
       return;
@@ -391,6 +451,7 @@ export function usePlaySessionActions({
     createPlaySession,
     saveConfiguration,
     terminatePlaySession,
+    removeSession,
     compactPlaySession,
     submitSessionPrompt,
     cancelExecution,

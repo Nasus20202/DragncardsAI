@@ -54,25 +54,36 @@ vi.mock("@/features/play/components/play-session-list", () => ({
     sessions,
     onCreate,
     onSelect,
+    onRemove,
   }: {
     selectedSessionId: string | null;
     sessions: SessionSummary[];
     onCreate: () => void;
     onSelect: (id: string | null) => void;
+    onRemove?: (id: string) => void;
   }) => (
     <div>
       <button type="button" onClick={onCreate}>
         Create session
       </button>
       <div data-testid="selected-session-id">{selectedSessionId ?? "none"}</div>
+      <div data-testid="visible-session-ids">
+        {sessions.map((session) => session.id).join(",")}
+      </div>
       {sessions.map((session) => (
-        <button
-          key={session.id}
-          type="button"
-          onClick={() => onSelect(session.id)}
-        >
-          {session.name}
-        </button>
+        <div key={session.id}>
+          <button type="button" onClick={() => onSelect(session.id)}>
+            {session.name}
+          </button>
+          <button
+            type="button"
+            data-testid={`remove-${session.id}`}
+            aria-label={`remove-${session.id}`}
+            onClick={() => onRemove?.(session.id)}
+          >
+            ×
+          </button>
+        </div>
       ))}
     </div>
   ),

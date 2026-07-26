@@ -274,4 +274,104 @@ describe("PlayTranscript branches", () => {
     expect(screen.queryByText("hidden later")).toBeNull();
     expect(screen.getByText("final text")).toBeInTheDocument();
   });
+
+  function getScrollContainer(): HTMLElement {
+    // The scrollable chat area is the only overflow-y-auto element.
+    const el = document.querySelector<HTMLElement>(".overflow-y-auto");
+    if (!el) {
+      throw new Error("scroll container not found");
+    }
+    return el;
+  }
+
+  function setScrolledUp(el: HTMLElement) {
+    // Report a position far from the bottom so isNearBottom() is false.
+    Object.defineProperty(el, "scrollHeight", {
+      configurable: true,
+      value: 1000,
+    });
+    Object.defineProperty(el, "clientHeight", {
+      configurable: true,
+      value: 200,
+    });
+    Object.defineProperty(el, "scrollTop", { configurable: true, value: 0 });
+  }
+
+  const transcriptProps = {
+    jobs: [makeJob([], "Prompt")],
+    streamingJobId: null,
+    streamState: "idle" as const,
+    statusText: "Ready",
+    isBusy: false,
+    errorText: null,
+    onOpenSettings: vi.fn(),
+    settingsOpen: false,
+  };
+
+  it("resets the scroll lock when switching sessions (remount via key)", () => {
+    let now = 1000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      // The parent keys PlayTranscript by session id, so switching sessions
+      // remounts it. Mirror that here with a key.
+      const { rerender } = render(
+        <PlayTranscript
+          key="session-1"
+          {...transcriptProps}
+          selectedSession={selectedSession}
+        />
+      );
+
+      // Advance past the auto-follow guard installed on mount, then scroll up
+      // so the lock releases and the jump-to-latest control appears.
+      now += 1000;
+      const container = getScrollContainer();
+      setScrolledUp(container);
+      fireEvent.scroll(container);
+      expect(screen.getByTestId("jump-to-latest")).toBeInTheDocument();
+
+      // Switching sessions remounts the component, resetting the lock to
+      // bottom and hiding the jump-to-latest control.
+      rerender(
+        <PlayTranscript
+          key="session-2"
+          {...transcriptProps}
+          selectedSession={{ ...selectedSession, id: "session-2" }}
+        />
+      );
+      expect(screen.queryByTestId("jump-to-latest")).toBeNull();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("ignores scroll events triggered by a programmatic jump", () => {
+    let now = 1000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      render(
+        <PlayTranscript
+          {...transcriptProps}
+          selectedSession={selectedSession}
+        />
+      );
+
+      // Advance past the mount-effect guard, then scroll up to release the lock.
+      now += 1000;
+      const container = getScrollContainer();
+      setScrolledUp(container);
+      fireEvent.scroll(container);
+      expect(screen.getByTestId("jump-to-latest")).toBeInTheDocument();
+
+      // Jump to latest starts a programmatic smooth scroll. An onScroll event
+      // fired within the guard window (still far from the bottom) must not flip
+      // the lock back off and resurrect the control.
+      fireEvent.click(screen.getByTestId("jump-to-latest"));
+      now += 100; // still inside the 600ms guard
+      fireEvent.scroll(container);
+      expect(screen.queryByTestId("jump-to-latest")).toBeNull();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });

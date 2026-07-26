@@ -68,7 +68,7 @@ describe("PlayWorkspace configuration", () => {
     expect(window.location.search).toBe("?session=session-2");
   });
 
-  it("creates a fresh session from dashboard defaults instead of cloning the selected session draft", async () => {
+  it("creates a new session seeded with the last-used session settings", async () => {
     api.fetchDashboardConfig.mockResolvedValueOnce({
       ...baseConfig,
       defaultProviderId: "lmstudio",
@@ -102,6 +102,13 @@ describe("PlayWorkspace configuration", () => {
 
     renderPlayWorkspace();
 
+    // Wait until the selected session's draft has fully loaded before creating
+    // a new one, so the new session is seeded from the last-used settings.
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
+    );
     await waitFor(() =>
       expect(screen.getByTestId("selected-session-id")).toHaveTextContent(
         "session-1"
@@ -114,14 +121,19 @@ describe("PlayWorkspace configuration", () => {
       expect(api.setModelConfig).toHaveBeenCalledWith(
         "session-2",
         expect.objectContaining({
-          provider_id: "lmstudio",
-          model_name: "qwen3.5-0.8b",
-          gateway_options: {},
-          provider_options: {},
+          // Provider and advanced options are carried forward; the model is
+          // normalized to a valid model for the provider.
+          provider_id: "openai",
+          model_name: "gpt-4o-mini",
+          gateway_options: { existing: true },
+          provider_options: { temperature: 0 },
         })
       )
     );
-    expect(api.addSkill).toHaveBeenCalledWith("session-2", "skill-b");
+    // The previously selected session's skill is carried forward, not the
+    // configuration default skill.
+    expect(api.addSkill).toHaveBeenCalledWith("session-2", "dragncards");
+    expect(api.addSkill).not.toHaveBeenCalledWith("session-2", "skill-b");
     // MCPs are now managed via McpSection UI, not automatically from config
     expect(api.addMcp).not.toHaveBeenCalled();
   });

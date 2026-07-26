@@ -30,6 +30,16 @@ a {
   text-decoration: none;
 }
 
+/* Mark clickable affordances with a pointer cursor (Tailwind v4 Preflight
+   does not set this on buttons). Disabled controls keep the default cursor. */
+button:not(:disabled):not([disabled]),
+[role="button"]:not([aria-disabled="true"]),
+summary,
+label:has(> input[type="radio"]),
+label:has(> input[type="checkbox"]) {
+  cursor: pointer;
+}
+
 /* ─── Swagger embed ─────────────────────────────────────────────── */
 
 #swagger-ui {

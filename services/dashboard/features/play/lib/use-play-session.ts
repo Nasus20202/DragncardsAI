@@ -57,10 +57,12 @@ interface UsePlaySessionResult {
   prompt: string;
   statusText: string;
   errorText: string | null;
+  providersNotice: string | null;
   isBusy: boolean;
   cancelPending: boolean;
   contextMetadata: ContextMetadata | null;
   subagentEntries: SubagentEntry[];
+  subagentChildSessionIds: Set<string>;
   streamingJobId: string | null;
   streamState: "idle" | "streaming";
   setDraft: Dispatch<SetStateAction<SessionDraft | null>>;
@@ -69,6 +71,7 @@ interface UsePlaySessionResult {
   createPlaySession: () => Promise<void>;
   saveConfiguration: () => Promise<void>;
   terminatePlaySession: () => Promise<void>;
+  removeSession: (sessionId: string) => Promise<void>;
   compactPlaySession: () => Promise<void>;
   submitSessionPrompt: () => Promise<void>;
   cancelExecution: () => Promise<void>;
@@ -128,6 +131,7 @@ export function usePlaySession(): UsePlaySessionResult {
   const [prompt, setPrompt] = useState("");
   const [statusText, setStatusText] = useState("Loading dashboard...");
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [providersNotice, setProvidersNotice] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isCancellingExecution, setIsCancellingExecution] = useState(false);
   const [contextMetadata, setContextMetadata] =
@@ -196,12 +200,13 @@ export function usePlaySession(): UsePlaySessionResult {
   }, []);
 
   const refreshSessions = useCallback(
-    async (preserveSelected = true) => {
+    async (preserveSelected = true): Promise<SessionSummary[]> => {
       const nextSessions = await listSessions();
       setSessions(nextSessions);
       if (!preserveSelected && nextSessions.length > 0) {
         persistSelectedSessionId(nextSessions[0].id);
       }
+      return nextSessions;
     },
     [persistSelectedSessionId]
   );
@@ -241,6 +246,12 @@ export function usePlaySession(): UsePlaySessionResult {
     () => deriveSubagentEntries(jobs, childJobStatuses),
     [jobs, childJobStatuses]
   );
+  // Session ids belonging to subagent children; the sidebar hides these, so
+  // removeSession must use the same set when reselecting after a removal.
+  const subagentChildSessionIds = useMemo(
+    () => new Set(subagentEntries.map((entry) => entry.childSessionId)),
+    [subagentEntries]
+  );
 
   const { loadAllJobs } = usePlaySessionLoader({
     config,
@@ -256,6 +267,7 @@ export function usePlaySession(): UsePlaySessionResult {
     setChildJobStatuses,
     setStatusText,
     setErrorText,
+    setProvidersNotice,
     committedModelRef,
     refreshContextMetadata,
     startStreaming,
@@ -298,13 +310,17 @@ export function usePlaySession(): UsePlaySessionResult {
     createPlaySession,
     saveConfiguration,
     terminatePlaySession,
+    removeSession,
     compactPlaySession,
     submitSessionPrompt,
     cancelExecution,
   } = usePlaySessionActions({
     config,
     draft,
+    providers,
+    subagentChildSessionIds,
     selectedSession,
+    selectedSessionId,
     jobsCount: jobs.length,
     prompt,
     streamingJobId,
@@ -456,10 +472,12 @@ export function usePlaySession(): UsePlaySessionResult {
     prompt,
     statusText,
     errorText,
+    providersNotice,
     isBusy,
     cancelPending,
     contextMetadata,
     subagentEntries,
+    subagentChildSessionIds,
     streamingJobId,
     streamState,
     setDraft,
@@ -468,6 +486,7 @@ export function usePlaySession(): UsePlaySessionResult {
     createPlaySession,
     saveConfiguration,
     terminatePlaySession,
+    removeSession,
     compactPlaySession,
     submitSessionPrompt,
     cancelExecution,

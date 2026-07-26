@@ -1,7 +1,9 @@
 import {
   filterProxyRequestHeaders,
   filterProxyResponseHeaders,
+  isCrossSiteRequest,
   isServiceKey,
+  ProxyPathError,
   resolveProxyUrl,
   type ServiceKey,
 } from "@/features/proxy/lib/proxy";
@@ -25,6 +27,24 @@ async function proxyRequest(request: Request, context: RouteContext) {
   const { service, path } = await context.params;
   const proxyPath = formatProxyPath(path);
 
+  if (isCrossSiteRequest(request)) {
+    logger.warn(
+      `dashboard proxy ${request.method} ${service}/${proxyPath} rejected`,
+      {
+        "proxy.service": service,
+        "proxy.path": proxyPath,
+        "http.request.method": request.method,
+        "http.response.status_code": 403,
+        "error.type": "cross_site",
+      }
+    );
+
+    return Response.json(
+      { detail: "Cross-site proxy requests are not allowed" },
+      { status: 403 }
+    );
+  }
+
   if (!isServiceKey(service)) {
     logger.warn(
       `dashboard proxy ${request.method} ${service}/${proxyPath} rejected`,
@@ -45,9 +65,30 @@ async function proxyRequest(request: Request, context: RouteContext) {
 
   const serviceKey: ServiceKey = service;
 
+  const incomingUrl = new URL(request.url);
+  let targetUrl: URL;
+  try {
+    targetUrl = resolveProxyUrl(serviceKey, path, incomingUrl.search);
+  } catch (error) {
+    if (error instanceof ProxyPathError) {
+      logger.warn(
+        `dashboard proxy ${request.method} ${serviceKey}/${proxyPath} rejected`,
+        {
+          "proxy.service": serviceKey,
+          "proxy.path": proxyPath,
+          "http.request.method": request.method,
+          "http.response.status_code": 400,
+          "error.type": "invalid_path",
+        }
+      );
+
+      return Response.json({ detail: error.message }, { status: 400 });
+    }
+
+    throw error;
+  }
+
   async function proxyUpstream() {
-    const incomingUrl = new URL(request.url);
-    const targetUrl = resolveProxyUrl(serviceKey, path, incomingUrl.search);
     const body =
       request.method === "GET" || request.method === "HEAD"
         ? undefined

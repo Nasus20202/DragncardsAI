@@ -54,6 +54,7 @@ export function AppShell({
           <nav className="flex items-center gap-1">
             <NavLink href="/play">Play</NavLink>
             <NavLink href="/games">Games</NavLink>
+            <NavLink href="/history">History</NavLink>
             <NavLink href="/swagger">Swagger</NavLink>
           </nav>
         </div>
