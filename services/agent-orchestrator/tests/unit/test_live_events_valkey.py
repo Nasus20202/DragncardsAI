@@ -38,7 +38,7 @@ async def test_resp_connection_skips_wait_closed_during_generator_exit(monkeypat
         return _ExplodingReader(), writer
 
     monkeypatch.setattr(
-        "agent_orchestrator.storage.valkey.asyncio.open_connection",
+        "dragncards_common.resp.asyncio.open_connection",
         fake_open_connection,
     )
 

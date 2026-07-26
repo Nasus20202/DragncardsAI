@@ -23,7 +23,11 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.62b0",
     "opentelemetry-instrumentation-httpx>=0.62b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.62b0",
+    "dragncards-common",
 ]
+
+[tool.uv.sources]
+dragncards-common = { path = "../shared", editable = true }
 
 [project.optional-dependencies]
 dev = [

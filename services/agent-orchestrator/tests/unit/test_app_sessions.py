@@ -53,6 +53,7 @@ async def test_session_lifecycle_supports_lmstudio_provider_and_game_service_mcp
 
 
 def test_session_lifecycle_and_assignments(app):
+    provider_id = app.state.settings.enabled_provider_ids[0]
     with TestClient(app) as client:
         create_response = client.post("/sessions", json={"name": "demo"})
         assert create_response.status_code == 201
@@ -60,7 +61,7 @@ def test_session_lifecycle_and_assignments(app):
 
         model_response = client.put(
             f"/sessions/{session_id}/model-config",
-            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+            json={"provider_id": provider_id, "model_name": "gpt-4o-mini"},
         )
         assert model_response.status_code == 200
 
@@ -97,7 +98,7 @@ def test_session_lifecycle_and_assignments(app):
         detail_response = client.get(f"/sessions/{session_id}")
         assert detail_response.status_code == 200
         detail = detail_response.json()["session"]
-        assert detail["model_config"]["provider_id"] == "openai"
+        assert detail["model_config"]["provider_id"] == provider_id
         assert detail["skills"][0]["skill_name"] == "demo-skill"
         assert detail["mcps"][0]["name"] == "game-service"
 
@@ -113,6 +114,7 @@ def test_session_lifecycle_and_assignments(app):
 
 
 def test_list_sessions_returns_pagination_metadata(app):
+    provider_id = app.state.settings.enabled_provider_ids[0]
     with TestClient(app) as client:
         first_session_id = client.post("/sessions", json={"name": "a"}).json()[
             "session"
@@ -122,7 +124,7 @@ def test_list_sessions_returns_pagination_metadata(app):
         ]["id"]
         client.put(
             f"/sessions/{first_session_id}/model-config",
-            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+            json={"provider_id": provider_id, "model_name": "gpt-4o-mini"},
         )
         client.post(
             f"/sessions/{second_session_id}/skills",
@@ -138,7 +140,7 @@ def test_list_sessions_returns_pagination_metadata(app):
     assert len(body["sessions"]) == 1
     assert body["page"] == {"limit": 1, "offset": 1, "total": 2}
     session = body["sessions"][0]
-    assert session["model_config"]["provider_id"] == "openai"
+    assert session["model_config"]["provider_id"] == provider_id
     assert session["skills"] == []
     assert len(session["mcps"]) == 1
     assert session["mcps"][0]["name"] == "game-service"
@@ -147,13 +149,14 @@ def test_list_sessions_returns_pagination_metadata(app):
 
 
 def test_list_sessions_includes_dashboard_summary_fields(app):
+    provider_id = app.state.settings.enabled_provider_ids[0]
     with TestClient(app) as client:
         session_id = client.post("/sessions", json={"name": "demo"}).json()["session"][
             "id"
         ]
         client.put(
             f"/sessions/{session_id}/model-config",
-            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+            json={"provider_id": provider_id, "model_name": "gpt-4o-mini"},
         )
         client.post(
             f"/sessions/{session_id}/skills",
@@ -167,7 +170,7 @@ def test_list_sessions_includes_dashboard_summary_fields(app):
 
     assert response.status_code == 200
     session = response.json()["sessions"][0]
-    assert session["model_config"]["provider_id"] == "openai"
+    assert session["model_config"]["provider_id"] == provider_id
     assert session["skills"][0]["skill_name"] == "demo-skill"
     assert session["mcps"][0]["name"] == "game-service"
     assert session["recent_job"] is None
@@ -260,11 +263,24 @@ def test_rejects_unknown_provider(app):
 
 
 def test_rejects_disabled_provider(app):
+    settings = app.state.settings
+    # Pick a provider that is supported by the build but not currently enabled,
+    # so the test holds regardless of which providers the environment enables.
+    disabled_provider_id = next(
+        (
+            provider_id
+            for provider_id in settings.supported_provider_ids
+            if provider_id not in settings.enabled_provider_ids
+        ),
+        None,
+    )
+    if disabled_provider_id is None:
+        pytest.skip("all supported providers are enabled; no disabled provider")
     with TestClient(app) as client:
         session_id = client.post("/sessions", json={}).json()["session"]["id"]
         response = client.put(
             f"/sessions/{session_id}/model-config",
-            json={"provider_id": "mistral", "model_name": "mistral-small"},
+            json={"provider_id": disabled_provider_id, "model_name": "x"},
         )
     assert response.status_code == 400
 
@@ -299,13 +315,14 @@ def test_missing_resources_return_404(app):
 
 @pytest.mark.asyncio
 async def test_remove_assignments_and_filter_events_with_after(app):
+    provider_id = app.state.settings.enabled_provider_ids[0]
     with TestClient(app) as client:
         session_id = client.post("/sessions", json={"name": "demo"}).json()["session"][
             "id"
         ]
         client.put(
             f"/sessions/{session_id}/model-config",
-            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+            json={"provider_id": provider_id, "model_name": "gpt-4o-mini"},
         )
         client.post(
             f"/sessions/{session_id}/mcps",

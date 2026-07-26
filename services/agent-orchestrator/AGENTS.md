@@ -62,8 +62,24 @@ Jobs are prompt executions:
 ```text
 ENABLED_PROVIDER_IDS=mistral,nvidia,openrouter
 PROVIDER_MODELS_CACHE_TTL_SECONDS=600
+BIFROST_LIST_MODELS_TIMEOUT_SECONDS=8
+BIFROST_UNAVAILABLE_CACHE_TTL_SECONDS=600
 VALKEY_URL=redis://localhost:6381/0
 ```
+
+`BIFROST_LIST_MODELS_TIMEOUT_SECONDS` bounds the per-provider model-listing call
+so a provider missing an API key fails fast (returns `available=false`) instead
+of stalling the `/providers` response for the full ~60s gateway timeout.
+
+`BIFROST_UNAVAILABLE_CACHE_TTL_SECONDS` (must be positive) controls how long an
+unavailable provider is negatively cached in Valkey under
+`agent-orchestrator:model-cache:unavailable:{id}`. While the marker is live,
+`/providers` reports that provider `available=false` immediately, without
+re-incurring the list-models timeout. A successful listing clears the marker.
+After adding an API key, force an immediate re-probe with
+`POST /providers/refresh` (clears positive + negative cache entries and the
+shared `:all` listing for every enabled provider) or a one-off
+`GET /providers?refresh=true`.
 
 ## Testing
 

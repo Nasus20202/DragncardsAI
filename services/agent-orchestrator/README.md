@@ -111,7 +111,7 @@ This returns only enabled provider IDs, the model prefix used when routing throu
 
 Supported provider IDs include `nvidia`, `openrouter`, `mistral`, `claude`, `openai`, `lmstudio`, and `gemini`.
 
-To avoid hitting Bifrost on every provider-picker refresh, agent-orchestrator keeps an in-memory TTL cache for provider model lists. Configure it with:
+To avoid hitting Bifrost on every provider-picker refresh, agent-orchestrator keeps a Valkey TTL cache for provider model lists. Configure it with:
 
 ```text
 PROVIDER_MODELS_CACHE_TTL_SECONDS=600
@@ -121,11 +121,38 @@ Set it to `0` to disable caching.
 
 The exact response depends on `ENABLED_PROVIDER_IDS`.
 
+### Resilient Listing
+
+Each provider's model-listing call to Bifrost is bounded by a short per-provider timeout so a provider missing an API key fails fast (returns `available=false`) instead of stalling the whole `/providers` response for the full ~60s gateway timeout. Configure the timeout with:
+
+```text
+BIFROST_LIST_MODELS_TIMEOUT_SECONDS=8
+```
+
+Unavailable providers are then negatively cached in Valkey, so repeat `/providers` calls fast-fail without re-incurring the timeout. Control how long the negative marker lives (must be positive) with:
+
+```text
+BIFROST_UNAVAILABLE_CACHE_TTL_SECONDS=600
+```
+
+A successful listing clears the negative marker. The remaining enabled providers degrade gracefully: one unavailable provider never blocks the others from being listed.
+
+### Refreshing the Cache
+
+After adding or fixing an API key you do not have to wait for the TTLs to expire:
+
+- `POST /providers/refresh`
+  Clears the cached provider model listings (positive and negative entries) for every enabled provider and reports a summary.
+
+- `GET /providers?refresh=true`
+  Bypasses the cache for a single call, forcing an immediate re-probe of every enabled provider.
+
 If a provider returns `available: false`, check that:
 
 - the provider is present in `ENABLED_PROVIDER_IDS`
 - the matching API key or base URL is set in `services/bifrost/.env`
 - `bifrost` has been restarted after the env change
+- the negative cache has been cleared (`POST /providers/refresh` or `GET /providers?refresh=true`)
 
 ## Endpoint Guide
 
@@ -141,12 +168,17 @@ Use these first when integrating the service.
 
 - `GET /providers`
   Lists enabled provider IDs, currently available models, plus `available` and `error` for each provider.
+  Accepts `?refresh=true` to bypass the model cache for one call.
+
+- `POST /providers/refresh`
+  Clears the cached provider model listings (positive and negative entries) for every enabled provider so the next `/providers` call re-probes Bifrost.
 
 ### Catalog
 
 Use these to populate selection UIs before a session is configured.
 
 - `GET /providers`
+- `POST /providers/refresh`
 - `GET /skills`
 
 `GET /skills` returns discovered skills with their path and markdown content.

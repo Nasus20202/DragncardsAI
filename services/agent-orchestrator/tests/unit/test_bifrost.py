@@ -28,12 +28,14 @@ async def _build_client(
 
 
 class _FakeValkey:
-    """Minimal in-process stand-in for _RespConnection that implements GET/SETEX."""
+    """Minimal in-process stand-in for _RespConnection (GET/SETEX/DEL)."""
 
     def __init__(self):
         self._store: dict[str, str] = {}
         self.get_calls: list[str] = []
         self.set_calls: list[tuple[str, str]] = []
+        self.setex_calls: list[tuple[str, int, str]] = []
+        self.del_calls: list[tuple[str, ...]] = []
 
     async def execute(self, *parts: object):
         command = str(parts[0]).upper()
@@ -43,11 +45,21 @@ class _FakeValkey:
             return self._store.get(key)
         if command == "SETEX":
             key = str(parts[1])
-            # parts[2] is TTL (ignored in fake), parts[3] is value
+            # parts[2] is TTL, parts[3] is value
+            ttl = int(str(parts[2]))
             value = str(parts[3])
             self.set_calls.append((key, value))
+            self.setex_calls.append((key, ttl, value))
             self._store[key] = value
             return "OK"
+        if command == "DEL":
+            keys = tuple(str(part) for part in parts[1:])
+            self.del_calls.append(keys)
+            removed = 0
+            for key in keys:
+                if self._store.pop(key, None) is not None:
+                    removed += 1
+            return removed
         raise RuntimeError(f"_FakeValkey: unsupported command {command!r}")
 
 
@@ -603,6 +615,7 @@ async def test_list_models_with_zero_ttl_skips_valkey():
     client = await _build_client(handler, valkey=valkey)
     client._models_cache_ttl_seconds = 0.0
     client._models_cache_ttl_int = 0
+    client._unavailable_cache_ttl_int = 0
     try:
         await client.list_models("openrouter")
         await client.list_models("openrouter")
@@ -1070,6 +1083,208 @@ async def test_fetch_all_models_valkey_error_falls_through_to_live_fetch():
 
     assert call_count == 1
     assert models[0].context_length == 64000
+
+
+# ---------------------------------------------------------------------------
+# Negative cache tests (unavailable provider)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_models_caches_unavailable_provider():
+    """A failing provider is negatively cached so the second call skips Bifrost."""
+    valkey = _FakeValkey()
+    call_count = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(
+            502, json={"error": {"message": "no api key"}}, request=request
+        )
+
+    client = await _build_client(handler, valkey=valkey)
+    client._models_cache_ttl_seconds = 60.0
+    client._models_cache_ttl_int = 60
+    client._unavailable_cache_ttl_int = 600
+    try:
+        with pytest.raises(BifrostError) as first:
+            await client.list_models("openai")
+        # Second call must fast-fail from the negative cache, not hit Bifrost.
+        with pytest.raises(BifrostError) as second:
+            await client.list_models("openai")
+    finally:
+        await client.aclose()
+
+    assert call_count == 1
+    assert first.value.code == "gateway_error"
+    assert second.value.code == "gateway_error"
+    assert "no api key" in str(second.value)
+    unavailable_key = "agent-orchestrator:model-cache:unavailable:openai"
+    assert unavailable_key in valkey._store
+
+
+@pytest.mark.asyncio
+async def test_list_models_retryable_failure_uses_short_negative_ttl():
+    """A transient (retryable) failure is negatively cached with the short TTL
+    so a recovered provider is not suppressed for the full unavailable TTL."""
+    valkey = _FakeValkey()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        # 503 -> retryable=True
+        return httpx.Response(
+            503, json={"error": {"message": "upstream"}}, request=request
+        )
+
+    client = await _build_client(handler, valkey=valkey)
+    client._models_cache_ttl_int = 0
+    client._unavailable_cache_ttl_int = 600
+    client._unavailable_retryable_cache_ttl_int = 30
+    try:
+        with pytest.raises(BifrostError):
+            await client.list_models("openai")
+    finally:
+        await client.aclose()
+
+    unavailable_key = "agent-orchestrator:model-cache:unavailable:openai"
+    setex = [call for call in valkey.setex_calls if call[0] == unavailable_key]
+    assert len(setex) == 1
+    assert setex[0][1] == 30  # short TTL, not the 600s definitive TTL
+
+
+@pytest.mark.asyncio
+async def test_list_models_non_retryable_failure_uses_full_negative_ttl():
+    """A definitive (non-retryable) failure — e.g. a missing API key — keeps the
+    full negative TTL so the slow HTTP call is not re-incurred."""
+    valkey = _FakeValkey()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        # 401 -> retryable=False
+        return httpx.Response(
+            401, json={"error": {"message": "no api key"}}, request=request
+        )
+
+    client = await _build_client(handler, valkey=valkey)
+    client._models_cache_ttl_int = 0
+    client._unavailable_cache_ttl_int = 600
+    client._unavailable_retryable_cache_ttl_int = 30
+    try:
+        with pytest.raises(BifrostError):
+            await client.list_models("openai")
+    finally:
+        await client.aclose()
+
+    unavailable_key = "agent-orchestrator:model-cache:unavailable:openai"
+    setex = [call for call in valkey.setex_calls if call[0] == unavailable_key]
+    assert len(setex) == 1
+    assert setex[0][1] == 600  # full definitive TTL
+
+
+@pytest.mark.asyncio
+async def test_list_models_negative_cache_disabled_when_ttl_zero():
+    """With negative TTL 0, every failing call re-hits Bifrost (no negative cache)."""
+    valkey = _FakeValkey()
+    call_count = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(502, json={"error": {"message": "down"}}, request=request)
+
+    client = await _build_client(handler, valkey=valkey)
+    client._models_cache_ttl_seconds = 0.0
+    client._models_cache_ttl_int = 0
+    client._unavailable_cache_ttl_int = 0
+    try:
+        with pytest.raises(BifrostError):
+            await client.list_models("openai")
+        with pytest.raises(BifrostError):
+            await client.list_models("openai")
+    finally:
+        await client.aclose()
+
+    assert call_count == 2
+    assert "agent-orchestrator:model-cache:unavailable:openai" not in valkey._store
+
+
+@pytest.mark.asyncio
+async def test_list_models_negative_cache_short_circuits_without_http():
+    """A pre-seeded negative marker fast-fails with zero Bifrost calls."""
+    valkey = _FakeValkey()
+    unavailable_key = "agent-orchestrator:model-cache:unavailable:openai"
+    valkey._store[unavailable_key] = json.dumps(
+        {"code": "timeout", "message": "timed out", "retryable": True}
+    )
+    call_count = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, json={"data": []}, request=request)
+
+    client = await _build_client(handler, valkey=valkey)
+    client._models_cache_ttl_seconds = 0.0
+    client._models_cache_ttl_int = 0
+    client._unavailable_cache_ttl_int = 600
+    try:
+        with pytest.raises(BifrostError) as exc_info:
+            await client.list_models("openai")
+    finally:
+        await client.aclose()
+
+    assert call_count == 0
+    assert exc_info.value.code == "timeout"
+    assert "timed out" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_list_models_success_clears_negative_marker():
+    """A now-available provider is re-probed and its negative marker is cleared."""
+    valkey = _FakeValkey()
+    unavailable_key = "agent-orchestrator:model-cache:unavailable:openrouter"
+    valkey._store[unavailable_key] = json.dumps(
+        {"code": "timeout", "message": "timed out", "retryable": True}
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "openrouter/back-online", "supported_methods": []}]},
+            request=request,
+        )
+
+    client = await _build_client(handler, valkey=valkey)
+    client._models_cache_ttl_seconds = 0.0
+    client._models_cache_ttl_int = 0
+    client._unavailable_cache_ttl_int = 600
+    try:
+        # Negative marker present -> fast-fail first.
+        with pytest.raises(BifrostError):
+            await client.list_models("openrouter")
+        # Operator clears the cache (simulating /providers/refresh), then re-probe.
+        await client.clear_model_cache(["openrouter"])
+        models = await client.list_models("openrouter")
+    finally:
+        await client.aclose()
+
+    assert [m.id for m in models] == ["openrouter/back-online"]
+    assert unavailable_key not in valkey._store
+
+
+@pytest.mark.asyncio
+async def test_clear_model_cache_deletes_positive_negative_and_all_keys():
+    valkey = _FakeValkey()
+    valkey._store["agent-orchestrator:model-cache:provider:openai"] = "[]"
+    valkey._store["agent-orchestrator:model-cache:unavailable:openai"] = "{}"
+    valkey._store["agent-orchestrator:model-cache:all"] = "[]"
+
+    client = BifrostClient("http://bifrost", "", {"openai": "openai"}, valkey=valkey)
+    summary = await client.clear_model_cache(["openai"])
+
+    assert summary == {"providers": 1, "keys_cleared": 3}
+    assert "agent-orchestrator:model-cache:provider:openai" not in valkey._store
+    assert "agent-orchestrator:model-cache:unavailable:openai" not in valkey._store
+    assert "agent-orchestrator:model-cache:all" not in valkey._store
 
 
 @pytest.mark.asyncio
