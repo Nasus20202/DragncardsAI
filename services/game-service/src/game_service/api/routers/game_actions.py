@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 
-from game_service.api.deps import get_manager
+from game_service.api.deps import SessionIdentifier, get_manager
 from game_service.api.models import (
     ActionRequest,
     ExecuteActionResponse,
@@ -28,7 +28,7 @@ router = APIRouter(tags=["game-actions"])
     operation_id="execute_action",
 )
 async def execute_action(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: ActionRequest,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -59,7 +59,7 @@ async def execute_action(
     operation_id="get_session_actions",
 )
 async def get_session_actions(
-    session_id: str,
+    session_id: SessionIdentifier,
     manager: SessionManager = Depends(get_manager),
 ):
     logger.info("get_session_actions: session_id=%s", session_id)

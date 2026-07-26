@@ -31,6 +31,8 @@ class SessionStore(Protocol):
 
     async def get_session(self, session_id: str) -> dict[str, Any] | None: ...
 
+    async def get_session_id_by_slug(self, room_slug: str) -> str | None: ...
+
     async def put_session(self, record: dict[str, Any]) -> None: ...
 
     async def delete_session(self, session_id: str) -> None: ...
@@ -51,6 +53,7 @@ class SessionStore(Protocol):
 class InMemorySessionStore:
     def __init__(self) -> None:
         self._records: dict[str, dict[str, Any]] = {}
+        self._slug_index: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_lock_tokens: dict[str, str] = {}
@@ -65,14 +68,25 @@ class InMemorySessionStore:
             record = self._records.get(session_id)
             return dict(record) if record is not None else None
 
+    async def get_session_id_by_slug(self, room_slug: str) -> str | None:
+        async with self._lock:
+            return self._slug_index.get(room_slug)
+
     async def put_session(self, record: dict[str, Any]) -> None:
         session_id = record["session_id"]
+        room_slug = record.get("room_slug")
         async with self._lock:
             self._records[session_id] = dict(record)
+            if room_slug:
+                self._slug_index[room_slug] = session_id
 
     async def delete_session(self, session_id: str) -> None:
         async with self._lock:
-            self._records.pop(session_id, None)
+            record = self._records.pop(session_id, None)
+            if record is not None:
+                room_slug = record.get("room_slug")
+                if room_slug and self._slug_index.get(room_slug) == session_id:
+                    self._slug_index.pop(room_slug, None)
 
     async def _get_session_lock(self, session_id: str) -> asyncio.Lock:
         async with self._session_locks_guard:
@@ -187,6 +201,7 @@ class ValkeySessionStore:
         url: str,
         key_prefix: str = "game-service:session:",
         lock_prefix: str = "game-service:session-lock:",
+        slug_prefix: str = "game-service:session-by-slug:",
     ) -> None:
         parsed = urlparse(url)
         if parsed.scheme not in {"redis", "valkey"}:
@@ -195,6 +210,7 @@ class ValkeySessionStore:
         self._port = parsed.port or 6379
         self._prefix = key_prefix
         self._lock_prefix = lock_prefix
+        self._slug_prefix = slug_prefix
         self._conn = _RespConnection(self._host, self._port)
 
     def _key(self, session_id: str) -> str:
@@ -202,6 +218,9 @@ class ValkeySessionStore:
 
     def _lock_key(self, session_id: str) -> str:
         return f"{self._lock_prefix}{session_id}"
+
+    def _slug_key(self, room_slug: str) -> str:
+        return f"{self._slug_prefix}{room_slug}"
 
     async def list_sessions(self) -> list[dict[str, Any]]:
         keys = await self._conn.execute("KEYS", f"{self._prefix}*")
@@ -220,13 +239,26 @@ class ValkeySessionStore:
         raw = await self._conn.execute("GET", self._key(session_id))
         return json.loads(raw) if raw is not None else None
 
+    async def get_session_id_by_slug(self, room_slug: str) -> str | None:
+        return await self._conn.execute("GET", self._slug_key(room_slug))
+
     async def put_session(self, record: dict[str, Any]) -> None:
-        await self._conn.execute(
-            "SET", self._key(record["session_id"]), json.dumps(record)
-        )
+        session_id = record["session_id"]
+        await self._conn.execute("SET", self._key(session_id), json.dumps(record))
+        room_slug = record.get("room_slug")
+        if room_slug:
+            await self._conn.execute("SET", self._slug_key(room_slug), session_id)
 
     async def delete_session(self, session_id: str) -> None:
+        record = await self.get_session(session_id)
         await self._conn.execute("DEL", self._key(session_id))
+        if record is not None:
+            room_slug = record.get("room_slug")
+            if room_slug:
+                slug_key = self._slug_key(room_slug)
+                mapped = await self._conn.execute("GET", slug_key)
+                if mapped == session_id:
+                    await self._conn.execute("DEL", slug_key)
 
     async def acquire_session_lock(
         self,

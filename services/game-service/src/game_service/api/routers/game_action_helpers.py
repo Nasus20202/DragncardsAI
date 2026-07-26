@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from game_service.api.deps import get_manager
+from game_service.api.deps import SessionIdentifier, get_manager
 from game_service.api.models import ExecuteActionResponse
 from game_service.logic.actions import (
     NextStepAction,
@@ -48,7 +48,9 @@ router = APIRouter(tags=["game-action-helpers"])
     summary="Advance to the next step in the round sequence (after player turns, before villain phase, etc.)",
     operation_id="next_step",
 )
-async def next_step(session_id: str, manager: SessionManager = Depends(get_manager)):
+async def next_step(
+    session_id: SessionIdentifier, manager: SessionManager = Depends(get_manager)
+):
     async with manager.session_operation_lock(session_id):
         session = await manager.get_session(session_id)
         await session.execute_action(NextStepAction())
@@ -63,7 +65,9 @@ async def next_step(session_id: str, manager: SessionManager = Depends(get_manag
     summary="Go back to the previous step (use to undo mistakes or redo encounter resolution)",
     operation_id="prev_step",
 )
-async def prev_step(session_id: str, manager: SessionManager = Depends(get_manager)):
+async def prev_step(
+    session_id: SessionIdentifier, manager: SessionManager = Depends(get_manager)
+):
     async with manager.session_operation_lock(session_id):
         session = await manager.get_session(session_id)
         await session.execute_action(PrevStepAction())
@@ -79,7 +83,7 @@ async def prev_step(session_id: str, manager: SessionManager = Depends(get_manag
     operation_id="draw_card",
 )
 async def draw_card(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: DrawCardAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -98,7 +102,7 @@ async def draw_card(
     operation_id="move_card",
 )
 async def move_card(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: MoveCardAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -117,7 +121,7 @@ async def move_card(
     operation_id="set_card_property",
 )
 async def set_card_property(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: SetCardPropertyAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -136,7 +140,7 @@ async def set_card_property(
     operation_id="set_player_count_action",
 )
 async def set_player_count(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: SetPlayerCountAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -155,7 +159,7 @@ async def set_player_count(
     operation_id="load_cards",
 )
 async def load_cards(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: LoadCardsAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -174,7 +178,7 @@ async def load_cards(
     operation_id="unload_cards",
 )
 async def unload_cards(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: UnloadCardsAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -193,7 +197,9 @@ async def unload_cards(
     operation_id="raw_action",
 )
 async def raw_action(
-    session_id: str, action: RawAction, manager: SessionManager = Depends(get_manager)
+    session_id: SessionIdentifier,
+    action: RawAction,
+    manager: SessionManager = Depends(get_manager),
 ):
     async with manager.session_operation_lock(session_id):
         session = await manager.get_session(session_id)
@@ -210,7 +216,7 @@ async def raw_action(
     operation_id="exhaust_card",
 )
 async def exhaust_card(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: ExhaustCardAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -229,7 +235,7 @@ async def exhaust_card(
     operation_id="ready_card",
 )
 async def ready_card(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: ReadyCardAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -248,7 +254,7 @@ async def ready_card(
     operation_id="flip_card",
 )
 async def flip_card(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: FlipCardAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -267,7 +273,7 @@ async def flip_card(
     operation_id="deal_encounter",
 )
 async def deal_encounter(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: DealEncounterAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -286,7 +292,7 @@ async def deal_encounter(
     operation_id="draw_boost",
 )
 async def draw_boost(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: DrawBoostAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -305,7 +311,7 @@ async def draw_boost(
     operation_id="shuffle_into_deck",
 )
 async def shuffle_into_deck(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: ShuffleIntoDeckAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -324,7 +330,7 @@ async def shuffle_into_deck(
     operation_id="zero_tokens",
 )
 async def zero_tokens(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: ZeroTokensAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -343,7 +349,7 @@ async def zero_tokens(
     operation_id="mulligan_draw_hand",
 )
 async def mulligan_draw_hand(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: MulliganDrawHandAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -362,7 +368,7 @@ async def mulligan_draw_hand(
     operation_id="shadows_of_the_past",
 )
 async def shadows_of_the_past(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: ShadowsOfThePastAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -381,7 +387,7 @@ async def shadows_of_the_past(
     operation_id="player_end_phase",
 )
 async def player_end_phase(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: PlayerEndPhaseAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -400,7 +406,7 @@ async def player_end_phase(
     operation_id="villain_encounter_phase",
 )
 async def villain_encounter_phase(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: VillainEncounterPhaseAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -419,7 +425,7 @@ async def villain_encounter_phase(
     operation_id="villain_end_phase",
 )
 async def villain_end_phase(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: VillainEndPhaseAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -438,7 +444,7 @@ async def villain_end_phase(
     operation_id="multiple_double_sided_villains",
 )
 async def multiple_double_sided_villains(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: MultipleDoubleSidedVillainsAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -457,7 +463,7 @@ async def multiple_double_sided_villains(
     operation_id="discard_minion",
 )
 async def discard_minion(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: DiscardMinionAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -476,7 +482,7 @@ async def discard_minion(
     operation_id="discard_side_scheme",
 )
 async def discard_side_scheme(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: DiscardSideSchemeAction,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -495,7 +501,7 @@ async def discard_side_scheme(
     operation_id="modify_tokens",
 )
 async def modify_tokens(
-    session_id: str,
+    session_id: SessionIdentifier,
     action: ModifyTokensAction,
     manager: SessionManager = Depends(get_manager),
 ):

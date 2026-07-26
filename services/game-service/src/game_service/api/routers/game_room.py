@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 
-from game_service.api.deps import get_manager
+from game_service.api.deps import SessionIdentifier, get_manager
 from game_service.api.models import (
     AlertsResponse,
     GuiUpdateResponse,
@@ -32,7 +32,7 @@ router = APIRouter(tags=["game-room"])
     operation_id="reset_game",
 )
 async def reset_game(
-    session_id: str,
+    session_id: SessionIdentifier,
     body: ResetGameRequest,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -65,7 +65,7 @@ async def reset_game(
     operation_id="set_seat",
 )
 async def set_seat(
-    session_id: str,
+    session_id: SessionIdentifier,
     body: SetSeatRequest,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -87,7 +87,7 @@ async def set_seat(
     operation_id="set_spectator",
 )
 async def set_spectator(
-    session_id: str,
+    session_id: SessionIdentifier,
     body: SetSpectatorRequest,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -109,7 +109,7 @@ async def set_spectator(
     operation_id="send_alert",
 )
 async def send_alert(
-    session_id: str,
+    session_id: SessionIdentifier,
     body: SendAlertRequest,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -126,7 +126,7 @@ async def send_alert(
     operation_id="save_replay",
 )
 async def save_replay(
-    session_id: str,
+    session_id: SessionIdentifier,
     manager: SessionManager = Depends(get_manager),
 ):
     logger.info("save_replay: session_id=%s", session_id)
@@ -143,7 +143,7 @@ async def save_replay(
     operation_id="set_player_count_room",
 )
 async def set_player_count(
-    session_id: str,
+    session_id: SessionIdentifier,
     body: SetPlayerCountRequest,
     manager: SessionManager = Depends(get_manager),
 ):
@@ -176,7 +176,7 @@ async def set_player_count(
     operation_id="get_alerts",
 )
 async def get_alerts(
-    session_id: str,
+    session_id: SessionIdentifier,
     manager: SessionManager = Depends(get_manager),
 ):
     session = await manager.get_session(session_id)
@@ -190,7 +190,7 @@ async def get_alerts(
     operation_id="get_gui_update",
 )
 async def get_gui_update(
-    session_id: str,
+    session_id: SessionIdentifier,
     manager: SessionManager = Depends(get_manager),
 ):
     session = await manager.get_session(session_id)

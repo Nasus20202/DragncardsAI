@@ -18,9 +18,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Awaitable, Callable
 
+from game_service.coordination.history_emitter import (
+    HistoryEmitter,
+    NullHistoryEmitter,
+)
 from game_service.logic.actions import (
     GameAction,
-    LoadCardsAction,
     RawAction,
     SetPlayerCountAction,
     translate_action,
@@ -66,6 +69,10 @@ class GameSession:
     channel: Channel
     initial_state: Any = None
     on_close: Callable[[], Awaitable[None]] | None = None
+    history_emitter: HistoryEmitter | None = None
+    # Non-emitting, server-reaped reconstruction session (view-only). When true
+    # this session never emits history events and is eligible for TTL reaping.
+    ephemeral: bool = False
     room: PhoenixRoom = field(init=False)
     _state: Any = field(default=None, init=False)
     _state_stale: bool = field(default=False, init=False)
@@ -77,6 +84,8 @@ class GameSession:
     _action_error: str | None = field(default=None, init=False)
 
     def __post_init__(self):
+        if self.history_emitter is None:
+            self.history_emitter = NullHistoryEmitter()
         self.room = PhoenixRoom(client=self.client, channel=self.channel)
         self.room.register_state_handlers(
             on_full_state=self._on_full_state,
@@ -186,6 +195,7 @@ class GameSession:
                 logger.info(
                     "execute_action: session_id=%s -> state updated", self.session_id
                 )
+                await self._emit_history_state_event(new_state, action=action)
                 return new_state
             except PhoenixChannelError as exc:
                 logger.error(
@@ -207,6 +217,7 @@ class GameSession:
                         "execute_action: session_id=%s recovered via request_state",
                         self.session_id,
                     )
+                    await self._emit_history_state_event(new_state, action=action)
                     return new_state
                 except (PhoenixChannelError, asyncio.TimeoutError) as recovery_exc:
                     logger.error(
@@ -235,22 +246,89 @@ class GameSession:
                 self._action_error = message
                 break
 
-    async def load_prebuilt_deck(self, deck_id: str, timeout: float = 15.0) -> Any:
-        load_action = LoadCardsAction(
-            cards=[], description=f"Loaded prebuilt deck {deck_id}"
-        )
-        payload = translate_action(
-            RawAction(
-                action_list=["LOAD_CARDS", deck_id],
-                description=load_action.description,
-                player_n="player1",
+    async def _emit_history_state_event(
+        self, state: Any, *, action: GameAction | None = None
+    ) -> None:
+        """Best-effort publish of the post-action state to the history bus.
+
+        Emits exactly one event per successfully executed action with a durable,
+        monotonically increasing ``producer_offset`` sourced from the shared
+        history Valkey (so it survives session restore / service restart and
+        never regenerates a previously used idempotency key). The executed
+        action is serialized into a replayable form (the body accepted by
+        ``POST /games/{id}/actions``) and carried in the envelope so the
+        history-service can replay it forward during restore.
+
+        Emission is skipped entirely when the action failed/was aborted in-game
+        (so a rejected action never advances the offset or records a move) and
+        when the durable offset cannot be allocated (so we never fabricate a
+        non-durable offset that would collide later). Never raises and never
+        alters the action result returned to the caller: any failure is logged
+        and swallowed so emission cannot break action execution.
+        """
+        emitter = self.history_emitter
+        if emitter is None:
+            return
+        # Ephemeral reconstruction sessions are view-only: they must never reach
+        # the history bus (no game_state/agent_move/any events) so they never
+        # appear in the games list and produce nothing to clean up.
+        if self.ephemeral:
+            return
+        # Do not record (or advance the offset for) a rejected/aborted action.
+        if self._action_error is not None:
+            return
+        try:
+            producer_offset = await emitter.next_producer_offset(self.session_id)
+        except Exception as exc:  # best-effort: never break the action
+            logger.warning(
+                "execute_action: session_id=%s history offset failed: %s",
+                self.session_id,
+                exc,
             )
+            return
+        if producer_offset is None:
+            # No durable offset available; skip rather than risk a collision.
+            return
+        action_args: dict[str, Any] | None = None
+        if action is not None:
+            try:
+                action_args = action.model_dump(mode="json")
+            except Exception:  # pragma: no cover - defensive
+                action_args = None
+        try:
+            await emitter.emit_state_event(
+                game_id=self.session_id,
+                producer_offset=producer_offset,
+                state=state,
+                action_args=action_args,
+                plugin_name=self.plugin_name,
+            )
+        except Exception as exc:  # best-effort: never break the action
+            logger.warning(
+                "execute_action: session_id=%s history emit failed: %s",
+                self.session_id,
+                exc,
+            )
+
+    async def load_prebuilt_deck(self, deck_id: str, timeout: float = 15.0) -> Any:
+        # Clear any previous action error before executing (mirrors execute_action).
+        self._action_error = None
+        load_action = RawAction(
+            action_list=["LOAD_CARDS", deck_id],
+            description=f"Loaded prebuilt deck {deck_id}",
+            player_n="player1",
         )
+        payload = translate_action(load_action)
         try:
             await self.room.execute_game_action(payload, timeout=timeout)
             await self.room.wait_for_state_change(timeout=timeout)
             self._check_state_flags()
-            return await self._request_fresh_state(timeout=timeout)
+            new_state = await self._request_fresh_state(timeout=timeout)
+            self._check_action_messages(new_state)
+            # Snapshot the post-load board so the recorded timeline never gaps
+            # over a whole-deck deal. Best-effort: never breaks the deck load.
+            await self._emit_history_state_event(new_state, action=load_action)
+            return new_state
         except PhoenixChannelError as exc:
             raise SessionError(f"load_prebuilt_deck rejected: {exc}") from exc
         except asyncio.TimeoutError as exc:
@@ -287,6 +365,8 @@ class GameSession:
                 f"Snapshot plugin {snapshot_doc.plugin_name!r} does not match session plugin {self.plugin_name!r}"
             )
 
+        # Clear any previous action error before executing (mirrors execute_action).
+        self._action_error = None
         payload = {
             "action": "set_game",
             "options": {
@@ -299,7 +379,13 @@ class GameSession:
             await self.room.execute_game_action(payload, timeout=timeout)
             await self.room.wait_for_state_change(timeout=timeout)
             self._check_state_flags()
-            return await self._request_fresh_state(timeout=timeout)
+            new_state = await self._request_fresh_state(timeout=timeout)
+            self._check_action_messages(new_state)
+            # Snapshot the replaced board so the recorded timeline reflects the
+            # loaded state. No replayable action accompanies a raw state load.
+            # Best-effort: never breaks the load.
+            await self._emit_history_state_event(new_state)
+            return new_state
         except PhoenixChannelError as exc:
             raise SessionError(f"load_state rejected: {exc}") from exc
         except asyncio.TimeoutError as exc:
@@ -312,12 +398,19 @@ class GameSession:
         logger.info(
             "reset_game: session_id=%s event=%s save=%s", self.session_id, event, save
         )
+        # Clear any previous action error before executing (mirrors execute_action).
+        self._action_error = None
         try:
             await self.room.push_room_event(
                 event, {"options": {"save?": save}}, timeout=timeout
             )
             new_state = await self._request_fresh_state(timeout=timeout)
             self._bad_state = False
+            self._check_action_messages(new_state)
+            # Snapshot the reset board so the recorded timeline captures the
+            # reset. No replayable action accompanies a room-level reset.
+            # Best-effort: never breaks the reset.
+            await self._emit_history_state_event(new_state)
             logger.info("reset_game: session_id=%s -> state updated", self.session_id)
             return new_state
         except PhoenixChannelError as exc:
@@ -401,4 +494,5 @@ class GameSession:
             "room_slug": self.room_slug,
             "created_at": self.created_at.isoformat(),
             "frontend_url": None,
+            "ephemeral": self.ephemeral,
         }

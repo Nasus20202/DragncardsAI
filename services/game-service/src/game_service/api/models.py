@@ -22,6 +22,15 @@ class CreateGameRequest(BaseModel):
         default="marvel-champions",
         description="Plugin identifier to use for the new game session",
     )
+    ephemeral: bool = Field(
+        default=False,
+        description=(
+            "Create a non-emitting, server-reaped reconstruction session used "
+            "only for viewing a past moment. Ephemeral sessions emit no history "
+            "events and are deleted by a background reaper after a TTL even if "
+            "the client never tears them down."
+        ),
+    )
 
 
 class AttachGameRequest(BaseModel):
@@ -55,6 +64,8 @@ class SessionMetadata(BaseModel):
     room_slug: str
     created_at: str  # ISO-8601
     frontend_url: str | None = None
+    # True for non-emitting, server-reaped reconstruction sessions (view-only).
+    ephemeral: bool = False
 
 
 class CreateGameResponse(BaseModel):
@@ -67,6 +78,17 @@ class AttachGameResponse(BaseModel):
 
 class ListGamesResponse(BaseModel):
     sessions: list[SessionMetadata]
+
+
+class LookupSessionBySlugResponse(BaseModel):
+    """Metadata returned when resolving a session by its room slug.
+
+    The room slug is low-entropy and guessable, so this lookup is intentionally
+    non-mutating: it only returns the canonical `session_id` (and other metadata)
+    needed to address the session on UUID-only state/mutation/delete endpoints.
+    """
+
+    session: SessionMetadata
 
 
 class SimplifiedCard(BaseModel):

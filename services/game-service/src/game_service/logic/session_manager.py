@@ -17,6 +17,10 @@ from typing import Any
 
 from game_service.dragncards.http_client import create_room, get_auth_token, get_user_id
 from game_service.catalog.service import load_prebuilt_deck
+from game_service.coordination.history_emitter import (
+    HistoryEmitter,
+    NullHistoryEmitter,
+)
 from game_service.logic.exceptions import (
     BadGameStateError,
     SessionError,
@@ -45,6 +49,9 @@ class SessionManager:
         password: str,
         plugin_registry: dict[str, dict],
         session_store: SessionStore | None = None,
+        history_emitter: HistoryEmitter | None = None,
+        ephemeral_session_ttl_seconds: float = 1800.0,
+        ephemeral_reaper_interval_seconds: float = 60.0,
     ):
         self._http_url = dragncards_http_url
         self._ws_url = dragncards_ws_url
@@ -52,8 +59,12 @@ class SessionManager:
         self._password = password
         self._plugin_registry = plugin_registry
         self._session_store = session_store or InMemorySessionStore()
+        self._history_emitter = history_emitter or NullHistoryEmitter()
         self._sessions: dict[str, GameSession] = {}
         self._lock = asyncio.Lock()
+        self._ephemeral_session_ttl_seconds = ephemeral_session_ttl_seconds
+        self._ephemeral_reaper_interval_seconds = ephemeral_reaper_interval_seconds
+        self._reaper_task: asyncio.Task[None] | None = None
 
     async def restore_sessions(self) -> None:
         with tracer.start_as_current_span("game_service.restore_sessions"):
@@ -103,6 +114,7 @@ class SessionManager:
         client: PhoenixClient,
         channel: Any,
         initial_state: Any,
+        ephemeral: bool = False,
     ) -> GameSession:
         session = GameSession(
             session_id=session_id,
@@ -114,6 +126,8 @@ class SessionManager:
             channel=channel,
             initial_state=initial_state,
             on_close=lambda: self._remove_session(session_id),
+            history_emitter=self._history_emitter,
+            ephemeral=ephemeral,
         )
         return session
 
@@ -155,6 +169,7 @@ class SessionManager:
                 client=ws_client,
                 channel=channel,
                 initial_state=initial_state,
+                ephemeral=bool(record.get("ephemeral", False)),
             )
             await self._register_session(session, persist=False)
 
@@ -266,10 +281,15 @@ class SessionManager:
 
         logger.info("auto_seat: session_id=%s no vacant seats", session.session_id)
 
-    async def create_session(self, plugin_name: str) -> GameSession:
+    async def create_session(
+        self, plugin_name: str, *, ephemeral: bool = False
+    ) -> GameSession:
         with tracer.start_as_current_span(
             "game_service.create_session",
-            attributes={"game.plugin.name": plugin_name},
+            attributes={
+                "game.plugin.name": plugin_name,
+                "game.session.ephemeral": ephemeral,
+            },
         ):
             plugin_info = self._get_plugin_info(plugin_name)
 
@@ -305,6 +325,7 @@ class SessionManager:
                 client=ws_client,
                 channel=channel,
                 initial_state=initial_state,
+                ephemeral=ephemeral,
             )
             await self._register_session(session)
             await self._auto_seat(session, user_id)
@@ -338,7 +359,44 @@ class SessionManager:
         logger.info("Session %s attached to existing room %s", session_id, room_slug)
         return session
 
+    def _normalize_session_id(self, session_id: str) -> str:
+        """Normalize a UUID ``session_id`` to its canonical string form.
+
+        State/mutation/delete paths are UUID-only: a guessable, low-entropy room
+        slug must never authorize a read, mutation, or delete. A valid but
+        non-canonical UUID (e.g. uppercase or braced) is normalized so it still
+        matches the canonical id stored on the session, while a non-UUID value is
+        returned unchanged so the caller surfaces the usual ``SessionNotFoundError``.
+        """
+        try:
+            return str(uuid.UUID(str(session_id)))
+        except ValueError, AttributeError, TypeError:
+            return session_id
+
+    async def lookup_session_by_slug(self, room_slug: str) -> dict[str, Any]:
+        """Resolve a human-readable ``room_slug`` to its session metadata.
+
+        This is the only path on which a room slug is accepted. It is a
+        non-mutating lookup that returns the canonical ``session_id`` together
+        with the rest of the session metadata, so a caller can subsequently
+        address the session by its UUID. The low-entropy slug never authorizes a
+        state read, mutation, or delete on its own. Raises
+        ``SessionNotFoundError`` when the slug is unknown.
+        """
+        # In-pool fast path: match an active session by its room slug.
+        for session in self._sessions.values():
+            if session.room_slug == room_slug:
+                return session.to_metadata()
+
+        session_id = await self._session_store.get_session_id_by_slug(room_slug)
+        if session_id is not None:
+            record = await self._session_store.get_session(session_id)
+            if record is not None:
+                return dict(record)
+        raise SessionNotFoundError(f"Session for room slug {room_slug!r} not found")
+
     async def get_session(self, session_id: str) -> GameSession:
+        session_id = self._normalize_session_id(session_id)
         session = self._sessions.get(session_id)
         if session is None:
             record = await self._session_store.get_session(session_id)
@@ -355,6 +413,7 @@ class SessionManager:
         wait_timeout: float = 5.0,
         lease_ttl: float = 30.0,
     ):
+        session_id = self._normalize_session_id(session_id)
         owner_token = str(uuid.uuid4())
         acquired = await self._session_store.acquire_session_lock(
             session_id=session_id,
@@ -385,6 +444,7 @@ class SessionManager:
         logger.info("Session %s removed from pool (room closed)", session_id)
 
     async def delete_session(self, session_id: str) -> None:
+        session_id = self._normalize_session_id(session_id)
         async with self._lock:
             session = self._sessions.pop(session_id, None)
         if session is None:
@@ -445,3 +505,127 @@ class SessionManager:
                 await self.delete_session(sid)
             except Exception as exc:
                 logger.warning("Error closing session %s on shutdown: %s", sid, exc)
+
+    # ------------------------------------------------------------------
+    # Ephemeral reconstruction reaper
+    # ------------------------------------------------------------------
+    #
+    # Ephemeral reconstruction sessions are view-only branches created for the
+    # dashboard "open board at this event" feature. Client teardown
+    # (DELETE /games/{id}) is the fast path, but it is best-effort only: a lost
+    # network connection, tab crash, or power loss can leave the session and its
+    # DragnCards room orphaned. This background reaper deletes ephemeral sessions
+    # (and their rooms) once they are older than the configured TTL, so a crashed
+    # client can never leak one. Non-ephemeral sessions are never touched. The
+    # ephemeral tag and created_at live in the session store (no in-memory-only
+    # durable state), so reaping is correct across service instances and restarts.
+
+    async def reap_expired_ephemeral_sessions(self) -> int:
+        """Delete ephemeral sessions older than the configured TTL.
+
+        Returns the number of sessions reaped. Reads candidates from the session
+        store (the durable source of the ``ephemeral`` tag + ``created_at``), so
+        a session that was never loaded into this process's pool is still
+        reclaimed. Idempotent: a record already removed (e.g. by an explicit
+        client teardown) is simply skipped.
+        """
+        now = datetime.now(timezone.utc)
+        ttl = self._ephemeral_session_ttl_seconds
+        try:
+            records = await self._session_store.list_sessions()
+        except Exception as exc:  # best-effort: never crash the reaper loop
+            logger.warning("ephemeral reaper: failed to list sessions: %s", exc)
+            return 0
+
+        reaped = 0
+        for record in records:
+            if not record.get("ephemeral"):
+                continue
+            created_raw = record.get("created_at")
+            if not isinstance(created_raw, str):
+                continue
+            try:
+                created_at = datetime.fromisoformat(created_raw)
+            except ValueError:
+                continue
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            age = (now - created_at).total_seconds()
+            if age < ttl:
+                continue
+            session_id = record["session_id"]
+            if await self._reap_ephemeral_session(session_id):
+                reaped += 1
+        if reaped:
+            logger.info("ephemeral reaper: reclaimed %d expired session(s)", reaped)
+        return reaped
+
+    async def _reap_ephemeral_session(self, session_id: str) -> bool:
+        """Delete a single ephemeral session + its room. Best-effort, idempotent."""
+        try:
+            # Reuse the existing session-delete path (leave channel + disconnect
+            # + remove store record). This mirrors the client fast path exactly.
+            await self.delete_session(session_id)
+            logger.info("ephemeral reaper: reclaimed session %s", session_id)
+            return True
+        except SessionNotFoundError:
+            # Not in the pool: the room may never have been loaded by this
+            # instance, or it was already removed. Ensure the durable record is
+            # gone so the room is not left tracked, then treat as reclaimed.
+            try:
+                await self._session_store.delete_session(session_id)
+            except Exception as exc:  # best-effort
+                logger.warning(
+                    "ephemeral reaper: failed to delete store record for %s: %s",
+                    session_id,
+                    exc,
+                )
+                return False
+            logger.info(
+                "ephemeral reaper: removed stale store record for %s", session_id
+            )
+            return True
+        except Exception as exc:  # best-effort: never crash the reaper loop
+            logger.warning(
+                "ephemeral reaper: failed to reap session %s: %s", session_id, exc
+            )
+            return False
+
+    async def _ephemeral_reaper_loop(self) -> None:
+        """Periodically reap expired ephemeral sessions until cancelled."""
+        interval = self._ephemeral_reaper_interval_seconds
+        logger.info(
+            "Started ephemeral session reaper (ttl=%.0fs interval=%.0fs)",
+            self._ephemeral_session_ttl_seconds,
+            interval,
+        )
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    await self.reap_expired_ephemeral_sessions()
+                except Exception as exc:  # best-effort: keep the loop alive
+                    logger.warning("ephemeral reaper: cycle failed: %s", exc)
+        except asyncio.CancelledError:
+            logger.info("Ephemeral session reaper stopped")
+            raise
+
+    def start_ephemeral_reaper(self) -> None:
+        """Start the background reaper task (idempotent)."""
+        if self._reaper_task is not None and not self._reaper_task.done():
+            return
+        self._reaper_task = asyncio.create_task(self._ephemeral_reaper_loop())
+
+    async def stop_ephemeral_reaper(self) -> None:
+        """Stop the background reaper task if running."""
+        task = self._reaper_task
+        if task is None:
+            return
+        self._reaper_task = None
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("ephemeral reaper: error during shutdown: %s", exc)

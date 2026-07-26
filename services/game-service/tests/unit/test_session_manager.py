@@ -12,14 +12,16 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from game_service.coordination.session_store import InMemorySessionStore
 from game_service.logic.exceptions import (
     BadGameStateError,
     SessionError,
+    SessionNotFoundError,
     SnapshotValidationError,
     StateUnavailableError,
 )
@@ -482,3 +484,337 @@ async def test_auto_seat_falls_back_to_player_data():
     await manager._auto_seat(session, user_id=42)
 
     session.set_seat.assert_awaited_once_with(player_index="player2", user_id=42)
+
+
+# ---------------------------------------------------------------------------
+# Slug lookup is LOOKUP-ONLY; state/mutation/delete paths remain UUID-only.
+#
+# The room slug is low-entropy (~27 bits) and visible in DragnCards URLs, so it
+# must never authorize a state read, mutation, or delete. It may only be used
+# through the dedicated, non-mutating `lookup_session_by_slug` resolver.
+# ---------------------------------------------------------------------------
+
+_TEST_SESSION_UUID = "11111111-1111-1111-1111-111111111111"
+_TEST_ROOM_SLUG = "lively-fog-1234"
+
+
+def _make_manager_with_store(store: InMemorySessionStore) -> SessionManager:
+    return SessionManager(
+        dragncards_http_url="http://localhost:4000",
+        dragncards_ws_url="ws://localhost:4000/socket",
+        email="dev@example.com",
+        password="password",
+        plugin_registry={"marvel-champions": {"id": 1, "version": 1, "name": "MC"}},
+        session_store=store,
+    )
+
+
+def _make_uuid_session() -> GameSession:
+    client = PhoenixClient("ws://localhost:4000/socket")
+    channel = _make_channel()
+    return GameSession(
+        session_id=_TEST_SESSION_UUID,
+        plugin_name="marvel-champions",
+        plugin_id=1,
+        room_slug=_TEST_ROOM_SLUG,
+        created_at=datetime.now(timezone.utc),
+        client=client,
+        channel=channel,
+    )
+
+
+async def _register(manager: SessionManager, session: GameSession) -> None:
+    await manager._session_store.put_session(session.to_metadata())
+    manager._sessions[session.session_id] = session
+
+
+# --- Dedicated slug lookup (the ONLY place a slug is accepted) ---
+
+
+@pytest.mark.asyncio
+async def test_lookup_session_by_slug_returns_session_metadata():
+    manager = _make_manager_with_store(InMemorySessionStore())
+    await _register(manager, _make_uuid_session())
+
+    metadata = await manager.lookup_session_by_slug(_TEST_ROOM_SLUG)
+
+    assert metadata["session_id"] == _TEST_SESSION_UUID
+    assert metadata["room_slug"] == _TEST_ROOM_SLUG
+
+
+@pytest.mark.asyncio
+async def test_lookup_session_by_slug_resolves_via_store_only():
+    # No live session in the pool — slug must still resolve from the store index.
+    store = InMemorySessionStore()
+    session = _make_uuid_session()
+    await store.put_session(session.to_metadata())
+    manager = _make_manager_with_store(store)
+
+    metadata = await manager.lookup_session_by_slug(_TEST_ROOM_SLUG)
+
+    assert metadata["session_id"] == _TEST_SESSION_UUID
+
+
+@pytest.mark.asyncio
+async def test_lookup_session_by_slug_unknown_slug_raises_not_found():
+    manager = _make_manager_with_store(InMemorySessionStore())
+    with pytest.raises(SessionNotFoundError):
+        await manager.lookup_session_by_slug("no-such-room")
+
+
+# --- State/mutation/delete paths are UUID-only ---
+
+
+@pytest.mark.asyncio
+async def test_get_session_returns_session_by_uuid():
+    manager = _make_manager_with_store(InMemorySessionStore())
+    await _register(manager, _make_uuid_session())
+
+    session = await manager.get_session(_TEST_SESSION_UUID)
+
+    assert session.session_id == _TEST_SESSION_UUID
+
+
+@pytest.mark.asyncio
+async def test_get_session_normalizes_non_canonical_uuid():
+    # A valid-but-non-canonical UUID (uppercase) must still match the stored id.
+    manager = _make_manager_with_store(InMemorySessionStore())
+    await _register(manager, _make_uuid_session())
+
+    session = await manager.get_session(_TEST_SESSION_UUID.upper())
+
+    assert session.session_id == _TEST_SESSION_UUID
+
+
+@pytest.mark.asyncio
+async def test_get_session_with_slug_does_not_resolve():
+    # A slug must NOT authorize a state read even when the session exists.
+    manager = _make_manager_with_store(InMemorySessionStore())
+    await _register(manager, _make_uuid_session())
+
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session(_TEST_ROOM_SLUG)
+
+
+@pytest.mark.asyncio
+async def test_get_session_unknown_uuid_raises_not_found():
+    manager = _make_manager_with_store(InMemorySessionStore())
+    with pytest.raises(SessionNotFoundError):
+        await manager.get_session("00000000-0000-0000-0000-000000000000")
+
+
+@pytest.mark.asyncio
+async def test_delete_session_by_uuid_removes_index_entry():
+    manager = _make_manager_with_store(InMemorySessionStore())
+    session = _make_uuid_session()
+    session.client.leave = AsyncMock()
+    session.client.disconnect = AsyncMock()
+    await _register(manager, session)
+
+    await manager.delete_session(_TEST_SESSION_UUID)
+
+    assert _TEST_SESSION_UUID not in manager._sessions
+    assert await manager._session_store.get_session(_TEST_SESSION_UUID) is None
+    assert await manager._session_store.get_session_id_by_slug(_TEST_ROOM_SLUG) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_session_with_slug_does_not_resolve():
+    # A slug must NOT authorize a delete; the session must survive untouched.
+    manager = _make_manager_with_store(InMemorySessionStore())
+    session = _make_uuid_session()
+    session.client.leave = AsyncMock()
+    session.client.disconnect = AsyncMock()
+    await _register(manager, session)
+
+    with pytest.raises(SessionNotFoundError):
+        await manager.delete_session(_TEST_ROOM_SLUG)
+
+    assert _TEST_SESSION_UUID in manager._sessions
+    assert await manager._session_store.get_session(_TEST_SESSION_UUID) is not None
+    assert (
+        await manager._session_store.get_session_id_by_slug(_TEST_ROOM_SLUG)
+        == _TEST_SESSION_UUID
+    )
+
+
+# ---------------------------------------------------------------------------
+# Ephemeral reconstruction reaper
+# ---------------------------------------------------------------------------
+
+
+def _make_ephemeral_session(
+    *, session_id: str, room_slug: str, created_at: datetime
+) -> GameSession:
+    client = PhoenixClient("ws://localhost:4000/socket")
+    channel = _make_channel()
+    return GameSession(
+        session_id=session_id,
+        plugin_name="marvel-champions",
+        plugin_id=1,
+        room_slug=room_slug,
+        created_at=created_at,
+        client=client,
+        channel=channel,
+        ephemeral=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reaper_deletes_expired_ephemeral_session_and_room():
+    store = InMemorySessionStore()
+    manager = SessionManager(
+        dragncards_http_url="http://localhost:4000",
+        dragncards_ws_url="ws://localhost:4000/socket",
+        email="dev@example.com",
+        password="password",
+        plugin_registry={"marvel-champions": {"id": 1, "version": 1, "name": "MC"}},
+        session_store=store,
+        ephemeral_session_ttl_seconds=1800.0,
+    )
+    # Created well past the TTL.
+    created = datetime.now(timezone.utc) - timedelta(seconds=3600)
+    session = _make_ephemeral_session(
+        session_id="22222222-2222-2222-2222-222222222222",
+        room_slug="aged-room-1",
+        created_at=created,
+    )
+    session.client.leave = AsyncMock()
+    session.client.disconnect = AsyncMock()
+    await _register(manager, session)
+
+    reaped = await manager.reap_expired_ephemeral_sessions()
+
+    assert reaped == 1
+    # Both the session and its room (channel left + disconnected) are reclaimed.
+    session.client.leave.assert_awaited_once()
+    session.client.disconnect.assert_awaited_once()
+    assert session.session_id not in manager._sessions
+    assert await store.get_session(session.session_id) is None
+    assert await store.get_session_id_by_slug("aged-room-1") is None
+
+
+@pytest.mark.asyncio
+async def test_reaper_does_not_touch_fresh_ephemeral_session():
+    store = InMemorySessionStore()
+    manager = SessionManager(
+        dragncards_http_url="http://localhost:4000",
+        dragncards_ws_url="ws://localhost:4000/socket",
+        email="dev@example.com",
+        password="password",
+        plugin_registry={"marvel-champions": {"id": 1, "version": 1, "name": "MC"}},
+        session_store=store,
+        ephemeral_session_ttl_seconds=1800.0,
+    )
+    session = _make_ephemeral_session(
+        session_id="33333333-3333-3333-3333-333333333333",
+        room_slug="fresh-room-1",
+        created_at=datetime.now(timezone.utc),  # well within TTL
+    )
+    session.client.leave = AsyncMock()
+    session.client.disconnect = AsyncMock()
+    await _register(manager, session)
+
+    reaped = await manager.reap_expired_ephemeral_sessions()
+
+    assert reaped == 0
+    assert session.session_id in manager._sessions
+    assert await store.get_session(session.session_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_reaper_never_reaps_non_ephemeral_session():
+    store = InMemorySessionStore()
+    manager = SessionManager(
+        dragncards_http_url="http://localhost:4000",
+        dragncards_ws_url="ws://localhost:4000/socket",
+        email="dev@example.com",
+        password="password",
+        plugin_registry={"marvel-champions": {"id": 1, "version": 1, "name": "MC"}},
+        session_store=store,
+        ephemeral_session_ttl_seconds=1800.0,
+    )
+    # A kept (non-ephemeral) session, even very old, must never be reaped.
+    client = PhoenixClient("ws://localhost:4000/socket")
+    kept = GameSession(
+        session_id="44444444-4444-4444-4444-444444444444",
+        plugin_name="marvel-champions",
+        plugin_id=1,
+        room_slug="kept-room-1",
+        created_at=datetime.now(timezone.utc) - timedelta(days=30),
+        client=client,
+        channel=_make_channel(),
+        ephemeral=False,
+    )
+    kept.client.leave = AsyncMock()
+    kept.client.disconnect = AsyncMock()
+    await _register(manager, kept)
+
+    reaped = await manager.reap_expired_ephemeral_sessions()
+
+    assert reaped == 0
+    kept.client.leave.assert_not_awaited()
+    assert kept.session_id in manager._sessions
+    assert await store.get_session(kept.session_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_reaper_is_idempotent_against_prior_teardown():
+    """A record removed by a client teardown leaves nothing for the reaper to do."""
+    store = InMemorySessionStore()
+    manager = SessionManager(
+        dragncards_http_url="http://localhost:4000",
+        dragncards_ws_url="ws://localhost:4000/socket",
+        email="dev@example.com",
+        password="password",
+        plugin_registry={"marvel-champions": {"id": 1, "version": 1, "name": "MC"}},
+        session_store=store,
+        ephemeral_session_ttl_seconds=1800.0,
+    )
+    session = _make_ephemeral_session(
+        session_id="55555555-5555-5555-5555-555555555555",
+        room_slug="torn-down-room",
+        created_at=datetime.now(timezone.utc) - timedelta(seconds=3600),
+    )
+    session.client.leave = AsyncMock()
+    session.client.disconnect = AsyncMock()
+    await _register(manager, session)
+
+    # Client fast-path teardown removes it first.
+    await manager.delete_session(session.session_id)
+
+    # The reaper then finds nothing to reap and does not error.
+    reaped = await manager.reap_expired_ephemeral_sessions()
+    assert reaped == 0
+
+
+@pytest.mark.asyncio
+async def test_reaper_removes_stale_store_record_not_in_pool():
+    """An expired ephemeral record present only in the store is still reclaimed."""
+    store = InMemorySessionStore()
+    manager = SessionManager(
+        dragncards_http_url="http://localhost:4000",
+        dragncards_ws_url="ws://localhost:4000/socket",
+        email="dev@example.com",
+        password="password",
+        plugin_registry={"marvel-champions": {"id": 1, "version": 1, "name": "MC"}},
+        session_store=store,
+        ephemeral_session_ttl_seconds=1800.0,
+    )
+    created = (datetime.now(timezone.utc) - timedelta(seconds=3600)).isoformat()
+    await store.put_session(
+        {
+            "session_id": "66666666-6666-6666-6666-666666666666",
+            "plugin_name": "marvel-champions",
+            "plugin_id": 1,
+            "room_slug": "orphan-room",
+            "created_at": created,
+            "frontend_url": None,
+            "ephemeral": True,
+        }
+    )
+
+    reaped = await manager.reap_expired_ephemeral_sessions()
+
+    assert reaped == 1
+    assert await store.get_session("66666666-6666-6666-6666-666666666666") is None

@@ -44,6 +44,54 @@ BOT_PASSWORD = os.environ.get("BOT_PASSWORD", "dev_password")
 VALKEY_URL = os.environ.get("VALKEY_URL", "redis://localhost:6380/0")
 HTTP_HOST = os.environ.get("HTTP_HOST", "0.0.0.0")
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "4001"))
+# History ingestion is on by default; set HISTORY_INGEST_ENABLED=false to disable.
+HISTORY_INGEST_ENABLED = os.environ.get(
+    "HISTORY_INGEST_ENABLED", "true"
+).lower() not in {
+    "0",
+    "false",
+    "no",
+}
+# The history-service ingests from a single shared Valkey reached by all three
+# producers/consumers (the agent-orchestrator Valkey). This is intentionally
+# separate from the game-service's own session-store Valkey (VALKEY_URL).
+# Defaults to the shared orchestrator Valkey for local runs.
+HISTORY_VALKEY_URL = os.environ.get("HISTORY_VALKEY_URL", "redis://localhost:6381/0")
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    """Parse a strictly-positive float env var, falling back to ``default``.
+
+    Used for the ephemeral reconstruction reaper knobs. A missing, malformed, or
+    non-positive value is rejected (logged) and the default is used so a typo can
+    never disable reaping or set a degenerate interval.
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using default %s", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning(
+            "%s must be positive (got %s); using default %s", name, value, default
+        )
+        return default
+    return value
+
+
+# How long an ephemeral reconstruction session may live before the server-side
+# reaper reclaims it (session + DragnCards room), even if the client never tore
+# it down. Default 30 minutes.
+EPHEMERAL_SESSION_TTL_SECONDS = _positive_float_env(
+    "EPHEMERAL_SESSION_TTL_SECONDS", 1800.0
+)
+# How often the reaper checks for expired ephemeral sessions. Default 60s.
+EPHEMERAL_REAPER_INTERVAL_SECONDS = _positive_float_env(
+    "EPHEMERAL_REAPER_INTERVAL_SECONDS", 60.0
+)
 
 # Plugin registry — maps plugin name to DragnCards plugin metadata.
 # Extend this dict to support additional plugins.
@@ -62,6 +110,7 @@ PLUGIN_REGISTRY: dict[str, dict] = {
 
 
 def build_session_manager():
+    from game_service.coordination.history_emitter import build_history_emitter
     from game_service.coordination.session_store import (
         InMemorySessionStore,
         ValkeySessionStore,
@@ -88,6 +137,21 @@ def build_session_manager():
             parsed.port or 6379,
         )
 
+    history_emitter = build_history_emitter(
+        enabled=HISTORY_INGEST_ENABLED,
+        valkey_url=None if use_in_memory else HISTORY_VALKEY_URL,
+    )
+    if HISTORY_INGEST_ENABLED and not use_in_memory:
+        history_valkey = urlparse(HISTORY_VALKEY_URL)
+        logger.info(
+            "History ingestion enabled; emitting to Valkey stream history:ingest "
+            "at %s:%s",
+            history_valkey.hostname,
+            history_valkey.port or 6379,
+        )
+    else:
+        logger.info("History ingestion disabled")
+
     return SessionManager(
         dragncards_http_url=DRAGNCARDS_HTTP_URL,
         dragncards_ws_url=DRAGNCARDS_WS_URL,
@@ -95,6 +159,9 @@ def build_session_manager():
         password=BOT_PASSWORD,
         plugin_registry=PLUGIN_REGISTRY,
         session_store=session_store,
+        history_emitter=history_emitter,
+        ephemeral_session_ttl_seconds=EPHEMERAL_SESSION_TTL_SECONDS,
+        ephemeral_reaper_interval_seconds=EPHEMERAL_REAPER_INTERVAL_SECONDS,
     )
 
 
@@ -143,6 +210,16 @@ def run_http():
                 )
             else:
                 raise
+
+    @app.on_event("startup")
+    async def _start_ephemeral_reaper() -> None:
+        # Background safety net: reclaims ephemeral reconstruction sessions whose
+        # client never issued a teardown (lost connection / crash / power-off).
+        manager.start_ephemeral_reaper()
+
+    @app.on_event("shutdown")
+    async def _stop_ephemeral_reaper() -> None:
+        await manager.stop_ephemeral_reaper()
 
     logger.info("Starting HTTP server on %s:%s", HTTP_HOST, HTTP_PORT)
     uvicorn.run(app, host=HTTP_HOST, port=HTTP_PORT)
