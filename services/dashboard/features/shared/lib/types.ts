@@ -195,3 +195,229 @@ export interface GameSession {
   created_at: string;
   room_slug: string;
 }
+
+export type HistoryActor = "agent" | "game-service" | "evaluator" | "user";
+
+export interface HistoryAgentPayload {
+  intended_action?: string | null;
+  reasoning?: string | null;
+  arguments?: JsonValue;
+  conversation_context?: JsonValue;
+}
+
+export interface HistoryGameServicePayload {
+  state?: JsonValue;
+  status?: string | null;
+}
+
+export interface HistoryEvaluatorScores {
+  rules_legality?: number | null;
+  strategic_quality?: number | null;
+  tempo_efficiency?: number | null;
+  threat_resource?: number | null;
+}
+
+export interface HistoryEvaluatorInfo {
+  model?: string | null;
+  provider?: string | null;
+  evaluator_version?: string | null;
+}
+
+export interface HistoryEvaluatorPayload {
+  scope?: string | null;
+  target_seq?: number | null;
+  round_span?: JsonValue;
+  /**
+   * The player this verdict pertains to (e.g. "player1"). `null`/absent only
+   * for legacy/unattributed verdicts; per-player roll-ups and per-move targets
+   * always set it.
+   */
+  player?: string | null;
+  scores?: HistoryEvaluatorScores;
+  overall_score?: number | null;
+  rationale?: string | null;
+  flags?: JsonValue;
+  evaluator?: HistoryEvaluatorInfo;
+}
+
+// --- On-demand evaluation request / status (eval-service contract) ---
+
+export type EvaluationScope = "move" | "round" | "game";
+
+/** Per-target status as reported by the eval-service. */
+export type EvaluationTargetStatus =
+  "pending" | "running" | "completed" | "skipped" | "failed" | "cancelled";
+
+/** Overall request status as reported by the eval-service. */
+export type EvaluationRequestStatus =
+  "pending" | "running" | "completed" | "partial" | "failed" | "cancelled";
+
+/** Target selection sent with a `POST /games/{id}/evaluations` request. */
+export interface EvaluationSelection {
+  seqs?: number[];
+  rounds?: number[];
+  seq_range?: { from_seq: number; to_seq: number };
+  whole_game?: boolean;
+}
+
+/** Reasoning override for the judge, mirroring the orchestrator's shape. */
+export interface JudgeReasoning {
+  enabled: boolean;
+  effort?: "low" | "medium" | "high";
+  max_tokens?: number | null;
+}
+
+/**
+ * Per-request judge configuration. All fields are optional; omitted fields
+ * fall back to the eval-service defaults. Empty fields MUST be omitted by the
+ * client when assembling the request body.
+ */
+export interface JudgeConfig {
+  provider_id?: string;
+  model_name?: string;
+  reasoning?: JudgeReasoning;
+  prompt_override?: string;
+  skills?: string[];
+}
+
+export interface EvaluationRequestBody {
+  scope: EvaluationScope;
+  selection: EvaluationSelection;
+  force?: boolean;
+  judge?: JudgeConfig;
+}
+
+export interface EvaluationTarget {
+  target_seq: number;
+  scope: EvaluationScope;
+  round_span?: [number, number] | null;
+  /** The player this target pertains to (e.g. "player1"); null for legacy. */
+  player?: string | null;
+  status: EvaluationTargetStatus;
+  verdict?: HistoryEvaluatorPayload | null;
+  error?: string | null;
+}
+
+/** Response from `POST /games/{id}/evaluations`. */
+export interface EvaluationRequestAck {
+  request_id: string;
+  game_id: string;
+  scope: EvaluationScope;
+  created_count: number;
+  skipped_count: number;
+  targets: EvaluationTarget[];
+}
+
+/** Response from `GET /games/{id}/evaluations/{request_id}`. */
+export interface EvaluationRequestStatusResponse {
+  request_id: string;
+  game_id: string;
+  status: EvaluationRequestStatus;
+  targets: EvaluationTarget[];
+}
+
+/** Response from `POST /games/{id}/evaluations/{request_id}/cancel`. */
+export interface EvaluationCancelResponse {
+  request_id: string;
+  cancelled: number;
+}
+
+// --- Cross-game evaluations queue (eval-service `GET /evaluations`) ---
+
+/**
+ * Scope of an evaluation target as reported by the cross-game listing. Wider
+ * than `EvaluationScope` (which only covers what the drawer can submit): the
+ * listing also distinguishes "range" and "game" scopes.
+ */
+export type EvaluationQueueScope = "move" | "round" | "range" | "game";
+
+/** A per-target summary in a queued evaluation request. */
+export interface EvaluationQueueTarget {
+  target_seq: number;
+  scope: EvaluationQueueScope;
+  round_span?: [number, number] | null;
+  /** The player this target pertains to (e.g. "player1"); null for legacy. */
+  player?: string | null;
+  status: EvaluationTargetStatus;
+}
+
+/** A request summary from the cross-game `GET /evaluations` listing. */
+export interface EvaluationQueueRequest {
+  request_id: string;
+  game_id: string;
+  status: EvaluationRequestStatus;
+  created_at: string;
+  targets: EvaluationQueueTarget[];
+}
+
+/** Response from `GET /evaluations` (newest-first). */
+export interface EvaluationQueueListResponse {
+  requests: EvaluationQueueRequest[];
+}
+
+/** Response from `POST /evaluations/clear` (clear all terminal requests). */
+export interface EvaluationClearResponse {
+  deleted_count: number;
+}
+
+// --- Games with recorded history (history-service contract) ---
+
+/** A single entry of `GET /history/games`. */
+export interface HistoryGame {
+  game_id: string;
+  event_count: number;
+  first_recorded_at: string;
+  last_recorded_at: string;
+}
+
+/** Response from `DELETE /history/games/{game_id}`. */
+export interface HistoryDeleteResponse {
+  game_id: string;
+  deleted_events: number;
+  deleted_snapshots: number;
+}
+
+export interface HistoryEvent {
+  seq: number;
+  event_id: string;
+  game_id: string;
+  actor: HistoryActor;
+  event_type: string;
+  payload: HistoryAgentPayload &
+    HistoryGameServicePayload &
+    HistoryEvaluatorPayload &
+    Record<string, JsonValue>;
+  occurred_at: string;
+  recorded_at: string;
+}
+
+export interface HistorySnapshot {
+  snapshot_at_seq: number;
+  recorded_at: string;
+  [key: string]: JsonValue;
+}
+
+export type RestoreMode = "new" | "in_place";
+
+export interface RestoreRequestBody {
+  target_seq: number;
+  mode: RestoreMode;
+  /**
+   * When true, the restore produces an EPHEMERAL, non-emitting session: it
+   * records no history and is reaped server-side by TTL if the client never
+   * tears it down. Used for the "open board at this event" reconstruction.
+   */
+  ephemeral?: boolean;
+}
+
+export interface RestoreOutcome {
+  status?: string | null;
+  target_seq?: number | null;
+  mode?: RestoreMode | null;
+  session_id?: string | null;
+  message?: string | null;
+  detail?: string | null;
+  status_verified?: boolean | null;
+  divergence?: string | null;
+  [key: string]: JsonValue | undefined;
+}

@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { JobDetail, SessionDetail } from "@/features/shared/lib/types";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   aggregateEvents,
   AggEvent,
@@ -345,7 +345,51 @@ export function PlayTranscript({
   settingsOpen: boolean;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // VSCode-style scroll lock: auto-scroll only while the user is parked at (or
+  // near) the bottom. Scrolling up unlocks it; "Jump to latest" re-locks it.
+  const [isLocked, setIsLocked] = useState(true);
+  // While a programmatic (auto-follow / jump) scroll is animating, the
+  // intermediate scroll positions are far from the bottom and would otherwise
+  // flip isLocked off mid-animation. Suppress onScroll handling until this
+  // timestamp to keep the follow locked.
+  const suppressScrollUntilRef = useRef(0);
   const latestJobStatus = jobs.at(-1)?.status ?? null;
+
+  // Treat anything within this many pixels of the bottom as "at the bottom" to
+  // tolerate sub-pixel rounding and smooth-scroll lag.
+  const NEAR_BOTTOM_THRESHOLD_PX = 80;
+  // Smooth scrolls fire no reliable "finished" event, so ignore onScroll for a
+  // short window after starting one.
+  const PROGRAMMATIC_SCROLL_GUARD_MS = 600;
+
+  const isNearBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) {
+      return true;
+    }
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    return distanceFromBottom <= NEAR_BOTTOM_THRESHOLD_PX;
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    suppressScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_GUARD_MS;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    // Ignore scroll events caused by a programmatic scroll so it cannot unlock
+    // the follow mid-animation.
+    if (Date.now() < suppressScrollUntilRef.current) {
+      return;
+    }
+    setIsLocked(isNearBottom());
+  }, [isNearBottom]);
+
+  const jumpToLatest = useCallback(() => {
+    setIsLocked(true);
+    scrollToBottom();
+  }, [scrollToBottom]);
 
   function getVisibleJobStateKey(): VisibleJobStateKey {
     if (streamState === "streaming") {
@@ -375,8 +419,11 @@ export function PlayTranscript({
       : JOB_STATE_LABELS[visibleJobStateKey];
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [jobs]);
+    if (!isLocked) {
+      return;
+    }
+    scrollToBottom();
+  }, [jobs, isLocked, scrollToBottom]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -423,29 +470,49 @@ export function PlayTranscript({
       )}
 
       {/* Scrollable chat area — messages anchored to bottom */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="flex min-h-full flex-col">
-          {/* Spacer pushes messages to the bottom when content is short */}
-          {selectedSession && jobs.length > 0 && <div className="flex-1" />}
-          <div
-            className={`mx-auto w-full max-w-3xl px-4 py-6 ${!selectedSession || jobs.length === 0 ? "flex flex-1 items-center justify-center" : ""}`}
-          >
-            {!selectedSession ? (
-              <Empty message="Select or create a session to start." />
-            ) : jobs.length === 0 ? (
-              <Empty message="No messages yet. Type a prompt below." />
-            ) : (
-              jobs.map((job) => (
-                <JobThread
-                  key={job.id}
-                  job={job}
-                  isStreaming={job.id === streamingJobId}
-                />
-              ))
-            )}
-            <div ref={bottomRef} />
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          className="h-full overflow-y-auto"
+          onScroll={handleScroll}
+        >
+          <div className="flex min-h-full flex-col">
+            {/* Spacer pushes messages to the bottom when content is short */}
+            {selectedSession && jobs.length > 0 && <div className="flex-1" />}
+            <div
+              className={`mx-auto w-full max-w-3xl px-4 py-6 ${!selectedSession || jobs.length === 0 ? "flex flex-1 items-center justify-center" : ""}`}
+            >
+              {!selectedSession ? (
+                <Empty message="Select or create a session to start." />
+              ) : jobs.length === 0 ? (
+                <Empty message="No messages yet. Type a prompt below." />
+              ) : (
+                jobs.map((job) => (
+                  <JobThread
+                    key={job.id}
+                    job={job}
+                    isStreaming={job.id === streamingJobId}
+                  />
+                ))
+              )}
+              <div ref={bottomRef} />
+            </div>
           </div>
         </div>
+
+        {/* Jump-to-latest control — shown only when scroll lock is released */}
+        {!isLocked && selectedSession && jobs.length > 0 && (
+          <button
+            data-testid="jump-to-latest"
+            type="button"
+            aria-label="Jump to latest"
+            className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 rounded-full border border-default-200/60 bg-background/90 px-3 py-1.5 text-xs font-medium text-default-600 shadow-lg backdrop-blur-sm transition-colors hover:bg-default-100 hover:text-foreground"
+            onClick={jumpToLatest}
+          >
+            <span aria-hidden="true">↓</span>
+            Jump to latest
+          </button>
+        )}
       </div>
     </div>
   );

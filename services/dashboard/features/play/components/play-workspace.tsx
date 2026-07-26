@@ -2,6 +2,7 @@
 
 import { Spinner } from "@heroui/react";
 import { usePlaySession } from "@/features/play/lib/use-play-session";
+import { isSelectableSession } from "@/features/play/lib/session-draft";
 import {
   getMobileLayoutSnapshot,
   subscribeToMobileLayout,
@@ -28,10 +29,12 @@ export function PlayWorkspace() {
     prompt,
     statusText,
     errorText,
+    providersNotice,
     isBusy,
     cancelPending,
     contextMetadata,
     subagentEntries,
+    subagentChildSessionIds,
     streamingJobId,
     streamState,
     setDraft,
@@ -40,6 +43,7 @@ export function PlayWorkspace() {
     createPlaySession,
     saveConfiguration,
     terminatePlaySession,
+    removeSession,
     compactPlaySession,
     submitSessionPrompt,
     cancelExecution,
@@ -94,6 +98,17 @@ export function PlayWorkspace() {
           </div>
         </div>
       ) : null}
+      {providersNotice ? (
+        <div
+          data-testid="providers-notice"
+          role="status"
+          className="pointer-events-none absolute inset-x-0 top-4 z-10 flex justify-center px-4"
+        >
+          <div className="max-w-xl rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning-700 shadow-sm dark:text-warning">
+            {providersNotice}
+          </div>
+        </div>
+      ) : null}
       {/* Left — session sidebar */}
       <aside
         data-testid="session-sidebar"
@@ -107,8 +122,8 @@ export function PlayWorkspace() {
           isBusy={isBusy}
           selectedSessionId={selectedSessionId}
           streamingSessionId={streamingJobId ? selectedSessionId : null}
-          sessions={sessions.filter(
-            (s) => !subagentEntries.some((e) => e.childSessionId === s.id)
+          sessions={sessions.filter((s) =>
+            isSelectableSession(s, subagentChildSessionIds)
           )}
           onCreate={createPlaySession}
           onToggleCollapsed={() =>
@@ -117,6 +132,15 @@ export function PlayWorkspace() {
             )
           }
           onSelect={selectSession}
+          onRemove={(id) => {
+            if (
+              typeof window !== "undefined" &&
+              !window.confirm("Remove this session? This cannot be undone.")
+            ) {
+              return;
+            }
+            void removeSession(id);
+          }}
         />
       </aside>
 
@@ -139,6 +163,10 @@ export function PlayWorkspace() {
           </div>
         )}
         <PlayTranscript
+          // Remount on session switch so the scroll lock resets to
+          // locked/at-bottom instead of inheriting the previous session's
+          // scrolled-up state.
+          key={selectedSessionId ?? "none"}
           errorText={errorText}
           isBusy={isBusy}
           jobs={jobs}

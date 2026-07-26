@@ -1,7 +1,7 @@
 "use client";
 
+import { CollapsibleCard as SharedCollapsibleCard } from "@/features/shared/components/collapsible-card";
 import { JobEventResponse } from "@/features/shared/lib/types";
-import { useState } from "react";
 
 const LABELS: Record<string, string> = {
   model_output: "Assistant",
@@ -60,7 +60,6 @@ function CancelledNote({ time }: { time: string }) {
 }
 
 function CollapsibleCard({ event }: { event: JobEventResponse }) {
-  const [open, setOpen] = useState(false);
   const label = LABELS[event.event_type] ?? event.event_type;
   const time = hhmm(event.created_at);
 
@@ -76,35 +75,12 @@ function CollapsibleCard({ event }: { event: JobEventResponse }) {
             : "bg-default-300";
 
   return (
-    <div className="overflow-hidden rounded-lg border border-default-200/60 bg-default-50/40 dark:bg-white/3">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-default-100/60"
-        onClick={() => setOpen((p) => !p)}
-      >
-        <div className="flex items-center gap-2">
-          <span
-            aria-hidden="true"
-            className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`}
-          />
-          <span className="text-xs font-medium text-default-500">{label}</span>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-default-400">
-          <span>{time}</span>
-          <span aria-hidden="true">{open ? "▴" : "▾"}</span>
-        </div>
-      </button>
-
-      {open && (
-        <div className="border-t border-default-200/60 px-3 py-2.5">
-          <pre className="overflow-x-auto whitespace-pre-wrap text-xs leading-relaxed text-default-600 dark:text-default-300">
-            {bodyText(event)}
-          </pre>
-        </div>
-      )}
-    </div>
+    <SharedCollapsibleCard
+      label={label}
+      dotClass={dotClass}
+      body={bodyText(event)}
+      time={time}
+    />
   );
 }
 

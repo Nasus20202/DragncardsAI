@@ -15,6 +15,7 @@ import {
 import {
   buildDraftFromSession,
   createDefaultDraft,
+  pickDefaultProviderModel,
 } from "@/features/play/lib/session-draft";
 import { readSelectedSessionIdFromUrl } from "@/features/play/lib/workspace-state";
 import {
@@ -48,6 +49,7 @@ interface UsePlaySessionLoaderOptions {
   setChildJobStatuses: Dispatch<SetStateAction<Map<string, string>>>;
   setStatusText: Dispatch<SetStateAction<string>>;
   setErrorText: Dispatch<SetStateAction<string | null>>;
+  setProvidersNotice: Dispatch<SetStateAction<string | null>>;
   committedModelRef: RefObject<{
     providerId: string;
     modelName: string;
@@ -71,6 +73,7 @@ export function usePlaySessionLoader({
   setChildJobStatuses,
   setStatusText,
   setErrorText,
+  setProvidersNotice,
   committedModelRef,
   refreshContextMetadata,
   startStreaming,
@@ -113,38 +116,98 @@ export function usePlaySessionLoader({
 
   useEffect(() => {
     async function load() {
-      try {
-        const [nextConfig, nextProviders, nextSkills, nextSessions] =
-          await Promise.all([
-            fetchDashboardConfig(),
-            listProviders(),
-            listAvailableSkills(),
-            listSessions(),
-          ]);
-        setConfig(nextConfig);
-        setProviders(nextProviders);
-        setSkills(nextSkills);
-        setSessions(nextSessions);
-        setDraft(createDefaultDraft(nextConfig));
-        setStatusText("Ready");
-        if (nextSessions.length > 0 && typeof window !== "undefined") {
-          const sessionIdFromUrl = readSelectedSessionIdFromUrl();
-          const savedId = localStorage.getItem("play:selectedSessionId");
-          const restoredId =
-            sessionIdFromUrl &&
-            nextSessions.some((session) => session.id === sessionIdFromUrl)
-              ? sessionIdFromUrl
-              : savedId &&
-                  nextSessions.some((session) => session.id === savedId)
-                ? savedId
-                : nextSessions[0].id;
-          persistSelectedSessionId(restoredId);
-        }
-      } catch (error) {
+      // Load all initial data resiliently: a slow or failed providers call (or
+      // any other single call) must degrade gracefully rather than failing the
+      // whole dashboard.
+      const [configResult, providersResult, skillsResult, sessionsResult] =
+        await Promise.allSettled([
+          fetchDashboardConfig(),
+          listProviders(),
+          listAvailableSkills(),
+          listSessions(),
+        ]);
+
+      // Dashboard config supplies the defaults needed to build a draft, so a
+      // failure here is genuinely fatal.
+      if (configResult.status === "rejected") {
         setErrorText(
-          error instanceof Error ? error.message : "Failed to load dashboard"
+          configResult.reason instanceof Error
+            ? configResult.reason.message
+            : "Failed to load dashboard configuration"
         );
         setStatusText("Configuration error");
+        return;
+      }
+      const nextConfig = configResult.value;
+      setConfig(nextConfig);
+
+      const nextProviders =
+        providersResult.status === "fulfilled" ? providersResult.value : [];
+      setProviders(nextProviders);
+
+      if (skillsResult.status === "fulfilled") {
+        setSkills(skillsResult.value);
+      }
+
+      const nextSessions =
+        sessionsResult.status === "fulfilled" ? sessionsResult.value : [];
+      setSessions(nextSessions);
+
+      // Seed the draft with a working provider/model so the selectors default
+      // to a provider the user can actually use.
+      const defaultDraft = createDefaultDraft(nextConfig);
+      const { providerId, modelName } = pickDefaultProviderModel(
+        nextConfig,
+        nextProviders
+      );
+      setDraft({ ...defaultDraft, providerId, modelName });
+
+      // Surface a non-blocking notice when providers fail to load or report
+      // themselves unavailable — never a fatal error.
+      const unavailableProviders = nextProviders
+        .filter((provider) => provider.available === false)
+        .map((provider) => provider.provider_id);
+      if (providersResult.status === "rejected") {
+        setProvidersNotice(
+          "Some providers could not be loaded. You can still use the providers that are available."
+        );
+      } else if (unavailableProviders.length > 0) {
+        setProvidersNotice(
+          `Unavailable provider${unavailableProviders.length > 1 ? "s" : ""}: ${unavailableProviders.join(", ")}.`
+        );
+      } else {
+        setProvidersNotice(null);
+      }
+
+      // Surface a visible error when sessions or skills fail to load, so a
+      // rejected sessions fetch does not look identical to an empty account.
+      // Providers degrade gracefully (notice only) and config stays the sole
+      // fatal failure.
+      const failedToLoad: string[] = [];
+      if (sessionsResult.status === "rejected") {
+        failedToLoad.push("sessions");
+      }
+      if (skillsResult.status === "rejected") {
+        failedToLoad.push("skills");
+      }
+      if (failedToLoad.length > 0) {
+        setErrorText(`Failed to load ${failedToLoad.join(" and ")}.`);
+      } else {
+        setErrorText(null);
+      }
+
+      setStatusText("Ready");
+      if (nextSessions.length > 0 && typeof window !== "undefined") {
+        const sessionIdFromUrl = readSelectedSessionIdFromUrl();
+        const savedId = localStorage.getItem("play:selectedSessionId");
+        const restoredId =
+          sessionIdFromUrl &&
+          nextSessions.some((session) => session.id === sessionIdFromUrl)
+            ? sessionIdFromUrl
+            : savedId && nextSessions.some((session) => session.id === savedId)
+              ? savedId
+              : nextSessions[0].id;
+        persistSelectedSessionId(restoredId);
       }
     }
 
@@ -155,6 +218,7 @@ export function usePlaySessionLoader({
     setDraft,
     setErrorText,
     setProviders,
+    setProvidersNotice,
     setSessions,
     setSkills,
     setStatusText,

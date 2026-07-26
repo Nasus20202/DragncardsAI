@@ -37,6 +37,7 @@ export function PlaySessionList({
   onCreate,
   onToggleCollapsed,
   onSelect,
+  onRemove,
 }: {
   sessions: SessionSummary[];
   selectedSessionId: string | null;
@@ -47,6 +48,7 @@ export function PlaySessionList({
   onCreate: () => void;
   onToggleCollapsed: () => void;
   onSelect: (id: string) => void;
+  onRemove: (id: string) => void;
 }) {
   return (
     <div className="flex h-full flex-col">
@@ -93,48 +95,67 @@ export function PlaySessionList({
           const jobStatus = s.recent_job?.status ?? null;
 
           return (
-            <button
+            <div
               key={s.id}
-              data-testid={`play-session-${s.id}`}
-              aria-label={s.name ?? "Untitled session"}
-              aria-current={active ? "true" : undefined}
-              type="button"
               className={[
-                "w-full text-left transition-colors",
-                isCollapsed
-                  ? "flex justify-center px-2 py-3"
-                  : "flex items-center gap-2.5 px-3 py-2.5",
+                "group relative flex items-center transition-colors",
                 active
                   ? "bg-default-100 text-foreground"
                   : "text-default-600 hover:bg-default-100/60 hover:text-foreground",
               ].join(" ")}
-              onClick={() => onSelect(s.id)}
             >
-              {/* Status dot — streaming overrides job status */}
-              {isStreaming ? (
-                <span
-                  aria-hidden="true"
-                  className="mt-0.5 h-2 w-2 shrink-0 animate-ping rounded-full bg-success"
-                />
-              ) : (
-                <span
-                  aria-hidden="true"
-                  className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${dotColor(jobStatus)}`}
-                />
-              )}
+              <button
+                data-testid={`play-session-${s.id}`}
+                aria-label={s.name ?? "Untitled session"}
+                aria-current={active ? "true" : undefined}
+                type="button"
+                className={[
+                  "min-w-0 flex-1 text-left",
+                  isCollapsed
+                    ? "flex justify-center px-2 py-3"
+                    : "flex items-center gap-2.5 py-2.5 pl-3 pr-2",
+                ].join(" ")}
+                onClick={() => onSelect(s.id)}
+              >
+                {/* Status dot — streaming overrides job status */}
+                {isStreaming ? (
+                  <span
+                    aria-hidden="true"
+                    className="mt-0.5 h-2 w-2 shrink-0 animate-ping rounded-full bg-success"
+                  />
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${dotColor(jobStatus)}`}
+                  />
+                )}
+
+                {!isCollapsed && (
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium leading-tight">
+                      {shortName(s.name)}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-default-400">
+                      {shortModel(s.model_config?.model_name)} ·{" "}
+                      {isStreaming ? "streaming…" : s.status}
+                    </div>
+                  </div>
+                )}
+              </button>
 
               {!isCollapsed && (
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium leading-tight">
-                    {shortName(s.name)}
-                  </div>
-                  <div className="mt-0.5 truncate text-xs text-default-400">
-                    {shortModel(s.model_config?.model_name)} ·{" "}
-                    {isStreaming ? "streaming…" : s.status}
-                  </div>
-                </div>
+                <button
+                  data-testid={`remove-session-${s.id}`}
+                  aria-label={`Remove ${s.name ?? "session"}`}
+                  type="button"
+                  disabled={isBusy}
+                  className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-default-400 opacity-0 transition-opacity hover:bg-default-200/70 hover:text-danger focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-0 group-hover:opacity-100"
+                  onClick={() => onRemove(s.id)}
+                >
+                  <span aria-hidden="true">✕</span>
+                </button>
               )}
-            </button>
+            </div>
           );
         })}
       </div>

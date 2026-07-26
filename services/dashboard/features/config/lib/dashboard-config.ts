@@ -46,6 +46,10 @@ export function getServerConfig() {
     process.env.AGENT_ORCHESTRATOR_URL ?? "http://localhost:4002";
   const gameServiceUrl =
     process.env.GAME_SERVICE_URL ?? "http://localhost:4001";
+  const historyServiceUrl =
+    process.env.HISTORY_SERVICE_URL ?? "http://localhost:4004";
+  const evalServiceUrl =
+    process.env.EVAL_SERVICE_URL ?? "http://localhost:4005";
   const isLocalDevelopment =
     orchestratorUrl.includes("localhost") ||
     orchestratorUrl.includes("127.0.0.1");
@@ -55,6 +59,8 @@ export function getServerConfig() {
   return {
     orchestratorUrl,
     gameServiceUrl,
+    historyServiceUrl,
+    evalServiceUrl,
     dragncardsFrontendUrl,
     orchestratorOpenApiPath:
       process.env.AGENT_ORCHESTRATOR_OPENAPI_PATH ?? "/openapi.json",
