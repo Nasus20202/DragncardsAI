@@ -1,0 +1,273 @@
+# history-event-store Specification
+
+## Purpose
+TBD - created by archiving change history-event-store. Update Purpose after archive.
+## Requirements
+### Requirement: History service boundary and persistence
+The system SHALL provide a dedicated `history-service` (Python/FastAPI) that persists a per-game append-only event log and periodic game-state snapshots in a dedicated PostgreSQL database, and SHALL NOT retain game history in process memory.
+
+#### Scenario: History service uses dedicated persistent storage
+- **WHEN** the history-service stores an ingested event or a game-state snapshot
+- **THEN** the history-service SHALL persist it in its dedicated PostgreSQL database and SHALL NOT keep the event log or snapshots only in process memory
+
+#### Scenario: Health and readiness without secrets
+- **WHEN** a client requests the history-service health or readiness endpoint
+- **THEN** the history-service SHALL report API, PostgreSQL, and Valkey ingestion readiness and SHALL NOT expose any secret values
+
+### Requirement: Versioned event envelope
+The history-service SHALL define a versioned event envelope containing an envelope version, a game correlation identifier (`game_id`), an actor of `agent`, `game-service`, or `evaluator`, an event type, a JSON payload, a producer-supplied occurrence timestamp, an idempotency key, and a history-assigned monotonic per-game sequence number and recorded timestamp.
+
+#### Scenario: Accept a well-formed envelope
+- **WHEN** a producer submits an event envelope containing `envelope_version`, `game_id`, `actor`, `event_type`, `payload`, `occurred_at`, and `idempotency_key`
+- **THEN** the history-service SHALL accept the envelope and SHALL assign a monotonic per-game `seq` and a `recorded_at` timestamp before persisting it
+
+#### Scenario: Reject an envelope missing required fields
+- **WHEN** a producer submits an envelope missing `game_id`, `actor`, or `event_type`
+- **THEN** the history-service SHALL reject the envelope with a validation error and SHALL NOT persist any event
+
+#### Scenario: Accept the evaluator actor
+- **WHEN** a producer submits an envelope whose `actor` is `evaluator`
+- **THEN** the history-service SHALL accept the envelope and SHALL persist it with the same ordering and idempotency rules as `agent` and `game-service` events
+
+#### Scenario: Reject an unknown actor
+- **WHEN** a producer submits an envelope whose `actor` is none of `agent`, `game-service`, or `evaluator`
+- **THEN** the history-service SHALL reject the envelope with a validation error and SHALL NOT persist any event
+
+#### Scenario: Tolerate unknown forward-compatible fields
+- **WHEN** a producer submits an envelope with a recognized `envelope_version` and additional unknown fields
+- **THEN** the history-service SHALL persist the envelope without failing on the unknown fields
+
+#### Scenario: Evaluator events are not replayed as game mutations
+- **WHEN** the history-service replays events forward during a restore
+- **THEN** it SHALL NOT apply `evaluator` events as game mutations, treating them as advisory like `agent` events
+
+### Requirement: Ordered per-game event storage
+The history-service SHALL store events in a strict, gap-free, monotonically increasing order per `game_id`, assigning the sequence number authoritatively at commit time rather than trusting producer-supplied ordering.
+
+#### Scenario: Sequence numbers are gap-free and increasing per game
+- **WHEN** multiple events for the same `game_id` are committed
+- **THEN** each committed event SHALL receive a `seq` exactly one greater than the previously committed event for that `game_id`, starting at 1
+
+#### Scenario: Out-of-order delivery is ordered authoritatively
+- **WHEN** events for the same `game_id` arrive in an order different from their `occurred_at` timestamps
+- **THEN** the history-service SHALL assign `seq` in commit order and SHALL return events ordered by `seq` on retrieval
+
+#### Scenario: Independent ordering across games
+- **WHEN** events for two different `game_id` values are committed interleaved
+- **THEN** each `game_id` SHALL maintain its own independent gap-free `seq` series
+
+### Requirement: Dual-source idempotent ingestion
+The history-service SHALL ingest events from both producers over a shared Valkey stream consumer group as the primary path and SHALL accept the same envelope through an authenticated HTTP backfill endpoint, and SHALL guarantee that at-least-once duplicate deliveries are stored at most once per `game_id`. On the stream path the history-service SHALL isolate per-entry commit failures so a transient failure on one entry neither aborts the rest of the batch nor loses that entry, and SHALL recover pending stream entries (from a failed commit or a crashed consumer) by reclaiming and re-processing them through the same idempotent commit path.
+
+#### Scenario: Ingest from the Valkey stream
+- **WHEN** a producer publishes an event envelope to the shared history ingestion Valkey stream
+- **THEN** the history-service SHALL consume it through its consumer group, persist it, and acknowledge the stream entry
+
+#### Scenario: Ingest from the HTTP backfill endpoint
+- **WHEN** a client submits an event envelope to the history-service HTTP ingestion endpoint for a `game_id`
+- **THEN** the history-service SHALL persist the event using the same envelope contract and ordering rules as the Valkey path
+
+#### Scenario: Duplicate delivery is stored once
+- **WHEN** the same envelope (identical `game_id` and `idempotency_key`) is delivered more than once
+- **THEN** the history-service SHALL persist it exactly once, SHALL NOT consume an additional `seq` for the duplicate, and SHALL acknowledge the duplicate delivery
+
+#### Scenario: A transient commit failure does not lose other entries in the batch
+- **WHEN** committing one entry of a stream batch fails transiently (e.g. a database deadlock or connection blip) while other entries in the same batch commit successfully
+- **THEN** the history-service SHALL persist and acknowledge the successful entries, SHALL NOT abort processing the remainder of the batch, and SHALL leave the failed entry un-acknowledged (pending) rather than dropping it
+
+#### Scenario: Stale pending entries are reclaimed and committed
+- **WHEN** a stream entry has remained pending and un-acknowledged for longer than the configured minimum idle time (because its consumer crashed or a prior commit failed)
+- **THEN** the history-service SHALL reclaim it onto a live consumer and re-process it through the idempotent commit path, persisting it exactly once (never consuming an additional `seq` if it was already committed) and acknowledging it
+
+### Requirement: Rating-ready captured data
+The history-service SHALL preserve, for each agent move, the agent's intended action, its reasoning/context, the full conversation context the agent had at that decision, and the resulting game state and game status from game-service, so that an automated rating capability can later score play and a restore can rebuild the agent's situation without re-instrumenting the producers.
+
+#### Scenario: Agent move event retains decision context
+- **WHEN** the history-service stores an `agent` move/decision event
+- **THEN** the stored payload SHALL retain the intended action and the agent's reasoning/context as supplied by the orchestrator
+
+#### Scenario: Agent move event retains full conversation context
+- **WHEN** the history-service stores an `agent` move/decision event
+- **THEN** the stored payload SHALL retain the full conversation context (ordered message, tool-call, and tool-result history) the agent had at that decision, sufficient to rehydrate an orchestrator session at that point
+
+#### Scenario: Game-state event retains status and outcome
+- **WHEN** the history-service stores a `game-service` game-state event
+- **THEN** the stored payload SHALL retain the resulting game-state representation and the game status (such as `in progress`, `win`, or `loss`)
+
+### Requirement: Periodic game-state snapshots
+The history-service SHALL checkpoint full game-state snapshots per `game_id` on a configurable cadence based on event count and elapsed time, storing each snapshot together with the `seq` it corresponds to.
+
+#### Scenario: Snapshot taken after the configured event count
+- **WHEN** the number of events committed for a `game_id` since the last snapshot reaches the configured count threshold
+- **THEN** the history-service SHALL obtain a full game-state snapshot from game-service and SHALL store it with its corresponding `seq`
+
+#### Scenario: Snapshot taken after the configured interval
+- **WHEN** the configured maximum interval elapses since the last snapshot for an active `game_id` with new events
+- **THEN** the history-service SHALL obtain and store a full game-state snapshot with its corresponding `seq`
+
+#### Scenario: Snapshot stored in the documented snapshot format
+- **WHEN** the history-service stores a snapshot
+- **THEN** the stored snapshot SHALL use the game-service versioned snapshot document containing the schema version, plugin identity, and game payload
+
+### Requirement: Event and snapshot retrieval
+The history-service SHALL expose read APIs to list a game's events in `seq` order with paging and to list a game's snapshots, for timeline consumption.
+
+#### Scenario: List events for a game in order
+- **WHEN** a client requests the events for a `game_id`
+- **THEN** the history-service SHALL return the events ordered by ascending `seq` with their envelope fields
+
+#### Scenario: List snapshots for a game
+- **WHEN** a client requests the snapshots for a `game_id`
+- **THEN** the history-service SHALL return the stored snapshots with their `seq` and timestamps
+
+#### Scenario: Retrieve for an unknown game
+- **WHEN** a client requests events or snapshots for a `game_id` with no stored history
+- **THEN** the history-service SHALL return an empty result rather than an error
+
+### Requirement: Restore to a past moment
+The history-service SHALL restore a game to an arbitrary past moment identified by a target `seq` by reconstructing both the game state (loading the nearest prior snapshot into a game-service session and replaying the subsequent game-mutating events forward up to and including the target `seq`) and the agent's conversation context as of the target `seq` (loaded into an orchestrator session bound to the restored game), so the agent faces an identical, replayable situation.
+
+#### Scenario: Restore from nearest prior snapshot then replay forward
+- **WHEN** a client requests a restore of a `game_id` to a target `seq`
+- **THEN** the history-service SHALL select the latest snapshot whose `seq` is less than or equal to the target `seq`, load it into a game-service session, and replay the game-mutating events between that snapshot and the target `seq` in ascending `seq` order
+
+#### Scenario: Restore reconstructs the agent conversation context
+- **WHEN** the history-service restores a `game_id` to a target `seq`
+- **THEN** the history-service SHALL reconstruct the agent's conversation context as captured at the latest `agent` event at or before the target `seq` and SHALL provide it to the orchestrator to seed a session bound to the restored game
+
+#### Scenario: Restore into a new branchable session
+- **WHEN** a client requests a restore with the target mode "new session"
+- **THEN** the history-service SHALL create a new game-service session and orchestrator session for the restored moment and SHALL leave the original game's events and any live session unmodified
+
+#### Scenario: Restore in place over the live session
+- **WHEN** a client requests a restore with the target mode "in place"
+- **THEN** the history-service SHALL restore the existing live session to the target moment, discarding game state after the target `seq`
+
+#### Scenario: Restore when no prior snapshot exists
+- **WHEN** a client requests a restore to a target `seq` for which no snapshot at or before that `seq` exists
+- **THEN** the history-service SHALL begin from an initial game-service session and replay the game-mutating events from `seq` 1 up to the target `seq`
+
+#### Scenario: Reject restore to an out-of-range moment
+- **WHEN** a client requests a restore to a target `seq` that does not exist for the `game_id`
+- **THEN** the history-service SHALL reject the request with a descriptive client error and SHALL NOT mutate any game-service or orchestrator session
+
+#### Scenario: Agent decision events are not replayed as mutations
+- **WHEN** the history-service replays events forward during a restore
+- **THEN** it SHALL apply only `game-service` game-mutating events as actions and SHALL NOT apply `agent` decision events as game mutations
+
+### Requirement: Stateless horizontal scaling of ingestion
+The history-service SHALL allow multiple replicas to ingest concurrently from a single shared consumer group while preserving gap-free per-game ordering and idempotency.
+
+#### Scenario: Concurrent replicas preserve ordering
+- **WHEN** two history-service replicas consume events for the same `game_id` concurrently
+- **THEN** the committed events SHALL still form a single gap-free ascending `seq` series for that `game_id`
+
+#### Scenario: Concurrent replicas preserve idempotency
+- **WHEN** two replicas process the same duplicated envelope concurrently
+- **THEN** the history-service SHALL persist that event exactly once
+
+### Requirement: List games with recorded history
+
+The history-service SHALL expose an endpoint listing every game that has recorded history, including the game identifier, its event count, and its first and last recorded timestamps, ordered by most recent activity, computed without a per-game query fan-out.
+
+#### Scenario: Listing returns recorded games
+
+- WHEN a client requests the games list and two games have recorded events
+- THEN the response contains both games with their event counts and first/last recorded timestamps, ordered by last activity descending
+
+#### Scenario: Listing is empty when nothing is recorded
+
+- WHEN a client requests the games list and no events have been recorded
+- THEN the response is an empty list
+
+### Requirement: Delete a game's history
+
+The history-service SHALL support deleting all recorded history for a game — its events, snapshots, and per-game bookkeeping — in a single transaction, reporting the counts removed, and SHALL be idempotent when the game has no history.
+
+#### Scenario: Deleting removes events and snapshots
+
+- WHEN a delete request is issued for a game that has recorded events and snapshots
+- THEN all of that game's events and snapshots are removed in one transaction and the response reports the counts deleted
+
+#### Scenario: Deleting an absent game is idempotent
+
+- WHEN a delete request is issued for a game with no recorded history
+- THEN the request succeeds and reports zero events and zero snapshots deleted
+
+### Requirement: Validated game_id at the route boundary
+The history-service SHALL validate the `game_id` path parameter on every game-scoped route (events backfill/listing, snapshots listing, restore, and game deletion) against a strict pattern (`^[A-Za-z0-9_-]{1,64}$`) and SHALL reject a malformed, oversized, or encoded-traversal `game_id` before any database access or outbound service call. Validation SHALL NOT alter the existing idempotent semantics for a well-formed but absent `game_id`.
+
+#### Scenario: Reject a malformed game_id
+- **WHEN** a request targets a game-scoped route with a `game_id` that violates the allowed pattern (e.g. contains a dot, space, slash, encoded slash, or exceeds 64 characters)
+- **THEN** the history-service SHALL reject the request before any database or outbound call, returning a validation error (422) or, for a path that cannot match the single-segment route, a route miss (404)
+
+#### Scenario: Well-formed unknown game_id keeps idempotent delete
+- **WHEN** a delete is requested for a well-formed `game_id` that has no stored history
+- **THEN** the history-service SHALL return success with zero deleted events and snapshots
+
+### Requirement: URL-encoded outbound service-call path parameters
+The history-service SHALL construct outbound game-service request URLs by percent-encoding each path segment (e.g. via `httpx.URL` / `urllib.parse.quote`) rather than by raw f-string interpolation, so a crafted `game_id` or action suffix cannot inject additional path segments or traversal against the trusted internal API.
+
+#### Scenario: Encode an id containing path-significant characters
+- **WHEN** the history-service issues a game-service request for a `game_id` that contains slash or traversal characters
+- **THEN** those characters SHALL be percent-encoded within a single path segment and SHALL NOT introduce extra path segments in the request
+
+### Requirement: Allowlisted replay action_path
+The history-service SHALL constrain the `action_path` read from a stored event payload to the known replay-endpoint shape (the generic `actions` endpoint, an `actions/<action_name>` suffix, or a single legacy `<action_name>` segment) before forwarding a replay, and SHALL reject any other value with a clear error instead of forwarding an arbitrary path.
+
+#### Scenario: Reject a disallowed action_path
+- **WHEN** a stored event payload carries an `action_path` that does not match the allowed replay-endpoint shape (e.g. contains traversal, extra segments, a scheme, or query characters)
+- **THEN** the history-service SHALL raise an error and SHALL NOT forward any request to the game-service
+
+#### Scenario: Forward an allowed action_path
+- **WHEN** a stored event payload carries `actions` or `actions/<action_name>`
+- **THEN** the history-service SHALL forward the replay to the corresponding game-service endpoint with each path segment percent-encoded
+
+### Requirement: Game-state events carry a full, self-sufficient reconstruction base
+
+Every `game_state` event SHALL record the session `plugin_name` slug and the complete game state in its payload, so a branchable reconstruction can be built from history alone. A branchable ("new"/ephemeral) restore SHALL load the full state embedded in the nearest `game_state` event at or before the target as its base (the densest available, preferring it over a sparser periodic snapshot), rather than relying on action replay — because setup actions (e.g. deck loading) are not all recorded as replayable actions, so replay-from-start yields an incomplete board. The branch `plugin_name` SHALL be resolvable without any snapshot (from a `game_state` event), so short games with no snapshot can still be reconstructed.
+
+#### Scenario: Short game with no snapshot reconstructs with full state
+
+- WHEN a branchable restore targets a game that has no periodic snapshot
+- THEN the branch session is created from the `plugin_name` recorded on a `game_state` event, and the nearest `game_state` event's full state is loaded as the base, reproducing the board (including cards loaded during setup)
+
+#### Scenario: Ephemeral reconstruction does not restore agent context
+
+- WHEN an ephemeral (view-only) reconstruction is created
+- THEN only the game-state layer is restored; no orchestrator agent session is created for it
+
+### Requirement: Ephemeral reconstruction sessions are non-emitting and self-reclaiming
+
+Reconstructing a past moment for viewing SHALL create an ephemeral session that emits no history events (so it never appears in the games list and produces nothing to clean up), distinct from a kept "new branchable session". Ephemeral reconstruction sessions SHALL be reclaimed server-side after a configurable TTL — their session state and DragnCards room deleted — even if the client never issues an explicit teardown (e.g. lost network connection, tab crash, or power loss). Explicit client teardown remains the fast path for immediate cleanup.
+
+#### Scenario: Viewing reconstruction does not pollute history
+
+- WHEN a user opens the board reconstructed at a past event (an ephemeral reconstruction)
+- THEN that reconstruction emits no history events and does not appear as a new game in the games list
+
+#### Scenario: Reconstruction is reclaimed after a lost connection
+
+- WHEN the client that opened an ephemeral reconstruction never issues a teardown (its connection is lost or the tab is killed)
+- THEN the server reclaims the reconstruction session and its room after the TTL elapses, leaving no orphaned session or room
+
+#### Scenario: Explicit teardown reclaims immediately
+
+- WHEN the client closes the reconstruction view and issues a teardown
+- THEN the reconstruction session and its room are deleted immediately rather than waiting for the TTL
+
+### Requirement: Player attribution on evaluation events
+The history-service SHALL accept, store, and return an optional `player` attribute on evaluation
+events, identifying the player a verdict pertains to (e.g. `player1`), so per-player move/round/
+game evaluations can be distinguished and queried. The field SHALL be optional for backward
+compatibility with existing evaluation events that predate per-player scoring.
+
+#### Scenario: Store and return a player-attributed evaluation
+- **WHEN** an evaluation event is appended with a `player` attribute
+- **THEN** the history-service SHALL persist it and SHALL include the `player` when the event is
+  listed or read back
+
+#### Scenario: Evaluation without a player remains valid
+- **WHEN** an evaluation event is appended without a `player` attribute
+- **THEN** the history-service SHALL accept and store it unchanged (backward compatible)
+

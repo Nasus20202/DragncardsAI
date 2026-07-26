@@ -3,9 +3,7 @@
 ## Purpose
 
 This spec describes the local development infrastructure for DragnCardsAI. All services run via Docker Compose from the repo root. External upstream projects (DragnCards backend/frontend, Marvel Champions plugin) are tracked as git submodules and built from local source; the internally-developed Game Service is built from `services/game-service/`.
-
 ## Requirements
-
 ### Requirement: Git submodules for external source
 The repository SHALL track upstream external projects as git submodules under `external/` so their source is pinned to a specific commit and available locally for reading and building.
 
@@ -148,3 +146,61 @@ The external compose file at `external/docker/docker-compose.yml` SHALL be runna
 #### Scenario: External compose standalone startup
 - **WHEN** a developer runs `docker compose -f external/docker/docker-compose.yml up -d` from the repo root
 - **THEN** postgres, mc-plugin, backend, and frontend SHALL start successfully without requiring game-service
+
+### Requirement: Eval Service Docker configuration
+The infrastructure compose configuration SHALL define an `eval-service` and its dedicated PostgreSQL database with secret-free defaults, isolated from the history-service and agent-orchestrator databases.
+
+#### Scenario: Eval-service and its database start
+- **WHEN** `docker compose up` is run
+- **THEN** the `eval-service` and its dedicated PostgreSQL service SHALL start and provide storage used only by the eval-service
+
+#### Scenario: Eval database is isolated
+- **WHEN** compose configuration is inspected
+- **THEN** the eval-service SHALL connect to its own dedicated PostgreSQL service rather than the history-service, agent-orchestrator, or any other shared database service
+
+### Requirement: Dedicated Bifrost judge identity
+The infrastructure Bifrost gateway configuration SHALL define a dedicated judge virtual key/provider entry for evaluation traffic, separate from the game-playing provider keys, configured through non-committed runtime secrets so the judge has its own budget and recognizable identity.
+
+#### Scenario: Dedicated judge key present in Bifrost configuration
+- **WHEN** the Bifrost gateway configuration is inspected
+- **THEN** a dedicated judge virtual key/provider entry SHALL be present, distinct from the game-playing keys, and the eval-service SHALL route judge traffic under it
+
+#### Scenario: Judge key secret remains external
+- **WHEN** repository files are inspected
+- **THEN** the judge identity's API key or access token SHALL NOT be committed in compose files, default env files, tests, or source code
+
+### Requirement: Shared internal Python library
+
+The repository SHALL provide a single internal Python package,
+`dragncards-common` (import name `dragncards_common`), under `services/shared/`,
+that houses cross-service infrastructure code (the SQL migration runner, the
+RESP/Valkey client, the Bifrost gateway error types + mapping, and the lazy
+`httpx.AsyncClient` base) so that this logic lives in exactly one place rather
+than being copy-pasted between services. Backend Python services that need this
+code SHALL depend on it via a uv path source and SHALL NOT keep a private copy of
+the extracted logic. The package SHALL treat OpenTelemetry as an optional
+(soft) import so that a consumer without OpenTelemetry does not acquire the
+dependency.
+
+#### Scenario: Consuming service resolves the shared package
+
+- **WHEN** a consuming service (`agent-orchestrator`, `eval-service`, or
+  `history-service`) runs `uv sync`
+- **THEN** `dragncards-common` SHALL resolve from the `../shared` path source and
+  `dragncards_common` SHALL be importable by that service
+
+#### Scenario: Shared package is packaged into service images
+
+- **WHEN** a consuming service's `docker/Dockerfile` is built from the repo-root
+  build context
+- **THEN** the Dockerfile SHALL `COPY services/shared` before `uv sync` so the
+  path-source dependency resolves inside the image and `dragncards_common`
+  imports succeed at runtime
+
+#### Scenario: RESP error replies are surfaced
+
+- **WHEN** the shared RESP client reads a reply beginning with the `-` (error)
+  prefix
+- **THEN** it SHALL raise a `RespError` carrying the error text rather than
+  silently ignoring it
+
