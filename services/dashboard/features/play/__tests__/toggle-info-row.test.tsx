@@ -4,73 +4,103 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ToggleInfoRow } from "@/features/play/components/toggle-info-row";
 
-type MockChildrenProps = {
-  children?: React.ReactNode;
-};
+// Faithful HeroUI 3 Switch mock: only `Switch.Content` renders the clickable
+// label + hidden input; `Switch.Control`/`Switch.Thumb` are plain spans. This
+// mirrors the real DOM so a control placed outside `Switch.Content` (its old,
+// broken position) would not toggle — guarding the fix from regressing.
+vi.mock("@heroui/react", async () => {
+  const React = await import("react");
 
-type MockSwitchRootProps = MockChildrenProps & {
-  ariaLabel?: string;
-  onChange?: (value: boolean) => void;
-  isSelected?: boolean;
-};
+  type ChildrenProps = { children?: React.ReactNode; className?: string };
+  type SwitchRootProps = ChildrenProps & {
+    "aria-label"?: string;
+    onChange?: (value: boolean) => void;
+    isSelected?: boolean;
+  };
 
-type MockClassNameChildrenProps = MockChildrenProps & {
-  className?: string;
-};
-
-vi.mock("@heroui/react", () => ({
-  Button: ({
-    children,
-    onPress,
-    ariaLabel,
-    className,
-    isDisabled,
-  }: {
-    children: React.ReactNode;
-    onPress?: () => void;
+  const SwitchContext = React.createContext<{
     ariaLabel?: string;
-    className?: string;
-    isDisabled?: boolean;
-  }) => (
-    <button
-      aria-label={ariaLabel}
-      className={className}
-      disabled={isDisabled}
-      onClick={onPress}
-    >
-      {children}
-    </button>
-  ),
-  Switch: Object.assign(
-    ({ children, ariaLabel, onChange, isSelected }: MockSwitchRootProps) => (
-      <label aria-label={ariaLabel}>
-        <input
-          aria-label={ariaLabel}
-          checked={isSelected}
-          type="checkbox"
-          onChange={(event) => onChange?.(event.target.checked)}
-        />
-        {children}
-      </label>
+    onChange?: (value: boolean) => void;
+    isSelected?: boolean;
+  }>({});
+
+  const Switch = Object.assign(
+    ({ children, onChange, isSelected, ...props }: SwitchRootProps) => (
+      <div>
+        <SwitchContext.Provider
+          value={{
+            ariaLabel: props["aria-label"],
+            onChange,
+            isSelected,
+          }}
+        >
+          {children}
+        </SwitchContext.Provider>
+      </div>
     ),
     {
-      Content: ({ children, className }: MockClassNameChildrenProps) => (
-        <div className={className}>{children}</div>
+      // The clickable label; clicking any descendant toggles the input.
+      Content: ({ children, className }: ChildrenProps) => {
+        const { ariaLabel, onChange, isSelected } =
+          React.useContext(SwitchContext);
+        return (
+          <label aria-label={ariaLabel} className={className}>
+            <input
+              aria-label={ariaLabel}
+              checked={isSelected}
+              type="checkbox"
+              onChange={(event) => onChange?.(event.target.checked)}
+            />
+            {children}
+          </label>
+        );
+      },
+      Control: ({ children, className }: ChildrenProps) => (
+        <span className={className} data-testid="switch-control">
+          {children}
+        </span>
       ),
-      Control: ({ children, className }: MockClassNameChildrenProps) => (
-        <div className={className}>{children}</div>
-      ),
-      Thumb: () => <div />,
+      Thumb: () => <span data-testid="switch-thumb" />,
     }
-  ),
-  Tooltip: Object.assign(
-    ({ children }: { children: React.ReactNode }) => <>{children}</>,
-    {
-      Trigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-      Content: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-    }
-  ),
-}));
+  );
+
+  return {
+    Button: ({
+      children,
+      onPress,
+      ariaLabel,
+      className,
+      isDisabled,
+    }: {
+      children: React.ReactNode;
+      onPress?: () => void;
+      ariaLabel?: string;
+      className?: string;
+      isDisabled?: boolean;
+    }) => (
+      <button
+        aria-label={ariaLabel}
+        className={className}
+        disabled={isDisabled}
+        onClick={onPress}
+      >
+        {children}
+      </button>
+    ),
+    Switch,
+    Tooltip: Object.assign(
+      ({ children }: { children: React.ReactNode }) => <>{children}</>,
+      {
+        Trigger: ({ children }: { children: React.ReactNode }) => (
+          <>{children}</>
+        ),
+        Content: ({ children }: { children: React.ReactNode }) => (
+          <>{children}</>
+        ),
+      }
+    ),
+  };
+});
 
 describe("ToggleInfoRow", () => {
   it("renders info trigger content when provided", () => {
@@ -88,6 +118,23 @@ describe("ToggleInfoRow", () => {
       screen.getByRole("button", { name: "Info about game-service" })
     ).toBeInTheDocument();
     expect(screen.getByText("Transport: streamable-http")).toBeInTheDocument();
+  });
+
+  it("toggles when the control (not just the label text) is clicked", () => {
+    const onChange = vi.fn();
+
+    render(
+      <ToggleInfoRow
+        label="Reasoning stream"
+        checked={true}
+        onChange={onChange}
+      />
+    );
+
+    // Clicking the visual toggle control must flip the switch. This regressed
+    // when Switch.Control sat outside the clickable Switch.Content.
+    fireEvent.click(screen.getByTestId("switch-control"));
+    expect(onChange).toHaveBeenCalledWith(false);
   });
 
   it("renders row action beside the label and calls it", () => {

@@ -50,35 +50,39 @@ export function ToggleInfoRow({
           isSelected={checked}
           isDisabled={disabled}
           onChange={onChange}
-          className="flex w-full items-center justify-between gap-3 py-0.5"
+          className="w-full py-0.5"
         >
-          <Switch.Content className="flex flex-1 flex-col justify-center">
-            <div className="flex items-center gap-2 leading-none">
-              <div className="text-sm text-foreground">{label}</div>
-              {action ? (
-                <Button
-                  size="sm"
-                  variant={action.variant ?? "danger-soft"}
-                  aria-label={action.ariaLabel}
-                  isDisabled={action.disabled}
-                  onPress={action.onPress}
-                  className={
-                    actionClassName
-                      ? `${actionClassName} h-6 min-h-6 self-center px-2`
-                      : "h-6 min-h-6 self-center px-2"
-                  }
-                >
-                  {action.label}
-                </Button>
-              ) : null}
+          {/* Switch.Content is the clickable SwitchButton; it must wrap the
+              control so clicking the toggle itself (not just the label) works. */}
+          <Switch.Content className="flex w-full items-center justify-between gap-3">
+            <div className="flex flex-1 flex-col justify-center">
+              <div className="flex items-center gap-2 leading-none">
+                <div className="text-sm text-foreground">{label}</div>
+                {action ? (
+                  <Button
+                    size="sm"
+                    variant={action.variant ?? "danger-soft"}
+                    aria-label={action.ariaLabel}
+                    isDisabled={action.disabled}
+                    onPress={action.onPress}
+                    className={
+                      actionClassName
+                        ? `${actionClassName} h-6 min-h-6 self-center px-2`
+                        : "h-6 min-h-6 self-center px-2"
+                    }
+                  >
+                    {action.label}
+                  </Button>
+                ) : null}
+              </div>
+              {description && (
+                <div className="text-xs text-default-400">{description}</div>
+              )}
             </div>
-            {description && (
-              <div className="text-xs text-default-400">{description}</div>
-            )}
+            <Switch.Control className="shrink-0">
+              <Switch.Thumb />
+            </Switch.Control>
           </Switch.Content>
-          <Switch.Control className="shrink-0">
-            <Switch.Thumb />
-          </Switch.Control>
         </Switch>
       </div>
       {infoContent && infoLabel ? (
