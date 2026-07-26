@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 
-from game_service.api.deps import get_manager
+from game_service.api.deps import SessionIdentifier, get_manager
 from game_service.api.models import (
     GameStateSnapshot,
     GameStateResponse,
@@ -172,7 +172,7 @@ def _simplify_marvel_state(raw_state: dict) -> SimplifiedGameState:
     operation_id="get_raw_game_state_games",
 )
 async def get_raw_game_state(
-    session_id: str,
+    session_id: SessionIdentifier,
     manager: SessionManager = Depends(get_manager),
 ):
     """Get the raw game state without any simplification or transformation."""
@@ -189,7 +189,7 @@ async def get_raw_game_state(
     operation_id="get_game_state",
 )
 async def get_game_state(
-    session_id: str,
+    session_id: SessionIdentifier,
     manager: SessionManager = Depends(get_manager),
 ):
     logger.info("get_game_state: session_id=%s", session_id)
@@ -217,7 +217,7 @@ async def get_game_state(
     operation_id="export_game_state_snapshot",
 )
 async def export_game_state_snapshot(
-    session_id: str,
+    session_id: SessionIdentifier,
     manager: SessionManager = Depends(get_manager),
 ):
     logger.info("export_game_state_snapshot: session_id=%s", session_id)
@@ -233,7 +233,7 @@ async def export_game_state_snapshot(
     operation_id="load_game_state_snapshot",
 )
 async def load_game_state_snapshot(
-    session_id: str,
+    session_id: SessionIdentifier,
     snapshot: GameStateSnapshot,
     manager: SessionManager = Depends(get_manager),
 ):

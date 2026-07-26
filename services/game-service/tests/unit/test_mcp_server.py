@@ -73,6 +73,7 @@ EXPECTED_TOOL_NAMES = {
     "create_game",
     "attach_game",
     "list_games",
+    "lookup_session_by_slug",
     "get_session_actions",
     "delete_game",
     "get_game_state",
@@ -220,6 +221,15 @@ async def test_load_prebuilt_deck_tool_is_exposed():
         tools = await client.list_tools()
     names = {t.name for t in tools}
     assert "load_prebuilt_deck" in names
+
+
+async def test_lookup_session_by_slug_tool_is_exposed_with_description():
+    mcp = _make_mcp()
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    tool = next(t for t in tools if t.name == "lookup_session_by_slug")
+    assert tool.description
+    assert "room_slug" in tool.inputSchema.get("required", [])
 
 
 # ---------------------------------------------------------------------------

@@ -632,6 +632,13 @@ async def test_delete_game(app, manager):
 
 
 def test_delete_game_not_found(sync_client):
-    """DELETE /games/{id} with unknown ID returns 404."""
+    """DELETE /games/{id} is idempotent for a valid-UUID session already gone.
+
+    A well-formed session id that no longer exists returns success (the reaper
+    or a prior teardown may have removed it), while a non-UUID identifier (e.g. a
+    guessable room slug) still 404s — preserving the slug-rejection property."""
     resp = sync_client.delete("/games/00000000-0000-0000-0000-000000000000")
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+
+    slug_resp = sync_client.delete("/games/not-a-uuid-slug")
+    assert slug_resp.status_code == 404

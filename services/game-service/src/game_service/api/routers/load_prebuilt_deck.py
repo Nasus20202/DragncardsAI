@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from game_service.api.deps import get_manager
+from game_service.api.deps import SessionIdentifier, get_manager
 from game_service.api.models import LoadPrebuiltDeckResponse
 from game_service.logic.exceptions import SessionError, SessionNotFoundError
 from game_service.logic.session_manager import SessionManager
@@ -20,7 +20,7 @@ router = APIRouter(tags=["prebuilt-deck"])
     operation_id="load_prebuilt_deck",
 )
 async def load_prebuilt_deck(
-    session_id: str,
+    session_id: SessionIdentifier,
     deck_id: str,
     manager: SessionManager = Depends(get_manager),
 ):

@@ -66,6 +66,14 @@ Use these to create, attach, list, and remove active game sessions.
 - `GET /games`
   List active sessions managed by this service.
 
+- `GET /games/by-slug/{room_slug}`
+  Resolve a human-readable DragnCards room slug (e.g. `lively-fog-1234`) to its
+  session metadata, including the canonical UUID `session_id`. This is a
+  read-only lookup and the ONLY endpoint that accepts a room slug. All state,
+  mutation, and delete endpoints remain UUID-only because the slug is
+  low-entropy and guessable; use the returned `session_id` to address those
+  endpoints.
+
 - `DELETE /games/{session_id}`
   Delete a managed session.
   Optional query param: `close_room=true`.
@@ -157,6 +165,7 @@ MCP tools expose a minimal game-control surface:
 - `create_game`
 - `attach_game`
 - `list_games`
+- `lookup_session_by_slug`
 - `delete_game`
 - `get_game_state`
 - `get_session_actions`
@@ -164,6 +173,11 @@ MCP tools expose a minimal game-control surface:
 - `list_actions`
 - `list_card_providers`
 - `search_cards_<provider>`
+
+`lookup_session_by_slug` resolves a room slug to its session metadata, including
+the canonical UUID `session_id`. The slug is accepted for lookup only; every
+other tool and endpoint that reads, mutates, or deletes a session takes the UUID
+`session_id`, never the slug.
 
 Room control and observability endpoints (reset, seat assignment, spectator, alerts,
 replay, player count, alert buffers, GUI updates) are HTTP-only.
