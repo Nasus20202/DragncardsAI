@@ -3,9 +3,7 @@
 ## Purpose
 
 This spec describes the agent orchestration service for DragnCardsAI, including session management, background prompt execution, provider integration through Bifrost, MCP tool usage, and streaming job events.
-
 ## Requirements
-
 ### Requirement: Agent session lifecycle API
 The system SHALL expose HTTP endpoints to create, retrieve, list, update, and terminate agent sessions used to run LLM-driven DragnCards gameplay.
 
@@ -830,3 +828,147 @@ The filter rules SHALL be:
 #### Scenario: Bifrost fallback leaks lmstudio models into openrouter
 - **WHEN** `openrouter` has no API key configured and Bifrost falls back to returning lmstudio models
 - **THEN** those `lmstudio/...` models SHALL be excluded from the `openrouter` provider catalog because they do not start with `openrouter/`
+
+### Requirement: Bounded provider-listing latency
+The provider/model listing endpoint SHALL bound the time spent listing models for any single provider so that a provider missing an API key or otherwise unreachable cannot stall the aggregate response.
+
+Each per-provider model-listing HTTP request SHALL use a short, configurable timeout controlled by `BIFROST_LIST_MODELS_TIMEOUT_SECONDS` (default 8 seconds, which MUST be positive), separate from the general client timeout used for chat completions. The general completion timeout SHALL remain unchanged so normal completion behaviour does not regress.
+
+The `/providers` endpoint SHALL additionally enforce a hard per-provider ceiling, no longer than the configured list-models timeout plus a small fixed margin, so that the total endpoint latency is bounded by that ceiling even when every provider is broken.
+
+#### Scenario: Keyless provider fails fast
+- **WHEN** a client requests `/providers` and one enabled provider's model listing does not respond within `BIFROST_LIST_MODELS_TIMEOUT_SECONDS`
+- **THEN** the system SHALL stop waiting for that provider within the configured timeout (plus the fixed guard margin) and SHALL NOT wait the full general completion timeout
+
+#### Scenario: Endpoint bounded when all providers are broken
+- **WHEN** a client requests `/providers` and every enabled provider's model listing hangs
+- **THEN** the system SHALL return a response whose total latency is bounded by the configured list-models timeout plus the fixed guard margin
+
+### Requirement: Graceful per-provider listing failure
+The provider/model listing endpoint SHALL isolate failures so that one slow or failing provider never prevents the working providers from returning their models.
+
+When listing models for a provider fails or times out, the system SHALL return that provider with `available=false`, an empty model list, and a clear, non-empty error message, while still returning successful results for all other enabled providers in the same response.
+
+#### Scenario: One failing provider does not block others
+- **WHEN** a client requests `/providers` and one enabled provider raises an error while others succeed
+- **THEN** the system SHALL return the successful providers with `available=true` and their models, and the failing provider with `available=false`, an empty model list, and a descriptive error message
+
+#### Scenario: Timed-out provider reported as unavailable
+- **WHEN** a provider's model listing exceeds the configured per-provider timeout
+- **THEN** the system SHALL return that provider with `available=false`, an empty model list, and an error indicating the listing timed out
+
+### Requirement: Cached unavailable providers
+The system SHALL cache the unavailable result of a provider model listing so that repeated `/providers` calls do not re-incur the per-provider list-models timeout for a provider that is missing an API key or otherwise unreachable.
+
+When a provider's model listing fails or times out, the system SHALL record a negative/unavailable marker in Valkey for that provider, distinguishable from a positive cache entry. The marker's time-to-live SHALL depend on whether the failure is retryable: a definitive (non-retryable) failure — such as a missing API key — SHALL use the long time-to-live controlled by `BIFROST_UNAVAILABLE_CACHE_TTL_SECONDS` (default 600 seconds, which MUST be positive), while a transient (retryable) failure — a timeout, network error, 5xx, or 429 — SHALL use a much shorter time-to-live controlled by `BIFROST_UNAVAILABLE_RETRYABLE_CACHE_TTL_SECONDS` (default 30 seconds, which MUST be positive) so that a provider which recovers from a brief blip is re-probed quickly rather than suppressed for the full definitive time-to-live.
+
+While a provider's negative marker is live, the system SHALL report that provider as `available=false` with a clear error message and SHALL NOT make the slow underlying model-listing HTTP call. A negative marker SHALL expire after its time-to-live so the negative cache can never permanently hide a provider, and a subsequent successful listing for a provider SHALL clear that provider's negative marker.
+
+#### Scenario: Unavailable provider is not re-probed within the TTL
+- **WHEN** a provider's model listing fails and a client requests `/providers` again before the negative-cache time-to-live elapses
+- **THEN** the system SHALL report that provider as `available=false` with a clear error message without making another model-listing HTTP call to that provider
+
+#### Scenario: Transient failure uses the short retryable TTL
+- **WHEN** a provider's model listing fails with a retryable error (timeout, network error, 5xx, or 429)
+- **THEN** the system SHALL record the negative marker with the short `BIFROST_UNAVAILABLE_RETRYABLE_CACHE_TTL_SECONDS` time-to-live rather than the long `BIFROST_UNAVAILABLE_CACHE_TTL_SECONDS` time-to-live, so a recovered provider is re-probed within the short window
+
+#### Scenario: Definitive failure uses the long TTL
+- **WHEN** a provider's model listing fails with a non-retryable error (for example a missing API key returning a 4xx auth error)
+- **THEN** the system SHALL record the negative marker with the long `BIFROST_UNAVAILABLE_CACHE_TTL_SECONDS` time-to-live so the slow model-listing HTTP call is not re-incurred on every subsequent request
+
+#### Scenario: Negative marker cleared on recovery
+- **WHEN** a provider that was previously negatively cached returns a successful model listing
+- **THEN** the system SHALL clear that provider's negative marker so it is reported as `available=true` with its models
+
+### Requirement: Provider model-cache reset
+The system SHALL provide an operator-facing capability to clear the cached provider model listings so that a provider which becomes available after configuration changes (such as adding an API key) is immediately re-probed rather than waiting for cache entries to expire.
+
+The reset capability SHALL clear both positive and negative cache entries, including the per-provider listing, the per-provider unavailable marker, and the shared aggregate listing, for every enabled provider, and SHALL be exposed via an HTTP endpoint registered consistently with the other catalog routes. The provider listing endpoint MAY additionally accept a request parameter that bypasses the cache for a single call.
+
+#### Scenario: Reset forces re-probe of a recovered provider
+- **WHEN** an operator triggers the provider model-cache reset after a previously unavailable provider becomes available
+- **THEN** the system SHALL clear the cached entries and the next `/providers` call SHALL re-probe the provider and report it as `available=true` with its models
+
+### Requirement: Agent move/decision event emission
+The agent-orchestrator SHALL emit an agent move/decision event to the history ingestion bus for each game action it drives through the game-service MCP, capturing the intended action, the agent's reasoning/context for that action, the supplied action arguments, and the full conversation context (ordered message, tool-call, and tool-result history) the agent had at that decision, using the versioned history event envelope with actor `agent`.
+
+Emission SHALL NOT block completion of the prompt job's tool round. When multiple history events are emitted for the same game, the agent-orchestrator SHALL ensure that, within a worker process, the events reach the ingestion stream in the same order their per-game producer offsets were assigned — because the history-service assigns each game's authoritative sequence by stream arrival order — so that assigning an offset and publishing the corresponding envelope is one indivisible step and a later-offset event can never reach the stream before an earlier-offset one.
+
+#### Scenario: Emit an event for a game-mutating tool call
+- **WHEN** a prompt job invokes a game-service MCP tool that performs a game action
+- **THEN** the agent-orchestrator SHALL emit a history event with actor `agent` whose payload includes the intended action, the agent's reasoning/context, and the action arguments
+
+#### Scenario: Emitted event carries the full conversation context
+- **WHEN** the agent-orchestrator emits an agent move/decision event
+- **THEN** the event payload SHALL include the conversation context (ordered messages, tool calls, and tool results) the agent had at that decision, sufficient to rehydrate the session at that point
+
+#### Scenario: Emitted event carries the game correlation id
+- **WHEN** the agent-orchestrator emits an agent move/decision event
+- **THEN** the event SHALL include the `game_id` correlation identifier for the game the action targets
+
+#### Scenario: Emission does not block the prompt job
+- **WHEN** the agent-orchestrator emits an agent move/decision event
+- **THEN** the emission SHALL be performed without blocking completion of the prompt job's tool round
+
+#### Scenario: Concurrent emissions reach the stream in offset order
+- **WHEN** several history events for the same game are emitted concurrently (for example a `user_prompt` and one or more `agent_move` events during one job, or interleaved emissions across jobs bound to the same game in one worker process)
+- **THEN** the agent-orchestrator SHALL publish those events to the ingestion stream in the same order their producer offsets were assigned, so a later-offset event never arrives before an earlier-offset one and the durable timeline is not reordered
+
+### Requirement: Game correlation id capture for agent sessions
+The agent-orchestrator SHALL capture the game-service game identifier when a game session is created or attached for an agent session and SHALL reuse it as the `game_id` on every subsequent agent move/decision event for that game.
+
+#### Scenario: Capture the game id from game creation
+- **WHEN** a prompt job creates or attaches a game-service game session via MCP and receives its session identifier
+- **THEN** the agent-orchestrator SHALL associate that identifier as the `game_id` for subsequent agent move/decision events
+
+#### Scenario: Reuse the captured game id across moves
+- **WHEN** the agent-orchestrator emits multiple agent move/decision events for the same game
+- **THEN** each event SHALL carry the same captured `game_id`
+
+### Requirement: Resume a session from a supplied conversation context
+The agent-orchestrator SHALL support creating or resuming an agent session seeded with a supplied conversation context and bound to a supplied restored `game_id`, so that after a history restore the agent continues from an identical decision situation.
+
+The agent-orchestrator SHALL validate the supplied `conversation_context` before persisting it or mutating any session, because the context is replayed verbatim into the next turn's message list and sent to the LLM. The supplied `game_id` SHALL be a non-empty, length-bounded string. The `conversation_context` SHALL be rejected with a validation error when it contains more than a bounded number of messages, when any message is not an object or lacks a string `role` in the set {`system`, `user`, `assistant`, `tool`}, or when its serialized size exceeds a bounded byte limit. A well-formed context SHALL be accepted and resumed unchanged.
+
+#### Scenario: Resume a session with a restored conversation context
+- **WHEN** a restore supplies a conversation context and a restored `game_id` to the agent-orchestrator
+- **THEN** the agent-orchestrator SHALL create or resume a session whose conversation context matches the supplied context and whose game binding is the restored `game_id`
+
+#### Scenario: Resumed session can play forward
+- **WHEN** a session resumed from a restored conversation context runs its next turn
+- **THEN** the agent SHALL act on the restored context and game state as if continuing from the original moment
+
+#### Scenario: Reject a malformed conversation context message
+- **WHEN** a restore request supplies a `conversation_context` containing a message that is not an object or whose `role` is missing or not one of `system`, `user`, `assistant`, or `tool`
+- **THEN** the agent-orchestrator SHALL reject the request with a validation error and SHALL NOT create or mutate any session
+
+#### Scenario: Reject an oversized conversation context
+- **WHEN** a restore request supplies a `conversation_context` that exceeds the bounded message count or the bounded serialized size
+- **THEN** the agent-orchestrator SHALL reject the request with a validation error and SHALL NOT persist the context
+
+### Requirement: Bounded request body size
+
+The agent-orchestrator SHALL enforce a configurable maximum request body size
+ahead of application handling, so that an oversized (or streamed-unbounded)
+request body cannot exhaust process memory before per-endpoint validation runs.
+A request whose declared `Content-Length` exceeds the limit SHALL be rejected
+without buffering the body; a request without a declared length SHALL be
+buffered only up to the limit and rejected as soon as the limit is crossed. In
+both cases the service SHALL respond with HTTP `413` and SHALL NOT invoke the
+route handler. A request within the limit SHALL be processed unchanged.
+
+#### Scenario: Reject a request with an oversized declared Content-Length
+
+- **WHEN** a request arrives whose `Content-Length` header exceeds the configured maximum request body size
+- **THEN** the agent-orchestrator SHALL respond with `413` without reading the body and SHALL NOT invoke the route handler
+
+#### Scenario: Reject a streamed body that exceeds the limit
+
+- **WHEN** a request with no declared `Content-Length` streams a body whose total size exceeds the configured maximum
+- **THEN** the agent-orchestrator SHALL stop buffering once the limit is crossed and respond with `413` without invoking the route handler
+
+#### Scenario: Process a request within the limit unchanged
+
+- **WHEN** a request body is within the configured maximum
+- **THEN** the agent-orchestrator SHALL pass the body to the route handler unchanged
+

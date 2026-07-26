@@ -3,9 +3,7 @@
 ## Purpose
 
 The Game Service is a Python backend that bridges AI/MCP clients with the DragnCards game engine. It exposes game capabilities via both an HTTP REST API (FastAPI) and a Model Context Protocol (MCP) server, both sharing the same session pool within a single process. It manages persistent WebSocket connections to the DragnCards backend using the Phoenix Channels protocol.
-
 ## Requirements
-
 ### Requirement: Game session lifecycle management
 The Game Service SHALL provide HTTP endpoints and MCP tools to create, query, and destroy game sessions. Each session corresponds to a single DragnCards game room with a persistent WebSocket connection.
 
@@ -321,6 +319,10 @@ The Game Service SHALL serialize state-changing and state-refreshing operations 
 ### Requirement: Room control operations
 The Game Service SHALL support room control operations (reset, seat assignment, spectator toggle, close room, send alert, save replay, set player count) via DragnCards room channel events.
 
+#### Scenario: Room control operation is routed to the room channel
+- **WHEN** a client invokes a supported room control operation for a session
+- **THEN** the Game Service SHALL perform it via the corresponding DragnCards room channel event
+
 ### Requirement: Game reset
 The Game Service SHALL support resetting a game session's state via the DragnCards `reset_game` channel event, with an optional save-before-reset flag.
 
@@ -405,6 +407,10 @@ The Game Service SHALL support setting the number of players for a game room, op
 ### Requirement: Room event observation
 The Game Service SHALL observe and surface events broadcast by the DragnCards room channel.
 
+#### Scenario: Broadcast room event is surfaced
+- **WHEN** the DragnCards room channel broadcasts an event for an observed session
+- **THEN** the Game Service SHALL surface that event through its observation interface
+
 ### Requirement: Alert event handling
 The Game Service SHALL capture `send_alert` broadcast events from the DragnCards room channel and store them in a bounded per-session alert buffer.
 
@@ -456,3 +462,87 @@ The Game Service SHALL capture `gui_update` events from the DragnCards room chan
 #### Scenario: Retrieve GUI update via HTTP
 - **WHEN** a client sends `GET /games/{id}/gui-update`
 - **THEN** the Game Service SHALL return a JSON object keyed by `player_n` with the latest GUI hint payload for each player
+
+### Requirement: Look up a session by room slug
+The Game Service SHALL provide a single, dedicated, non-mutating endpoint and MCP
+tool (`GET /games/by-slug/{room_slug}`) that resolves a session's human-readable
+DragnCards `room_slug` to its session metadata, including the canonical UUID
+`session_id`. This lookup SHALL be the ONLY place a room slug is accepted.
+
+State, mutation, and delete endpoints (everything that takes a `{session_id}` path
+parameter) SHALL remain UUID-only and SHALL NOT accept a room slug. The room slug
+(`adjective-noun-NNNN`, roughly 27 bits and visible in DragnCards URLs) is
+low-entropy and guessable, and the session endpoints are unauthenticated; the
+unguessable UUID is therefore the only access-control barrier protecting a session,
+so a slug MUST NOT be able to authorize a state read, mutation, or delete.
+
+#### Scenario: Resolve a session by its room slug
+- **WHEN** a client supplies a session's DragnCards `room_slug` to `GET /games/by-slug/{room_slug}`
+- **THEN** the Game Service SHALL return that session's metadata, including its canonical UUID `session_id`, without modifying any session
+
+#### Scenario: Unknown room slug is rejected as not found
+- **WHEN** a client supplies a `room_slug` that does not correspond to any managed session
+- **THEN** the lookup SHALL fail with the not-found behavior (HTTP 404) and SHALL NOT create, modify, or destroy any session
+
+#### Scenario: State, mutation, and delete endpoints are UUID-only
+- **WHEN** a client supplies a room slug in the `{session_id}` position of any state, mutation, or delete endpoint
+- **THEN** the Game Service SHALL NOT resolve the slug and SHALL fail with the not-found behavior (HTTP 404), so a guessable slug can never authorize a read, mutation, or delete
+
+#### Scenario: Non-canonical UUID still matches the stored session
+- **WHEN** a client supplies a valid but non-canonical UUID `session_id` (e.g. uppercase or braced) to a UUID-only endpoint
+- **THEN** the Game Service SHALL normalize it to its canonical form (`str(uuid.UUID(value))`) so it matches the canonical id stored on the session
+
+#### Scenario: Slug index is maintained across session lifecycle
+- **WHEN** a session is created or attached and later deleted
+- **THEN** the Game Service SHALL add a `room_slug -> session_id` mapping to the session store on creation and remove that mapping on deletion so the slug lookup stays consistent
+
+#### Scenario: MCP tool documentation describes the lookup
+- **WHEN** an MCP client inspects the `lookup_session_by_slug` tool
+- **THEN** its description SHALL state that the tool resolves a room slug to a session's metadata (including the `session_id`) and that state/mutation/delete tools remain UUID-only
+
+### Requirement: Game-state and status event emission
+The Game Service SHALL emit a game-state/status event to the history ingestion bus after each state-mutating operation on a session — including action execution, prebuilt-deck loading, snapshot/state loading, and game reset — capturing the resulting game-state representation and the game status, using the versioned history event envelope with actor `game-service` and the session identifier as the `game_id`.
+
+#### Scenario: Emit a state event after an executed action
+- **WHEN** the Game Service executes an action for a session and observes the resulting state
+- **THEN** the Game Service SHALL emit a history event with actor `game-service` whose payload includes the resulting game-state representation and the game status (such as `in progress`, `win`, or `loss`)
+
+#### Scenario: Emit a state event after loading a prebuilt deck
+- **WHEN** the Game Service successfully loads a prebuilt deck into a session and observes the resulting state
+- **THEN** the Game Service SHALL emit exactly one history event capturing the post-load game-state representation and status, carrying the replayable deck-load action so the event can be replayed forward during restore
+
+#### Scenario: Emit a state event after loading a game state snapshot
+- **WHEN** the Game Service successfully loads a game-state snapshot into a session and observes the resulting state
+- **THEN** the Game Service SHALL emit exactly one history event capturing the loaded game-state representation and status
+
+#### Scenario: Emit a state event after resetting a game
+- **WHEN** the Game Service successfully resets a session's game and observes the resulting state
+- **THEN** the Game Service SHALL emit exactly one history event capturing the post-reset game-state representation and status
+
+#### Scenario: Read-only state observation does not emit
+- **WHEN** the Game Service serves a read-only state observation or snapshot export without mutating the session
+- **THEN** the Game Service SHALL NOT emit a game-state/status event
+
+#### Scenario: Emitted event uses the session id as the game correlation id
+- **WHEN** the Game Service emits a game-state/status event
+- **THEN** the event SHALL carry the session identifier as its `game_id` correlation identifier
+
+#### Scenario: Emission does not change game behavior
+- **WHEN** the Game Service emits a game-state/status event for any state-mutating operation
+- **THEN** the result returned to the original caller SHALL be unchanged by the emission, and any emission failure SHALL be swallowed without aborting or altering the operation
+
+### Requirement: Snapshot-based restore entry point for history replay
+The Game Service SHALL provide a snapshot-based restore entry point that the history-service can use to load a stored snapshot into a target session and then apply replayed actions forward, reusing the existing versioned snapshot import contract.
+
+#### Scenario: Load a history-supplied snapshot into a target session
+- **WHEN** the history-service loads a stored snapshot into a target Game Service session whose plugin identity matches the snapshot
+- **THEN** the Game Service SHALL apply the snapshot and return the updated game state so that subsequent replayed actions can be applied forward
+
+#### Scenario: Reject a snapshot with mismatched plugin identity during restore
+- **WHEN** the history-service loads a snapshot whose plugin identity or schema version does not match the target session
+- **THEN** the Game Service SHALL reject the load with a descriptive client error and SHALL NOT mutate the target session
+
+#### Scenario: Apply replayed actions after snapshot load
+- **WHEN** the history-service applies replayed game-mutating actions to a session after loading a snapshot
+- **THEN** the Game Service SHALL execute those actions through its normal action execution path and reflect them in the session state
+
