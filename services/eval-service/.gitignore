@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Unit test / coverage reports
+htmlcov/
+.coverage
+.coverage.*
+.cache
+coverage.xml
+.pytest_cache/
+
+# Environments
+.env
+.envrc
+.venv
+env/
+venv/
+
+# mypy / ruff
+.mypy_cache/
+.ruff_cache/
+
+# Local sqlite test databases
+*.sqlite3
+*.sqlite3-journal
