@@ -6,6 +6,8 @@ TBD - created by archiving change agent-move-evaluation. Update Purpose after ar
 ### Requirement: Evaluation service boundary and persistence
 The system SHALL provide a dedicated `eval-service` (Python/FastAPI) that evaluates how well the game-playing agent played by judging recorded moves and rounds on user request, and SHALL NOT retain evaluation state in process memory; durable evaluation requests, idempotency, and bookkeeping data SHALL live in a dedicated PostgreSQL database not shared with other services.
 
+The eval-service container image SHALL start cleanly regardless of the module's on-disk depth, and SHALL package the shared rules-skill directory so that skill names selected for a judge configuration resolve to skill content inside the container.
+
 #### Scenario: Eval-service uses dedicated isolated storage
 - **WHEN** the eval-service records that a target has been evaluated
 - **THEN** the eval-service SHALL persist that record in its dedicated PostgreSQL database and SHALL NOT keep evaluation bookkeeping only in process memory
@@ -13,6 +15,10 @@ The system SHALL provide a dedicated `eval-service` (Python/FastAPI) that evalua
 #### Scenario: Health and readiness without secrets
 - **WHEN** a client requests the eval-service health or readiness endpoint
 - **THEN** the eval-service SHALL report API, PostgreSQL, history-service, and Bifrost readiness and SHALL NOT expose any secret values
+
+#### Scenario: Packaged service boots and resolves skills
+- **WHEN** the eval-service container image starts
+- **THEN** the service SHALL boot to a healthy state without an import-time error, and SHALL resolve rules-skill names against a skills directory packaged into the image at the configured skill root
 
 ### Requirement: On-demand evaluation of user-selected targets
 The eval-service SHALL expose an API for a user to request evaluation of explicitly selected targets within a game — one or more moves (by `seq`), one or more rounds, a `seq` range, and/or the whole game — and SHALL evaluate only the requested targets, reading the events it needs from the history-service. The eval-service SHALL NOT automatically evaluate moves or rounds that were not requested.
