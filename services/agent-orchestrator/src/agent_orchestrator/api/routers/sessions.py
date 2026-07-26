@@ -42,9 +42,15 @@ from agent_orchestrator.schemas.sessions import (
     SessionDetail,
     SessionListResponse,
     SessionMcpEnableRequest,
+    SessionRestoreRequest,
+    SessionRestoreResponse,
     SessionToolsResponse,
     SessionUpdateRequest,
     SkillAssignmentRequest,
+)
+from agent_orchestrator.runtime.history_emitter import (
+    SESSION_GAME_ID_KEY,
+    SESSION_RESTORED_CONTEXT_KEY,
 )
 from agent_orchestrator.storage.repository import Repository
 
@@ -80,6 +86,46 @@ async def create_session(
         context_recent_tool_exchange_limit=body.context_recent_tool_exchange_limit,
     )
     return {"session": serialize_session_detail(item)}
+
+
+@router.post("/sessions/restore", status_code=201)
+async def restore_session(
+    body: SessionRestoreRequest,
+    repo: Repository = Depends(get_repository),
+) -> SessionRestoreResponse:
+    """Create or resume an agent session seeded with a supplied conversation context.
+
+    - ``mode="new"`` creates a fresh branchable session bound to ``game_id``.
+    - ``mode="in_place"`` resumes the existing active session bound to ``game_id``,
+      replacing its conversation context with the supplied one.
+
+    The resulting session's conversation context matches the supplied context so
+    the agent can continue from an identical decision situation.
+    """
+    restored_context = list(body.conversation_context)
+    if body.mode == "in_place":
+        existing = await repo.get_active_session_by_game_id(body.game_id)
+        if existing is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No active session bound to the supplied game_id",
+            )
+        metadata = dict(existing.metadata_json or {})
+        metadata[SESSION_GAME_ID_KEY] = body.game_id
+        metadata[SESSION_RESTORED_CONTEXT_KEY] = restored_context
+        updated = await repo.update_session(existing.id, metadata_json=metadata)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return SessionRestoreResponse(session_id=updated.id)
+
+    item = await repo.create_session(
+        name=None,
+        metadata_json={
+            SESSION_GAME_ID_KEY: body.game_id,
+            SESSION_RESTORED_CONTEXT_KEY: restored_context,
+        },
+    )
+    return SessionRestoreResponse(session_id=item.id)
 
 
 @router.get("/sessions/{session_id}/jobs")

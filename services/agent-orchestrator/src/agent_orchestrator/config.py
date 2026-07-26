@@ -59,8 +59,59 @@ class Settings(BaseSettings):
         ),
     )
     valkey_url: str = "redis://localhost:6381/0"
+    # Shared Valkey carrying the history:ingest bus. All three services
+    # (game-service, agent-orchestrator, history-service) MUST reach the same
+    # instance. Defaults to this service's own valkey_url, which is the shared
+    # history bus by decision.
+    history_valkey_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("history_valkey_url", "HISTORY_VALKEY_URL"),
+    )
+    history_ingest_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "history_ingest_enabled", "HISTORY_INGEST_ENABLED"
+        ),
+    )
+    history_ingest_stream: str = Field(
+        default="history:ingest",
+        validation_alias=AliasChoices("history_ingest_stream", "HISTORY_INGEST_STREAM"),
+    )
+    history_ingest_stream_maxlen: int = Field(
+        default=100_000,
+        validation_alias=AliasChoices(
+            "history_ingest_stream_maxlen", "HISTORY_INGEST_STREAM_MAXLEN"
+        ),
+    )
     mcp_request_timeout_seconds: float = 30.0
     provider_models_cache_ttl_seconds: float = 600.0
+    bifrost_list_models_timeout_seconds: float = Field(
+        default=8.0,
+        validation_alias=AliasChoices(
+            "bifrost_list_models_timeout_seconds",
+            "BIFROST_LIST_MODELS_TIMEOUT_SECONDS",
+        ),
+    )
+    bifrost_unavailable_cache_ttl_seconds: float = Field(
+        default=600.0,
+        validation_alias=AliasChoices(
+            "bifrost_unavailable_cache_ttl_seconds",
+            "BIFROST_UNAVAILABLE_CACHE_TTL_SECONDS",
+        ),
+    )
+    bifrost_unavailable_retryable_cache_ttl_seconds: float = Field(
+        default=30.0,
+        validation_alias=AliasChoices(
+            "bifrost_unavailable_retryable_cache_ttl_seconds",
+            "BIFROST_UNAVAILABLE_RETRYABLE_CACHE_TTL_SECONDS",
+        ),
+    )
+    max_request_body_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        validation_alias=AliasChoices(
+            "max_request_body_bytes", "MAX_REQUEST_BODY_BYTES"
+        ),
+    )
     supported_provider_ids: tuple[str, ...] = REQUIRED_PROVIDER_IDS
     context_window_size: int = Field(
         default=128000,
@@ -108,6 +159,43 @@ class Settings(BaseSettings):
             raise ValueError("provider_models_cache_ttl_seconds must be non-negative")
         return value
 
+    @field_validator("bifrost_list_models_timeout_seconds")
+    @classmethod
+    def validate_bifrost_list_models_timeout(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("bifrost_list_models_timeout_seconds must be positive")
+        return value
+
+    @field_validator("bifrost_unavailable_cache_ttl_seconds")
+    @classmethod
+    def validate_bifrost_unavailable_cache_ttl(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("bifrost_unavailable_cache_ttl_seconds must be positive")
+        return value
+
+    @field_validator("bifrost_unavailable_retryable_cache_ttl_seconds")
+    @classmethod
+    def validate_bifrost_unavailable_retryable_cache_ttl(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError(
+                "bifrost_unavailable_retryable_cache_ttl_seconds must be positive"
+            )
+        return value
+
+    @field_validator("max_request_body_bytes")
+    @classmethod
+    def validate_max_request_body_bytes(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("max_request_body_bytes must be at least 1")
+        return value
+
+    @field_validator("history_ingest_stream_maxlen")
+    @classmethod
+    def validate_history_ingest_stream_maxlen(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("history_ingest_stream_maxlen must be at least 1")
+        return value
+
     @field_validator("supported_provider_ids")
     @classmethod
     def validate_providers(cls, value: tuple[str, ...]) -> tuple[str, ...]:
@@ -115,6 +203,15 @@ class Settings(BaseSettings):
         if missing:
             raise ValueError(f"missing provider ids: {', '.join(missing)}")
         return value
+
+    @property
+    def effective_history_valkey_url(self) -> str:
+        """Valkey URL for the shared history:ingest bus.
+
+        Falls back to ``valkey_url`` when ``HISTORY_VALKEY_URL`` is unset, since
+        this service's own Valkey is the shared history bus by decision.
+        """
+        return self.history_valkey_url or self.valkey_url
 
     @cached_property
     def skill_roots(self) -> tuple[Path, ...]:

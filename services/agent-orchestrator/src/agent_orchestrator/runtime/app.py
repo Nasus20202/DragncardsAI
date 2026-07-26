@@ -14,12 +14,17 @@ from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient
 from agent_orchestrator.integrations.mcp.client import McpClient
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
+from agent_orchestrator.runtime.history_emitter import (
+    HistoryEventBus,
+    HistoryEventEmitter,
+    ValkeyHistoryEventBus,
+)
 from agent_orchestrator.runtime.live_events import (
-    InMemoryLiveEventBus,
     LiveEventBus,
     ValkeyLiveEventBus,
 )
 from agent_orchestrator.runtime.job_event_stream import JobEventStreamService
+from agent_orchestrator.runtime.request_limits import MaxBodySizeMiddleware
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.runtime.worker import WorkerService
 from agent_orchestrator.storage.db import create_engine, create_session_factory
@@ -72,6 +77,7 @@ def create_app(
     live_event_bus: LiveEventBus | None = None,
     mcp_client: McpClient | None = None,
     skill_registry: SkillRegistry | None = None,
+    history_event_bus: HistoryEventBus | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
 
@@ -81,6 +87,7 @@ def create_app(
         created_bifrost = None
         created_live_event_bus = None
         created_valkey_conn = None
+        created_history_event_bus = None
         worker_task = None
 
         if repository is None:
@@ -110,6 +117,9 @@ def create_app(
                 settings.bifrost_api_key,
                 settings.provider_prefixes,
                 models_cache_ttl_seconds=settings.provider_models_cache_ttl_seconds,
+                list_models_timeout_seconds=settings.bifrost_list_models_timeout_seconds,
+                unavailable_cache_ttl_seconds=settings.bifrost_unavailable_cache_ttl_seconds,
+                unavailable_retryable_cache_ttl_seconds=settings.bifrost_unavailable_retryable_cache_ttl_seconds,
                 valkey=created_valkey_conn,
             )
             app.state.bifrost_client = created_bifrost
@@ -143,6 +153,31 @@ def create_app(
             live_event_bus=app.state.live_event_bus,
             poll_interval_seconds=settings.worker_poll_interval_seconds,
         )
+
+        if history_event_bus is None and settings.history_ingest_enabled:
+            logger.info(
+                "Initializing Valkey history event bus stream=%s",
+                settings.history_ingest_stream,
+            )
+            created_history_event_bus = ValkeyHistoryEventBus(
+                settings.effective_history_valkey_url,
+                stream_key=settings.history_ingest_stream,
+                max_stream_length=settings.history_ingest_stream_maxlen,
+            )
+            resolved_history_bus: HistoryEventBus | None = created_history_event_bus
+        else:
+            resolved_history_bus = history_event_bus
+        app.state.history_event_bus = resolved_history_bus
+        history_emitter = (
+            HistoryEventEmitter(
+                bus=resolved_history_bus,
+                enabled=settings.history_ingest_enabled,
+            )
+            if resolved_history_bus is not None
+            else None
+        )
+        app.state.history_emitter = history_emitter
+
         app.state.worker = WorkerService(
             settings=settings,
             repository=app.state.repository,
@@ -150,6 +185,7 @@ def create_app(
             live_event_bus=app.state.live_event_bus,
             mcp_tool_catalog=app.state.mcp_tool_catalog,
             skill_registry=app.state.skill_registry,
+            history_emitter=history_emitter,
         )
         worker_task = asyncio.create_task(app.state.worker.run_forever())
         app.state.worker_task = worker_task
@@ -171,6 +207,8 @@ def create_app(
                 await created_valkey_conn.aclose()
             if created_live_event_bus is not None:
                 await created_live_event_bus.aclose()
+            if created_history_event_bus is not None:
+                await created_history_event_bus.aclose()
             if created_engine is not None:
                 await created_engine.dispose()
             shutdown_telemetry()
@@ -181,7 +219,14 @@ def create_app(
         description="Background-job harness for LLM-driven DragnCards agents.",
         lifespan=lifespan,
     )
+    # Expose settings before lifespan startup so callers (and tests) can read
+    # the resolved configuration without entering the lifespan context.
+    app.state.settings = settings
     instrument_fastapi_app(app)
+    app.add_middleware(
+        MaxBodySizeMiddleware,
+        max_bytes=settings.max_request_body_bytes,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

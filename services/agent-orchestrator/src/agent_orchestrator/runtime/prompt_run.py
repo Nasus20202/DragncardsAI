@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import copy
 import json
 import logging
 from builtins import BaseExceptionGroup
@@ -12,6 +14,14 @@ from agent_orchestrator.integrations.mcp.client import McpClientError
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.runtime.builtin_tools import build_builtin_registry
 from agent_orchestrator.runtime.compaction import perform_compaction
+from agent_orchestrator.runtime.history_emitter import (
+    SESSION_GAME_ID_KEY,
+    SESSION_RESTORED_CONTEXT_KEY,
+    HistoryEventEmitter,
+    extract_game_id,
+    is_game_id_source_tool,
+    is_game_mutating_tool,
+)
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
 from agent_orchestrator.runtime.skills import SkillRegistry
@@ -45,6 +55,7 @@ class PromptRunDependencies:
     live_event_bus: LiveEventBus
     mcp_tool_catalog: McpToolCatalog
     skill_registry: SkillRegistry
+    history_emitter: HistoryEventEmitter | None = None
 
 
 class PromptRunService:
@@ -61,8 +72,10 @@ class PromptRunService:
         self._live_event_bus = dependencies.live_event_bus
         self._mcp_tool_catalog = dependencies.mcp_tool_catalog
         self._skill_registry = dependencies.skill_registry
+        self._history_emitter = dependencies.history_emitter
         self._transcript_service = transcript_service
         self._schedule_child_job = schedule_child_job
+        self._history_tasks: set[asyncio.Task[Any]] = set()
 
     async def run(self, job: Job) -> None:
         with tracer.start_as_current_span(
@@ -157,12 +170,16 @@ class PromptRunService:
                 messages: list[dict[str, Any]] = [
                     {"role": "system", "content": system_prompt},
                 ]
+                restored_context = self._restored_conversation_context(session)
+                if restored_context:
+                    messages.extend(copy.deepcopy(restored_context))
                 if session.multi_turn_memory:
                     prior = await self._transcript_service.build_message_history(
                         session.id, job.id
                     )
                     messages.extend(prior)
                 messages.append({"role": "user", "content": full_job.prompt})
+                self._emit_user_prompt_event(session=session, prompt=full_job.prompt)
                 await self._repository.append_event(
                     job.id, session.id, "progress", {"status": "running"}
                 )
@@ -451,6 +468,25 @@ class PromptRunService:
                             }
                         )
 
+                        captured_game_id = await self._capture_game_id(
+                            session=session,
+                            assignment=tool_definition.assignment_name,
+                            tool_name=tool_definition.actual_name,
+                            arguments=tool_call.arguments,
+                            result=result,
+                        )
+                        # A game-mutating tool call that returned an error did
+                        # not change the game; do not record it as an agent move.
+                        tool_failed = bool(result.get("is_error", False))
+                        if captured_game_id is not None and not tool_failed:
+                            self._emit_agent_move_event(
+                                game_id=captured_game_id,
+                                tool_definition=tool_definition,
+                                arguments=tool_call.arguments,
+                                reasoning=response.content or "",
+                                messages=messages,
+                            )
+
                 await self._repository.update_job_tokens_used(
                     job.id, accumulated_job_tokens
                 )
@@ -497,6 +533,137 @@ class PromptRunService:
                 failure = self.classify_execution_failure(exc)
                 job_span.set_attribute("job.status", "failed")
                 await self.record_failure(full_job, failure)
+            finally:
+                await self._drain_history_tasks()
+
+    async def _drain_history_tasks(self) -> None:
+        """Await any in-flight best-effort history emissions before the job ends.
+
+        Emission is detached from the tool round (it never blocks the next LLM
+        call), but we drain at job end so pending publishes complete and never
+        outlive the job. Failures are swallowed by the emitter itself.
+        """
+        if not self._history_tasks:
+            return
+        pending = list(self._history_tasks)
+        self._history_tasks.clear()
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    def _restored_conversation_context(
+        self, session: Any
+    ) -> list[dict[str, Any]] | None:
+        metadata = getattr(session, "metadata_json", None) or {}
+        context = metadata.get(SESSION_RESTORED_CONTEXT_KEY)
+        if isinstance(context, list) and context:
+            return context
+        return None
+
+    def _session_game_id(self, session: Any) -> str | None:
+        metadata = getattr(session, "metadata_json", None) or {}
+        value = metadata.get(SESSION_GAME_ID_KEY)
+        return value if isinstance(value, str) and value else None
+
+    async def _capture_game_id(
+        self,
+        *,
+        session: Any,
+        assignment: str | None,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: dict[str, Any],
+    ) -> str | None:
+        """Resolve the game_id for this tool call and persist it on the session.
+
+        Returns the game_id to use for emission, or None when the tool call does
+        not mutate the game (and therefore should not produce an agent event).
+        """
+        existing = self._session_game_id(session)
+
+        if is_game_id_source_tool(assignment, tool_name):
+            extracted = extract_game_id(
+                assignment=assignment,
+                tool_name=tool_name,
+                arguments=arguments,
+                result=result,
+            )
+            if extracted and extracted != existing:
+                await self._persist_game_id(session, extracted)
+            # Session-creating tools are not themselves game moves.
+            return None
+
+        if not is_game_mutating_tool(assignment, tool_name):
+            return None
+
+        game_id = existing or extract_game_id(
+            assignment=assignment,
+            tool_name=tool_name,
+            arguments=arguments,
+            result=result,
+        )
+        if game_id is None:
+            return None
+        if game_id != existing:
+            await self._persist_game_id(session, game_id)
+        return game_id
+
+    async def _persist_game_id(self, session: Any, game_id: str) -> None:
+        metadata = dict(getattr(session, "metadata_json", None) or {})
+        metadata[SESSION_GAME_ID_KEY] = game_id
+        session.metadata_json = metadata
+        try:
+            await self._repository.update_session(session.id, metadata_json=metadata)
+        except Exception:
+            logger.warning(
+                "Failed to persist game_id %s for session %s",
+                game_id,
+                getattr(session, "id", "?"),
+                exc_info=True,
+            )
+
+    def _emit_user_prompt_event(self, *, session: Any, prompt: str) -> None:
+        """Fire-and-forget emission of a ``user_prompt`` history event.
+
+        The prompt is what triggered this agent turn. History events are keyed
+        by the game-service session id, which the session only carries once a
+        game exists (``metadata.game_id``). When there is no game yet — e.g. the
+        very first prompt before any game is created — there is nothing to key
+        the event by, so emission is skipped gracefully.
+        """
+        emitter = self._history_emitter
+        if emitter is None or not emitter.enabled:
+            return
+        game_id = self._session_game_id(session)
+        if game_id is None:
+            return
+        coro = emitter.emit_user_prompt(game_id=game_id, prompt=prompt)
+        task = asyncio.create_task(coro)
+        self._history_tasks.add(task)
+        task.add_done_callback(self._history_tasks.discard)
+
+    def _emit_agent_move_event(
+        self,
+        *,
+        game_id: str,
+        tool_definition: Any,
+        arguments: dict[str, Any],
+        reasoning: str,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Fire-and-forget emission of an agent move/decision history event."""
+        emitter = self._history_emitter
+        if emitter is None or not emitter.enabled:
+            return
+        conversation_context = copy.deepcopy(messages)
+        coro = emitter.emit_agent_move(
+            game_id=game_id,
+            intended_action=tool_definition.actual_name,
+            reasoning=reasoning,
+            arguments=dict(arguments),
+            conversation_context=conversation_context,
+        )
+        task = asyncio.create_task(coro)
+        self._history_tasks.add(task)
+        task.add_done_callback(self._history_tasks.discard)
 
     async def record_failure(self, job: Job, failure: dict[str, Any]) -> None:
         await self._repository.append_event(job.id, job.session.id, "failure", failure)

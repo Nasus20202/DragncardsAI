@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from agent_orchestrator.schemas.common import PageInfo
 from agent_orchestrator.schemas.jobs import JobSummary, SessionToolResponse
+
+# A supplied restored conversation context is replayed verbatim into the next
+# prompt's message list and sent to the LLM, so it is validated to the same
+# OpenAI chat-message shape the orchestrator itself produces. These bounds keep
+# malformed or oversized input from reaching the runtime (and the session's
+# persisted metadata).
+MAX_CONVERSATION_CONTEXT_MESSAGES = 2000
+MAX_CONVERSATION_CONTEXT_BYTES = 4_000_000
+CONVERSATION_CONTEXT_ROLES = frozenset({"system", "user", "assistant", "tool"})
 
 
 class SessionCreateRequest(BaseModel):
@@ -44,6 +54,46 @@ class McpRegistryRequest(BaseModel):
 
 class SessionMcpEnableRequest(BaseModel):
     enabled: bool
+
+
+class SessionRestoreRequest(BaseModel):
+    game_id: str = Field(min_length=1, max_length=64)
+    conversation_context: list[dict[str, Any]] = Field(default_factory=list)
+    mode: Literal["new", "in_place"] = "new"
+
+    @field_validator("conversation_context")
+    @classmethod
+    def validate_conversation_context(
+        cls, value: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if len(value) > MAX_CONVERSATION_CONTEXT_MESSAGES:
+            raise ValueError(
+                "conversation_context exceeds the maximum of "
+                f"{MAX_CONVERSATION_CONTEXT_MESSAGES} messages"
+            )
+        for index, message in enumerate(value):
+            if not isinstance(message, dict):
+                raise ValueError(f"conversation_context[{index}] must be an object")
+            role = message.get("role")
+            if not isinstance(role, str) or role not in CONVERSATION_CONTEXT_ROLES:
+                allowed = ", ".join(sorted(CONVERSATION_CONTEXT_ROLES))
+                raise ValueError(
+                    f"conversation_context[{index}].role must be one of: {allowed}"
+                )
+        try:
+            serialized_size = len(json.dumps(value).encode("utf-8"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("conversation_context must be JSON-serializable") from exc
+        if serialized_size > MAX_CONVERSATION_CONTEXT_BYTES:
+            raise ValueError(
+                "conversation_context exceeds the maximum serialized size of "
+                f"{MAX_CONVERSATION_CONTEXT_BYTES} bytes"
+            )
+        return value
+
+
+class SessionRestoreResponse(BaseModel):
+    session_id: str
 
 
 class SessionSummary(BaseModel):

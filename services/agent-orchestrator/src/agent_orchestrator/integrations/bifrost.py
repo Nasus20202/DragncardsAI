@@ -7,17 +7,27 @@ from inspect import isawaitable
 from typing import Any, Awaitable, Callable
 
 import httpx
+from dragncards_common.bifrost import (
+    BifrostError,
+    extract_error_message,
+    gateway_error,
+    transport_error,
+)
 
 from agent_orchestrator.storage.valkey import RespConnection
 
 logger = logging.getLogger(__name__)
 
 
-class BifrostError(RuntimeError):
-    def __init__(self, code: str, message: str, *, retryable: bool = False):
-        super().__init__(message)
-        self.code = code
-        self.retryable = retryable
+def _ttl_int(seconds: float) -> int:
+    """Round a TTL to whole seconds for SETEX.
+
+    A configured positive TTL never collapses to ``0`` (which would silently
+    disable that cache tier); only a non-positive value disables it.
+    """
+    if seconds <= 0:
+        return 0
+    return max(1, round(seconds))
 
 
 @dataclass(frozen=True)
@@ -61,6 +71,7 @@ class ModelInfo:
 
 class BifrostClient:
     _CACHE_KEY_PREFIX = "agent-orchestrator:model-cache:"
+    _ALL_CACHE_KEY = f"{_CACHE_KEY_PREFIX}all"
 
     def __init__(
         self,
@@ -69,15 +80,30 @@ class BifrostClient:
         provider_prefixes: dict[str, str],
         *,
         models_cache_ttl_seconds: float = 60.0,
+        list_models_timeout_seconds: float = 8.0,
+        unavailable_cache_ttl_seconds: float = 600.0,
+        unavailable_retryable_cache_ttl_seconds: float = 30.0,
         valkey: RespConnection | None = None,
     ):
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._provider_prefixes = provider_prefixes
         self._models_cache_ttl_seconds = models_cache_ttl_seconds
-        self._models_cache_ttl_int: int = round(models_cache_ttl_seconds)
+        self._models_cache_ttl_int: int = _ttl_int(models_cache_ttl_seconds)
+        self._list_models_timeout_seconds = list_models_timeout_seconds
+        self._unavailable_cache_ttl_seconds = unavailable_cache_ttl_seconds
+        self._unavailable_cache_ttl_int: int = _ttl_int(unavailable_cache_ttl_seconds)
+        self._unavailable_retryable_cache_ttl_int: int = _ttl_int(
+            unavailable_retryable_cache_ttl_seconds
+        )
         self._valkey = valkey
         self._http_client = httpx.AsyncClient(timeout=60.0)
+
+    def _provider_cache_key(self, provider_id: str) -> str:
+        return f"{self._CACHE_KEY_PREFIX}provider:{provider_id}"
+
+    def _provider_unavailable_key(self, provider_id: str) -> str:
+        return f"{self._CACHE_KEY_PREFIX}unavailable:{provider_id}"
 
     async def aclose(self) -> None:
         await self._http_client.aclose()
@@ -101,13 +127,51 @@ class BifrostClient:
             logger.warning("Valkey cache GET failed for key %r", key, exc_info=True)
             return None
 
-    async def _cache_set(self, key: str, data: list[Any], ttl: int) -> None:
+    async def _cache_set(
+        self, key: str, data: list[Any] | dict[str, Any], ttl: int
+    ) -> None:
         if self._valkey is None:
             return
         try:
             await self._valkey.execute("SETEX", key, str(ttl), json.dumps(data))
         except Exception:
             logger.warning("Valkey cache SETEX failed for key %r", key, exc_info=True)
+
+    async def _cache_get_unavailable(self, key: str) -> dict[str, Any] | None:
+        if self._valkey is None:
+            return None
+        try:
+            raw = await self._valkey.execute("GET", key)
+            if raw is None:
+                return None
+            value = json.loads(raw)
+            return value if isinstance(value, dict) else None
+        except Exception:
+            logger.warning("Valkey cache GET failed for key %r", key, exc_info=True)
+            return None
+
+    async def _cache_del(self, *keys: str) -> None:
+        if self._valkey is None or not keys:
+            return
+        try:
+            await self._valkey.execute("DEL", *keys)
+        except Exception:
+            logger.warning("Valkey cache DEL failed for keys %r", keys, exc_info=True)
+
+    async def clear_model_cache(self, provider_ids: list[str]) -> dict[str, int]:
+        """Flush positive and negative model-cache entries.
+
+        Deletes the per-provider positive cache, the per-provider negative
+        (``unavailable``) marker for each given provider id, and the shared
+        ``:all`` listing. Returns a small summary so callers can report how many
+        keys were targeted. Safe to call when Valkey is unavailable.
+        """
+        keys: list[str] = [self._ALL_CACHE_KEY]
+        for provider_id in provider_ids:
+            keys.append(self._provider_cache_key(provider_id))
+            keys.append(self._provider_unavailable_key(provider_id))
+        await self._cache_del(*keys)
+        return {"providers": len(provider_ids), "keys_cleared": len(keys)}
 
     @staticmethod
     def _model_info_from_dict(item: dict) -> ModelInfo:
@@ -120,12 +184,72 @@ class BifrostClient:
 
     async def list_models(self, provider_id: str) -> list[ModelInfo]:
         ttl = self._models_cache_ttl_int
+        provider_cache_key = self._provider_cache_key(provider_id)
+        unavailable_key = self._provider_unavailable_key(provider_id)
+        negative_ttl = self._unavailable_cache_ttl_int
         if ttl > 0:
-            cache_key = f"{self._CACHE_KEY_PREFIX}provider:{provider_id}"
-            cached = await self._cache_get(cache_key)
+            cached = await self._cache_get(provider_cache_key)
             if cached is not None:
                 return [self._model_info_from_dict(item) for item in cached]
+        # Negative cache: a recently-failed provider fast-fails without the slow
+        # HTTP call, but the marker expires so an added API key is re-probed.
+        if negative_ttl > 0:
+            marker = await self._cache_get_unavailable(unavailable_key)
+            if marker is not None:
+                raise BifrostError(
+                    str(marker.get("code") or "gateway_error"),
+                    str(marker.get("message") or "Provider unavailable"),
+                    retryable=bool(marker.get("retryable", True)),
+                )
 
+        try:
+            result = await self._list_models_uncached(provider_id)
+        except BifrostError as exc:
+            # A transient (retryable) failure — timeout, network blip, 5xx, or
+            # 429 — must not suppress the provider for the full negative TTL:
+            # once it recovers, every list_models call would keep fast-failing
+            # from the stale marker for up to 10 minutes. Retryable failures use
+            # a much shorter TTL so a brief outage is re-probed quickly, while
+            # definitive (non-retryable) failures — e.g. a missing API key —
+            # keep the long TTL so we do not re-incur the slow HTTP call.
+            if negative_ttl > 0:
+                write_ttl = (
+                    self._unavailable_retryable_cache_ttl_int
+                    if exc.retryable
+                    else negative_ttl
+                )
+                if write_ttl > 0:
+                    await self._cache_set(
+                        unavailable_key,
+                        {
+                            "code": exc.code,
+                            "message": str(exc),
+                            "retryable": exc.retryable,
+                        },
+                        write_ttl,
+                    )
+            raise
+
+        if ttl > 0:
+            await self._cache_set(
+                provider_cache_key,
+                [
+                    {
+                        "id": m.id,
+                        "name": m.name,
+                        "supported_methods": m.supported_methods,
+                    }
+                    for m in result
+                ],
+                ttl,
+            )
+        # A successful listing clears any stale negative marker so the provider
+        # is no longer reported unavailable before its negative TTL elapses.
+        if negative_ttl > 0:
+            await self._cache_del(unavailable_key)
+        return result
+
+    async def _list_models_uncached(self, provider_id: str) -> list[ModelInfo]:
         headers = {"x-bf-list-models-provider": self._provider_prefixes[provider_id]}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
@@ -133,22 +257,17 @@ class BifrostClient:
             response = await self._http_client.get(
                 f"{self._base_url}/openai/v1/models",
                 headers=headers,
+                timeout=self._list_models_timeout_seconds,
             )
-        except httpx.TimeoutException as exc:
-            raise BifrostError(
-                "timeout", "Bifrost model listing timed out", retryable=True
-            ) from exc
         except httpx.HTTPError as exc:
-            raise BifrostError(
-                "network_error", "Bifrost model listing failed", retryable=True
+            raise transport_error(
+                exc,
+                timeout_message="Bifrost model listing timed out",
+                network_message="Bifrost model listing failed",
             ) from exc
 
         if response.status_code >= 400:
-            raise BifrostError(
-                "gateway_error",
-                self._extract_error_message(response),
-                retryable=response.status_code >= 500 or response.status_code == 429,
-            )
+            raise gateway_error(response)
 
         payload = response.json()
         models = payload.get("data") or payload.get("models") or []
@@ -166,25 +285,12 @@ class BifrostClient:
                     supported_methods=list(item.get("supported_methods") or []),
                 )
             )
-        if ttl > 0:
-            await self._cache_set(
-                f"{self._CACHE_KEY_PREFIX}provider:{provider_id}",
-                [
-                    {
-                        "id": m.id,
-                        "name": m.name,
-                        "supported_methods": m.supported_methods,
-                    }
-                    for m in result
-                ],
-                ttl,
-            )
         return result
 
     async def _fetch_all_models(self) -> list[ModelInfo]:
         """Fetch the rich /v1/models listing (includes context_length per model)."""
         ttl = self._models_cache_ttl_int
-        cache_key = f"{self._CACHE_KEY_PREFIX}all"
+        cache_key = self._ALL_CACHE_KEY
         if ttl > 0:
             cached = await self._cache_get(cache_key)
             if cached is not None:
@@ -197,22 +303,17 @@ class BifrostClient:
             response = await self._http_client.get(
                 f"{self._base_url}/v1/models",
                 headers=headers,
+                timeout=self._list_models_timeout_seconds,
             )
-        except httpx.TimeoutException as exc:
-            raise BifrostError(
-                "timeout", "Bifrost model listing timed out", retryable=True
-            ) from exc
         except httpx.HTTPError as exc:
-            raise BifrostError(
-                "network_error", "Bifrost model listing failed", retryable=True
+            raise transport_error(
+                exc,
+                timeout_message="Bifrost model listing timed out",
+                network_message="Bifrost model listing failed",
             ) from exc
 
         if response.status_code >= 400:
-            raise BifrostError(
-                "gateway_error",
-                self._extract_error_message(response),
-                retryable=response.status_code >= 500 or response.status_code == 429,
-            )
+            raise gateway_error(response)
 
         payload = response.json()
         items = payload.get("data") or payload.get("models") or []
@@ -324,22 +425,15 @@ class BifrostClient:
                 json=payload,
                 headers=headers,
             )
-        except httpx.TimeoutException as exc:
-            raise BifrostError(
-                "timeout", "Bifrost request timed out", retryable=True
-            ) from exc
         except httpx.HTTPError as exc:
-            raise BifrostError(
-                "network_error", "Bifrost request failed", retryable=True
+            raise transport_error(
+                exc,
+                timeout_message="Bifrost request timed out",
+                network_message="Bifrost request failed",
             ) from exc
 
         if response.status_code >= 400:
-            message = self._extract_error_message(response)
-            raise BifrostError(
-                "gateway_error",
-                message,
-                retryable=response.status_code >= 500 or response.status_code == 429,
-            )
+            raise gateway_error(response)
         return response
 
     async def _stream_chat_completion(
@@ -363,13 +457,7 @@ class BifrostClient:
             ) as response:
                 if response.status_code >= 400:
                     await response.aread()
-                    message = self._extract_error_message(response)
-                    raise BifrostError(
-                        "gateway_error",
-                        message,
-                        retryable=response.status_code >= 500
-                        or response.status_code == 429,
-                    )
+                    raise gateway_error(response)
 
                 async for raw_event in self._iter_sse_data(response):
                     if raw_event == "[DONE]":
@@ -413,13 +501,11 @@ class BifrostClient:
             raise BifrostError(
                 "invalid_response", "Bifrost returned an invalid streamed response"
             ) from exc
-        except httpx.TimeoutException as exc:
-            raise BifrostError(
-                "timeout", "Bifrost request timed out", retryable=True
-            ) from exc
         except httpx.HTTPError as exc:
-            raise BifrostError(
-                "network_error", "Bifrost request failed", retryable=True
+            raise transport_error(
+                exc,
+                timeout_message="Bifrost request timed out",
+                network_message="Bifrost request failed",
             ) from exc
 
         return ChatResponse(
@@ -592,15 +678,4 @@ class BifrostClient:
         return tool_calls
 
     def _extract_error_message(self, response: httpx.Response) -> str:
-        try:
-            payload = response.json()
-        except ValueError:
-            return f"Bifrost returned HTTP {response.status_code}"
-        detail = payload.get("error") or payload.get("message") or payload
-        if isinstance(detail, dict):
-            detail = (
-                detail.get("message")
-                or detail.get("detail")
-                or "Bifrost request failed"
-            )
-        return str(detail)
+        return extract_error_message(response)

@@ -26,6 +26,18 @@ def test_settings_validate_provider_models_cache_ttl():
         Settings(provider_models_cache_ttl_seconds=-1)
 
 
+def test_settings_validate_bifrost_unavailable_cache_ttl():
+    with pytest.raises(ValueError):
+        Settings(bifrost_unavailable_cache_ttl_seconds=0)
+    assert Settings().bifrost_unavailable_cache_ttl_seconds == 600.0
+    assert (
+        Settings(
+            BIFROST_UNAVAILABLE_CACHE_TTL_SECONDS=30
+        ).bifrost_unavailable_cache_ttl_seconds
+        == 30
+    )
+
+
 def test_settings_parse_enabled_providers():
     settings = Settings(ENABLED_PROVIDER_IDS="openai,gemini")
     assert settings.enabled_provider_ids == ("openai", "gemini")

@@ -14,6 +14,7 @@ from agent_orchestrator.integrations.mcp.client import (
     StreamableHttpMcpClient,
 )
 from agent_orchestrator.runtime.app import create_app
+from agent_orchestrator.runtime.history_emitter import InMemoryHistoryEventBus
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.db import create_engine, create_session_factory
@@ -25,12 +26,21 @@ class FakeBifrostClient(BifrostClient):
     def __init__(self, *, unavailable_provider_ids: set[str] | None = None):
         self.healthy = True
         self.unavailable_provider_ids = unavailable_provider_ids or set()
+        self._valkey = None
+        self.clear_cache_calls: list[list[str]] = []
 
     async def aclose(self) -> None:
         return None
 
     async def health(self) -> bool:
         return self.healthy
+
+    async def clear_model_cache(self, provider_ids: list[str]) -> dict[str, int]:
+        self.clear_cache_calls.append(list(provider_ids))
+        return {
+            "providers": len(provider_ids),
+            "keys_cleared": len(provider_ids) * 2 + 1,
+        }
 
     async def list_models(self, provider_id: str):
         if provider_id in self.unavailable_provider_ids:
@@ -93,6 +103,7 @@ async def build_test_app(
     bifrost_client: BifrostClient | None = None,
     mcp_client: StreamableHttpMcpClient | None = None,
     enabled_provider_ids: str = "openai,gemini",
+    list_models_timeout_seconds: float | None = None,
 ):
     database_path = tmp_path / "unit.sqlite3"
     engine = create_engine(f"sqlite+aiosqlite:///{database_path}")
@@ -105,6 +116,12 @@ async def build_test_app(
     demo.mkdir()
     (demo / "SKILL.md").write_text("demo skill", encoding="utf-8")
 
+    settings_kwargs: dict = {}
+    if list_models_timeout_seconds is not None:
+        settings_kwargs["BIFROST_LIST_MODELS_TIMEOUT_SECONDS"] = (
+            list_models_timeout_seconds
+        )
+
     app = create_app(
         settings=Settings(
             database_url=f"sqlite+aiosqlite:///{database_path}",
@@ -112,6 +129,7 @@ async def build_test_app(
             bifrost_api_key="dummy",
             SKILL_ROOTS=str(skill_root),
             ENABLED_PROVIDER_IDS=enabled_provider_ids,
+            **settings_kwargs,
         ),
         repository=repository,
         bifrost_client=bifrost_client
@@ -119,5 +137,6 @@ async def build_test_app(
         live_event_bus=InMemoryLiveEventBus(),
         mcp_client=mcp_client or FakeMcpClient(),
         skill_registry=SkillRegistry((skill_root,)),
+        history_event_bus=InMemoryHistoryEventBus(),
     )
     return app, engine

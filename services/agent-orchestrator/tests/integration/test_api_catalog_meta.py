@@ -15,15 +15,15 @@ async def test_catalog_endpoints_expose_available_providers_and_skills(app):
     assert providers_response.status_code == 200
     providers = providers_response.json()["providers"]
     provider_ids = [provider["provider_id"] for provider in providers]
-    assert "openai" in provider_ids
+    assert set(provider_ids) == set(app.state.settings.enabled_provider_ids)
     assert all("available" in provider for provider in providers)
     assert all("models" in provider for provider in providers)
-    openai_provider = next(
-        provider for provider in providers if provider["provider_id"] == "openai"
-    )
-    assert openai_provider["available"] is False
-    assert isinstance(openai_provider["models"], list)
-    assert isinstance(openai_provider["error"], str)
+    # The integration Bifrost stub cannot list models, so every enabled
+    # provider is reported as unavailable with an error message.
+    sample_provider = providers[0]
+    assert sample_provider["available"] is False
+    assert isinstance(sample_provider["models"], list)
+    assert isinstance(sample_provider["error"], str)
 
     assert skills_response.status_code == 200
     skills = skills_response.json()["skills"]

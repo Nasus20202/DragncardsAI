@@ -149,6 +149,25 @@ class SessionRepositoryMixin:
             )
             return result.scalars().unique().first()
 
+    async def get_active_session_by_game_id(self, game_id: str) -> AgentSession | None:
+        """Return the most recently created active session bound to a game_id.
+
+        The game_id correlation identifier is stored in ``metadata_json`` by the
+        history emitter. JSON containment varies across backends, so this loads
+        active sessions and matches in Python to stay dialect-agnostic.
+        """
+        async with self._session_factory() as session:
+            result = await session.execute(
+                self._session_query()
+                .where(AgentSession.status == "active")
+                .order_by(AgentSession.created_at.desc())
+            )
+            for item in result.scalars().unique():
+                metadata = item.metadata_json or {}
+                if metadata.get("game_id") == game_id:
+                    return item
+            return None
+
     async def update_session(
         self, session_id: str, **changes: Any
     ) -> AgentSession | None:

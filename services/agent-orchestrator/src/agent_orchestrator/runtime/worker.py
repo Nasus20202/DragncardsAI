@@ -7,6 +7,7 @@ from typing import Any
 from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
+from agent_orchestrator.runtime.history_emitter import HistoryEventEmitter
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.prompt_run import (
     PromptRunDependencies,
@@ -32,6 +33,7 @@ class WorkerService:
         live_event_bus: LiveEventBus,
         mcp_tool_catalog: McpToolCatalog,
         skill_registry: SkillRegistry,
+        history_emitter: HistoryEventEmitter | None = None,
     ):
         self._settings = settings
         self._repository = repository
@@ -39,6 +41,7 @@ class WorkerService:
         self._live_event_bus = live_event_bus
         self._mcp_tool_catalog = mcp_tool_catalog
         self._skill_registry = skill_registry
+        self._history_emitter = history_emitter
         self._stop_event = asyncio.Event()
         self.is_running = False
         self._child_tasks: set[asyncio.Task[None]] = set()
@@ -51,6 +54,7 @@ class WorkerService:
                 live_event_bus=live_event_bus,
                 mcp_tool_catalog=mcp_tool_catalog,
                 skill_registry=skill_registry,
+                history_emitter=history_emitter,
             ),
             transcript_service=self._transcript_service,
             schedule_child_job=self.run_child_job,

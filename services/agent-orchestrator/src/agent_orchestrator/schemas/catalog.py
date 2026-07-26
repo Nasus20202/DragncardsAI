@@ -11,6 +11,12 @@ class ProviderResponse(BaseModel):
     error: str | None = None
 
 
+class ProviderCacheRefreshResponse(BaseModel):
+    status: str
+    providers: int
+    keys_cleared: int
+
+
 class SkillDefinitionResponse(BaseModel):
     name: str
     path: str
