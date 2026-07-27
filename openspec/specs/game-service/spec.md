@@ -262,9 +262,14 @@ The Game Service SHALL provide descriptive summaries for all explicit action han
 - **WHEN** an agent views tool descriptions in their MCP client
 - **THEN** low-level tools SHALL include warnings about better-typed alternatives (e.g., `set_card_property` warns to use `flip_card` instead)
 
+#### Scenario: Summaries describe the behaviour the action actually performs
+- **WHEN** an agent reads an action tool's summary
+- **THEN** the summary SHALL describe only effects the underlying DragnLang action list performs, and SHALL NOT claim effects the action does not perform
+
 #### Scenario: Drawing to hand limit has clear guidance
 - **WHEN** an agent needs to draw cards up to hand limit
-- **THEN** the `mulligan_draw_hand` tool description SHALL clarify it is the preferred tool for this use case over `draw_card`
+- **THEN** the `mulligan_draw_hand` tool description SHALL state that it draws the player up to their hand size, discards nothing, and does nothing when the hand is already full
+- **AND** it SHALL clarify it is the preferred tool for this use case over `draw_card`
 
 ### Requirement: Plugin management
 The Game Service SHALL support loading DragnCards-compatible plugins for game initialization.

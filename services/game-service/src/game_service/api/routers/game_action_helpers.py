@@ -345,7 +345,7 @@ async def zero_tokens(
 @router.post(
     "/games/{session_id}/actions/mulligan_draw_hand",
     response_model=ExecuteActionResponse,
-    summary="Discard any number of cards, then draw up to hand size - use for setup mulligan OR drawing cards to hand limit (preferred over draw_card for 'draw up to hand size')",
+    summary="Draw one player up to their hand size - never discards, and does nothing if the hand is already full; use for the setup mulligan after discarding the unwanted cards yourself, or to refill one player's hand (preferred over draw_card, which draws an exact count)",
     operation_id="mulligan_draw_hand",
 )
 async def mulligan_draw_hand(
