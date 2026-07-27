@@ -3,11 +3,22 @@ import { screen, waitFor } from "@testing-library/react";
 
 import {
   getApi,
+  providers,
   renderPlayWorkspace,
   resetPlayWorkspaceEnvironment,
 } from "@/features/play/__tests__/play-workspace-test-support";
+import type { ProviderResponse } from "@/features/shared/lib/types";
 
 const api = getApi();
+
+/** A promise the test resolves by hand, to hold `/providers` in flight. */
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 describe("PlayWorkspace initial loading", () => {
   beforeEach(() => {
@@ -48,6 +59,69 @@ describe("PlayWorkspace initial loading", () => {
       expect(screen.getByTestId("error-text")).toHaveTextContent(
         /failed to load sessions and skills/i
       )
+    );
+  });
+
+  it("renders the workspace without waiting for the provider catalog", async () => {
+    const pending = createDeferred<ProviderResponse[]>();
+    api.listProviders.mockReturnValue(pending.promise);
+
+    renderPlayWorkspace();
+
+    // The workspace is fully rendered and Ready while `/providers` is still
+    // in flight — a slow gateway probe must never gate the first paint.
+    await waitFor(() =>
+      expect(screen.getByTestId("play-workspace")).toBeInTheDocument()
+    );
+    expect(screen.getByTestId("status-text")).toHaveTextContent("Ready");
+    expect(screen.getByTestId("provider-count")).toHaveTextContent("0");
+
+    // The catalog is applied once it eventually arrives.
+    pending.resolve(providers);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-count")).toHaveTextContent("2")
+    );
+  });
+
+  it("defaults the selectors to a working provider once the catalog arrives", async () => {
+    api.listSessions.mockResolvedValue([]);
+    const pending = createDeferred<ProviderResponse[]>();
+    api.listProviders.mockReturnValue(pending.promise);
+
+    renderPlayWorkspace();
+
+    // Before the catalog lands the draft holds the configuration defaults.
+    await waitFor(() =>
+      expect(screen.getByTestId("draft-provider")).toHaveTextContent("openai")
+    );
+
+    pending.resolve([
+      {
+        provider_id: "openai",
+        model_prefix: "openai",
+        models: [],
+        available: false,
+        error: "no API key configured",
+      },
+      {
+        provider_id: "anthropic",
+        model_prefix: "anthropic",
+        models: ["claude-3-5-haiku"],
+        available: true,
+        error: null,
+      },
+    ]);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("draft-provider")).toHaveTextContent(
+        "anthropic"
+      )
+    );
+    expect(screen.getByTestId("draft-model")).toHaveTextContent(
+      "claude-3-5-haiku"
+    );
+    expect(screen.getByTestId("providers-notice")).toHaveTextContent(
+      /unavailable provider: openai/i
     );
   });
 

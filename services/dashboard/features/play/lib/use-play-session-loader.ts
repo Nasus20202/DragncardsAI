@@ -115,14 +115,66 @@ export function usePlaySessionLoader({
   );
 
   useEffect(() => {
+    // The provider catalog is deliberately kept OFF the blocking initial-load
+    // path. `/providers` probes the AI gateway, which can take several seconds
+    // whenever a configured provider is unreachable; awaiting it here used to
+    // leave the entire workspace on a bare spinner for that whole time.
+    // Rejections are folded into `null` so this promise can never surface as an
+    // unhandled rejection when the blocking load below bails out early.
+    const providersPromise = listProviders().catch(() => null);
+
+    function applyProviders(
+      nextConfig: DashboardConfig,
+      loadedProviders: ProviderResponse[] | null
+    ) {
+      // Surface a non-blocking notice when providers fail to load or report
+      // themselves unavailable — never a fatal error.
+      if (loadedProviders === null) {
+        setProviders([]);
+        setProvidersNotice(
+          "Some providers could not be loaded. You can still use the providers that are available."
+        );
+        return;
+      }
+
+      setProviders(loadedProviders);
+
+      // Re-seed the selectors with a provider the user can actually use, but
+      // only while the draft still holds the untouched configuration defaults
+      // and no session has committed its own model: a user edit or a loaded
+      // session that landed first must win.
+      setDraft((current) => {
+        if (
+          !current ||
+          committedModelRef.current !== null ||
+          current.providerId !== nextConfig.defaultProviderId ||
+          current.modelName !== nextConfig.defaultModelName
+        ) {
+          return current;
+        }
+        const { providerId, modelName } = pickDefaultProviderModel(
+          nextConfig,
+          loadedProviders
+        );
+        return { ...current, providerId, modelName };
+      });
+
+      const unavailableProviders = loadedProviders
+        .filter((provider) => provider.available === false)
+        .map((provider) => provider.provider_id);
+      setProvidersNotice(
+        unavailableProviders.length > 0
+          ? `Unavailable provider${unavailableProviders.length > 1 ? "s" : ""}: ${unavailableProviders.join(", ")}.`
+          : null
+      );
+    }
+
     async function load() {
-      // Load all initial data resiliently: a slow or failed providers call (or
-      // any other single call) must degrade gracefully rather than failing the
-      // whole dashboard.
-      const [configResult, providersResult, skillsResult, sessionsResult] =
+      // Load the remaining initial data resiliently: a failure in any single
+      // call must degrade gracefully rather than failing the whole dashboard.
+      const [configResult, skillsResult, sessionsResult] =
         await Promise.allSettled([
           fetchDashboardConfig(),
-          listProviders(),
           listAvailableSkills(),
           listSessions(),
         ]);
@@ -141,10 +193,6 @@ export function usePlaySessionLoader({
       const nextConfig = configResult.value;
       setConfig(nextConfig);
 
-      const nextProviders =
-        providersResult.status === "fulfilled" ? providersResult.value : [];
-      setProviders(nextProviders);
-
       if (skillsResult.status === "fulfilled") {
         setSkills(skillsResult.value);
       }
@@ -153,31 +201,15 @@ export function usePlaySessionLoader({
         sessionsResult.status === "fulfilled" ? sessionsResult.value : [];
       setSessions(nextSessions);
 
-      // Seed the draft with a working provider/model so the selectors default
-      // to a provider the user can actually use.
-      const defaultDraft = createDefaultDraft(nextConfig);
-      const { providerId, modelName } = pickDefaultProviderModel(
-        nextConfig,
-        nextProviders
-      );
-      setDraft({ ...defaultDraft, providerId, modelName });
+      // Seed the draft from configuration defaults so the workspace renders
+      // immediately; `applyProviders` refines the provider/model once the
+      // catalog arrives.
+      setDraft(createDefaultDraft(nextConfig));
 
-      // Surface a non-blocking notice when providers fail to load or report
-      // themselves unavailable — never a fatal error.
-      const unavailableProviders = nextProviders
-        .filter((provider) => provider.available === false)
-        .map((provider) => provider.provider_id);
-      if (providersResult.status === "rejected") {
-        setProvidersNotice(
-          "Some providers could not be loaded. You can still use the providers that are available."
-        );
-      } else if (unavailableProviders.length > 0) {
-        setProvidersNotice(
-          `Unavailable provider${unavailableProviders.length > 1 ? "s" : ""}: ${unavailableProviders.join(", ")}.`
-        );
-      } else {
-        setProvidersNotice(null);
-      }
+      // Apply the catalog whenever it lands — never before the rest of the UI.
+      void providersPromise.then((loadedProviders) => {
+        applyProviders(nextConfig, loadedProviders);
+      });
 
       // Surface a visible error when sessions or skills fail to load, so a
       // rejected sessions fetch does not look identical to an empty account.
@@ -213,6 +245,7 @@ export function usePlaySessionLoader({
 
     void load();
   }, [
+    committedModelRef,
     persistSelectedSessionId,
     setConfig,
     setDraft,
