@@ -1,6 +1,6 @@
 "use client";
 
-import { Alert, Button, Chip, Radio, RadioGroup, Spinner } from "@heroui/react";
+import { Button, Chip, Spinner } from "@heroui/react";
 import { useState } from "react";
 
 import { RestoreMode, RestoreOutcome } from "@/features/shared/lib/types";
@@ -120,54 +120,59 @@ export function RestoreControl({ targetSeq, onRestore }: RestoreControlProps) {
         )}
       </div>
 
-      <RadioGroup
-        aria-label="Restore target mode"
+      <fieldset
         className="flex flex-col gap-2"
-        value={mode}
-        isDisabled={disabled}
-        onChange={(next) => setMode(next as RestoreMode)}
+        aria-label="Restore target mode"
       >
-        <Radio value="new">
-          <Radio.Content className="flex items-start gap-2 text-sm">
-            <Radio.Control className="mt-1">
-              <Radio.Indicator />
-            </Radio.Control>
-            <span>
-              <span className="font-medium text-foreground">
-                New branchable session
-              </span>
-              <span className="block text-xs text-default-400">
-                Leaves the original timeline untouched.
-              </span>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="radio"
+            name="restore-mode"
+            value="new"
+            checked={mode === "new"}
+            disabled={disabled}
+            onChange={() => setMode("new")}
+            className="mt-1"
+          />
+          <span>
+            <span className="font-medium text-foreground">
+              New branchable session
             </span>
-          </Radio.Content>
-        </Radio>
-        <Radio value="in_place">
-          <Radio.Content className="flex items-start gap-2 text-sm">
-            <Radio.Control className="mt-1">
-              <Radio.Indicator />
-            </Radio.Control>
-            <span>
-              <span className="font-medium text-foreground">
-                In-place overwrite
-              </span>
-              <span className="block text-xs text-default-400">
-                Rewinds the live session to this moment.
-              </span>
+            <span className="block text-xs text-default-400">
+              Leaves the original timeline untouched.
             </span>
-          </Radio.Content>
-        </Radio>
-      </RadioGroup>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="radio"
+            name="restore-mode"
+            value="in_place"
+            checked={mode === "in_place"}
+            disabled={disabled}
+            onChange={() => setMode("in_place")}
+            className="mt-1"
+          />
+          <span>
+            <span className="font-medium text-foreground">
+              In-place overwrite
+            </span>
+            <span className="block text-xs text-default-400">
+              Rewinds the live session to this moment.
+            </span>
+          </span>
+        </label>
+      </fieldset>
 
       {mode === "in_place" && (
-        <Alert
-          status="danger"
+        <div
           role="alert"
           data-testid="restore-in-place-warning"
+          className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
         >
           Warning: game state recorded after the selected moment will be
           discarded. This cannot be undone.
-        </Alert>
+        </div>
       )}
 
       <Button
@@ -187,19 +192,31 @@ export function RestoreControl({ targetSeq, onRestore }: RestoreControlProps) {
       </Button>
 
       {outcome?.kind === "success" && (
-        <Alert status="success" role="status" data-testid="restore-success">
+        <div
+          role="status"
+          data-testid="restore-success"
+          className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-success"
+        >
           {describeOutcome(outcome.outcome)}
-        </Alert>
+        </div>
       )}
       {outcome?.kind === "warning" && (
-        <Alert status="warning" role="status" data-testid="restore-warning">
+        <div
+          role="status"
+          data-testid="restore-warning"
+          className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning"
+        >
           {describeOutcome(outcome.outcome)} {outcome.divergence}
-        </Alert>
+        </div>
       )}
       {outcome?.kind === "failure" && (
-        <Alert status="danger" role="alert" data-testid="restore-failure">
+        <div
+          role="alert"
+          data-testid="restore-failure"
+          className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
+        >
           {outcome.message}
-        </Alert>
+        </div>
       )}
     </div>
   );

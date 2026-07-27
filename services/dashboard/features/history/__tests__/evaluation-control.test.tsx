@@ -128,11 +128,7 @@ describe("EvaluationControl", () => {
     // The target-selection "Whole game" (mode), distinct from the new
     // "Whole game (cascade)" scope radio.
     fireEvent.click(screen.getByRole("radio", { name: "Whole game" }));
-    fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: /re-evaluate even if a verdict already exists/i,
-      })
-    );
+    fireEvent.click(screen.getByTestId("eval-force"));
     fireEvent.click(screen.getByTestId("eval-submit"));
 
     await waitFor(() => {

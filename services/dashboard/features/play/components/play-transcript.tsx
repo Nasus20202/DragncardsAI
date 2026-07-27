@@ -1,4 +1,3 @@
-import { Alert, Button, Card } from "@heroui/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { JobDetail, SessionDetail } from "@/features/shared/lib/types";
@@ -21,11 +20,6 @@ const JOB_STATE_LABELS = {
 } as const;
 
 type VisibleJobStateKey = keyof typeof JOB_STATE_LABELS | "idle";
-
-/** Flush, full-width, left-aligned header styling for the collapsible blocks. */
-const BLOCK_HEADER_CLASS =
-  "h-auto min-h-0 items-center justify-between gap-3 rounded-none bg-transparent px-3 py-2 text-left transition-colors hover:bg-default-100/60";
-const BLOCK_CARD_CLASS = "overflow-hidden";
 
 /* ── Sub-renderers ───────────────────────────────────────────────── */
 
@@ -59,14 +53,13 @@ function ReasoningBlock({
   }, [hasOutput]);
 
   return (
-    <Card className={BLOCK_CARD_CLASS}>
-      <Button
-        fullWidth
-        variant="ghost"
+    <div className="overflow-hidden rounded-lg border border-default-200/60 bg-default-50/40 dark:bg-white/3">
+      <button
+        type="button"
         aria-expanded={open}
         aria-label={open ? "Collapse reasoning" : "Expand reasoning"}
-        className={BLOCK_HEADER_CLASS}
-        onPress={() => setOpen((p) => !p)}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-default-100/60"
+        onClick={() => setOpen((p) => !p)}
       >
         <div className="flex items-center gap-2">
           {isStreaming && !hasOutput ? (
@@ -87,7 +80,7 @@ function ReasoningBlock({
         <span aria-hidden="true" className="text-xs text-default-400">
           {open ? "▴" : "▾"}
         </span>
-      </Button>
+      </button>
       {open && (
         <div className="border-t border-default-200/60 px-3 py-2.5">
           <pre className="overflow-x-auto whitespace-pre-wrap text-xs leading-relaxed text-default-600 dark:text-default-300">
@@ -95,7 +88,7 @@ function ReasoningBlock({
           </pre>
         </div>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -103,14 +96,13 @@ function CompactionBlock({ text }: { text: string }) {
   const [open, setOpen] = useState(true);
 
   return (
-    <Card className={BLOCK_CARD_CLASS}>
-      <Button
-        fullWidth
-        variant="ghost"
+    <div className="overflow-hidden rounded-lg border border-default-200/60 bg-default-50/40 dark:bg-white/3">
+      <button
+        type="button"
         aria-expanded={open}
         aria-label={open ? "Collapse compaction" : "Expand compaction"}
-        className={BLOCK_HEADER_CLASS}
-        onPress={() => setOpen((p) => !p)}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-default-100/60"
+        onClick={() => setOpen((p) => !p)}
       >
         <div className="flex items-center gap-2">
           <span
@@ -124,7 +116,7 @@ function CompactionBlock({ text }: { text: string }) {
         <span aria-hidden="true" className="text-xs text-default-400">
           {open ? "▴" : "▾"}
         </span>
-      </Button>
+      </button>
       {open && (
         <div className="border-t border-default-200/60 px-3 py-2.5">
           <pre className="overflow-x-auto whitespace-pre-wrap text-xs leading-relaxed text-default-600 dark:text-default-300">
@@ -132,7 +124,7 @@ function CompactionBlock({ text }: { text: string }) {
           </pre>
         </div>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -161,14 +153,13 @@ function CollapsibleEventBlock({
   const [open, setOpen] = useState(false);
 
   return (
-    <Card className={BLOCK_CARD_CLASS}>
-      <Button
-        fullWidth
-        variant="ghost"
+    <div className="overflow-hidden rounded-lg border border-default-200/60 bg-default-50/40 dark:bg-white/3">
+      <button
+        type="button"
         aria-expanded={open}
         aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
-        className={BLOCK_HEADER_CLASS}
-        onPress={() => setOpen((p) => !p)}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-default-100/60"
+        onClick={() => setOpen((p) => !p)}
       >
         <div className="flex items-center gap-2">
           <span
@@ -180,7 +171,7 @@ function CollapsibleEventBlock({
         <span aria-hidden="true" className="text-xs text-default-400">
           {open ? "▴" : "▾"}
         </span>
-      </Button>
+      </button>
       {open && (
         <div className="border-t border-default-200/60 px-3 py-2.5">
           <pre className="overflow-x-auto whitespace-pre-wrap text-xs leading-relaxed text-default-600 dark:text-default-300">
@@ -188,7 +179,7 @@ function CollapsibleEventBlock({
           </pre>
         </div>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -263,14 +254,14 @@ export function AggEventRow({
     }
     case "failure":
       return (
-        <Alert status="danger" className="text-sm">
+        <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm">
           <span className="mr-1.5 font-semibold text-danger">Error</span>
           <span className="text-danger/80">
             {typeof agg.event.payload.message === "string"
               ? agg.event.payload.message
               : JSON.stringify(agg.event.payload)}
           </span>
-        </Alert>
+        </div>
       );
     case "cancellation":
       return <p className="text-xs italic text-default-400">Cancelled</p>;
@@ -456,28 +447,26 @@ export function PlayTranscript({
             {visibleJobState}
           </span>
         </div>
-        <Button
-          size="sm"
-          variant="ghost"
+        <button
+          type="button"
           aria-label={
             settingsOpen ? "Close session settings" : "Open session settings"
           }
-          className="h-7 min-h-7 rounded bg-transparent px-2.5 py-1 text-xs text-default-500 transition-colors hover:bg-default-100 hover:text-foreground"
-          onPress={onOpenSettings}
+          className="rounded px-2.5 py-1 text-xs text-default-500 transition-colors hover:bg-default-100 hover:text-foreground"
+          onClick={onOpenSettings}
         >
           {settingsOpen ? "Close settings" : "Settings"}
-        </Button>
+        </button>
       </div>
 
       {/* Error banner */}
       {errorText && (
-        <Alert
-          status="danger"
+        <div
           role="alert"
-          className="mx-4 mt-3 shrink-0 text-xs"
+          className="mx-4 mt-3 shrink-0 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
         >
           {errorText}
-        </Alert>
+        </div>
       )}
 
       {/* Scrollable chat area — messages anchored to bottom */}
@@ -513,17 +502,16 @@ export function PlayTranscript({
 
         {/* Jump-to-latest control — shown only when scroll lock is released */}
         {!isLocked && selectedSession && jobs.length > 0 && (
-          <Button
+          <button
             data-testid="jump-to-latest"
-            size="sm"
-            variant="ghost"
+            type="button"
             aria-label="Jump to latest"
-            className="absolute bottom-4 right-4 z-10 flex h-auto min-h-0 items-center gap-1.5 rounded-full border border-default-200/60 bg-background/90 px-3 py-1.5 text-xs font-medium text-default-600 shadow-lg backdrop-blur-sm transition-colors hover:bg-default-100 hover:text-foreground"
-            onPress={jumpToLatest}
+            className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 rounded-full border border-default-200/60 bg-background/90 px-3 py-1.5 text-xs font-medium text-default-600 shadow-lg backdrop-blur-sm transition-colors hover:bg-default-100 hover:text-foreground"
+            onClick={jumpToLatest}
           >
             <span aria-hidden="true">↓</span>
             Jump to latest
-          </Button>
+          </button>
         )}
       </div>
     </div>

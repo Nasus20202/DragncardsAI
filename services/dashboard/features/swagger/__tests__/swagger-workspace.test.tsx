@@ -5,7 +5,6 @@ import "@testing-library/jest-dom";
 import { SwaggerWorkspace } from "@/features/swagger/components/swagger-workspace";
 
 vi.mock("@heroui/react", () => ({
-  Alert: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   Card: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   Chip: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   Spinner: () => <div>Spinner</div>,

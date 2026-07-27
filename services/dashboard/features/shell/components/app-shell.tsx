@@ -1,6 +1,5 @@
 "use client";
 
-import { Button } from "@heroui/react";
 import Image from "next/image";
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
@@ -61,17 +60,14 @@ export function AppShell({
         </div>
 
         {/* Theme toggle stays empty until the theme resolves to avoid hydration mismatch */}
-        <Button
+        <button
           aria-label="Toggle colour theme"
           type="button"
-          isIconOnly
-          variant="ghost"
-          size="sm"
-          className="text-default-500 hover:bg-default-100 hover:text-foreground"
-          onPress={() => setTheme(isDark ? "light" : "dark")}
+          className="flex h-8 w-8 items-center justify-center rounded text-default-500 transition-colors hover:bg-default-100 hover:text-foreground"
+          onClick={() => setTheme(isDark ? "light" : "dark")}
         >
           {resolvedTheme ? (isDark ? "☀" : "☾") : null}
-        </Button>
+        </button>
       </header>
 
       {/* ── Page content fills the rest ─────────────────────────── */}
