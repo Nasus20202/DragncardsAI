@@ -198,7 +198,25 @@ class WorkerService:
         await self._prompt_run_service._maybe_terminate_child_session(job)
 
     async def _run_job(self, job: Job) -> None:
-        await self._prompt_run_service.run(job)
+        try:
+            await self._prompt_run_service.run(job)
+        except Exception:
+            # `_run_job` runs as a detached task, so an escaping exception would
+            # silently leave the job in `running`. Non-terminal jobs are skipped
+            # by context replay, which would drop the prompt from the session
+            # transcript, so force the job to a terminal status as a last resort.
+            logger.exception(
+                "Job %s crashed outside prompt-run failure handling", job.id
+            )
+            try:
+                await self._repository.mark_job_failed(
+                    job.id,
+                    error_code="worker_crash",
+                    error_message="Job crashed before reaching a terminal status",
+                    retryable=False,
+                )
+            except Exception:
+                logger.exception("Failed to mark crashed job %s as failed", job.id)
 
     async def _maybe_auto_compact(self, job_id: str, session_id: str) -> None:
         """Auto-compact context if estimated usage ratio exceeds threshold."""
