@@ -9,6 +9,7 @@ Service-specific guides live in each service's `AGENTS.md` and override the root
 
 - Do substantive work in an isolated git worktree rather than directly on the checked-out branch.
 - Delegate as much as reasonably possible to subagents; fan out independent pieces in parallel.
+- Run implementation subagents on the Opus model (pass `model: opus`), not Fable.
 - Multi-feature sessions branch off a single integration branch: each feature/agent gets its own worktree branch off the integration branch, works independently, then merges back as **one squash commit per feature**. The PR is opened from the integration branch.
 - Skip the worktree/delegation overhead for trivial one-off edits.
 - Commits use a single-line message and must NOT include a `Co-Authored-By: Claude` trailer (or any Claude attribution).
