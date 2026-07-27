@@ -107,9 +107,9 @@ printings of the same card share a name and stats but have different `database_i
 
 ### `mulligan_draw_hand(session_id, player_n)`
 
-Despite the summary saying "discard any number of cards, then draw up to hand size", the
-underlying action list is just `DRAW_HAND`: it draws **up to** the player's current hand
-size and **discards nothing**. If your hand is already at or above hand size it is a no-op.
+The underlying action list is just `DRAW_HAND`: it draws **up to** the player's current
+hand size and **discards nothing**. If your hand is already at or above hand size it is a
+no-op.
 
 Use it only at setup, after you have manually discarded the cards you want to mulligan
 (`move_card` each to `playerNDiscard` first). During a normal turn, leave hand refills to

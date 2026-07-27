@@ -336,11 +336,11 @@ class ZeroTokensAction(BaseModel):
 
 
 class MulliganDrawHandAction(BaseModel):
-    """Perform mulligan - redraw starting hand if round 0."""
+    """Draw a player up to their hand size - never discards, no-op on a full hand."""
 
     type: Literal["mulligan_draw_hand"] = "mulligan_draw_hand"
     player_n: str = Field(
-        ..., description="Player performing mulligan (e.g., 'player1')"
+        ..., description="Player drawing up to hand size (e.g., 'player1')"
     )
 
     @field_validator("player_n")
@@ -706,7 +706,8 @@ def _to_dragncards(action: GameAction) -> tuple[list, str, str | None]:
         )
 
     if isinstance(action, MulliganDrawHandAction):
-        # mulliganDrawHand draws a new hand if roundNumber is 0
+        # DRAW_HAND always tops the hand up to handSize and never discards;
+        # the mulligan log line only fires on round 0.
         return (
             [
                 [

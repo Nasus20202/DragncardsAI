@@ -109,8 +109,9 @@ end-of-phase step does that for everyone at once.
    forget, the game happily lets you play a 4-cost card for free — and you have cheated.
 8. **`prev_step` is not undo.** It moves the step marker only. Card moves, tokens, and
    exhaustion are permanent; fix mistakes with inverse actions.
-9. **`mulligan_draw_hand` draws *up to* hand size and never discards** — despite its tool
-   summary claiming otherwise. If your hand is already at or above hand size it does nothing.
+9. **`mulligan_draw_hand` draws *up to* hand size and never discards.** If your hand is
+   already at or above hand size it does nothing. Discard the cards you want to mulligan
+   yourself first.
 10. **`shuffle_into_deck` is currently broken.** It returns
     `error: "... Group not found: cardById<id>deckGroupId ..."` and does nothing. Use
     `move_card` to `playerNDeck` instead.
