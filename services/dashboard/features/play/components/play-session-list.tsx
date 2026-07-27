@@ -1,3 +1,4 @@
+import { Button } from "@heroui/react";
 import { SessionSummary } from "@/features/shared/lib/types";
 
 function dotColor(status: string | null | undefined) {
@@ -62,24 +63,27 @@ export function PlaySessionList({
         <div
           className={`flex items-center gap-1 ${isCollapsed ? "w-full justify-center" : ""}`}
         >
-          <button
+          <Button
             data-testid="new-session-button"
             aria-label="New session"
-            disabled={isBusy || !canCreate}
-            type="button"
-            className="flex h-7 items-center gap-1 rounded px-2 text-xs font-medium text-default-500 transition-colors hover:bg-default-100 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-            onClick={onCreate}
+            isDisabled={isBusy || !canCreate}
+            size="sm"
+            variant="ghost"
+            className="flex h-7 min-h-7 items-center gap-1 rounded px-2 text-xs font-medium text-default-500 transition-colors hover:bg-default-100 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            onPress={onCreate}
           >
             {isCollapsed ? "+" : "+ New"}
-          </button>
-          <button
+          </Button>
+          <Button
             aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            type="button"
-            className="flex h-7 w-7 items-center justify-center rounded text-default-400 transition-colors hover:bg-default-100 hover:text-foreground"
-            onClick={onToggleCollapsed}
+            isIconOnly
+            size="sm"
+            variant="ghost"
+            className="flex h-7 min-h-7 w-7 items-center justify-center rounded text-default-400 transition-colors hover:bg-default-100 hover:text-foreground"
+            onPress={onToggleCollapsed}
           >
             <span aria-hidden="true">{isCollapsed ? "›" : "‹"}</span>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -104,18 +108,18 @@ export function PlaySessionList({
                   : "text-default-600 hover:bg-default-100/60 hover:text-foreground",
               ].join(" ")}
             >
-              <button
+              <Button
                 data-testid={`play-session-${s.id}`}
                 aria-label={s.name ?? "Untitled session"}
                 aria-current={active ? "true" : undefined}
-                type="button"
+                variant="ghost"
                 className={[
-                  "min-w-0 flex-1 text-left",
+                  "h-auto min-h-0 min-w-0 flex-1 rounded-none bg-transparent text-left",
                   isCollapsed
                     ? "flex justify-center px-2 py-3"
-                    : "flex items-center gap-2.5 py-2.5 pl-3 pr-2",
+                    : "flex items-center justify-start gap-2.5 py-2.5 pl-3 pr-2",
                 ].join(" ")}
-                onClick={() => onSelect(s.id)}
+                onPress={() => onSelect(s.id)}
               >
                 {/* Status dot — streaming overrides job status */}
                 {isStreaming ? (
@@ -141,19 +145,21 @@ export function PlaySessionList({
                     </div>
                   </div>
                 )}
-              </button>
+              </Button>
 
               {!isCollapsed && (
-                <button
+                <Button
                   data-testid={`remove-session-${s.id}`}
                   aria-label={`Remove ${s.name ?? "session"}`}
-                  type="button"
-                  disabled={isBusy}
-                  className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-default-400 opacity-0 transition-opacity hover:bg-default-200/70 hover:text-danger focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-0 group-hover:opacity-100"
-                  onClick={() => onRemove(s.id)}
+                  isIconOnly
+                  size="sm"
+                  variant="ghost"
+                  isDisabled={isBusy}
+                  className="mr-1.5 flex h-6 min-h-6 w-6 shrink-0 items-center justify-center rounded bg-transparent text-default-400 opacity-0 transition-opacity hover:bg-default-200/70 hover:text-danger focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-0 group-hover:opacity-100"
+                  onPress={() => onRemove(s.id)}
                 >
                   <span aria-hidden="true">✕</span>
-                </button>
+                </Button>
               )}
             </div>
           );

@@ -1,5 +1,6 @@
 "use client";
 
+import { Button, Card } from "@heroui/react";
 import { useState } from "react";
 
 /**
@@ -30,16 +31,19 @@ export function CollapsibleCard({
   const [open, setOpen] = useState(false);
 
   return (
-    <div
+    <Card
+      variant="transparent"
       data-testid={testId}
-      className="overflow-hidden rounded-lg border border-default-200/60 bg-default-50/40 dark:bg-white/3"
+      className="gap-0 overflow-hidden rounded-lg border border-default-200/60 bg-default-50/40 p-0 dark:bg-white/3"
     >
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        fullWidth
         aria-expanded={open}
         aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-default-100/60"
-        onClick={() => setOpen((p) => !p)}
+        className="h-auto justify-between gap-3 rounded-none px-3 py-2 text-left hover:bg-default-100/60"
+        onPress={() => setOpen((p) => !p)}
       >
         <div className="flex items-center gap-2">
           <span
@@ -58,7 +62,7 @@ export function CollapsibleCard({
             {open ? "▴" : "▾"}
           </span>
         )}
-      </button>
+      </Button>
 
       {open && (
         <div className="border-t border-default-200/60 px-3 py-2.5">
@@ -71,6 +75,6 @@ export function CollapsibleCard({
           </pre>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

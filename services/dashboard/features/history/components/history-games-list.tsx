@@ -1,3 +1,5 @@
+import { Button } from "@heroui/react";
+
 import { HistoryGame } from "@/features/shared/lib/types";
 import { formatActivity } from "@/features/history/lib/history-games";
 
@@ -42,15 +44,18 @@ export function HistoryGamesList({
         <div
           className={`flex items-center gap-1 ${isCollapsed ? "w-full justify-center" : ""}`}
         >
-          <button
+          <Button
             data-testid="history-games-collapse"
             aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             type="button"
-            className="flex h-7 w-7 items-center justify-center rounded text-default-400 transition-colors hover:bg-default-100 hover:text-foreground"
-            onClick={onToggleCollapsed}
+            isIconOnly
+            size="sm"
+            variant="ghost"
+            className="flex h-7 w-7 min-w-0 items-center justify-center rounded p-0 text-default-400 transition-colors hover:bg-default-100 hover:text-foreground"
+            onPress={onToggleCollapsed}
           >
             <span aria-hidden="true">{isCollapsed ? "›" : "‹"}</span>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -76,18 +81,19 @@ export function HistoryGamesList({
                   : "text-default-600 hover:bg-default-100/60 hover:text-foreground",
               ].join(" ")}
             >
-              <button
+              <Button
                 data-testid={`history-game-${game.game_id}`}
                 aria-label={label}
                 aria-current={active ? "true" : undefined}
                 type="button"
+                variant="ghost"
                 className={[
-                  "min-w-0 flex-1 text-left",
+                  "h-auto min-w-0 flex-1 rounded-none bg-transparent text-left",
                   isCollapsed
                     ? "flex justify-center px-2 py-3"
                     : "flex items-center gap-2.5 py-2.5 pl-3 pr-2",
                 ].join(" ")}
-                onClick={() => onSelect(game.game_id)}
+                onPress={() => onSelect(game.game_id)}
               >
                 <span
                   aria-hidden="true"
@@ -109,19 +115,22 @@ export function HistoryGamesList({
                     </div>
                   </div>
                 )}
-              </button>
+              </Button>
 
               {!isCollapsed && (
-                <button
+                <Button
                   data-testid={`history-game-delete-${game.game_id}`}
                   aria-label={`Delete history for ${label}`}
                   type="button"
-                  disabled={isBusy}
-                  className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-default-400 opacity-0 transition-opacity hover:bg-default-200/70 hover:text-danger focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-0 group-hover:opacity-100"
-                  onClick={() => onRemove(game.game_id)}
+                  isIconOnly
+                  size="sm"
+                  variant="ghost"
+                  isDisabled={isBusy}
+                  className="mr-1.5 flex h-6 w-6 min-w-0 shrink-0 items-center justify-center rounded p-0 text-default-400 opacity-0 transition-opacity hover:bg-default-200/70 hover:text-danger focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-0 group-hover:opacity-100"
+                  onPress={() => onRemove(game.game_id)}
                 >
                   <span aria-hidden="true">✕</span>
-                </button>
+                </Button>
               )}
             </div>
           );

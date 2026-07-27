@@ -68,12 +68,15 @@ describe("HistoryScorecard", () => {
     render(<HistoryScorecard events={events} onClose={vi.fn()} />);
 
     const p1 = screen.getByTestId("history-scorecard-player-player1");
-    const p1cells = within(p1).getAllByRole("cell");
-    // Columns: player | move | round | game.
+    // Columns: player | move | round | game. The table is an ARIA grid, so the
+    // player column (the row header) is a `rowheader` and the three score
+    // columns are `gridcell`s.
+    expect(within(p1).getByRole("rowheader")).toHaveTextContent("player1");
+    const p1cells = within(p1).getAllByRole("gridcell");
     // Move average is (8 + 6) / 2 = 7; round is 7; game is 9.
+    expect(p1cells[0]).toHaveTextContent("7/10");
     expect(p1cells[1]).toHaveTextContent("7/10");
-    expect(p1cells[2]).toHaveTextContent("7/10");
-    expect(p1cells[3]).toHaveTextContent("9/10");
+    expect(p1cells[2]).toHaveTextContent("9/10");
 
     const p2 = screen.getByTestId("history-scorecard-player-player2");
     expect(within(p2).getByText("4/10")).toBeInTheDocument();

@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Tooltip } from "@heroui/react";
+import { Button, Chip, ProgressBar, Tooltip } from "@heroui/react";
 import { ContextMetadata } from "@/features/shared/lib/types";
 
 interface ContextHealthWidgetProps {
@@ -41,17 +41,6 @@ function usageColor(ratio: number): "default" | "warning" | "danger" {
   return "default";
 }
 
-function usageFillClass(color: "default" | "warning" | "danger"): string {
-  switch (color) {
-    case "danger":
-      return "bg-danger";
-    case "warning":
-      return "bg-warning";
-    default:
-      return "bg-foreground/70";
-  }
-}
-
 export function ContextHealthWidget({
   contextMetadata,
   isBusy,
@@ -74,16 +63,15 @@ export function ContextHealthWidget({
   const memoryOff = !multi_turn_memory;
   const pct = Math.round(usage_ratio * 100);
   const color = usageColor(usage_ratio);
-  const fillWidth = pct === 0 ? "0%" : `${Math.max(pct, 4)}%`;
 
   return (
     <div className="flex h-full flex-col gap-1 rounded-lg border border-default-200/60 bg-default-50 px-3 py-1.5 text-[11px]">
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium text-default-700">Context</span>
         {memoryOff ? (
-          <span className="rounded bg-default-200 px-1.5 py-0.5 text-default-500">
+          <Chip size="sm" variant="soft" color="default">
             Memory off
-          </span>
+          </Chip>
         ) : (
           <Button
             size="sm"
@@ -103,19 +91,19 @@ export function ContextHealthWidget({
         </p>
       ) : (
         <>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-default-200/80">
-            <div
-              role="progressbar"
-              aria-label={`Context usage ${pct}%`}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={pct}
-              data-value={pct}
-              data-color={color}
-              className={`h-full rounded-full transition-[width] duration-200 ${usageFillClass(color)}`}
-              style={{ width: fillWidth }}
-            />
-          </div>
+          <ProgressBar
+            aria-label={`Context usage ${pct}%`}
+            value={pct}
+            color={color}
+            size="sm"
+            data-value={pct}
+            data-color={color}
+            className="w-full"
+          >
+            <ProgressBar.Track>
+              <ProgressBar.Fill />
+            </ProgressBar.Track>
+          </ProgressBar>
           <div className="flex justify-between gap-2 text-default-500">
             <Tooltip>
               <Tooltip.Trigger>

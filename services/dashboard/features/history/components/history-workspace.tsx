@@ -1,6 +1,14 @@
 "use client";
 
-import { Button, Spinner } from "@heroui/react";
+import {
+  Alert,
+  Button,
+  Chip,
+  Input,
+  Modal,
+  SearchField,
+  Spinner,
+} from "@heroui/react";
 import { useEffect, useState } from "react";
 
 import {
@@ -277,12 +285,15 @@ export function HistoryWorkspace({
           >
             Evaluations
             {queue.activeCount > 0 && (
-              <span
+              <Chip
+                size="sm"
+                variant="soft"
+                color="accent"
                 data-testid="history-eval-queue-badge"
-                className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-accent px-1.5 text-xs font-semibold text-accent-foreground"
+                className="ml-1.5"
               >
                 {queue.activeCount}
-              </span>
+              </Chip>
             )}
           </Button>
           {gameId && (
@@ -344,9 +355,9 @@ export function HistoryWorkspace({
 
         <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {error ? (
-            <div className="p-4 text-sm text-danger" role="alert">
+            <Alert status="danger" role="alert" className="m-4">
               {error}
-            </div>
+            </Alert>
           ) : !gameId ? (
             <div className="flex h-full items-center justify-center px-4 text-center text-sm text-default-500">
               Select a game to view its history.
@@ -366,15 +377,20 @@ export function HistoryWorkspace({
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               {/* Transcript usability toolbar: search + global expand/collapse. */}
               <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-default-200/60 px-4 py-2">
-                <input
-                  type="search"
-                  data-testid="history-search"
+                <SearchField
                   aria-label="Search events"
-                  placeholder="Search events…"
+                  className="min-w-0 flex-1"
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="min-w-0 flex-1 rounded-md border border-default-200/60 bg-default-50/40 px-3 py-1.5 text-sm text-foreground outline-none transition-colors placeholder:text-default-400 focus:border-primary/60 dark:bg-white/3"
-                />
+                  onChange={setSearchQuery}
+                >
+                  <Input
+                    type="search"
+                    data-testid="history-search"
+                    aria-label="Search events"
+                    placeholder="Search events…"
+                    className="min-w-0 flex-1 rounded-md border border-default-200/60 bg-default-50/40 px-3 py-1.5 text-sm text-foreground outline-none transition-colors placeholder:text-default-400 focus:border-primary/60 dark:bg-white/3"
+                  />
+                </SearchField>
                 <div className="flex items-center gap-1.5">
                   <Button
                     type="button"
@@ -492,57 +508,62 @@ export function HistoryWorkspace({
       )}
 
       {confirmDelete && deleteTargetId && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Confirm delete history"
-          data-testid="history-delete-dialog"
+        <Modal
+          isOpen
+          onOpenChange={(open) => {
+            if (!open) setConfirmDelete(false);
+          }}
         >
-          <div className="flex w-full max-w-sm flex-col gap-4 rounded-xl border border-default-200 bg-background p-5 shadow-2xl">
-            <div className="flex flex-col gap-1">
-              <h2 className="text-sm font-semibold text-foreground">
-                Delete history?
-              </h2>
-              <p className="text-sm text-default-500">
-                This permanently removes all recorded history (events and
-                snapshots) for{" "}
-                <span className="font-mono text-foreground">
-                  {deleteTargetId}
-                </span>
-                . This cannot be undone.
-              </p>
-            </div>
-            {deleteError && (
-              <div
-                role="alert"
-                className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
+          <Modal.Backdrop>
+            <Modal.Container size="sm">
+              <Modal.Dialog
+                aria-label="Confirm delete history"
+                data-testid="history-delete-dialog"
               >
-                {deleteError}
-              </div>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                isDisabled={isDeleting}
-                data-testid="history-delete-cancel"
-                onPress={() => setConfirmDelete(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="danger"
-                isDisabled={isDeleting}
-                data-testid="history-delete-confirm"
-                onPress={handleDelete}
-              >
-                {isDeleting ? <Spinner size="sm" /> : "Delete"}
-              </Button>
-            </div>
-          </div>
-        </div>
+                <Modal.Header>
+                  <Modal.Heading className="text-sm font-semibold text-foreground">
+                    Delete history?
+                  </Modal.Heading>
+                </Modal.Header>
+                <Modal.Body>
+                  <p className="text-sm text-default-500">
+                    This permanently removes all recorded history (events and
+                    snapshots) for{" "}
+                    <span className="font-mono text-foreground">
+                      {deleteTargetId}
+                    </span>
+                    . This cannot be undone.
+                  </p>
+                  {deleteError && (
+                    <Alert status="danger" role="alert" className="mt-3">
+                      {deleteError}
+                    </Alert>
+                  )}
+                </Modal.Body>
+                <Modal.Footer>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    isDisabled={isDeleting}
+                    data-testid="history-delete-cancel"
+                    onPress={() => setConfirmDelete(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="danger"
+                    isDisabled={isDeleting}
+                    data-testid="history-delete-confirm"
+                    onPress={handleDelete}
+                  >
+                    {isDeleting ? <Spinner size="sm" /> : "Delete"}
+                  </Button>
+                </Modal.Footer>
+              </Modal.Dialog>
+            </Modal.Container>
+          </Modal.Backdrop>
+        </Modal>
       )}
     </div>
   );

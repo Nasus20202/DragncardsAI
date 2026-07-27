@@ -31,12 +31,12 @@ a {
 }
 
 /* Mark clickable affordances with a pointer cursor (Tailwind v4 Preflight
-   does not set this on buttons). Disabled controls keep the default cursor. */
+   does not set this on buttons). Disabled controls keep the default cursor.
+   Hero UI's Checkbox/Radio/Switch render their own clickable label, so the
+   former `label:has(> input[type=…])` rules no longer match any markup. */
 button:not(:disabled):not([disabled]),
 [role="button"]:not([aria-disabled="true"]),
-summary,
-label:has(> input[type="radio"]),
-label:has(> input[type="checkbox"]) {
+summary {
   cursor: pointer;
 }
 

@@ -10,7 +10,10 @@ type MockChildrenProps = {
 
 type MockButtonProps = MockChildrenProps & {
   onPress?: () => void;
+  onClick?: React.MouseEventHandler<HTMLButtonElement>;
+  /** Legacy alias — the real component uses the `aria-label` DOM prop. */
   ariaLabel?: string;
+  "aria-label"?: string;
   className?: string;
   isDisabled?: boolean;
 };
@@ -41,15 +44,20 @@ vi.mock("@heroui/react", () => ({
   Button: ({
     children,
     onPress,
+    onClick,
     ariaLabel,
     className,
     isDisabled,
+    ...props
   }: MockButtonProps) => (
     <button
-      aria-label={ariaLabel}
+      aria-label={props["aria-label"] ?? ariaLabel}
       className={className}
       disabled={isDisabled}
-      onClick={onPress}
+      onClick={(event) => {
+        onClick?.(event);
+        onPress?.();
+      }}
     >
       {children}
     </button>
@@ -150,8 +158,11 @@ describe("McpSection", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("streamable-http")).toBeInTheDocument();
 
-    const deleteButton = screen.getByRole("button", { name: "Delete" });
-    expect(deleteButton).toBeInTheDocument();
+    // The action button carries `aria-label`, so that is its accessible name.
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete custom-mcp",
+    });
+    expect(deleteButton).toHaveTextContent("Delete");
     expect(deleteButton).toHaveClass("group-hover:opacity-100");
 
     fireEvent.click(deleteButton);

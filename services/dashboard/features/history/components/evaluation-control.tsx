@@ -1,6 +1,16 @@
 "use client";
 
-import { Button, Chip, Spinner } from "@heroui/react";
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Chip,
+  Input,
+  Radio,
+  RadioGroup,
+  Spinner,
+  TextField,
+} from "@heroui/react";
 import { useState } from "react";
 
 import {
@@ -135,50 +145,51 @@ export function EvaluationControl({
         </span>
       </div>
 
-      <fieldset className="flex flex-col gap-1" aria-label="Evaluation scope">
+      <div className="flex flex-col gap-1">
         <span className="text-xs font-semibold uppercase tracking-wide text-default-400">
           Scope
         </span>
-        <div className="flex flex-wrap gap-4">
-          <label className="flex items-center gap-1.5 text-sm">
-            <input
-              type="radio"
-              name="eval-scope"
-              value="move"
-              checked={scope === "move"}
-              disabled={disabled}
-              onChange={() => setScope("move")}
-            />
-            Move
-          </label>
-          <label className="flex items-center gap-1.5 text-sm">
-            <input
-              type="radio"
-              name="eval-scope"
-              value="round"
-              checked={scope === "round"}
-              disabled={disabled}
-              onChange={() => setScope("round")}
-            />
-            Round
-          </label>
-          <label className="flex items-center gap-1.5 text-sm">
-            <input
-              type="radio"
-              name="eval-scope"
-              value="game"
-              checked={scope === "game"}
-              disabled={disabled}
-              onChange={() => {
-                // A whole-game cascade grades the entire game; pin the target
-                // selection to the whole game so the request reads cleanly.
-                setScope("game");
-                setMode("whole_game");
-              }}
-            />
-            Whole game (cascade)
-          </label>
-        </div>
+        <RadioGroup
+          aria-label="Evaluation scope"
+          className="flex flex-row flex-wrap gap-4"
+          value={scope}
+          isDisabled={disabled}
+          onChange={(next) => {
+            if (next === "game") {
+              // A whole-game cascade grades the entire game; pin the target
+              // selection to the whole game so the request reads cleanly.
+              setScope("game");
+              setMode("whole_game");
+              return;
+            }
+            setScope(next as EvaluationScope);
+          }}
+        >
+          <Radio value="move">
+            <Radio.Content className="flex items-center gap-1.5 text-sm">
+              <Radio.Control>
+                <Radio.Indicator />
+              </Radio.Control>
+              <span>Move</span>
+            </Radio.Content>
+          </Radio>
+          <Radio value="round">
+            <Radio.Content className="flex items-center gap-1.5 text-sm">
+              <Radio.Control>
+                <Radio.Indicator />
+              </Radio.Control>
+              <span>Round</span>
+            </Radio.Content>
+          </Radio>
+          <Radio value="game">
+            <Radio.Content className="flex items-center gap-1.5 text-sm">
+              <Radio.Control>
+                <Radio.Indicator />
+              </Radio.Control>
+              <span>Whole game (cascade)</span>
+            </Radio.Content>
+          </Radio>
+        </RadioGroup>
         {scope !== "move" && (
           <p
             data-testid="eval-cascade-note"
@@ -189,93 +200,102 @@ export function EvaluationControl({
               : "Grades the round: every move in it, then per-player round roll-ups."}
           </p>
         )}
-      </fieldset>
+      </div>
 
-      <fieldset className="flex flex-col gap-2" aria-label="Evaluation targets">
+      <div className="flex flex-col gap-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-default-400">
           Targets
         </span>
-        <label className="flex items-center gap-1.5 text-sm">
-          <input
-            type="radio"
-            name="eval-mode"
-            value="selected"
-            checked={mode === "selected"}
-            disabled={disabled}
-            onChange={() => setMode("selected")}
-          />
-          <span>
-            Selected event
-            {selectedSeq !== null ? (
-              <Chip size="sm" variant="soft" color="default" className="ml-1.5">
-                #{selectedSeq}
-              </Chip>
-            ) : (
-              <span className="ml-1.5 text-xs text-default-400">
-                (none selected)
+        <RadioGroup
+          aria-label="Evaluation targets"
+          className="flex flex-col gap-2"
+          value={mode}
+          isDisabled={disabled}
+          onChange={(next) => setMode(next as SelectionMode)}
+        >
+          <Radio value="selected">
+            <Radio.Content className="flex items-center gap-1.5 text-sm">
+              <Radio.Control>
+                <Radio.Indicator />
+              </Radio.Control>
+              <span>
+                Selected event
+                {selectedSeq !== null ? (
+                  <Chip
+                    size="sm"
+                    variant="soft"
+                    color="default"
+                    className="ml-1.5"
+                  >
+                    #{selectedSeq}
+                  </Chip>
+                ) : (
+                  <span className="ml-1.5 text-xs text-default-400">
+                    (none selected)
+                  </span>
+                )}
               </span>
-            )}
-          </span>
-        </label>
-        <label className="flex items-center gap-1.5 text-sm">
-          <input
-            type="radio"
-            name="eval-mode"
-            value="range"
-            checked={mode === "range"}
-            disabled={disabled}
-            onChange={() => setMode("range")}
-          />
-          Seq range
-        </label>
-        {mode === "range" && (
-          <div className="flex items-center gap-2 pl-5">
-            <input
-              type="number"
-              aria-label="From seq"
-              data-testid="eval-from-seq"
-              className="w-20 rounded border border-default-200 bg-background px-2 py-1 text-sm text-foreground"
-              value={fromSeq}
-              disabled={disabled}
-              onChange={(event) => setFromSeq(event.target.value)}
-              placeholder="from"
-            />
-            <span className="text-xs text-default-400">to</span>
-            <input
-              type="number"
-              aria-label="To seq"
-              data-testid="eval-to-seq"
-              className="w-20 rounded border border-default-200 bg-background px-2 py-1 text-sm text-foreground"
-              value={toSeq}
-              disabled={disabled}
-              onChange={(event) => setToSeq(event.target.value)}
-              placeholder="to"
-            />
-          </div>
-        )}
-        <label className="flex items-center gap-1.5 text-sm">
-          <input
-            type="radio"
-            name="eval-mode"
-            value="whole_game"
-            checked={mode === "whole_game"}
-            disabled={disabled}
-            onChange={() => setMode("whole_game")}
-          />
-          Whole game
-        </label>
-      </fieldset>
+            </Radio.Content>
+          </Radio>
+          <Radio value="range">
+            <Radio.Content className="flex items-center gap-1.5 text-sm">
+              <Radio.Control>
+                <Radio.Indicator />
+              </Radio.Control>
+              <span>Seq range</span>
+            </Radio.Content>
+          </Radio>
+          {mode === "range" && (
+            <div className="flex items-center gap-2 pl-5">
+              <TextField aria-label="From seq" isDisabled={disabled}>
+                <Input
+                  type="number"
+                  aria-label="From seq"
+                  data-testid="eval-from-seq"
+                  className="w-20"
+                  value={fromSeq}
+                  onChange={(event) => setFromSeq(event.target.value)}
+                  placeholder="from"
+                />
+              </TextField>
+              <span className="text-xs text-default-400">to</span>
+              <TextField aria-label="To seq" isDisabled={disabled}>
+                <Input
+                  type="number"
+                  aria-label="To seq"
+                  data-testid="eval-to-seq"
+                  className="w-20"
+                  value={toSeq}
+                  onChange={(event) => setToSeq(event.target.value)}
+                  placeholder="to"
+                />
+              </TextField>
+            </div>
+          )}
+          <Radio value="whole_game">
+            <Radio.Content className="flex items-center gap-1.5 text-sm">
+              <Radio.Control>
+                <Radio.Indicator />
+              </Radio.Control>
+              <span>Whole game</span>
+            </Radio.Content>
+          </Radio>
+        </RadioGroup>
+      </div>
 
-      <label className="flex items-center gap-1.5 text-sm">
-        <input
-          type="checkbox"
-          data-testid="eval-force"
-          checked={force}
-          disabled={disabled}
-          onChange={(event) => setForce(event.target.checked)}
-        />
-        Re-evaluate even if a verdict already exists
-      </label>
+      <Checkbox
+        data-testid="eval-force"
+        isSelected={force}
+        isDisabled={disabled}
+        onChange={setForce}
+      >
+        <Checkbox.Content className="flex items-center gap-1.5 text-sm">
+          <Checkbox.Control>
+            <Checkbox.Indicator />
+          </Checkbox.Control>
+          <span>Re-evaluate even if a verdict already exists</span>
+        </Checkbox.Content>
+      </Checkbox>
 
       {judgeDraft && onJudgeDraftChange && (
         <JudgeConfigPanel
@@ -298,24 +318,16 @@ export function EvaluationControl({
       </Button>
 
       {error && (
-        <div
-          role="alert"
-          data-testid="eval-error"
-          className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
-        >
+        <Alert status="danger" role="alert" data-testid="eval-error">
           {error}
-        </div>
+        </Alert>
       )}
 
       {enqueued && (
-        <div
-          role="status"
-          data-testid="eval-enqueued"
-          className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-success"
-        >
+        <Alert status="success" role="status" data-testid="eval-enqueued">
           Added to the queue. Track its progress and cancel it from the
           Evaluations queue — you can close this panel.
-        </div>
+        </Alert>
       )}
     </div>
   );
