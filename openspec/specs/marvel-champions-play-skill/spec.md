@@ -118,10 +118,11 @@ The skill SHALL state that an action response always reports `success: true` and
 - **THEN** it SHALL state that the previous-step tool does not revert card moves, token changes, or exhaustion
 - **AND** it SHALL give inverse-action sequences for the reversible mistakes
 
-#### Scenario: Known-broken tool is documented
+#### Scenario: Returning a card to a deck distinguishes shuffling from placing
 - **WHEN** the skill describes returning a card to its deck
-- **THEN** it SHALL record that the shuffle-into-deck tool currently fails in game with a group-not-found error
-- **AND** it SHALL give a move-based workaround
+- **THEN** it SHALL direct the agent to the shuffle-into-deck tool for effects that say to shuffle the card in
+- **AND** it SHALL direct the agent to the move tool with a top-of-deck destination for effects that say to place the card on top without shuffling
+- **AND** it SHALL state that the shuffle-into-deck tool derives its destination from the card's own deck group and cannot be redirected
 
 ### Requirement: Skill provides an observable-driven turn procedure
 The skill SHALL define a repeatable turn procedure that begins by reading state, decides between hero and alter-ego form, sequences plays and basic powers, and ends by reporting rather than by advancing the phase. It SHALL provide prioritisation heuristics expressed in terms of values the agent can actually observe.

@@ -200,6 +200,55 @@ async def test_shuffle_into_deck_action(manager):
         await manager.delete_session(session.session_id)
 
 
+def _group_of_card(state, card_id):
+    """Return the group id currently holding card_id, or None."""
+    game = state.get("game", state)
+    for group_id, group in game["groupById"].items():
+        for stack_id in group["stackIds"]:
+            if card_id in game["stackById"][stack_id]["cardIds"]:
+                return group_id
+    return None
+
+
+@pytest.mark.asyncio
+async def test_shuffle_into_deck_moves_the_card_into_the_owner_deck(manager):
+    """SHUFFLE_INTO_DECK must actually move a real card from hand into its deck.
+
+    Regression test: the action used to pass "/cardById/<id>/deckGroupId" to VAR,
+    which DragnLang evaluates to the path list ["cardById", "<id>", "deckGroupId"]
+    rather than the value at that path. MOVE_CARD then failed with
+    "Group not found: cardById<id>deckGroupId" and the card never moved.
+    """
+    session = await manager.create_session("marvel-champions")
+    try:
+        # Spider-Man (Peter Parker) hero set - gives player1 a real deck and hand.
+        # Go through the manager so the load is polled to completion.
+        await manager.load_prebuilt_deck(
+            session.session_id, "fe0f49aa-d3b4-4604-a43c-eaa18bbe1601"
+        )
+        await session.execute_action(DrawCardAction(player_n="player1", count=5))
+
+        state = await session.get_state()
+        game = state.get("game", state)
+        hand_stacks = game["groupById"]["player1Hand"]["stackIds"]
+        assert hand_stacks, "expected a non-empty player1Hand after drawing"
+        card_id = game["stackById"][hand_stacks[0]]["cardIds"][0]
+        deck_group_id = game["cardById"][card_id]["deckGroupId"]
+        deck_size_before = len(game["groupById"][deck_group_id]["stackIds"])
+
+        await session.execute_action(
+            ShuffleIntoDeckAction(instance_id=card_id, player_n="player1")
+        )
+        assert session.get_action_error() is None
+
+        state = await session.get_state()
+        game = state.get("game", state)
+        assert _group_of_card(state, card_id) == deck_group_id
+        assert len(game["groupById"][deck_group_id]["stackIds"]) == deck_size_before + 1
+    finally:
+        await manager.delete_session(session.session_id)
+
+
 @pytest.mark.asyncio
 async def test_zero_tokens_action(manager):
     """ZERO_TOKENS action should execute and return a valid state."""

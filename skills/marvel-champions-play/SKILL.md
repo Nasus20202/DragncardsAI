@@ -112,9 +112,10 @@ end-of-phase step does that for everyone at once.
 9. **`mulligan_draw_hand` draws *up to* hand size and never discards.** If your hand is
    already at or above hand size it does nothing. Discard the cards you want to mulligan
    yourself first.
-10. **`shuffle_into_deck` is currently broken.** It returns
-    `error: "... Group not found: cardById<id>deckGroupId ..."` and does nothing. Use
-    `move_card` to `playerNDeck` instead.
+10. **`shuffle_into_deck` picks its own destination, but still needs `player_n`.** It sends
+    the card to the deck named by the card's own `deckGroupId` and shuffles that deck — you
+    cannot redirect it. Pass `player_n` for your own cards or deck automation fails with
+    `$PLAYER_N is undefined`. To place on top *without* shuffling, use `move_card`.
 
 ---
 

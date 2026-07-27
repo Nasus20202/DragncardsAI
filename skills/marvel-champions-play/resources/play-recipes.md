@@ -248,11 +248,21 @@ Discard until `len(zones["playerNHand"])` equals `players.<you>.handSize`.
 
 ## Returning a card to your deck
 
-`shuffle_into_deck` is broken (see `resources/tool-reference.md`). Use:
+If the effect says **shuffle it into your deck**:
+
+```
+shuffle_into_deck(<the card>, player_n="playerN")
+```
+
+It finds the card's own deck, moves it there facedown, and shuffles that deck. You do not
+pass a destination group — but you do pass `player_n`, or deck-insertion automation fails
+with `Variable $PLAYER_N is undefined`.
+
+If the effect says **put it on top of your deck** — no shuffle — use:
 
 ```
 move_card(<the card>, "playerNDeck", dest_stack_index=0, player_n="playerN")
 ```
 
-The card is turned facedown automatically. This places it on top rather than shuffling it
-in — note the difference in your report if the effect required a shuffle.
+Either way the card is turned facedown automatically. Pick the one the card text asks for;
+they are not interchangeable.

@@ -70,9 +70,11 @@ intermediate states stay coherent.
 ## Things you cannot fix yourself
 
 - **Drew a card you should not have.** You can `move_card` it from `playerNHand` back to
-  `playerNDeck` (it turns facedown on top), but the original card order is gone. Say so.
-- **Anything requiring a shuffle.** There is no player-facing shuffle tool and
-  `shuffle_into_deck` is broken. Report it.
+  `playerNDeck` (it turns facedown on top), or `shuffle_into_deck` it to put it back and
+  randomise the deck. Either way the original card order is gone. Say so.
+- **Shuffling a group that is not a card's own deck.** `shuffle_into_deck` only shuffles
+  the deck the card belongs to; there is no free-standing "shuffle this group" tool.
+  Report it.
 - **A card that left the game or was mangled by an aborted plugin action list.** Report it
   and stop; do not improvise with `raw_action`.
 
@@ -84,7 +86,7 @@ tools you do not have.
 
 | Symptom | Likely cause |
 | --- | --- |
-| `Group not found: cardById<id><field>` | A tool built a malformed DragnLang path. Known for `shuffle_into_deck`. |
+| `Group not found: cardById<id><field>` | A tool built a malformed DragnLang path — a `/a/b/c` literal evaluates to a *path list*, not the value at that path. Report it; you cannot work around it. |
 | Action returns `error: null` but state did not change | You targeted a `HIDDEN` entry's inherited `instanceId`, which points at the wrong card — or at a card the action is a no-op for. |
 | Card vanished from the zone listing after a move | You moved it onto another card's stack (`dest_card_index` > 0). It is now an attachment; check the host's `stackSize`. |
 | Card came back facedown | You moved it into a `*Deck` group; those set `currentSide: "B"` on entry. |

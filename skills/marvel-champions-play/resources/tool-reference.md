@@ -121,18 +121,30 @@ Low-level `["SET", "/cardById/<id>/<path>", value]`. Prefer `flip_card`, `exhaus
 `ready_card`, and `modify_tokens` — they exist so you do not need this. Legitimate use is
 narrow, e.g. forcing `currentSide` to a specific value rather than cycling.
 
-### `shuffle_into_deck(session_id, instance_id)` — **BROKEN**
+### `shuffle_into_deck(session_id, instance_id, player_n=None)`
 
-Currently fails. It builds a malformed DragnLang path and returns, verbatim:
+Reads the card's own `deckGroupId`, moves the card there, then shuffles that group:
 
 ```
-Error in Marvel Champions triggered by [player1/player1]: Group not found:
-cardById<instanceId>deckGroupId Trace: ["Shuffle card <instanceId> into its deck", "index 1"]
+["VAR", "$DECK_GROUP_ID", "$GAME.cardById.<id>.deckGroupId"]
+["MOVE_CARD", "<id>", "$DECK_GROUP_ID", 0]
+["SHUFFLE_GROUP", "$DECK_GROUP_ID"]
 ```
 
-The card does not move. **Workaround:** `move_card(instance_id, "playerNDeck", dest_stack_index=0)`
-puts it facedown on top of your deck. That is not a shuffle — if the effect genuinely
-requires shuffling, say so in your report and let the coordinator or human handle it.
+You do not name the destination — the card knows its own deck, so a player card returns to
+`playerNDeck` and an encounter card to `sharedEncounterDeck`. The card is turned facedown
+on entry, and the deck's order is genuinely randomised afterwards.
+
+**Always pass `player_n` for your own cards.** Deck-insertion automation references
+`$PLAYER_N`; without the context the action fails with
+`Failed to insert new stack at index 0 in group playerNDeck. Error: : Variable $PLAYER_N is undefined`.
+
+This is the tool for any effect that says "shuffle it into your deck". Use `move_card` to
+`playerNDeck` only when the effect says "put it on top of your deck" — that places without
+shuffling.
+
+The card must have a `deckGroupId`; a card that never came from a deck has none, and the
+action will fail rather than guess.
 
 ---
 
