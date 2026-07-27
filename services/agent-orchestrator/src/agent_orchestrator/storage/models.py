@@ -90,6 +90,11 @@ class AgentSession(Base):
     enabled_mcps: Mapped[list[SessionEnabledMcp]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
+    player_configs: Mapped[list[SessionPlayerConfig]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="SessionPlayerConfig.player_id",
+    )
     jobs: Mapped[list[Job]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
@@ -142,6 +147,36 @@ class SessionEnabledSkill(Base):
 
     session: Mapped[AgentSession] = relationship(back_populates="enabled_skills")
     skill: Mapped[SkillRegistry] = relationship()
+
+
+class SessionPlayerConfig(Base):
+    """Per-seat agent configuration for an orchestrated multi-player game.
+
+    One row per player seat (``player1``..``playerN``) on the orchestrating
+    session. Nullable columns mean *inherit from the orchestrator session*, so a
+    user comparing two configurations only has to state the axis that differs.
+    """
+
+    __tablename__ = "session_player_configs"
+
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    player_id: Mapped[str] = mapped_column(String(16), primary_key=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    gateway_options: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    provider_options: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # ``None`` inherits the orchestrator's enabled skills; a list (including the
+    # empty list) overrides them.
+    skills_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime(), default=utc_now, onupdate=utc_now
+    )
+
+    session: Mapped[AgentSession] = relationship(back_populates="player_configs")
 
 
 class McpRegistry(Base):

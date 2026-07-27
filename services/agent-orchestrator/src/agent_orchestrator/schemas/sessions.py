@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from agent_orchestrator.schemas.common import PageInfo
 from agent_orchestrator.schemas.jobs import JobSummary, SessionToolResponse
+from agent_orchestrator.schemas.players import PlayerConfigResponse
 
 # A supplied restored conversation context is replayed verbatim into the next
 # prompt's message list and sent to the LLM, so it is validated to the same
@@ -113,6 +114,7 @@ class SessionSummary(BaseModel):
     )
     skills: list[SkillAssignmentResponse] = Field(default_factory=list)
     mcps: list[McpAssignmentResponse] = Field(default_factory=list)
+    players: list[PlayerConfigResponse] = Field(default_factory=list)
     recent_job: JobSummary | None = None
 
 

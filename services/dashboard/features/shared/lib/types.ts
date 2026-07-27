@@ -111,7 +111,38 @@ export interface SessionSummary {
   model_config: ModelConfigResponse | null;
   skills: SkillAssignmentResponse[];
   mcps: McpAssignmentResponse[];
+  /** Per-seat roster; absent on sessions that are not running an orchestrated game. */
+  players?: PlayerConfigResponse[];
   recent_job: JobSummary | null;
+}
+
+/**
+ * One seat's agent configuration in an orchestrated multi-player game. Null
+ * `provider_id` / `model_name` / `skills` mean the seat inherits the session's
+ * own configuration, so two seats can differ on a single axis.
+ */
+export interface PlayerConfigResponse {
+  player_id: string;
+  display_name: string | null;
+  provider_id: string | null;
+  model_name: string | null;
+  reasoning: { effort?: string; max_tokens?: number } | null;
+  skills: string[] | null;
+  gateway_options: Record<string, JsonValue>;
+  provider_options: Record<string, JsonValue>;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Request body for `PUT /sessions/{id}/players/{player_id}`. */
+export interface PlayerConfigRequest {
+  display_name?: string;
+  provider_id?: string;
+  model_name?: string;
+  reasoning?: { enabled: boolean; effort?: string; max_tokens?: number };
+  skills?: string[];
+  gateway_options?: Record<string, JsonValue>;
+  provider_options?: Record<string, JsonValue>;
 }
 
 export interface SessionDetail extends SessionSummary {
