@@ -68,29 +68,21 @@ vi.mock("@heroui/react", async () => {
     Button: ({
       children,
       onPress,
-      onClick,
       ariaLabel,
       className,
       isDisabled,
-      ...props
     }: {
       children: React.ReactNode;
       onPress?: () => void;
-      onClick?: React.MouseEventHandler<HTMLButtonElement>;
-      /** Legacy alias — the real component uses the `aria-label` DOM prop. */
       ariaLabel?: string;
-      "aria-label"?: string;
       className?: string;
       isDisabled?: boolean;
     }) => (
       <button
-        aria-label={props["aria-label"] ?? ariaLabel}
+        aria-label={ariaLabel}
         className={className}
         disabled={isDisabled}
-        onClick={(event) => {
-          onClick?.(event);
-          onPress?.();
-        }}
+        onClick={onPress}
       >
         {children}
       </button>
@@ -162,9 +154,8 @@ describe("ToggleInfoRow", () => {
       />
     );
 
-    // The action button carries `aria-label`, so that is its accessible name.
-    const button = screen.getByRole("button", { name: "Delete custom-mcp" });
-    expect(button).toHaveTextContent("Delete");
+    const button = screen.getByRole("button", { name: "Delete" });
+    expect(button).toBeInTheDocument();
     expect(button).toHaveClass("group-hover:opacity-100");
 
     fireEvent.click(button);

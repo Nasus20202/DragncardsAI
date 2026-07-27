@@ -86,14 +86,15 @@ describe("EvaluationControl judge config", () => {
 
     render(<ControlHarness initial={createDefaultJudgeDraft(CONFIG)} />);
 
-    // Pick provider anthropic -> model clamps to claude-x. The Hero UI Select
-    // opens a listbox on click; picking the option commits the value.
-    fireEvent.click(screen.getByTestId("judge-provider"));
-    fireEvent.click(await screen.findByRole("option", { name: "anthropic" }));
+    // Pick provider anthropic -> model clamps to claude-x.
+    fireEvent.change(screen.getByTestId("judge-provider"), {
+      target: { value: "anthropic" },
+    });
     // Enable reasoning + effort high.
-    fireEvent.click(screen.getByRole("checkbox", { name: /reasoning/i }));
-    fireEvent.click(screen.getByTestId("judge-reasoning-effort"));
-    fireEvent.click(await screen.findByRole("option", { name: "high" }));
+    fireEvent.click(screen.getByTestId("judge-reasoning-enabled"));
+    fireEvent.change(screen.getByTestId("judge-reasoning-effort"), {
+      target: { value: "high" },
+    });
     fireEvent.change(screen.getByTestId("judge-reasoning-max-tokens"), {
       target: { value: "2048" },
     });
@@ -101,7 +102,7 @@ describe("EvaluationControl judge config", () => {
     fireEvent.change(screen.getByTestId("judge-prompt"), {
       target: { value: "be strict" },
     });
-    fireEvent.click(screen.getByRole("checkbox", { name: "core-rules" }));
+    fireEvent.click(screen.getByTestId("judge-skill-core-rules"));
 
     fireEvent.click(screen.getByTestId("eval-submit"));
 

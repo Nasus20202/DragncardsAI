@@ -1,7 +1,5 @@
 "use client";
 
-import { Button } from "@heroui/react";
-
 import { GameSession } from "@/features/shared/lib/types";
 
 interface GamesSessionListProps {
@@ -33,25 +31,23 @@ export function GamesSessionList({
       {sortedGames.map((game) => {
         const active = game.id === selectedGameId;
         return (
-          <Button
+          <button
             key={game.id}
             data-testid={`game-session-${game.id}`}
             type="button"
-            variant="ghost"
-            fullWidth
             className={[
-              "h-auto justify-start rounded-none px-3 py-2.5 text-left transition-colors",
+              "w-full text-left transition-colors px-3 py-2.5",
               active
                 ? "bg-default-300 text-foreground font-medium"
                 : "text-default-600 hover:bg-default-100/60 hover:text-foreground",
             ].join(" ")}
-            onPress={() => onSelect(game.id)}
+            onClick={() => onSelect(game.id)}
           >
             <div className="flex flex-col items-start">
               <span className="font-bold text-sm">{game.room_slug}</span>
               <span className="text-xs text-default-500">{game.plugin}</span>
             </div>
-          </Button>
+          </button>
         );
       })}
     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Chip, Table } from "@heroui/react";
+import { Button, Chip } from "@heroui/react";
 import { useMemo } from "react";
 
 import { RightDrawer } from "@/features/shared/components/right-drawer";
@@ -87,44 +87,45 @@ export function HistoryScorecard({
             Evaluate panel to score each player.
           </div>
         ) : (
-          <Table aria-label="Player scorecard" className="w-full text-sm">
-            <Table.Content>
-              <Table.Header>
-                <Table.Column isRowHeader>Player</Table.Column>
-                <Table.Column>Move</Table.Column>
-                <Table.Column>Round</Table.Column>
-                <Table.Column>Game</Table.Column>
-              </Table.Header>
-              <Table.Body>
-                {rows.map((row) => (
-                  <Table.Row
-                    key={row.player}
-                    data-testid={`history-scorecard-player-${row.player}`}
-                  >
-                    <Table.Cell>
-                      <Chip
-                        size="sm"
-                        variant="soft"
-                        color="default"
-                        className="bg-secondary/15 text-secondary"
-                      >
-                        {row.player}
-                      </Chip>
-                    </Table.Cell>
-                    <Table.Cell>
-                      <ScoreCell level={row.move} />
-                    </Table.Cell>
-                    <Table.Cell>
-                      <ScoreCell level={row.round} />
-                    </Table.Cell>
-                    <Table.Cell>
-                      <ScoreCell level={row.game} />
-                    </Table.Cell>
-                  </Table.Row>
-                ))}
-              </Table.Body>
-            </Table.Content>
-          </Table>
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="text-left text-xs font-semibold uppercase tracking-wide text-default-400">
+                <th className="py-2 pr-3">Player</th>
+                <th className="py-2 pr-3">Move</th>
+                <th className="py-2 pr-3">Round</th>
+                <th className="py-2">Game</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr
+                  key={row.player}
+                  data-testid={`history-scorecard-player-${row.player}`}
+                  className="border-t border-default-200/60"
+                >
+                  <td className="py-2 pr-3">
+                    <Chip
+                      size="sm"
+                      variant="soft"
+                      color="default"
+                      className="bg-secondary/15 text-secondary"
+                    >
+                      {row.player}
+                    </Chip>
+                  </td>
+                  <td className="py-2 pr-3">
+                    <ScoreCell level={row.move} />
+                  </td>
+                  <td className="py-2 pr-3">
+                    <ScoreCell level={row.round} />
+                  </td>
+                  <td className="py-2">
+                    <ScoreCell level={row.game} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </RightDrawer>

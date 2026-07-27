@@ -46,63 +46,6 @@ export function getApi() {
 
 vi.mock("@heroui/react", () => ({
   Spinner: () => <div>Loading spinner</div>,
-  Alert: ({
-    children,
-    className,
-    role,
-    "data-testid": dataTestId,
-  }: {
-    children?: React.ReactNode;
-    className?: string;
-    role?: string;
-    "data-testid"?: string;
-  }) => (
-    <div className={className} data-testid={dataTestId} role={role}>
-      {children}
-    </div>
-  ),
-  Card: ({
-    children,
-    className,
-  }: {
-    children?: React.ReactNode;
-    className?: string;
-  }) => <div className={className}>{children}</div>,
-  // Used by the (unmocked) SubagentList rendered inside PlayWorkspace.
-  Button: ({
-    children,
-    onPress,
-    className,
-    isDisabled,
-    "aria-label": ariaLabel,
-  }: {
-    children?: React.ReactNode;
-    onPress?: () => void;
-    className?: string;
-    isDisabled?: boolean;
-    "aria-label"?: string;
-  }) => (
-    <button
-      aria-label={ariaLabel}
-      className={className}
-      disabled={isDisabled}
-      type="button"
-      onClick={onPress}
-    >
-      {children}
-    </button>
-  ),
-  Tooltip: Object.assign(
-    ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-    {
-      Trigger: ({ children }: { children?: React.ReactNode }) => (
-        <>{children}</>
-      ),
-      Content: ({ children }: { children?: React.ReactNode }) => (
-        <>{children}</>
-      ),
-    }
-  ),
 }));
 
 vi.mock("@/features/play/components/play-session-list", () => ({

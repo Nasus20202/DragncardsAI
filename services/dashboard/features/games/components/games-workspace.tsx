@@ -1,7 +1,5 @@
 "use client";
 
-import { Alert, Spinner } from "@heroui/react";
-
 import { GamesSessionList } from "@/features/games/components/games-session-list";
 import { DragnCardsIframe } from "@/features/games/components/dragncards-iframe";
 import { useGames } from "@/features/games/lib/use-games";
@@ -12,8 +10,7 @@ export function GamesWorkspace() {
 
   if (isLoading) {
     return (
-      <div className="flex h-full items-center justify-center gap-3">
-        <Spinner size="sm" />
+      <div className="flex h-full items-center justify-center">
         <span className="text-sm text-default-500">Loading games...</span>
       </div>
     );
@@ -21,10 +18,8 @@ export function GamesWorkspace() {
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Alert status="danger" role="alert">
-          {error}
-        </Alert>
+      <div className="flex h-full items-center justify-center text-sm text-danger">
+        {error}
       </div>
     );
   }

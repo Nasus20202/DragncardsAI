@@ -448,12 +448,11 @@ export function PlayConfigPanel({
 
   return (
     <>
-      <Button
+      <button
         type="button"
         aria-label="Close settings overlay"
-        variant="ghost"
-        className="fixed inset-0 z-20 h-auto min-h-0 rounded-none bg-black/40 p-0 md:hidden"
-        onPress={onClose}
+        className="fixed inset-0 z-20 bg-black/40 md:hidden"
+        onClick={onClose}
       />
       <aside className="fixed inset-y-0 right-0 z-30 flex w-full max-w-sm flex-col border-l border-default-200/60 bg-background shadow-2xl md:static md:z-auto md:w-96 md:max-w-none md:shrink-0 md:shadow-none">
         {/* Header */}

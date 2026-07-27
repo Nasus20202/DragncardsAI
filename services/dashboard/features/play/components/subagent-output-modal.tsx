@@ -1,6 +1,5 @@
 "use client";
 
-import { Button, Modal, Spinner } from "@heroui/react";
 import { useEffect, useRef, useState } from "react";
 import { JobEventResponse } from "@/features/shared/lib/types";
 import { getJobEvents } from "@/features/play/lib/client-api";
@@ -86,70 +85,80 @@ export function SubagentOutputModal({
   const hasOutput = aggEvents.some((e) => e.kind === "model_output");
 
   return (
-    <Modal
-      isOpen
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-        }
-      }}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Subagent output"
+      onClick={onClose}
     >
-      <Modal.Backdrop>
-        <Modal.Container placement="center">
-          <Modal.Dialog
-            aria-label="Subagent output"
-            className="flex h-[80vh] w-full max-w-2xl flex-col overflow-hidden"
-          >
-            <Modal.Header className="flex h-10 shrink-0 items-center justify-between border-b border-default-200/60 px-4">
-              <div className="flex items-center gap-2">
-                {!done && (
-                  <Spinner
-                    size="sm"
-                    aria-hidden="true"
-                    className="h-3 w-3 shrink-0 text-success-500"
-                  />
-                )}
-                <span className="text-xs font-semibold text-default-500">
-                  {name}
-                </span>
-              </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                aria-label="Close subagent output"
-                className="h-auto min-h-0 rounded bg-transparent px-2 py-1 text-xs text-default-400 hover:bg-default-100 hover:text-foreground"
-                onPress={onClose}
+      <div
+        className="relative flex h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-default-200 bg-background shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex h-10 shrink-0 items-center justify-between border-b border-default-200/60 px-4">
+          <div className="flex items-center gap-2">
+            {!done && (
+              <svg
+                className="h-3 w-3 shrink-0 animate-spin text-success-500"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
               >
-                ✕
-              </Button>
-            </Modal.Header>
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                />
+              </svg>
+            )}
+            <span className="text-xs font-semibold text-default-500">
+              {name}
+            </span>
+          </div>
+          <button
+            type="button"
+            aria-label="Close subagent output"
+            className="rounded px-2 py-1 text-xs text-default-400 hover:bg-default-100 hover:text-foreground"
+            onClick={onClose}
+          >
+            ✕
+          </button>
+        </div>
 
-            {/* Transcript-style events */}
-            <Modal.Body className="min-h-0 flex-1 overflow-y-auto">
-              <div className="mx-auto w-full max-w-3xl px-4 py-6">
-                {aggEvents.length === 0 ? (
-                  <p className="text-xs text-default-400">
-                    {done ? "No output." : "Waiting for output…"}
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {aggEvents.map((agg, i) => (
-                      <AggEventRow
-                        key={i}
-                        agg={agg}
-                        isStreaming={!done}
-                        hasOutput={hasOutput}
-                        isLast={i === aggEvents.length - 1}
-                      />
-                    ))}
-                  </div>
-                )}
-                <div ref={bottomRef} />
+        {/* Transcript-style events */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-3xl px-4 py-6">
+            {aggEvents.length === 0 ? (
+              <p className="text-xs text-default-400">
+                {done ? "No output." : "Waiting for output…"}
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {aggEvents.map((agg, i) => (
+                  <AggEventRow
+                    key={i}
+                    agg={agg}
+                    isStreaming={!done}
+                    hasOutput={hasOutput}
+                    isLast={i === aggEvents.length - 1}
+                  />
+                ))}
               </div>
-            </Modal.Body>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
-    </Modal>
+            )}
+            <div ref={bottomRef} />
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

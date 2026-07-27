@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Card, Chip } from "@heroui/react";
+import { Chip } from "@heroui/react";
 import {
   Fragment,
   useCallback,
@@ -116,63 +116,63 @@ function CollapsibleField({
   };
 
   const toolbarBtn =
-    "h-auto rounded bg-transparent px-1.5 py-0.5 text-xs text-default-400 transition-colors hover:bg-default-100 hover:text-foreground";
+    "rounded px-1.5 py-0.5 text-xs text-default-400 transition-colors hover:bg-default-100 hover:text-foreground";
 
   return (
     <div className="flex flex-col gap-1">
-      <Button
+      <button
         type="button"
-        variant="ghost"
-        size="sm"
         data-testid={testId}
         aria-expanded={open}
-        onPress={() => setOpen((p) => !p)}
-        onClick={stop}
-        className="flex h-auto items-center gap-1.5 self-start bg-transparent py-1 text-xs font-semibold uppercase tracking-wide text-default-400 transition-colors hover:text-foreground"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((p) => !p);
+        }}
+        className="flex items-center gap-1.5 self-start py-1 text-xs font-semibold uppercase tracking-wide text-default-400 transition-colors hover:text-foreground"
       >
         <span aria-hidden="true">{open ? "▾" : "▸"}</span>
         {label}
-      </Button>
+      </button>
       {open && (
-        <Card className="overflow-hidden p-0">
+        <div className="overflow-hidden rounded-lg border border-default-200/60">
           <div className="flex items-center gap-0.5 border-b border-default-200/60 bg-default-100/70 px-1.5 py-1 dark:bg-white/5">
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="sm"
               data-testid={testId ? `${testId}-copy` : undefined}
-              onPress={copy}
-              onClick={stop}
+              onClick={(e) => {
+                stop(e);
+                copy();
+              }}
               className={toolbarBtn}
             >
               {copied ? "✓ Copied" : "⧉ Copy"}
-            </Button>
+            </button>
             <span
               aria-hidden="true"
               className="mx-0.5 h-3.5 w-px bg-default-300/60"
             />
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="sm"
               data-testid={testId ? `${testId}-top` : undefined}
-              onPress={() => scrollPreTo(0)}
-              onClick={stop}
+              onClick={(e) => {
+                stop(e);
+                scrollPreTo(0);
+              }}
               className={toolbarBtn}
             >
               ↑ Top
-            </Button>
-            <Button
+            </button>
+            <button
               type="button"
-              variant="ghost"
-              size="sm"
               data-testid={testId ? `${testId}-bottom` : undefined}
-              onPress={() => scrollPreTo(preRef.current?.scrollHeight ?? 0)}
-              onClick={stop}
+              onClick={(e) => {
+                stop(e);
+                scrollPreTo(preRef.current?.scrollHeight ?? 0);
+              }}
               className={toolbarBtn}
             >
               ↓ Bottom
-            </Button>
+            </button>
           </div>
           <pre
             ref={preRef}
@@ -181,7 +181,7 @@ function CollapsibleField({
           >
             {value}
           </pre>
-        </Card>
+        </div>
       )}
     </div>
   );
@@ -224,50 +224,46 @@ function AgentBody({ event }: { event: HistoryEvent }) {
       />
       {hasConversation && (
         <div className="flex flex-col gap-2">
-          <Button
+          <button
             type="button"
-            variant="ghost"
-            size="sm"
             data-testid={`history-conversation-toggle-${event.seq}`}
             aria-expanded={showConversation}
-            onPress={() => setShowConversation((p) => !p)}
-            onClick={(e) => e.stopPropagation()}
-            className="flex h-auto items-center gap-1.5 self-start bg-transparent py-1 text-xs font-semibold uppercase tracking-wide text-default-400 transition-colors hover:text-foreground hover:underline"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowConversation((p) => !p);
+            }}
+            className="flex items-center gap-1.5 self-start py-1 text-xs font-semibold uppercase tracking-wide text-default-400 transition-colors hover:text-foreground hover:underline"
           >
             <span aria-hidden="true">{showConversation ? "▾" : "▸"}</span>
             Conversation
             <span className="font-normal lowercase tracking-normal text-default-400">
               ({messageCount} message{messageCount === 1 ? "" : "s"})
             </span>
-          </Button>
+          </button>
           {showConversation && (
-            <Card
-              className="overflow-hidden p-0"
+            <div
+              className="overflow-hidden rounded-lg border border-default-200/60"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center gap-0.5 border-b border-default-200/60 bg-default-100/70 px-1.5 py-1 dark:bg-white/5">
-                <Button
+                <button
                   type="button"
-                  variant="ghost"
-                  size="sm"
                   data-testid={`history-conversation-top-${event.seq}`}
-                  onPress={() => scrollConvoTo(0)}
-                  className="h-auto rounded bg-transparent px-1.5 py-0.5 text-xs text-default-400 transition-colors hover:bg-default-100 hover:text-foreground"
+                  onClick={() => scrollConvoTo(0)}
+                  className="rounded px-1.5 py-0.5 text-xs text-default-400 transition-colors hover:bg-default-100 hover:text-foreground"
                 >
                   ↑ Top
-                </Button>
-                <Button
+                </button>
+                <button
                   type="button"
-                  variant="ghost"
-                  size="sm"
                   data-testid={`history-conversation-bottom-${event.seq}`}
-                  onPress={() =>
+                  onClick={() =>
                     scrollConvoTo(convoRef.current?.scrollHeight ?? 0)
                   }
-                  className="h-auto rounded bg-transparent px-1.5 py-0.5 text-xs text-default-400 transition-colors hover:bg-default-100 hover:text-foreground"
+                  className="rounded px-1.5 py-0.5 text-xs text-default-400 transition-colors hover:bg-default-100 hover:text-foreground"
                 >
                   ↓ Bottom
-                </Button>
+                </button>
               </div>
               <div
                 ref={convoRef}
@@ -276,7 +272,7 @@ function AgentBody({ event }: { event: HistoryEvent }) {
               >
                 <ConversationTranscript context={context} />
               </div>
-            </Card>
+            </div>
           )}
         </div>
       )}
@@ -362,18 +358,16 @@ function VerdictSubtree({
 
   return (
     <div className="ml-3 mt-2 border-l border-default-200/60 pl-3">
-      <Button
+      <button
         type="button"
-        variant="ghost"
-        size="sm"
         data-testid={`history-evals-toggle-${graded.seq}`}
         aria-expanded={open}
-        onPress={onToggle}
-        className="flex h-auto items-center gap-1.5 bg-transparent px-0 py-1 text-xs font-medium text-success hover:underline"
+        onClick={onToggle}
+        className="flex items-center gap-1.5 py-1 text-xs font-medium text-success hover:underline"
       >
         <span aria-hidden="true">{open ? "▾" : "▸"}</span>
         {verdicts.length} evaluation{verdicts.length > 1 ? "s" : ""}
-      </Button>
+      </button>
 
       {open && (
         <ul
@@ -415,22 +409,20 @@ function VerdictSubtree({
                 : null;
             return (
               <li key={verdict.event_id ?? verdict.seq}>
-                <Button
+                <button
                   type="button"
-                  variant="ghost"
-                  size="sm"
                   data-testid={`history-eval-${verdict.seq}`}
                   aria-current={
                     selectedSeq === verdict.seq ? "true" : undefined
                   }
                   aria-expanded={vOpen}
-                  onPress={() => {
+                  onClick={() => {
                     onSelect(verdict.seq);
                     toggleVerdict(verdict.seq);
                   }}
                   data-level={level}
                   className={[
-                    "flex h-auto w-full flex-col items-stretch gap-0.5 rounded-md border px-2 py-1.5 text-left transition-colors",
+                    "flex w-full flex-col gap-0.5 rounded-md border px-2 py-1.5 text-left transition-colors",
                     isRollup ? "ml-3" : "",
                     vOpen
                       ? "border-success/60 bg-success/10"
@@ -483,7 +475,7 @@ function VerdictSubtree({
                       {rationale}
                     </span>
                   )}
-                </Button>
+                </button>
                 {vOpen && (
                   <div
                     data-testid={`history-eval-detail-${verdict.seq}`}
@@ -637,7 +629,7 @@ function TranscriptEvent({
 
   return (
     <div className="flex flex-col">
-      <Card
+      <div
         role="button"
         tabIndex={0}
         data-testid={`history-event-${event.seq}`}
@@ -680,52 +672,42 @@ function TranscriptEvent({
             </Chip>
           )}
           {latestScore && (
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="sm"
               data-testid={`history-event-eval-indicator-${event.seq}`}
-              onPress={() => {
+              title="View evaluation"
+              onClick={(e) => {
+                e.stopPropagation();
                 onSelect(event.seq);
                 revealEvals();
               }}
-              onClick={(e) => e.stopPropagation()}
-              className="h-auto rounded-full bg-transparent p-0"
+              className="rounded-full"
             >
-              {/* Hero UI's Button props do not accept `title`; the tooltip
-                  lives on the score chip it wraps. */}
-              <Chip
-                size="sm"
-                variant="primary"
-                color="success"
-                title="View evaluation"
-              >
+              <Chip size="sm" variant="primary" color="success">
                 {latestScore}
               </Chip>
-            </Button>
+            </button>
           )}
           <span className="ml-auto text-xs text-default-400">
             {hhmmss(event.occurred_at)}
           </span>
           <div className="relative" ref={actionsRef}>
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="sm"
               data-testid={`history-event-actions-toggle-${event.seq}`}
               aria-expanded={showActions}
               aria-haspopup="menu"
-              onPress={() => {
+              onClick={(e) => {
+                e.stopPropagation();
                 onSelect(event.seq);
                 setShowActions((p) => !p);
               }}
-              onClick={(e) => e.stopPropagation()}
-              className="h-auto rounded-md border border-default-200/60 bg-transparent px-2 py-0.5 text-xs text-default-500 transition-colors hover:bg-default-100 hover:text-foreground"
+              className="rounded-md border border-default-200/60 px-2 py-0.5 text-xs text-default-500 transition-colors hover:bg-default-100 hover:text-foreground"
             >
               Actions {showActions ? "▾" : "▸"}
-            </Button>
+            </button>
             {showActions && (
-              <Card
+              <div
                 role="menu"
                 data-testid={`history-event-actions-${event.seq}`}
                 onClick={(e) => e.stopPropagation()}
@@ -740,7 +722,7 @@ function TranscriptEvent({
                   isOpen={board.isOpen}
                   onOpen={board.onOpen}
                 />
-              </Card>
+              </div>
             )}
           </div>
         </div>
@@ -750,24 +732,22 @@ function TranscriptEvent({
             {actionLabel(event)}
           </span>
         ) : (
-          <Button
+          <button
             type="button"
-            variant="ghost"
-            size="sm"
             data-testid={`history-event-body-toggle-${event.seq}`}
             aria-expanded={bodyOpen}
-            onPress={() => {
+            onClick={(e) => {
+              e.stopPropagation();
               onSelect(event.seq);
               setBodyOpen((p) => !p);
             }}
-            onClick={(e) => e.stopPropagation()}
-            className="flex h-auto items-center gap-1.5 self-start bg-transparent px-0 text-left text-sm font-medium text-foreground transition-colors hover:text-primary hover:underline"
+            className="flex items-center gap-1.5 self-start text-left text-sm font-medium text-foreground transition-colors hover:text-primary hover:underline"
           >
             <span aria-hidden="true" className="text-xs text-default-400">
               {bodyOpen ? "▾" : "▸"}
             </span>
             {actionLabel(event)}
-          </Button>
+          </button>
         )}
 
         {isUser ? (
@@ -777,7 +757,7 @@ function TranscriptEvent({
         ) : bodyOpen ? (
           <GameBody event={event} />
         ) : null}
-      </Card>
+      </div>
 
       {verdicts.length > 0 && (
         <div ref={evalsRef}>
@@ -1000,18 +980,16 @@ export function HistoryTranscript({
       </div>
 
       {!isLocked && (
-        <Button
+        <button
           data-testid="history-jump-to-latest"
           type="button"
-          variant="ghost"
-          size="sm"
           aria-label="Jump to latest"
-          className="absolute bottom-4 right-4 z-10 flex h-auto items-center gap-1.5 rounded-full border border-default-200/60 bg-background/90 px-3 py-1.5 text-xs font-medium text-default-600 shadow-lg backdrop-blur-sm transition-colors hover:bg-default-100 hover:text-foreground"
-          onPress={jumpToLatest}
+          className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 rounded-full border border-default-200/60 bg-background/90 px-3 py-1.5 text-xs font-medium text-default-600 shadow-lg backdrop-blur-sm transition-colors hover:bg-default-100 hover:text-foreground"
+          onClick={jumpToLatest}
         >
           <span aria-hidden="true">↓</span>
           Jump to latest
-        </Button>
+        </button>
       )}
     </div>
   );

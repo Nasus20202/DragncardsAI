@@ -88,16 +88,14 @@ export function ToggleInfoRow({
       {infoContent && infoLabel ? (
         <Tooltip delay={200} closeDelay={250}>
           <Tooltip.Trigger>
-            <Button
-              isIconOnly
-              size="sm"
-              variant="ghost"
-              className="h-auto min-h-0 shrink-0 cursor-default select-none bg-transparent px-0 text-xs text-default-300 hover:text-default-500 focus:outline-none"
+            <button
+              type="button"
+              className="shrink-0 cursor-default select-none text-xs text-default-300 hover:text-default-500 focus:outline-none"
               aria-label={infoLabel}
               onClick={(event) => event.preventDefault()}
             >
               ⓘ
-            </Button>
+            </button>
           </Tooltip.Trigger>
           <Tooltip.Content placement={tooltipPlacement} className="max-w-sm">
             {infoContent}

@@ -1,6 +1,6 @@
 "use client";
 
-import { Alert, Card, Spinner } from "@heroui/react";
+import { Spinner } from "@heroui/react";
 import { usePlaySession } from "@/features/play/lib/use-play-session";
 import { isSelectableSession } from "@/features/play/lib/session-draft";
 import {
@@ -90,24 +90,23 @@ export function PlayWorkspace() {
           className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center px-4"
           role="status"
         >
-          <Card className="flex flex-row items-center gap-3 rounded-full px-4 py-2 shadow-lg backdrop-blur-sm">
+          <div className="flex items-center gap-3 rounded-full border border-default-200/60 bg-background/90 px-4 py-2 shadow-lg backdrop-blur-sm">
             <Spinner size="sm" />
             <span className="text-sm text-default-500">
               Streaming response...
             </span>
-          </Card>
+          </div>
         </div>
       ) : null}
       {providersNotice ? (
-        <div className="pointer-events-none absolute inset-x-0 top-4 z-10 flex justify-center px-4">
-          <Alert
-            data-testid="providers-notice"
-            role="status"
-            status="warning"
-            className="max-w-xl text-xs shadow-sm"
-          >
+        <div
+          data-testid="providers-notice"
+          role="status"
+          className="pointer-events-none absolute inset-x-0 top-4 z-10 flex justify-center px-4"
+        >
+          <div className="max-w-xl rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning-700 shadow-sm dark:text-warning">
             {providersNotice}
-          </Alert>
+          </div>
         </div>
       ) : null}
       {/* Left — session sidebar */}

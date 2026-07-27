@@ -1,6 +1,5 @@
 "use client";
 
-import { Button } from "@heroui/react";
 import { useMemo, useState } from "react";
 
 import { HistoryEvent } from "@/features/shared/lib/types";
@@ -55,14 +54,12 @@ export function HistoryNavTree({
           const isCollapsed = collapsed.has(round.key);
           return (
             <div key={round.key} className="flex flex-col">
-              <Button
+              <button
                 type="button"
-                variant="ghost"
-                size="sm"
                 data-testid={`history-nav-round-${round.key}`}
                 aria-expanded={!isCollapsed}
-                onPress={() => toggleRound(round.key)}
-                className="flex h-auto justify-start gap-1.5 rounded bg-transparent px-2 py-1 text-left text-xs font-semibold text-default-600 transition-colors hover:bg-default-100 hover:text-foreground"
+                onClick={() => toggleRound(round.key)}
+                className="flex items-center gap-1.5 rounded px-2 py-1 text-left text-xs font-semibold text-default-600 transition-colors hover:bg-default-100 hover:text-foreground"
               >
                 <span aria-hidden="true" className="text-default-400">
                   {isCollapsed ? "▸" : "▾"}
@@ -71,33 +68,28 @@ export function HistoryNavTree({
                 <span className="font-normal text-default-400">
                   ({round.moves.length})
                 </span>
-              </Button>
+              </button>
               {!isCollapsed && (
                 <ul className="flex flex-col">
                   {round.moves.map((move) => {
                     const active = selectedSeq === move.seq;
                     return (
                       <li key={move.seq}>
-                        <Button
+                        <button
                           type="button"
-                          variant="ghost"
-                          size="sm"
                           data-testid={`history-nav-move-${move.seq}`}
                           aria-current={active ? "true" : undefined}
-                          onPress={() => onSelect(move.seq)}
+                          onClick={() => onSelect(move.seq)}
+                          title={move.label}
                           className={[
-                            "flex h-auto w-full items-center justify-start truncate rounded bg-transparent py-1 pl-7 pr-2 text-left text-xs transition-colors",
+                            "flex w-full items-center truncate rounded py-1 pl-7 pr-2 text-left text-xs transition-colors",
                             active
                               ? "bg-primary/10 text-foreground"
                               : "text-default-500 hover:bg-default-100/60 hover:text-foreground",
                           ].join(" ")}
                         >
-                          {/* Hero UI's Button props do not accept `title`;
-                              the tooltip lives on the label text instead. */}
-                          <span className="truncate" title={move.label}>
-                            {move.label}
-                          </span>
-                        </Button>
+                          <span className="truncate">{move.label}</span>
+                        </button>
                       </li>
                     );
                   })}

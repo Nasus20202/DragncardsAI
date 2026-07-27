@@ -1,6 +1,6 @@
 "use client";
 
-import { Alert, Button, Spinner } from "@heroui/react";
+import { Button, Spinner } from "@heroui/react";
 
 import { DragnCardsIframe } from "@/features/games/components/dragncards-iframe";
 import { Reconstruction } from "@/features/history/lib/use-board-reconstruction";
@@ -57,9 +57,13 @@ export function BoardOpenControl({
         </span>
       )}
       {error && (
-        <Alert status="danger" role="alert" data-testid="board-error">
+        <div
+          role="alert"
+          data-testid="board-error"
+          className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger"
+        >
           {error}
-        </Alert>
+        </div>
       )}
     </div>
   );
