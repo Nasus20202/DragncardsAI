@@ -82,53 +82,51 @@ class PromptRunService:
             "agent_orchestrator.run_job",
             attributes={"job.id": job.id},
         ) as job_span:
-            if await self._repository.get_job_cancellation_requested(job.id):
-                logger.info("Job %s cancelled before execution", job.id)
-                job_span.set_attribute("job.status", "cancelled")
-                await self._repository.mark_job_cancelled(
-                    job.id, reason="cancelled before execution"
-                )
-                await self._live_event_bus.publish(
-                    job.id, "cancellation", {"reason": "cancelled before execution"}
-                )
-                await self._maybe_terminate_child_session(job)
-                return
-
-            full_job = await self._repository.get_job(job.id)
-            assert full_job is not None
-            session = full_job.session
-            model_config = session.model_config
-            job_span.set_attribute("session.id", session.id)
-            if model_config is None:
-                logger.warning("Job %s missing model configuration", job.id)
-                job_span.set_attribute("job.status", "failed")
-                failure = {
-                    "code": "missing_model_config",
-                    "message": "Session model configuration is required",
-                    "retryable": False,
-                }
-                await self._repository.append_event(
-                    job.id, session.id, "failure", {"code": "missing_model_config"}
-                )
-                await self._live_event_bus.publish(job.id, "failure", failure)
-                await self._repository.mark_job_failed(
-                    job.id,
-                    error_code="missing_model_config",
-                    error_message="Session model configuration is required",
-                    retryable=False,
-                )
-                await self._maybe_terminate_child_session(full_job)
-                return
-
-            job_span.set_attribute("provider.id", model_config.provider_id)
-            job_span.set_attribute("model.name", model_config.model_name)
-
-            context_length = await self._bifrost_client.get_model_context_length(
-                model_config.provider_id, model_config.model_name
-            )
-            context_window_size = context_length or self._settings.context_window_size
-
+            # Seeded so failure handling has a job to record against even when
+            # the reload below is what crashed.
+            full_job = job
             try:
+                if await self._repository.get_job_cancellation_requested(job.id):
+                    logger.info("Job %s cancelled before execution", job.id)
+                    job_span.set_attribute("job.status", "cancelled")
+                    await self._repository.mark_job_cancelled(
+                        job.id, reason="cancelled before execution"
+                    )
+                    await self._live_event_bus.publish(
+                        job.id, "cancellation", {"reason": "cancelled before execution"}
+                    )
+                    await self._maybe_terminate_child_session(job)
+                    return
+
+                full_job = await self._repository.get_job(job.id)
+                assert full_job is not None
+                session = full_job.session
+                model_config = session.model_config
+                job_span.set_attribute("session.id", session.id)
+                if model_config is None:
+                    logger.warning("Job %s missing model configuration", job.id)
+                    job_span.set_attribute("job.status", "failed")
+                    failure = {
+                        "code": "missing_model_config",
+                        "message": "Session model configuration is required",
+                        "retryable": False,
+                    }
+                    await self._repository.append_event(
+                        job.id, session.id, "failure", {"code": "missing_model_config"}
+                    )
+                    await self._live_event_bus.publish(job.id, "failure", failure)
+                    await self._repository.mark_job_failed(
+                        job.id,
+                        error_code="missing_model_config",
+                        error_message="Session model configuration is required",
+                        retryable=False,
+                    )
+                    await self._maybe_terminate_child_session(full_job)
+                    return
+
+                job_span.set_attribute("provider.id", model_config.provider_id)
+                job_span.set_attribute("model.name", model_config.model_name)
+
                 logger.info(
                     "Starting job %s for session %s with provider=%s model=%s",
                     job.id,
@@ -523,12 +521,12 @@ class PromptRunService:
                 )
                 job_span.set_attribute("job.status", "failed")
                 await self.record_failure(full_job, failure)
-            except (
-                McpClientError,
-                RuntimeError,
-                ValueError,
-                InvalidToolInvocationError,
-            ) as exc:
+            except Exception as exc:
+                # Catch-all on purpose: anything escaping here would leave the
+                # job in `running`, and non-terminal jobs are excluded from
+                # context replay, so the prompt that triggered the run would be
+                # lost from the session transcript forever. `CancelledError`
+                # derives from BaseException and is deliberately not caught.
                 logger.exception("Job %s failed", job.id)
                 failure = self.classify_execution_failure(exc)
                 job_span.set_attribute("job.status", "failed")

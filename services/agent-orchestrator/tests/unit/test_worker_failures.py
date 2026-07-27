@@ -7,6 +7,7 @@ import pytest
 from agent_orchestrator.integrations.bifrost import BifrostError, ChatResponse, ToolCall
 from agent_orchestrator.integrations.mcp.client import McpClientError
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
+from agent_orchestrator.runtime.session_transcript import build_message_history
 from agent_orchestrator.storage.repository import Repository
 
 from .worker_test_support import (
@@ -352,6 +353,133 @@ async def test_worker_marks_non_retryable_bifrost_error_as_failed(
     assert stored.status == "failed"
     assert stored.error_code == "gateway_error"
     assert stored.error_message == "fatal"
+
+
+class CrashingBifrost(FakeBifrost):
+    """Raises an error type the worker does not explicitly classify."""
+
+    def __init__(self, crash: BaseException):
+        super().__init__()
+        self.crash = crash
+
+    async def chat_completion(self, *args, **kwargs):
+        raise self.crash
+
+
+@pytest.mark.parametrize(
+    "crash",
+    [
+        TimeoutError("provider read timeout"),
+        ExceptionGroup("wrapper", [RuntimeError("transport closed")]),
+    ],
+    ids=["timeout", "exception_group"],
+)
+@pytest.mark.asyncio
+async def test_unclassified_crash_keeps_prompt_in_context(
+    repository: Repository, skill_registry, crash: BaseException
+):
+    """A crashed run must still leave its prompt visible to the next run."""
+    session = await prepare_session(repository)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="remember the alamo", metadata_json={}, max_attempts=1
+    )
+    claimed = await repository.claim_next_job()
+    assert job is not None
+    assert claimed is not None
+
+    worker = make_worker(
+        skill_registry=skill_registry,
+        repository=repository,
+        bifrost_client=CrashingBifrost(crash),
+        mcp_client=FakeMcp(),
+    )
+
+    await worker._run_job(claimed)
+
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error_code == "execution_error"
+    events = await repository.list_events(job.id)
+    assert any(event.event_type == "failure" for event in events)
+
+    history = await build_message_history(repository, session.id, "next-job")
+    assert history[0] == {"role": "user", "content": "remember the alamo"}
+    assert history[-1]["role"] == "assistant"
+    assert "Previous turn failed before completing" in history[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_crash_before_the_model_call_keeps_prompt_in_context(
+    repository: Repository, skill_registry, monkeypatch: pytest.MonkeyPatch
+):
+    """Crashes in the run prologue must not leave the job stuck in `running`."""
+    session = await prepare_session(repository)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="deal the encounter", metadata_json={}, max_attempts=1
+    )
+    claimed = await repository.claim_next_job()
+    assert job is not None
+    assert claimed is not None
+
+    worker = make_worker(
+        skill_registry=skill_registry,
+        repository=repository,
+        bifrost_client=FakeBifrost(),
+        mcp_client=FakeMcp(),
+    )
+
+    async def exploding_cancellation_check(_job_id: str) -> bool:
+        raise TimeoutError("database read timed out")
+
+    monkeypatch.setattr(
+        repository, "get_job_cancellation_requested", exploding_cancellation_check
+    )
+
+    await worker._run_job(claimed)
+
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "failed"
+
+    history = await build_message_history(repository, session.id, "next-job")
+    assert history[0] == {"role": "user", "content": "deal the encounter"}
+
+
+@pytest.mark.asyncio
+async def test_worker_forces_terminal_status_when_prompt_run_raises(
+    repository: Repository, skill_registry, monkeypatch: pytest.MonkeyPatch
+):
+    """Last-resort guard: `_run_job` is detached, so nothing else would notice."""
+    session = await prepare_session(repository)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="mulligan my hand", metadata_json={}, max_attempts=1
+    )
+    claimed = await repository.claim_next_job()
+    assert job is not None
+    assert claimed is not None
+
+    worker = make_worker(
+        skill_registry=skill_registry,
+        repository=repository,
+        bifrost_client=FakeBifrost(),
+        mcp_client=FakeMcp(),
+    )
+
+    async def exploding_run(_job):
+        raise TimeoutError("failure handling itself crashed")
+
+    monkeypatch.setattr(worker._prompt_run_service, "run", exploding_run)
+
+    await worker._run_job(claimed)
+
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error_code == "worker_crash"
+
+    history = await build_message_history(repository, session.id, "next-job")
+    assert history[0] == {"role": "user", "content": "mulligan my hand"}
 
 
 def test_worker_classifies_errors(skill_registry):
