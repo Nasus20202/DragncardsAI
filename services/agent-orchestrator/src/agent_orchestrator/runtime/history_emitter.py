@@ -239,6 +239,7 @@ class HistoryEventEmitter:
         arguments: dict[str, Any],
         conversation_context: list[dict[str, Any]],
         event_type: str = "agent_move",
+        player: str | None = None,
     ) -> dict[str, Any] | None:
         """Build and publish an agent move/decision envelope. Best-effort."""
         if not self._enabled:
@@ -256,6 +257,7 @@ class HistoryEventEmitter:
                     conversation_context=conversation_context,
                     producer_offset=producer_offset,
                     event_type=event_type,
+                    player=player,
                 )
                 await self._bus.publish(envelope)
             return envelope
@@ -312,19 +314,27 @@ class HistoryEventEmitter:
         conversation_context: list[dict[str, Any]],
         producer_offset: int | str,
         event_type: str = "agent_move",
+        player: str | None = None,
     ) -> dict[str, Any]:
+        # ``player`` names the seat that made this move in a multi-player
+        # orchestrated game. It is omitted entirely for moves that belong to no
+        # seat (the orchestrator's own phase and villain automation) so
+        # downstream consumers can tell "seat unknown" from "no seat".
+        payload: dict[str, Any] = {
+            "intended_action": intended_action,
+            "reasoning": reasoning,
+            "arguments": arguments,
+            "conversation_context": conversation_context,
+        }
+        if player:
+            payload["player"] = player
         return {
             "envelope_version": ENVELOPE_VERSION,
             "event_id": str(uuid4()),
             "game_id": game_id,
             "actor": HISTORY_ACTOR_AGENT,
             "event_type": event_type,
-            "payload": {
-                "intended_action": intended_action,
-                "reasoning": reasoning,
-                "arguments": arguments,
-                "conversation_context": conversation_context,
-            },
+            "payload": payload,
             "occurred_at": datetime.now(timezone.utc).isoformat(),
             "idempotency_key": build_idempotency_key(
                 game_id, HISTORY_ACTOR_AGENT, producer_offset

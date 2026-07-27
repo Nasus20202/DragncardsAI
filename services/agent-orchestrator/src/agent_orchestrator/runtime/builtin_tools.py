@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, Callable
 
+from agent_orchestrator.runtime.history_emitter import SESSION_GAME_ID_KEY
 from agent_orchestrator.runtime.live_events import LiveEventBus
+from agent_orchestrator.runtime.player_agents import (
+    SESSION_ORCHESTRATOR_ID_KEY,
+    SESSION_PLAYER_ID_KEY,
+    SESSION_PLAYER_NAME_KEY,
+    ResolvedPlayerAgentConfig,
+    resolve_player_agent_config,
+    resolve_roster,
+)
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.repository import Repository
 
@@ -150,28 +160,19 @@ def is_master_job(job: Any) -> bool:
     return job.parent_job_id is None and job.job_type == "prompt"
 
 
-def make_spawn_subagent_handler(
+def _make_child_monitor(
     repository: Repository,
     live_event_bus: LiveEventBus,
     session_id: str,
     job_id: str,
-    job: Any,
-    schedule_child_fn: Callable[[str], Any] | None = None,
-) -> BuiltinHandler:
-    """Return a spawn_subagent handler bound to the current parent job context.
-
-    The handler returns immediately after enqueuing the child job. A detached
-    background task monitors the child and appends subagent_completed /
-    subagent_failed to the parent job when the child reaches a terminal state.
-
-    schedule_child_fn: optional async callable(child_job_id) that starts the child
-    job concurrently (used to avoid deadlock when only one worker is running).
-    """
+) -> Callable[..., Any]:
+    """Build the background watcher that reports a child's outcome to its parent."""
 
     async def _monitor_child(
         child_job_id: str,
         child_session_id: str,
         name: str,
+        extra_payload: dict[str, Any] | None = None,
     ) -> None:
         """Background task: wait for child terminal event, update parent job."""
         try:
@@ -206,6 +207,7 @@ def make_spawn_subagent_handler(
                 "child_job_id": child_job_id,
                 "child_session_id": child_session_id,
                 "name": name,
+                **(extra_payload or {}),
             }
             if not success:
                 outcome_payload["reason"] = (
@@ -230,6 +232,141 @@ def make_spawn_subagent_handler(
                 child_job_id,
             )
 
+    return _monitor_child
+
+
+async def _launch_child_agent(
+    *,
+    repository: Repository,
+    live_event_bus: LiveEventBus,
+    session_id: str,
+    job_id: str,
+    parent_session: Any,
+    prompt: str,
+    name: str,
+    child_metadata: dict[str, Any],
+    model_config: ResolvedPlayerAgentConfig | None,
+    skills: list[str] | None,
+    schedule_child_fn: Callable[[str], Any] | None,
+    monitor: Callable[..., Any],
+    event_payload_extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create, announce, monitor, and schedule a child agent session.
+
+    Shared by ``spawn_subagent`` (which inherits the parent's configuration) and
+    ``prompt_player_agent`` (which supplies a seat's own configuration). Passing
+    ``model_config``/``skills`` as ``None`` means "copy the parent's".
+
+    MCP servers are always inherited: seats differ in how they think, not in
+    which table they are sitting at.
+    """
+    child_session = await repository.create_session(
+        name,
+        child_metadata,
+        multi_turn_memory=False,
+    )
+
+    if model_config is not None:
+        # A resolved config with neither provider nor model means the parent had
+        # no model config to inherit and the seat named none either. Leave the
+        # child unconfigured so it fails with the normal `missing_model_config`
+        # error rather than being handed empty provider/model strings.
+        if model_config.provider_id and model_config.model_name:
+            await repository.set_model_config(
+                child_session.id,
+                provider_id=model_config.provider_id,
+                model_name=model_config.model_name,
+                gateway_options=model_config.gateway_options,
+                provider_options=model_config.provider_options,
+            )
+    elif parent_session.model_config is not None:
+        mc = parent_session.model_config
+        await repository.set_model_config(
+            child_session.id,
+            provider_id=mc.provider_id,
+            model_name=mc.model_name,
+            gateway_options=mc.gateway_options,
+            provider_options=mc.provider_options,
+        )
+
+    if skills is None:
+        skill_names = [
+            es.skill_name for es in parent_session.enabled_skills if es.enabled
+        ]
+    else:
+        skill_names = skills
+    for skill_name in skill_names:
+        await repository.enable_skill_for_session(child_session.id, skill_name, True)
+
+    for em in parent_session.enabled_mcps:
+        if em.enabled:
+            await repository.enable_mcp_for_session(
+                child_session.id, em.mcp_name, em.enabled
+            )
+
+    child_job = await repository.enqueue_prompt_job(
+        child_session.id,
+        prompt=prompt,
+        metadata_json={"parent_job_id": job_id, **(event_payload_extra or {})},
+        max_attempts=1,
+    )
+    if child_job is None:
+        return _text_result("Failed to enqueue child job.", is_error=True)
+
+    await repository.set_parent_job_id(child_job.id, job_id)
+    child_job_id = child_job.id
+
+    started_payload: dict[str, Any] = {
+        "child_job_id": child_job_id,
+        "child_session_id": child_session.id,
+        "name": name,
+        **(event_payload_extra or {}),
+    }
+    await repository.append_event(
+        job_id, session_id, "subagent_started", started_payload
+    )
+    await live_event_bus.publish(job_id, "subagent_started", started_payload)
+
+    # Launch background monitor BEFORE scheduling so we don't miss events.
+    asyncio.create_task(
+        monitor(child_job_id, child_session.id, name, event_payload_extra or {}),
+        name=f"monitor-child-{child_job_id}",
+    )
+
+    if schedule_child_fn is not None:
+        await schedule_child_fn(child_job_id)
+
+    # Return immediately — the parent agent continues without waiting.
+    return _text_result(
+        json.dumps(
+            {
+                "child_job_id": child_job_id,
+                "name": name,
+                **(event_payload_extra or {}),
+            }
+        )
+    )
+
+
+def make_spawn_subagent_handler(
+    repository: Repository,
+    live_event_bus: LiveEventBus,
+    session_id: str,
+    job_id: str,
+    job: Any,
+    schedule_child_fn: Callable[[str], Any] | None = None,
+) -> BuiltinHandler:
+    """Return a spawn_subagent handler bound to the current parent job context.
+
+    The handler returns immediately after enqueuing the child job. A detached
+    background task monitors the child and appends subagent_completed /
+    subagent_failed to the parent job when the child reaches a terminal state.
+
+    schedule_child_fn: optional async callable(child_job_id) that starts the child
+    job concurrently (used to avoid deadlock when only one worker is running).
+    """
+    monitor = _make_child_monitor(repository, live_event_bus, session_id, job_id)
+
     async def handle(arguments: dict[str, Any]) -> dict[str, Any]:
         if not is_master_job(job):
             return _text_result(
@@ -243,80 +380,136 @@ def make_spawn_subagent_handler(
 
         name = prompt[:50]
 
-        # Create child session inheriting model config from parent session
         parent_session = await repository.get_session(session_id)
         if parent_session is None:
             return _text_result("Parent session not found.", is_error=True)
 
-        child_session = await repository.create_session(
-            name,
-            {},
-            multi_turn_memory=False,
+        return await _launch_child_agent(
+            repository=repository,
+            live_event_bus=live_event_bus,
+            session_id=session_id,
+            job_id=job_id,
+            parent_session=parent_session,
+            prompt=prompt,
+            name=name,
+            child_metadata={},
+            model_config=None,
+            skills=None,
+            schedule_child_fn=schedule_child_fn,
+            monitor=monitor,
         )
 
-        # Copy model config from parent to child
-        if parent_session.model_config is not None:
-            mc = parent_session.model_config
-            await repository.set_model_config(
-                child_session.id,
-                provider_id=mc.provider_id,
-                model_name=mc.model_name,
-                gateway_options=mc.gateway_options,
-                provider_options=mc.provider_options,
+    return handle
+
+
+def make_list_player_agents_handler(
+    repository: Repository,
+    session_id: str,
+) -> BuiltinHandler:
+    """Return a list_player_agents handler for an orchestrating session.
+
+    Reports the *resolved* configuration per seat — what each player agent will
+    actually run with after inheritance — so the orchestrator can state the
+    roster accurately when reporting a game.
+    """
+
+    async def handle(arguments: dict[str, Any]) -> dict[str, Any]:
+        del arguments
+        session = await repository.get_session(session_id)
+        if session is None:
+            return _text_result("Session not found.", is_error=True)
+        configs = await repository.list_player_configs(session_id)
+        if not configs:
+            return _text_result(
+                "No player agents are configured for this session. "
+                "Ask the user to configure at least one player before starting a game.",
+                is_error=True,
+            )
+        roster = resolve_roster(session, configs)
+        return _text_result(
+            json.dumps({"players": [entry.as_summary() for entry in roster]})
+        )
+
+    return handle
+
+
+def make_prompt_player_agent_handler(
+    repository: Repository,
+    live_event_bus: LiveEventBus,
+    session_id: str,
+    job_id: str,
+    job: Any,
+    schedule_child_fn: Callable[[str], Any] | None = None,
+) -> BuiltinHandler:
+    """Return a prompt_player_agent handler bound to the orchestrating job.
+
+    The child is configured from the named seat's own stored configuration
+    rather than from the parent's, which is what makes two seats comparable.
+    The child session is tagged with its seat id so every move it records is
+    attributed to that seat without inference, and with the orchestrator's
+    ``game_id`` so its very first move lands on the right timeline.
+    """
+    monitor = _make_child_monitor(repository, live_event_bus, session_id, job_id)
+
+    async def handle(arguments: dict[str, Any]) -> dict[str, Any]:
+        if not is_master_job(job):
+            return _text_result(
+                "prompt_player_agent may only be called from the orchestrating "
+                "(top-level) job.",
+                is_error=True,
             )
 
-        # Copy enabled skills from parent to child
-        for es in parent_session.enabled_skills:
-            if es.enabled:
-                await repository.enable_skill_for_session(
-                    child_session.id, es.skill_name, es.enabled
-                )
+        player_id: str = arguments.get("player_id", "")
+        prompt: str = arguments.get("prompt", "")
+        if not player_id:
+            return _text_result("player_id is required.", is_error=True)
+        if not prompt:
+            return _text_result("prompt is required.", is_error=True)
 
-        # Copy enabled MCPs from parent to child
-        for em in parent_session.enabled_mcps:
-            if em.enabled:
-                await repository.enable_mcp_for_session(
-                    child_session.id, em.mcp_name, em.enabled
-                )
+        parent_session = await repository.get_session(session_id)
+        if parent_session is None:
+            return _text_result("Parent session not found.", is_error=True)
 
-        # Enqueue the child job
-        child_job = await repository.enqueue_prompt_job(
-            child_session.id,
-            prompt=prompt,
-            metadata_json={"parent_job_id": job_id},
-            max_attempts=1,
-        )
-        if child_job is None:
-            return _text_result("Failed to enqueue child job.", is_error=True)
+        player_config = await repository.get_player_config(session_id, player_id)
+        if player_config is None:
+            configured = [
+                c.player_id for c in await repository.list_player_configs(session_id)
+            ]
+            known = ", ".join(configured) if configured else "none"
+            return _text_result(
+                f"No player agent is configured for '{player_id}'. Configured seats: {known}.",
+                is_error=True,
+            )
 
-        # Stamp parent_job_id on the child job row
-        await repository.set_parent_job_id(child_job.id, job_id)
+        resolved = resolve_player_agent_config(parent_session, player_config)
+        name = resolved.display_name or player_id
 
-        child_job_id = child_job.id
-
-        # Emit subagent_started on parent job (includes name for dashboard)
-        started_payload: dict[str, Any] = {
-            "child_job_id": child_job_id,
-            "child_session_id": child_session.id,
-            "name": name,
+        child_metadata: dict[str, Any] = {
+            SESSION_PLAYER_ID_KEY: player_id,
+            SESSION_ORCHESTRATOR_ID_KEY: session_id,
         }
-        await repository.append_event(
-            job_id, session_id, "subagent_started", started_payload
+        if resolved.display_name:
+            child_metadata[SESSION_PLAYER_NAME_KEY] = resolved.display_name
+        parent_metadata = parent_session.metadata_json or {}
+        game_id = parent_metadata.get(SESSION_GAME_ID_KEY)
+        if isinstance(game_id, str) and game_id:
+            child_metadata[SESSION_GAME_ID_KEY] = game_id
+
+        return await _launch_child_agent(
+            repository=repository,
+            live_event_bus=live_event_bus,
+            session_id=session_id,
+            job_id=job_id,
+            parent_session=parent_session,
+            prompt=prompt,
+            name=name,
+            child_metadata=child_metadata,
+            model_config=resolved,
+            skills=resolved.skills,
+            schedule_child_fn=schedule_child_fn,
+            monitor=monitor,
+            event_payload_extra={"player_id": player_id},
         )
-        await live_event_bus.publish(job_id, "subagent_started", started_payload)
-
-        # Launch background monitor BEFORE scheduling so we don't miss events.
-        asyncio.create_task(
-            _monitor_child(child_job_id, child_session.id, name),
-            name=f"monitor-child-{child_job_id}",
-        )
-
-        # Schedule the child job to run concurrently.
-        if schedule_child_fn is not None:
-            await schedule_child_fn(child_job_id)
-
-        # Return immediately — the parent agent continues without waiting.
-        return _text_result(f'{{"child_job_id": "{child_job_id}", "name": "{name}"}}')
 
     return handle
 
@@ -383,11 +576,17 @@ def build_builtin_registry(
     skill_assignments: list[Any],
     job: Any,
     schedule_child_fn: Callable[[str], Any] | None = None,
+    player_configs: list[Any] | None = None,
 ) -> BuiltinToolRegistry:
     """Build a per-job BuiltinToolRegistry with all handlers bound to job context.
 
     schedule_child_fn: optional async callable(child_job_id) called concurrently
     after enqueueing a child job, to avoid single-worker deadlock.
+
+    player_configs: the session's player-agent roster. The player tools are
+    registered only when a roster exists, so sessions that are not running an
+    orchestrated game never see tools they cannot use. The roster is passed in
+    already loaded so registry construction stays synchronous.
     """
     registry = BuiltinToolRegistry()
 
@@ -508,5 +707,71 @@ def build_builtin_registry(
                 ),
             )
         )
+
+        if player_configs:
+            registry.register(
+                BuiltinToolDefinition(
+                    name="list_player_agents",
+                    description=(
+                        "List the player agents configured for this game, one per seat. "
+                        "Returns each seat's id, display name, and the provider, model, "
+                        "reasoning, and skills it will actually run with. "
+                        "Call this before starting a game to confirm the roster and the "
+                        "number of players."
+                    ),
+                    parameters={"type": "object", "properties": {}},
+                    handler=make_list_player_agents_handler(
+                        repository=repository,
+                        session_id=session_id,
+                    ),
+                )
+            )
+
+            registry.register(
+                BuiltinToolDefinition(
+                    name="prompt_player_agent",
+                    description=(
+                        "Send a prompt to one seat's player agent — the agent that plays "
+                        "that hero. Use this for every decision that belongs to a player: "
+                        "their turn during the player phase, and any choice an encounter "
+                        "card or activation hands to that specific player. "
+                        "The player agent runs with that seat's own model, reasoning, and "
+                        "skills, and has NO memory of previous turns, so the prompt must be "
+                        "fully self-contained: game session id, seat id, hero and form, "
+                        "round number, the board summary it needs, and exactly what to "
+                        "report back. Returns immediately with child_job_id; retrieve the "
+                        "seat's report with wait_for_subagent. Never decide a hero's play "
+                        "yourself."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "player_id": {
+                                "type": "string",
+                                "description": (
+                                    "The seat to prompt, for example player1. Must be a "
+                                    "seat returned by list_player_agents."
+                                ),
+                            },
+                            "prompt": {
+                                "type": "string",
+                                "description": (
+                                    "The fully self-contained prompt for this seat's turn "
+                                    "or decision."
+                                ),
+                            },
+                        },
+                        "required": ["player_id", "prompt"],
+                    },
+                    handler=make_prompt_player_agent_handler(
+                        repository=repository,
+                        live_event_bus=live_event_bus,
+                        session_id=session_id,
+                        job_id=job_id,
+                        job=job,
+                        schedule_child_fn=schedule_child_fn,
+                    ),
+                )
+            )
 
     return registry

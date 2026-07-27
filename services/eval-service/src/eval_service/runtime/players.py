@@ -79,11 +79,25 @@ def _nearest_state_game(events: list[StoredEvent], target_seq: int) -> dict | No
     return min(states, key=lambda item: item[0])[1]
 
 
+def _recorded_player(event: StoredEvent) -> str | None:
+    """The acting seat recorded on the move itself, if the producer knew it.
+
+    An orchestrated multi-player game runs one agent per seat, so the producer
+    knows exactly who acted and stamps it on the payload. That is ground truth
+    and outranks anything inferred from board state.
+    """
+    value = event.payload.get("player")
+    if isinstance(value, str) and _PLAYER_KEY_RE.match(value):
+        return value
+    return None
+
+
 def _explicit_player_hint(event: StoredEvent) -> str | None:
     """A player id explicitly carried on an agent move's arguments, if any.
 
     Some recorded actions carry the acting player directly (``player_n`` /
-    ``player``); when present it is the most reliable attribution signal.
+    ``player``); when present it is the most reliable attribution signal
+    available for a move the producer did not stamp.
     """
     args = event.payload.get("arguments")
     if not isinstance(args, dict):
@@ -98,19 +112,26 @@ def _explicit_player_hint(event: StoredEvent) -> str | None:
 def attribute_move(events: list[StoredEvent], target_seq: int) -> str:
     """Attribute an agent move to the player who was active for it.
 
-    Single-player games (or games whose player count cannot be derived) always
-    attribute to ``player1``. For multi-player games the acting player is taken
-    from an explicit hint on the move's arguments when present, otherwise
-    derived from the game state's ``firstPlayer`` rotation: the agent moves
-    within a round are dealt out in turn order starting at the first player, so
-    the k-th agent move of a round maps to the k-th seat in that rotation.
+    A seat recorded on the move itself always wins — including when the player
+    count cannot be derived from state, since a failure to infer must never
+    override a fact. Otherwise: single-player games (or games whose player count
+    cannot be derived) attribute to ``player1``, and multi-player games take the
+    acting player from an explicit hint on the move's arguments when present,
+    else from the game state's ``firstPlayer`` rotation — agent moves within a
+    round are dealt out in turn order starting at the first player, so the k-th
+    agent move of a round maps to the k-th seat in that rotation.
     """
+    target = next((e for e in events if e.seq == target_seq), None)
+    if target is not None:
+        recorded = _recorded_player(target)
+        if recorded is not None:
+            return recorded
+
     game = _nearest_state_game(events, target_seq)
     seats = _player_seats(game) if game else [DEFAULT_PLAYER]
     if len(seats) <= 1:
         return DEFAULT_PLAYER
 
-    target = next((e for e in events if e.seq == target_seq), None)
     if target is not None:
         hint = _explicit_player_hint(target)
         if hint is not None and hint in seats:

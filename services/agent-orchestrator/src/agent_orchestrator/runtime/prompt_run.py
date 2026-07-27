@@ -23,6 +23,7 @@ from agent_orchestrator.runtime.history_emitter import (
     is_game_mutating_tool,
 )
 from agent_orchestrator.runtime.live_events import LiveEventBus
+from agent_orchestrator.runtime.player_agents import session_player_id
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.runtime.system_prompts import (
@@ -159,6 +160,7 @@ class PromptRunService:
                     skill_assignments=session.enabled_skills,
                     job=full_job,
                     schedule_child_fn=self._schedule_child_job,
+                    player_configs=list(session.player_configs),
                 )
                 tools = builtin_registry.as_openai_tools() + mcp_tools
 
@@ -483,6 +485,7 @@ class PromptRunService:
                                 arguments=tool_call.arguments,
                                 reasoning=response.content or "",
                                 messages=messages,
+                                session=session,
                             )
 
                 await self._repository.update_job_tokens_used(
@@ -646,8 +649,15 @@ class PromptRunService:
         arguments: dict[str, Any],
         reasoning: str,
         messages: list[dict[str, Any]],
+        session: Any = None,
     ) -> None:
-        """Fire-and-forget emission of an agent move/decision history event."""
+        """Fire-and-forget emission of an agent move/decision history event.
+
+        When the emitting session represents a player seat in an orchestrated
+        multi-player game, the move is tagged with that seat so downstream
+        evaluation attributes it exactly rather than inferring it from turn
+        order.
+        """
         emitter = self._history_emitter
         if emitter is None or not emitter.enabled:
             return
@@ -658,6 +668,7 @@ class PromptRunService:
             reasoning=reasoning,
             arguments=dict(arguments),
             conversation_context=conversation_context,
+            player=session_player_id(session) if session is not None else None,
         )
         task = asyncio.create_task(coro)
         self._history_tasks.add(task)

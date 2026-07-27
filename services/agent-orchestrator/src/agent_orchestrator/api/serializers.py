@@ -8,6 +8,8 @@ from agent_orchestrator.schemas.jobs import (
     JobSummary,
     SessionToolResponse,
 )
+from agent_orchestrator.runtime.player_agents import unfold_reasoning
+from agent_orchestrator.schemas.players import PlayerConfigResponse
 from agent_orchestrator.schemas.sessions import (
     McpAssignmentResponse,
     McpRegistryResponse,
@@ -40,7 +42,23 @@ def serialize_session_summary(item) -> SessionSummary:
             serialize_session_enabled_skill(skill) for skill in item.enabled_skills
         ],
         mcps=[serialize_mcp_assignment(em) for em in item.enabled_mcps],
+        players=[serialize_player_config(config) for config in item.player_configs],
         recent_job=None if not recent_jobs else serialize_job(recent_jobs[0]),
+    )
+
+
+def serialize_player_config(item) -> PlayerConfigResponse:
+    return PlayerConfigResponse(
+        player_id=item.player_id,
+        display_name=item.display_name,
+        provider_id=item.provider_id,
+        model_name=item.model_name,
+        reasoning=unfold_reasoning(item.gateway_options),
+        skills=item.skills_json,
+        gateway_options=item.gateway_options or {},
+        provider_options=item.provider_options or {},
+        created_at=item.created_at,
+        updated_at=item.updated_at,
     )
 
 
@@ -179,6 +197,7 @@ def serialize_session_detail(item) -> SessionDetail:
         session_model_config=summary.session_model_config,
         skills=summary.skills,
         mcps=summary.mcps,
+        players=summary.players,
         recent_job=summary.recent_job,
         recent_jobs=[serialize_job(job) for job in recent_jobs],
     )

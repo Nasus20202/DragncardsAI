@@ -265,6 +265,45 @@ Use these to manage skills discovered from the configured `SKILL_ROOTS` entries.
 - `POST /sessions/{session_id}/skills`
 - `DELETE /sessions/{session_id}/skills/{skill_name}`
 
+### Session Player Agents
+
+Use these to configure a roster of player agents for an orchestrated multi-player game — one seat
+per hero, each with its own provider, model, reasoning effort, and skills, so two configurations can
+play the same cooperative game and be compared afterwards.
+
+- `GET /sessions/{session_id}/players`
+- `PUT /sessions/{session_id}/players/{player_id}`
+- `DELETE /sessions/{session_id}/players/{player_id}`
+
+`player_id` is one of `player1`..`player4`, matching DragnCards' seat naming.
+
+Every field is optional and an **unset field inherits from the session**, so a comparison only has to
+state the axis that differs:
+
+```json
+{
+  "display_name": "Spider-Man",
+  "provider_id": "openai",
+  "model_name": "gpt-4o-mini",
+  "reasoning": { "enabled": true, "effort": "high" },
+  "skills": ["marvel-champions-learn-to-play"],
+  "gateway_options": {},
+  "provider_options": {}
+}
+```
+
+- `provider_id` / `model_name` unset — inherit the session's model config.
+- `gateway_options` / `provider_options` — *overlaid* on the session's, not replacing them.
+- `reasoning` — folded into the resolved `gateway_options.reasoning`; `{"enabled": false}` removes it.
+- `skills` unset — inherit the session's enabled skills; a list (including `[]`) overrides them.
+- MCP servers are always inherited from the session.
+
+When a session has a roster, its master prompt jobs gain the `list_player_agents` and
+`prompt_player_agent` built-in tools. `prompt_player_agent` spawns a child session configured from
+that seat's row, tagged with the seat id and the session's `game_id`, so every move the seat records
+is attributed to it without inference. Pair it with the standard `wait_for_subagent`. The
+`marvel-champions-orchestrator` skill is the playbook for driving this.
+
 ### Session Tools
 
 Use this to inspect the tool list that the worker will expose to the model after MCP assignments are attached.

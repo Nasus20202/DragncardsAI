@@ -29,6 +29,7 @@ class RepositoryBase:
                 SessionEnabledSkill.skill
             ),
             selectinload(AgentSession.enabled_mcps).selectinload(SessionEnabledMcp.mcp),
+            selectinload(AgentSession.player_configs),
             selectinload(AgentSession.jobs).selectinload(Job.events),
         )
 
@@ -39,4 +40,5 @@ class RepositoryBase:
             selectinload(Job.session).selectinload(AgentSession.model_config),
             selectinload(Job.session).selectinload(AgentSession.enabled_skills),
             selectinload(Job.session).selectinload(AgentSession.enabled_mcps),
+            selectinload(Job.session).selectinload(AgentSession.player_configs),
         )

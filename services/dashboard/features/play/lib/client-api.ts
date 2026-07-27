@@ -8,6 +8,8 @@ import {
   JobSummary,
   McpAssignmentResponse,
   McpRegistryResponse,
+  PlayerConfigRequest,
+  PlayerConfigResponse,
   ProviderResponse,
   SessionDetail,
   SessionJobsResponse,
@@ -347,4 +349,40 @@ export async function listGames(): Promise<GameSession[]> {
     room_slug: s.room_slug,
     created_at: s.created_at,
   }));
+}
+
+// --- Per-seat player agents (orchestrated multi-player games) ---
+
+export async function listPlayerAgents(
+  sessionId: string
+): Promise<PlayerConfigResponse[]> {
+  return (
+    await getJson<{ players: PlayerConfigResponse[] }>(
+      `/api/proxy/orchestrator/sessions/${sessionId}/players`
+    )
+  ).players;
+}
+
+export async function setPlayerAgent(
+  sessionId: string,
+  playerId: string,
+  body: PlayerConfigRequest
+): Promise<PlayerConfigResponse> {
+  return (
+    await sendJson<{ player: PlayerConfigResponse }>(
+      `/api/proxy/orchestrator/sessions/${sessionId}/players/${playerId}`,
+      "PUT",
+      body
+    )
+  ).player;
+}
+
+export async function deletePlayerAgent(
+  sessionId: string,
+  playerId: string
+): Promise<void> {
+  await sendNoContent(
+    `/api/proxy/orchestrator/sessions/${sessionId}/players/${playerId}`,
+    "DELETE"
+  );
 }

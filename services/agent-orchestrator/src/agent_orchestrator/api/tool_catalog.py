@@ -21,6 +21,7 @@ def build_preview_builtin_tools(
     session_id: str,
     skill_assignments: list[Any],
     is_master_job: bool,
+    player_configs: list[Any] | None = None,
 ) -> list[Any]:
     preview_job = SimpleNamespace(
         parent_job_id=None if is_master_job else "preview-parent",
@@ -35,6 +36,7 @@ def build_preview_builtin_tools(
         skill_assignments=skill_assignments,
         job=preview_job,
         schedule_child_fn=None,
+        player_configs=player_configs,
     )
     return registry.list_definitions()
 
@@ -55,6 +57,7 @@ async def list_effective_session_tools(
         session_id=session.id,
         skill_assignments=session.enabled_skills,
         is_master_job=is_master_job,
+        player_configs=list(getattr(session, "player_configs", []) or []),
     )
     all_registries = await repository.list_mcp_registries()
     mcp_tools = await mcp_tool_catalog.list_session_tools(

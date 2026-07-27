@@ -5,9 +5,7 @@
 This spec defines the capabilities available to an LLM agent during a session: MCP tools, system built-in tools, on-demand skill loading, subagent delegation, and dashboard visibility of agent capability activity.
 
 Implementation details such as worker mechanics, database schema, and internal session/job lifecycle belong in `agent-orchestrator/spec.md`.
-
 ## Requirements
-
 ### Requirement: Agent tool catalogue at session start
 At the start of every prompt job the agent SHALL receive a unified tool list containing all MCP tools from assigned MCP servers and all system built-in tools applicable to the job type. The agent SHALL be able to call any tool in this list without distinguishing between MCP and built-in origin.
 
@@ -143,3 +141,43 @@ The dashboard transcript SHALL render skill loads and MCP tool calls as distinct
 - **WHEN** the transcript receives `subagent_started`, `subagent_completed`, or `subagent_failed`
 - **THEN** it displays a single non-expandable line indicating the subagent name and status in the parent job thread
 - **THEN** the full child transcript is shown in the separate inline subagent card
+
+### Requirement: Player agent built-in tools
+A master prompt job on a session that has a player roster SHALL receive two additional built-in tools: `list_player_agents`, which returns the configured seats and their resolved configuration, and `prompt_player_agent`, which sends a prompt to a named seat's player agent. A session with no player roster SHALL NOT receive these tools, and a job that is not a master job SHALL NOT receive them.
+
+#### Scenario: Tools appear for a session with a roster
+- **WHEN** a master prompt job starts on a session that has at least one player configuration
+- **THEN** the tool list presented to the agent SHALL include `list_player_agents` and `prompt_player_agent`
+
+#### Scenario: Tools are absent without a roster
+- **WHEN** a master prompt job starts on a session with no player configurations
+- **THEN** the tool list presented to the agent SHALL NOT include `list_player_agents` or `prompt_player_agent`
+
+#### Scenario: Player agents cannot spawn player agents
+- **WHEN** a job is running as a player agent or any other subagent
+- **THEN** the tool list SHALL NOT include `prompt_player_agent`
+
+### Requirement: Inspecting the player roster
+`list_player_agents` SHALL return, for every configured seat, the seat id, the display name if set, and the provider, model, reasoning, and skills that a player agent for that seat would actually run with after inheritance is applied.
+
+#### Scenario: Roster reports resolved configuration
+- **WHEN** the agent calls `list_player_agents` on a session with two configured seats
+- **THEN** the result SHALL list both seats with the provider, model, reasoning, and skills each would run with
+
+### Requirement: Prompting a player agent
+`prompt_player_agent` SHALL accept a seat id and a prompt, SHALL spawn a child agent for that seat configured from its stored configuration, and SHALL return immediately with the child job id so the orchestrator can await it with `wait_for_subagent`.
+
+#### Scenario: Prompt returns a child job id
+- **WHEN** the agent calls `prompt_player_agent` with a configured seat id and a prompt
+- **THEN** the result SHALL contain the child job id and the seat id
+- **AND** the child SHALL run concurrently rather than blocking the call
+
+#### Scenario: Result is retrievable
+- **WHEN** the orchestrator calls `wait_for_subagent` with the child job id returned by `prompt_player_agent`
+- **THEN** it SHALL receive that player agent's final answer once the child finishes
+
+#### Scenario: Missing arguments are rejected
+- **WHEN** the agent calls `prompt_player_agent` without a seat id or without a prompt
+- **THEN** the call SHALL return an error result describing the missing argument
+- **AND** no child job SHALL be created
+
