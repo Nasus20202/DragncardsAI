@@ -19,6 +19,45 @@ vi.mock("@heroui/react", () => ({
       {children}
     </button>
   ),
+  Chip: ({ children }: { children: React.ReactNode }) => (
+    <span>{children}</span>
+  ),
+  ProgressBar: Object.assign(
+    ({
+      children,
+      value,
+      "aria-label": ariaLabel,
+      "data-value": dataValue,
+      "data-color": dataColor,
+      className,
+    }: {
+      children?: React.ReactNode;
+      value?: number;
+      "aria-label"?: string;
+      "data-value"?: number;
+      "data-color"?: string;
+      className?: string;
+    }) => (
+      <div
+        aria-label={ariaLabel}
+        aria-valuemax={100}
+        aria-valuemin={0}
+        aria-valuenow={value}
+        className={className}
+        data-color={dataColor}
+        data-value={dataValue}
+        role="progressbar"
+      >
+        {children}
+      </div>
+    ),
+    {
+      Track: ({ children }: { children?: React.ReactNode }) => (
+        <div>{children}</div>
+      ),
+      Fill: () => <div />,
+    }
+  ),
   Tooltip: Object.assign(
     ({ children }: { children: React.ReactNode }) => <>{children}</>,
     {

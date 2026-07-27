@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, Chip, Spinner } from "@heroui/react";
+import { Alert, Card, Chip, Spinner } from "@heroui/react";
 import { useEffect, useState } from "react";
 
 interface OpenApiPayload {
@@ -34,7 +34,9 @@ export function SwaggerWorkspace() {
 
   if (error) {
     return (
-      <Card className="p-4 text-danger-600 dark:text-danger-300">{error}</Card>
+      <Alert status="danger" role="alert">
+        {error}
+      </Alert>
     );
   }
 
@@ -65,7 +67,7 @@ export function SwaggerWorkspace() {
           </Chip>
         </div>
         {payload.errors.length > 0 ? (
-          <div className="mt-4 rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-warning-700 dark:text-warning-300">
+          <Alert status="warning" role="status" className="mt-4">
             Partial OpenAPI load:
             <ul className="ml-5 mt-2 list-disc">
               {payload.errors.map((item) => (
@@ -74,7 +76,7 @@ export function SwaggerWorkspace() {
                 </li>
               ))}
             </ul>
-          </div>
+          </Alert>
         ) : null}
       </Card>
 

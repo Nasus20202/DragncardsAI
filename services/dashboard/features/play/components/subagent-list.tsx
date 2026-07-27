@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useState } from "react";
-import { Tooltip } from "@heroui/react";
+import { Button, Spinner, Tooltip } from "@heroui/react";
 import { SubagentEntry } from "@/features/play/lib/play-session-events";
 
 interface Props {
@@ -70,33 +70,16 @@ function ChildJobWatcher({
   return null;
 }
 
-function Spinner() {
-  return (
-    <svg
-      className="h-3 w-3 shrink-0 animate-spin text-success-500"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <circle
-        className="opacity-25"
-        cx="12"
-        cy="12"
-        r="10"
-        stroke="currentColor"
-        strokeWidth="4"
-      />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-      />
-    </svg>
-  );
-}
-
 function StatusIcon({ status }: { status: SubagentEntry["status"] }) {
-  if (status === "running") return <Spinner />;
+  if (status === "running") {
+    return (
+      <Spinner
+        size="sm"
+        aria-hidden="true"
+        className="h-3 w-3 shrink-0 text-success-500"
+      />
+    );
+  }
   if (status === "failed") {
     return (
       <span className="h-3 w-3 shrink-0 text-center text-[10px] leading-none text-danger-500">
@@ -119,11 +102,12 @@ function EntryRow({
   onSelect: (e: SubagentEntry) => void;
 }) {
   const button = (
-    <button
-      type="button"
-      onClick={() => onSelect(entry)}
+    <Button
+      size="sm"
+      variant="ghost"
+      onPress={() => onSelect(entry)}
       className={[
-        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs shadow-sm backdrop-blur-sm",
+        "flex h-auto min-h-0 items-center justify-start gap-1.5 rounded-lg border px-2.5 py-1 text-xs shadow-sm backdrop-blur-sm",
         entry.status === "failed"
           ? "border-danger-200 bg-danger-50/90 hover:bg-danger-100"
           : "border-default-200 bg-content1/95 hover:bg-default-100",
@@ -133,7 +117,7 @@ function EntryRow({
       <span className="max-w-[140px] truncate text-default-600">
         {entry.name ?? entry.childJobId.slice(0, 8)}
       </span>
-    </button>
+    </Button>
   );
 
   if (entry.status === "failed" && entry.reason) {
@@ -182,14 +166,15 @@ export function SubagentList({ entries, onSelect, onSubagentFinished }: Props) {
         <span className="text-[10px] font-semibold uppercase tracking-wider text-default-400">
           Subagents
         </span>
-        <button
-          type="button"
-          onClick={() => setExpanded((value) => !value)}
-          className="rounded px-1 py-0.5 text-[10px] text-default-400 hover:bg-default-100 hover:text-default-600"
+        <Button
+          size="sm"
+          variant="ghost"
+          onPress={() => setExpanded((value) => !value)}
+          className="h-auto min-h-0 rounded bg-transparent px-1 py-0.5 text-[10px] text-default-400 hover:bg-default-100 hover:text-default-600"
           aria-label={expanded ? "Collapse subagents" : "Expand subagents"}
         >
           {expanded ? "▴" : `▾ ${entries.length}`}
-        </button>
+        </Button>
       </div>
 
       {visible.length > 0 && (

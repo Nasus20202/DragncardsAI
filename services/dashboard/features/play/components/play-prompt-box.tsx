@@ -1,5 +1,6 @@
 "use client";
 
+import { Button, TextArea, TextField } from "@heroui/react";
 import { ContextMetadata, SessionDetail } from "@/features/shared/lib/types";
 import { ContextHealthWidget } from "@/features/play/components/context-health-widget";
 import { useCallback, useEffect, useRef } from "react";
@@ -63,55 +64,52 @@ export function PlayPromptBox({
                 : "border-default-300 focus-within:border-default-400",
             ].join(" ")}
           >
-            <textarea
-              data-testid="play-prompt-input"
-              ref={ref}
+            <TextField
+              fullWidth
               aria-label="Message"
-              rows={1}
-              value={prompt}
-              disabled={disabled}
-              placeholder={
-                disabled
-                  ? "Select an active session to start."
-                  : "Message the agent..."
-              }
-              className="min-h-24 w-full flex-1 resize-none bg-transparent py-1 text-[17px] leading-6 text-foreground placeholder-default-400 outline-none sm:min-h-11 sm:py-0 sm:text-base sm:leading-normal"
-              onChange={(e) => onPromptChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-            />
+              isDisabled={disabled}
+              className="min-w-0 flex-1"
+            >
+              <TextArea
+                data-testid="play-prompt-input"
+                ref={ref}
+                aria-label="Message"
+                rows={1}
+                value={prompt}
+                disabled={disabled}
+                placeholder={
+                  disabled
+                    ? "Select an active session to start."
+                    : "Message the agent..."
+                }
+                className="min-h-24 w-full flex-1 resize-none border-0 bg-transparent py-1 text-[17px] leading-6 text-foreground placeholder-default-400 shadow-none outline-none sm:min-h-11 sm:py-0 sm:text-base sm:leading-normal"
+                onChange={(e) => onPromptChange(e.target.value)}
+                onKeyDown={handleKeyDown}
+              />
+            </TextField>
 
             <div className="flex shrink-0 gap-2 sm:mb-0.5">
               {showCancel ? (
-                <button
-                  type="button"
+                <Button
                   aria-label="Cancel active execution"
-                  disabled={cancelPending}
-                  className={[
-                    "rounded-lg px-3 py-2 text-sm font-semibold transition-colors sm:px-3 sm:py-1.5",
-                    cancelPending
-                      ? "cursor-not-allowed bg-default-200 text-default-400"
-                      : "bg-danger/12 text-danger hover:bg-danger/18",
-                  ].join(" ")}
-                  onClick={onCancelExecution}
+                  isDisabled={cancelPending}
+                  variant={cancelPending ? "ghost" : "danger-soft"}
+                  className="rounded-lg px-3 py-2 text-sm font-semibold transition-colors sm:px-3 sm:py-1.5"
+                  onPress={onCancelExecution}
                 >
                   {cancelPending ? "Cancelling..." : "Cancel"}
-                </button>
+                </Button>
               ) : null}
-              <button
+              <Button
                 data-testid="play-prompt-send"
-                type="button"
                 aria-label="Send message"
-                disabled={!canSend}
-                className={[
-                  "rounded-lg px-3 py-2 text-sm font-semibold transition-colors sm:px-3 sm:py-1.5",
-                  canSend
-                    ? "bg-foreground text-background hover:opacity-80"
-                    : "cursor-not-allowed bg-default-200 text-default-400",
-                ].join(" ")}
-                onClick={onSubmit}
+                isDisabled={!canSend}
+                variant="primary"
+                className="rounded-lg px-3 py-2 text-sm font-semibold transition-colors sm:px-3 sm:py-1.5"
+                onPress={onSubmit}
               >
                 {isBusy ? "…" : "Send"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
