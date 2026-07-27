@@ -125,10 +125,46 @@ def test_translate_shuffle_into_deck():
     payload = translate_action(action)
     assert payload["action"] == "evaluate"
     assert payload["options"]["action_list"] == [
-        ["VAR", "$DECK_GROUP_ID", "/cardById/card-456/deckGroupId"],
+        ["VAR", "$DECK_GROUP_ID", "$GAME.cardById.card-456.deckGroupId"],
         ["MOVE_CARD", "card-456", "$DECK_GROUP_ID", 0],
         ["SHUFFLE_GROUP", "$DECK_GROUP_ID"],
     ]
+
+
+def test_translate_shuffle_into_deck_reads_deck_group_as_a_value_not_a_path():
+    """A "/a/b/c" literal evaluates to the path list ["a", "b", "c"] in DragnLang,
+    so MOVE_CARD would receive a list and DragnCards would raise
+    "Group not found: cardById<id>deckGroupId". The deck group must be read with
+    dotted "$GAME." access so the variable holds the group id string.
+    """
+    action = ShuffleIntoDeckAction(instance_id="card-456")
+    action_list = translate_action(action)["options"]["action_list"]
+
+    var_op, move_op, shuffle_op = action_list
+    assert var_op[0] == "VAR"
+    deck_group_expr = var_op[2]
+    assert deck_group_expr.startswith("$GAME.")
+    assert not deck_group_expr.startswith("/")
+    assert "/" not in deck_group_expr
+    assert deck_group_expr == "$GAME.cardById.card-456.deckGroupId"
+
+    # The move and the shuffle must both target the resolved deck group.
+    assert move_op == ["MOVE_CARD", "card-456", "$DECK_GROUP_ID", 0]
+    assert shuffle_op == ["SHUFFLE_GROUP", "$DECK_GROUP_ID"]
+
+
+def test_translate_shuffle_into_deck_injects_player_context():
+    """Deck-insertion automation references $PLAYER_N, so player_n must reach
+    player_ui or DragnCards rejects the move with "$PLAYER_N is undefined"."""
+    action = ShuffleIntoDeckAction(instance_id="card-456", player_n="player2")
+    payload = translate_action(action)
+    assert payload["options"]["player_ui"] == {"playerN": "player2"}
+
+
+def test_translate_shuffle_into_deck_omits_player_ui_when_unset():
+    action = ShuffleIntoDeckAction(instance_id="card-456")
+    payload = translate_action(action)
+    assert "player_ui" not in payload["options"]
 
 
 def test_translate_zero_tokens():

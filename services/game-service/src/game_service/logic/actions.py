@@ -324,6 +324,26 @@ class ShuffleIntoDeckAction(BaseModel):
     instance_id: str = Field(
         ..., description="Instance ID of the card to shuffle into its deck"
     )
+    player_n: str | None = Field(
+        default=None,
+        description=(
+            "Player context for the shuffle (e.g. 'player1'). "
+            "Set this whenever the card belongs to a player deck. "
+            "Injects player_ui.playerN so DragnCards automation rules that "
+            "reference $PLAYER_N on deck insertion resolve correctly; without "
+            "it the engine rejects the move with '$PLAYER_N is undefined'."
+        ),
+    )
+
+    @field_validator("player_n")
+    @classmethod
+    def _validate_player_n_shuffle(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        allowed = {"player1", "player2", "player3", "player4"}
+        if v not in allowed:
+            raise ValueError(f"Invalid player_n: {v}")
+        return v
 
 
 class ZeroTokensAction(BaseModel):
@@ -683,18 +703,22 @@ def _to_dragncards(action: GameAction) -> tuple[list, str, str | None]:
     if isinstance(action, ShuffleIntoDeckAction):
         # Marvel Champions shuffleIntoDeck action list expects $ACTIVE_CARD context.
         # Implement inline: read card's deckGroupId, move card there, shuffle.
+        # A "/a/b/c" string is a *write* path literal in DragnLang - evaluating it
+        # yields the path list ["a", "b", "c"], not the value stored there. Reads
+        # must use dotted "$GAME.a.b.c" access (same idiom as the plugin's
+        # "$ACTIVE_CARD.deckGroupId").
         return (
             [
                 [
                     "VAR",
                     "$DECK_GROUP_ID",
-                    f"/cardById/{action.instance_id}/deckGroupId",
+                    f"$GAME.cardById.{action.instance_id}.deckGroupId",
                 ],
                 ["MOVE_CARD", action.instance_id, "$DECK_GROUP_ID", 0],
                 ["SHUFFLE_GROUP", "$DECK_GROUP_ID"],
             ],
             f"Shuffle card {action.instance_id} into its deck",
-            None,
+            action.player_n,
         )
 
     if isinstance(action, ZeroTokensAction):
