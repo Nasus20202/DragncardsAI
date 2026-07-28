@@ -103,6 +103,10 @@ services:
       VALKEY_URL: ${HISTORY_VALKEY_URL:-redis://agent-orchestrator-valkey:6379/0}
       GAME_SERVICE_BASE_URL: ${HISTORY_GAME_SERVICE_BASE_URL:-http://game-service:8000}
       AGENT_ORCHESTRATOR_BASE_URL: ${HISTORY_AGENT_ORCHESTRATOR_BASE_URL:-http://agent-orchestrator:8010}
+      # Ceiling on an uploaded history bundle (POST /import). A lossless bundle
+      # carries a full board state per game-service event, so it is far above the
+      # agent-orchestrator's 8 MiB request-body cap.
+      HISTORY_IMPORT_MAX_BYTES: ${HISTORY_IMPORT_MAX_BYTES:-67108864}
       HTTP_HOST: ${HISTORY_SERVICE_HTTP_HOST:-0.0.0.0}
       HTTP_PORT: ${HISTORY_SERVICE_HTTP_PORT:-4004}
       OTEL_SERVICE_NAME: ${HISTORY_SERVICE_OTEL_SERVICE_NAME:-history-service}

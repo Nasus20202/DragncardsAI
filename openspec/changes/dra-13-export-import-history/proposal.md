@@ -190,6 +190,19 @@ verbatim; a reader derives rounds the same way the UI does.
     `features/history/components/history-workspace.tsx`,
     `features/history/lib/history-api.ts`,
     `features/shared/lib/types.ts`
-- New configuration: `HISTORY_IMPORT_MAX_BYTES` (default 67108864).
+  - Ancillary files kept current: root `README.md` (architecture prose),
+    `docker-compose.yaml` (the history-service `environment:` block).
+- New configuration: `HISTORY_IMPORT_MAX_BYTES` (default 67108864), carried in
+  the history-service README table, its `.env.example`, and `docker-compose.yaml`.
+  `scripts/service-helpers.sh` and the `Makefile` reference only port 4004 and
+  the image name, so neither needs the new key; there is no root `.env.example`.
 - No database migration: import writes the existing `events` and `snapshots`
-  tables with the existing columns.
+  tables with the existing columns. No Dockerfile change: the endpoints add no
+  dependency, port, or entrypoint change.
+- Known gaps left to their own issues, not fixed here:
+  - The dashboard Swagger index merges only `orchestrator` and `game`
+    (`features/swagger/lib/openapi.ts`), so these endpoints cannot surface there
+    until history-service joins that index — **DRA-20**'s scope.
+  - history-service has no OpenTelemetry instrumentation in code even though
+    compose sets `OTEL_*` for it; the new routes are neither more nor less
+    instrumented than the existing ones — overlaps **DRA-23**.
