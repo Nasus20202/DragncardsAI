@@ -64,9 +64,11 @@ def test_health_ok(repo_factory):
 
 
 def test_ready_reports_checks_and_no_secrets(repo_factory):
-    settings = Settings(eval_judge_model="anthropic/claude-x")
+    settings = Settings(
+        eval_judge_model="anthropic/claude-x", bifrost_api_key="super-secret-token"
+    )
     history = FakeHistoryClient({"g1": _game()})
-    judge = StubJudgeClient()
+    judge = StubJudgeClient(judge_key_providers=frozenset({"anthropic"}))
     with _client(repo_factory, history, judge, settings) as client:
         resp = client.get("/ready")
         body = resp.json()
@@ -78,8 +80,9 @@ def test_ready_reports_checks_and_no_secrets(repo_factory):
             "bifrost": True,
         }
         assert body["judge_configured"] is True
-        # No secret echoed anywhere in the response.
-        assert "key" not in resp.text.lower()
+        assert body["judge_key"]["status"] == "present"
+        # Key NAMES are reported; the secret itself never is.
+        assert "super-secret-token" not in resp.text
 
 
 def test_ready_degraded_when_no_judge_model(repo_factory):
@@ -90,6 +93,68 @@ def test_ready_degraded_when_no_judge_model(repo_factory):
         body = client.get("/ready").json()
         assert body["status"] == "degraded"
         assert body["judge_configured"] is False
+
+
+def test_ready_degraded_when_judge_provider_has_no_dedicated_key(repo_factory):
+    """Judging via a provider with no ``eval-judge`` key must NOT look healthy.
+
+    Without this, the judge would silently be billed to the game-playing key (or
+    fail every call), so readiness has to call it out.
+    """
+    settings = Settings(eval_judge_model="openrouter/anthropic/claude-sonnet-4")
+    history = FakeHistoryClient({"g1": _game()})
+    judge = StubJudgeClient(judge_key_providers=frozenset({"anthropic"}))
+    with _client(repo_factory, history, judge, settings) as client:
+        body = client.get("/ready").json()
+        assert body["status"] == "degraded"
+        assert body["judge_configured"] is True
+        assert body["judge_key"] == {
+            "name": "eval-judge",
+            "provider": "openrouter",
+            "status": "missing",
+            "providers": ["anthropic"],
+        }
+
+
+def test_ready_reports_present_for_any_provider_with_a_judge_key(repo_factory):
+    # The judge identity is not Anthropic-specific: any provider that defines an
+    # ``eval-judge`` key entry is a valid judge provider.
+    settings = Settings(eval_judge_model="openrouter/anthropic/claude-sonnet-4")
+    history = FakeHistoryClient({"g1": _game()})
+    judge = StubJudgeClient(
+        judge_key_providers=frozenset({"anthropic", "openrouter", "gemini"})
+    )
+    with _client(repo_factory, history, judge, settings) as client:
+        body = client.get("/ready").json()
+        assert body["status"] == "ok"
+        assert body["judge_key"]["status"] == "present"
+        assert body["judge_key"]["provider"] == "openrouter"
+
+
+def test_ready_unknown_judge_key_does_not_degrade(repo_factory):
+    # An unreadable key listing is "cannot tell", not "missing": the bifrost
+    # check already covers reachability, so don't cry wolf.
+    settings = Settings(eval_judge_model="anthropic/claude-x")
+    history = FakeHistoryClient({"g1": _game()})
+    judge = StubJudgeClient(judge_key_providers=None)
+    with _client(repo_factory, history, judge, settings) as client:
+        body = client.get("/ready").json()
+        assert body["status"] == "ok"
+        assert body["judge_key"]["status"] == "unknown"
+
+
+def test_ready_reports_disabled_when_key_selection_opted_out(repo_factory):
+    # Falling back to the game-playing key pool is allowed but must be explicit
+    # and visible, never an accident.
+    settings = Settings(
+        eval_judge_model="anthropic/claude-x", eval_judge_bifrost_key_name=""
+    )
+    history = FakeHistoryClient({"g1": _game()})
+    judge = StubJudgeClient(judge_key_providers=frozenset())
+    with _client(repo_factory, history, judge, settings) as client:
+        body = client.get("/ready").json()
+        assert body["status"] == "ok"
+        assert body["judge_key"]["status"] == "disabled"
 
 
 def test_create_request_returns_targets(repo_factory):

@@ -134,11 +134,17 @@ services:
       EVAL_DATABASE_URL: ${EVAL_DATABASE_URL:-postgresql+asyncpg://postgres:postgres@eval-postgres:5432/eval_service}
       HISTORY_SERVICE_BASE_URL: ${EVAL_HISTORY_SERVICE_BASE_URL:-http://history-service:4004}
       BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
-      # The dedicated eval-judge virtual key; external/unset by default.
+      # Gateway auth token only. This does NOT select a provider key: the
+      # dedicated judge identity is pinned by EVAL_JUDGE_BIFROST_KEY_NAME below.
       BIFROST_API_KEY: ${EVAL_BIFROST_API_KEY:-dummy}
       # Required, no default: the judge model the eval-service routes to.
       EVAL_JUDGE_MODEL: ${EVAL_JUDGE_MODEL:-}
       EVAL_JUDGE_PROVIDER: ${EVAL_JUDGE_PROVIDER:-}
+      # Name of the Bifrost key entry judge traffic is pinned to (sent as
+      # x-bf-api-key). Every provider in services/bifrost/config.json defines an
+      # `eval-judge` entry at weight 0.0, so any provider can judge under its own
+      # key. Set to "" to deliberately fall back to the game-playing key pool.
+      EVAL_JUDGE_BIFROST_KEY_NAME: ${EVAL_JUDGE_BIFROST_KEY_NAME:-eval-judge}
       EVALUATOR_VERSION: ${EVALUATOR_VERSION:-eval-1}
       HTTP_HOST: ${EVAL_SERVICE_HTTP_HOST:-0.0.0.0}
       HTTP_PORT: ${EVAL_SERVICE_HTTP_PORT:-4005}

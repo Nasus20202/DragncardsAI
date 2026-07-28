@@ -14,7 +14,7 @@ The eval-service container image SHALL start cleanly regardless of the module's 
 
 #### Scenario: Health and readiness without secrets
 - **WHEN** a client requests the eval-service health or readiness endpoint
-- **THEN** the eval-service SHALL report API, PostgreSQL, history-service, and Bifrost readiness and SHALL NOT expose any secret values
+- **THEN** the eval-service SHALL report API, PostgreSQL, history-service, and Bifrost readiness, plus whether a judge model and a dedicated judge key for its provider are configured, and SHALL NOT expose any secret values
 
 #### Scenario: Packaged service boots and resolves skills
 - **WHEN** the eval-service container image starts
@@ -81,7 +81,9 @@ The eval-service SHALL evaluate each round/turn in isolation, detecting round bo
 - **THEN** the eval-service SHALL close the final round at that terminal event and produce its round verdict
 
 ### Requirement: Isolated judge LLM under a dedicated Bifrost identity
-The eval-service SHALL run each evaluation through a fresh, stateless judge LLM invocation routed through the Bifrost gateway under a dedicated Bifrost virtual key/provider identity that is separate from the game-playing identities. The judge model and provider SHALL be operator-configured with NO built-in default; the eval-service SHALL refuse to perform an evaluation when no judge model is configured. The judge SHALL NOT reuse or mutate the game-playing agent's session.
+The eval-service SHALL run each evaluation through a fresh, stateless judge LLM invocation routed through the Bifrost gateway under a dedicated judge key that is separate from the game-playing keys, for WHICHEVER provider the configured judge model routes to. The judge model and provider SHALL be operator-configured with NO built-in default; the eval-service SHALL refuse to perform an evaluation when no judge model is configured. The judge SHALL NOT reuse or mutate the game-playing agent's session.
+
+The eval-service SHALL address the judge key by an operator-configurable NAME, sent as the gateway's named-key selection header, so a single setting pins the judge identity across every provider. The eval-service SHALL NOT rely on the gateway authorization bearer to select a provider key. Judge traffic SHALL NOT fall back to a game-playing key implicitly; where an operator deliberately disables named-key selection, the service SHALL log that at startup and report it in readiness.
 
 #### Scenario: Judge runs in a fresh isolated session
 - **WHEN** the eval-service invokes the judge for a target
@@ -89,7 +91,11 @@ The eval-service SHALL run each evaluation through a fresh, stateless judge LLM 
 
 #### Scenario: Judge traffic uses the dedicated Bifrost identity
 - **WHEN** the eval-service sends a judge request through Bifrost
-- **THEN** the request SHALL be sent under the dedicated judge virtual key/provider identity and SHALL NOT use a game-playing identity
+- **THEN** the request SHALL name the dedicated judge key so the gateway selects it for the target provider, and SHALL NOT use a game-playing identity
+
+#### Scenario: Judge identity holds for any provider
+- **WHEN** the configured judge model routes to a provider other than the default one
+- **THEN** the same named judge key SHALL be selected for that provider, so the judge uses that provider's own judge credential rather than its game-playing key, with no code change
 
 #### Scenario: Judge model and provider are configurable
 - **WHEN** an operator configures the eval-service judge model and provider
@@ -98,6 +104,11 @@ The eval-service SHALL run each evaluation through a fresh, stateless judge LLM 
 #### Scenario: No judge model configured
 - **WHEN** the eval-service is asked to evaluate a target but no judge model has been configured
 - **THEN** the eval-service SHALL NOT invoke a default model and SHALL skip the evaluation with a clear configuration error rather than guessing a model
+
+#### Scenario: Missing judge key is reported, not absorbed
+- **WHEN** the judge provider has no dedicated judge key configured
+- **THEN** readiness SHALL report the judge key as missing for that provider and SHALL report status `degraded`
+- **AND** an attempted evaluation SHALL be recorded against the target with the gateway's own error identifying the missing key and provider, rather than a generic judge failure
 
 ### Requirement: Structured verdict written back as an evaluator event
 The eval-service SHALL write each evaluation verdict back to the history-service through its HTTP ingest endpoint as a versioned event envelope with actor `evaluator`, whose payload contains an overall 0-10 score, four per-criterion 0-10 scores (`rules_legality`, `strategic_quality`, `tempo_efficiency`, `threat_resource`), a rationale, the evaluation scope, the `evaluator_version`, and the target move `seq` or round span it grades, using an idempotency key derived from `(game_id, target_seq, scope, evaluator_version)`.

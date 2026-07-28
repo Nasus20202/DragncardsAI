@@ -21,8 +21,9 @@ uv run eval-service        # serves on :4005 by default
 
 ## Configuration
 
-All settings have secret-free defaults; secrets live only in
-`EVAL_DATABASE_URL` and `BIFROST_API_KEY` (the dedicated judge key).
+All settings have secret-free defaults; the judge's provider credentials live in
+Bifrost, not here (see [Judge identity](#judge-identity)), so the only secret in
+this service's own configuration is `EVAL_DATABASE_URL`.
 `EVAL_JUDGE_MODEL` is **required with no default** — the service refuses to
 evaluate (and reports readiness `degraded`) until it is set. See `.env.example`.
 
@@ -31,9 +32,10 @@ evaluate (and reports readiness `degraded`) until it is set. See `.env.example`.
 | `EVAL_DATABASE_URL` | `postgresql+asyncpg://...:5443/eval_service` | Dedicated eval DB (its own) |
 | `HISTORY_SERVICE_BASE_URL` | `http://localhost:4004` | History read + write-back |
 | `BIFROST_URL` | `http://localhost:4003` | LLM gateway |
-| `BIFROST_API_KEY` | `dummy` | Dedicated `eval-judge` virtual key |
-| `EVAL_JUDGE_MODEL` | _(required, unset)_ | `provider/model` judge id |
+| `BIFROST_API_KEY` | `dummy` | Gateway auth token — does **not** select a provider key |
+| `EVAL_JUDGE_MODEL` | _(required, unset)_ | `provider/model` judge id; the prefix picks the provider |
 | `EVAL_JUDGE_PROVIDER` | _(optional)_ | Provider hint for verdict metadata |
+| `EVAL_JUDGE_BIFROST_KEY_NAME` | `eval-judge` | Bifrost key entry judge traffic is pinned to (`x-bf-api-key`); `""` opts out |
 | `EVALUATOR_VERSION` | `eval-1` | Recorded on every verdict |
 | `EVAL_MAX_ATTEMPTS` | `3` | Retry attempts before skip |
 | `EVAL_PER_GAME_CONCURRENCY` | `2` | Per-game in-flight judge cap |
@@ -43,6 +45,47 @@ evaluate (and reports readiness `degraded`) until it is set. See `.env.example`.
 | `EVAL_JUDGE_MAX_ROUND_MOVES` | `100` | Cap on per-move blocks listed in a round prompt |
 | `EVAL_CORS_ALLOW_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001` | Comma-separated CORS allowlist (dashboard reaches the service via a server-side proxy, so a strict list is safe) |
 
+## Judge identity
+
+The judge runs on its own provider credential, for **any** provider — not just
+Anthropic. The mechanism is Bifrost's named-key selection:
+
+1. Each provider in `services/bifrost/config.json` carries a second key entry
+   named `eval-judge` at `"weight": 0.0`, sourced from its own
+   `env.EVAL_JUDGE_<PROVIDER>_API_KEY`. Weight `0.0` keeps it out of normal
+   gameplay key selection, which is weighted-random over the provider's keys.
+2. Every judge call sends `x-bf-api-key: eval-judge` (from
+   `EVAL_JUDGE_BIFROST_KEY_NAME`). Bifrost resolves that header to the
+   same-named key of whichever provider the model id routes to, and explicit
+   selection overrides the `0.0` weight.
+
+`Authorization: Bearer` is gateway auth only — with `enforce_auth_on_inference:
+false` and `allow_direct_keys: false` it selects nothing, so the
+`x-bf-api-key` header is what makes the dedicated identity real.
+
+**Adding a judge key for another provider** — e.g. to judge with
+`EVAL_JUDGE_MODEL=openrouter/anthropic/claude-sonnet-4`:
+
+1. Ensure that provider has an `eval-judge` key entry in
+   `services/bifrost/config.json` (all shipped providers already do).
+2. Set `EVAL_JUDGE_OPENROUTER_API_KEY` in `services/bifrost/.env` (never
+   committed).
+3. Restart Bifrost so it re-reads `config.json` and the environment.
+
+**Misconfiguration is loud, never silent.** Judge traffic can never quietly fall
+back to a game-playing key:
+
+- `GET /ready` reports `judge_key: {name, provider, status, providers}` and
+  returns `degraded` when `status` is `missing` — the configured provider has no
+  `eval-judge` entry. `providers` lists the providers that do, so switching is an
+  informed choice. `status: unknown` means Bifrost's key listing was unreadable;
+  `disabled` means `EVAL_JUDGE_BIFROST_KEY_NAME` was deliberately emptied (also
+  warned at startup).
+- If the key is missing or its `env.` reference is unset, Bifrost rejects the
+  call with `no supported key found with name "eval-judge" for provider: <p>`.
+  That is a definitive 4xx, so it is not retried, and the message is recorded as
+  the target's skip reason and shown in the UI.
+
 ## HTTP API
 
 - `POST /games/{game_id}/evaluations` — request evaluation of selected targets.
@@ -50,7 +93,8 @@ evaluate (and reports readiness `degraded`) until it is set. See `.env.example`.
   Returns `201` with created/skipped counts and the target list.
 - `GET  /games/{game_id}/evaluations/{request_id}` — per-target status + verdicts.
 - `GET  /games/{game_id}/evaluations` — list a game's requests (UI polling).
-- `GET  /health`, `GET /ready` — liveness/readiness (db + history + bifrost; no secrets).
+- `GET  /health`, `GET /ready` — liveness/readiness (db + history + bifrost +
+  judge model/key; names only, no secrets).
 
 ### Selection shape
 

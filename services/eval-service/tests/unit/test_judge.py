@@ -225,11 +225,12 @@ def test_writeback_envelope_uses_evaluator_actor():
 
 @pytest.mark.asyncio
 async def test_judge_routes_under_dedicated_identity_fresh_session():
-    """The judge sends only the prompt under the dedicated bearer key."""
+    """The judge sends only the prompt, pinned to the named judge key."""
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["auth"] = request.headers.get("Authorization")
+        captured["key_name"] = request.headers.get("x-bf-api-key")
         captured["url"] = str(request.url)
         captured["body"] = json.loads(request.content)
         return httpx.Response(
@@ -238,7 +239,9 @@ async def test_judge_routes_under_dedicated_identity_fresh_session():
         )
 
     transport = httpx.MockTransport(handler)
-    client = BifrostJudgeClient("http://bifrost:8080", "eval-judge-key")
+    client = BifrostJudgeClient(
+        "http://bifrost:8080", "gateway-token", key_name="eval-judge"
+    )
     client._client = httpx.AsyncClient(transport=transport)
 
     messages = [{"role": "user", "content": "grade this"}]
@@ -246,14 +249,126 @@ async def test_judge_routes_under_dedicated_identity_fresh_session():
         model="anthropic/claude-x", messages=messages, max_tokens=256
     )
 
-    # Routed under the dedicated judge key (NOT a game identity).
-    assert captured["auth"] == "Bearer eval-judge-key"
+    assert captured["auth"] == "Bearer gateway-token"
+    # The named-key header is what pins the call to the dedicated judge key: the
+    # bearer above does NOT select a provider key.
+    assert captured["key_name"] == "eval-judge"
     assert captured["url"].endswith("/openai/chat/completions")
     # Fresh, stateless: the request body carries only the supplied messages.
     assert captured["body"]["messages"] == messages
     assert captured["body"]["model"] == "anthropic/claude-x"
     assert captured["body"]["max_tokens"] == 256
     assert json.loads(out) == {"ok": True}
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model", ["openrouter/anthropic/claude-sonnet-4", "gemini/gemini-2.5-pro"]
+)
+async def test_judge_key_selection_is_provider_agnostic(model):
+    """The same judge key name is selected whatever provider the model routes to.
+
+    Bifrost resolves ``x-bf-api-key`` against the TARGET provider's keys, so one
+    header pins the judge identity for every provider that defines that key.
+    """
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["key_name"] = request.headers.get("x-bf-api-key")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    client = BifrostJudgeClient("http://bifrost:8080", "t", key_name="eval-judge")
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await client.judge(model=model, messages=[], max_tokens=8)
+    assert captured["key_name"] == "eval-judge"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_judge_omits_key_header_when_selection_disabled():
+    """An empty key name opts out: no header, so the normal key pool applies."""
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["headers"] = dict(request.headers)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    client = BifrostJudgeClient("http://bifrost:8080", "t", key_name="")
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await client.judge(model="anthropic/claude-x", messages=[], max_tokens=8)
+    assert "x-bf-api-key" not in captured["headers"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_missing_judge_key_is_a_definitive_non_retryable_error():
+    """Bifrost's "no supported key found" 400 must fail fast, not be retried.
+
+    This is the real-gateway response when the target provider has no key of the
+    judge's name (or its env reference is unset) -- the guarantee that judge
+    traffic can never silently fall back to a game-playing key.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": 'no supported key found with name "eval-judge" '
+                    "for provider: openrouter and model: x"
+                }
+            },
+        )
+
+    client = BifrostJudgeClient("http://bifrost:8080", "t", key_name="eval-judge")
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with pytest.raises(BifrostError) as excinfo:
+        await client.judge(model="openrouter/x", messages=[], max_tokens=8)
+    assert excinfo.value.retryable is False
+    assert 'no supported key found with name "eval-judge"' in str(excinfo.value)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_named_key_providers_lists_providers_with_the_judge_key():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/keys"
+        return httpx.Response(
+            200,
+            json=[
+                {"name": "openai-primary", "provider": "openai"},
+                {"name": "eval-judge", "provider": "openai"},
+                {"name": "eval-judge", "provider": "openrouter"},
+                {"name": "anthropic-primary", "provider": "anthropic"},
+                "not-a-dict",
+            ],
+        )
+
+    client = BifrostJudgeClient("http://bifrost:8080", "t", key_name="eval-judge")
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    assert await client.named_key_providers("eval-judge") == frozenset(
+        {"openai", "openrouter"}
+    )
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(401, text="admin auth required"),
+        httpx.Response(200, text="not json"),
+        httpx.Response(200, json={"keys": []}),
+    ],
+)
+async def test_named_key_providers_returns_none_when_unreadable(response):
+    # "Cannot tell" must be distinguishable from "no judge keys configured".
+    client = BifrostJudgeClient("http://bifrost:8080", "t", key_name="eval-judge")
+    client._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: response)
+    )
+    assert await client.named_key_providers("eval-judge") is None
     await client.aclose()
 
 

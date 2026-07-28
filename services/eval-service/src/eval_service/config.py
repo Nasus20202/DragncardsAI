@@ -20,6 +20,11 @@ _DEFAULT_SKILL_ROOT = (
 )
 
 
+def provider_from_model(model: str) -> str:
+    """Best-effort provider id derived from a ``provider/model`` Bifrost id."""
+    return model.split("/", 1)[0] if "/" in model else ""
+
+
 class Settings(BaseSettings):
     """Eval-service configuration.
 
@@ -74,6 +79,20 @@ class Settings(BaseSettings):
     eval_judge_provider: str = Field(
         default="",
         validation_alias=AliasChoices("eval_judge_provider", "EVAL_JUDGE_PROVIDER"),
+    )
+
+    # Name of the Bifrost provider-key entry judge traffic is pinned to, sent as
+    # the ``x-bf-api-key`` header. This header is the ONLY thing that selects a
+    # dedicated key: the ``Authorization`` bearer is gateway auth, not a key
+    # selector, and Bifrost never auto-selects a ``weight: 0.0`` key. Works for
+    # ANY provider that defines a key of this name (see services/bifrost).
+    # Set to "" to deliberately opt out and let judge calls draw the provider's
+    # normal game-playing key pool -- logged at startup, never implicit.
+    eval_judge_bifrost_key_name: str = Field(
+        default="eval-judge",
+        validation_alias=AliasChoices(
+            "eval_judge_bifrost_key_name", "EVAL_JUDGE_BIFROST_KEY_NAME"
+        ),
     )
     evaluator_version: str = Field(
         default="eval-1",
@@ -184,6 +203,19 @@ class Settings(BaseSettings):
     def judge_configured(self) -> bool:
         """True when a judge model has been deliberately configured."""
         return bool(self.eval_judge_model.strip())
+
+    @property
+    def judge_routing_provider(self) -> str:
+        """Bifrost provider the DEFAULT judge model routes to.
+
+        Bifrost routes on the ``provider/model`` prefix of the model id, so that
+        prefix -- not ``EVAL_JUDGE_PROVIDER``, which is verdict metadata --
+        decides whose key pool is drawn. Falls back to the explicit provider
+        setting when the model id carries no prefix. Empty when neither is set.
+        """
+        return provider_from_model(self.eval_judge_model.strip()) or (
+            self.eval_judge_provider.strip()
+        )
 
     @property
     def skill_root_paths(self) -> tuple[Path, ...]:

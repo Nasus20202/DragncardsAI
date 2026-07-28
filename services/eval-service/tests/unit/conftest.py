@@ -124,7 +124,9 @@ class StubJudgeClient:
         verdict: dict[str, Any] | None = None,
         fail_times: int = 0,
         error: Exception | None = None,
+        judge_key_providers: frozenset[str] | None = None,
     ):
+        self.judge_key_providers = judge_key_providers
         self.verdict = verdict or {
             "scores": {
                 "rules_legality": 8,
@@ -161,6 +163,10 @@ class StubJudgeClient:
 
     async def health(self) -> bool:
         return self.healthy
+
+    async def named_key_providers(self, key_name: str) -> frozenset[str] | None:
+        """Providers with a judge key entry, or ``None`` for "cannot tell"."""
+        return self.judge_key_providers
 
     async def aclose(self) -> None:
         pass

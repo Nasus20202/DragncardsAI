@@ -88,6 +88,32 @@ def test_invalid_judge_input_caps_rejected():
         Settings(eval_judge_max_round_moves=0)
 
 
+def test_judge_key_name_defaults_to_eval_judge(monkeypatch: pytest.MonkeyPatch):
+    # Judge traffic is pinned to a dedicated key by DEFAULT; opting out into the
+    # game-playing key pool has to be spelled out.
+    assert Settings().eval_judge_bifrost_key_name == "eval-judge"
+    monkeypatch.setenv("EVAL_JUDGE_BIFROST_KEY_NAME", "judge-2")
+    assert Settings().eval_judge_bifrost_key_name == "judge-2"
+
+
+@pytest.mark.parametrize(
+    ("model", "provider", "expected"),
+    [
+        # The model id prefix decides the provider whose key pool is drawn, so it
+        # wins over the metadata-only EVAL_JUDGE_PROVIDER.
+        ("openrouter/anthropic/claude-sonnet-4", "", "openrouter"),
+        ("openrouter/anthropic/claude-sonnet-4", "anthropic", "openrouter"),
+        ("gemini/gemini-2.5-pro", "", "gemini"),
+        # No prefix -> fall back to the explicit provider setting.
+        ("claude-x", "anthropic", "anthropic"),
+        ("", "", ""),
+    ],
+)
+def test_judge_routing_provider(model: str, provider: str, expected: str):
+    settings = Settings(eval_judge_model=model, eval_judge_provider=provider)
+    assert settings.judge_routing_provider == expected
+
+
 def test_cors_origins_default_and_parse(monkeypatch: pytest.MonkeyPatch):
     default = Settings()
     assert "http://localhost:3001" in default.cors_allow_origins

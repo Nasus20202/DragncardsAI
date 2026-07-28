@@ -152,6 +152,36 @@ async def test_non_retryable_judge_error_fails_fast(repository):
 
 
 @pytest.mark.asyncio
+async def test_skip_reason_carries_the_gateway_error(repository):
+    """The gateway's own message must reach the target, not a generic "failed".
+
+    A missing dedicated judge key is reported by Bifrost as a definitive 400; if
+    that text were swallowed, the operator would see only "judge failed" and have
+    no idea the judge key for that provider is not configured.
+    """
+    events = _events()
+    history = FakeHistoryClient({"g1": events})
+    message = (
+        'no supported key found with name "eval-judge" for provider: openrouter '
+        "and model: anthropic/claude-sonnet-4"
+    )
+    judge = StubJudgeClient(error=BifrostError("gateway_error", message))
+    evaluator = Evaluator(
+        settings=_settings(eval_judge_model="openrouter/anthropic/claude-sonnet-4"),
+        repository=repository,
+        history=history,
+        judge=judge,
+    )
+    target_id = await _claim_move(repository)
+    await evaluator.evaluate_target(
+        target_id=target_id, game_id="g1", target_seq=2, scope="move", events=events
+    )
+    row = await repository.get_target_by_id(target_id)
+    assert row.status == "skipped"
+    assert message in row.error
+
+
+@pytest.mark.asyncio
 async def test_writeback_failure_marks_skipped(repository):
     events = _events()
     history = FakeHistoryClient({"g1": events})

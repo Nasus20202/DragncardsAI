@@ -64,6 +64,7 @@ def create_app(
             settings.bifrost_url,
             settings.bifrost_api_key,
             timeout_seconds=settings.eval_judge_timeout_seconds,
+            key_name=settings.eval_judge_bifrost_key_name,
         )
         if judge_client is None:
             created_judge = app.state.judge_client
@@ -115,6 +116,13 @@ def create_app(
             logger.warning(
                 "EVAL_JUDGE_MODEL is not configured; evaluations will be skipped "
                 "with a clear error until a judge model is set"
+            )
+
+        if not settings.eval_judge_bifrost_key_name.strip():
+            logger.warning(
+                "EVAL_JUDGE_BIFROST_KEY_NAME is empty: judge calls will draw the "
+                "provider's normal game-playing key pool instead of a dedicated "
+                "judge key, so judge spend is billed to the game-playing budget"
             )
 
         try:
