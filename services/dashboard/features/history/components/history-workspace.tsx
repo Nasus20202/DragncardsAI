@@ -37,6 +37,10 @@ import { HistoryTranscript } from "@/features/history/components/history-transcr
 import { EvaluationControl } from "@/features/history/components/evaluation-control";
 import { EvaluationQueue } from "@/features/history/components/evaluation-queue";
 import { HistoryScorecard } from "@/features/history/components/history-scorecard";
+import {
+  HistoryTransferControls,
+  TransferNotice,
+} from "@/features/history/components/history-transfer";
 import { BoardView } from "@/features/history/components/board-control";
 
 export function HistoryWorkspace({
@@ -53,6 +57,11 @@ export function HistoryWorkspace({
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Outcome of the last export/import, shown in a notice row under the header
+  // (the dashboard surfaces results inline; there is no toast layer).
+  const [transferNotice, setTransferNotice] = useState<TransferNotice | null>(
+    null
+  );
   // Evaluation is a game-level action (it can target the whole game, not just
   // the selected move), so it lives in its own drawer.
   const [evalOpen, setEvalOpen] = useState(false);
@@ -301,6 +310,14 @@ export function HistoryWorkspace({
         <h1 className="text-sm font-semibold text-foreground">Game history</h1>
         {isLoading && <Spinner size="sm" />}
         <div className="ml-auto flex items-center gap-2">
+          <HistoryTransferControls
+            gameId={gameId}
+            onNotice={setTransferNotice}
+            onImported={(importedId) => {
+              setGameId(importedId);
+              void refreshGames(importedId);
+            }}
+          />
           <Button
             type="button"
             size="sm"
@@ -342,6 +359,18 @@ export function HistoryWorkspace({
           )}
         </div>
       </header>
+
+      {transferNotice && (
+        <div
+          data-testid="history-transfer-notice"
+          role={transferNotice.kind === "failure" ? "alert" : "status"}
+          className={`shrink-0 border-b border-default-200/60 px-4 py-1.5 text-xs ${
+            transferNotice.kind === "failure" ? "text-danger" : "text-success"
+          }`}
+        >
+          {transferNotice.message}
+        </div>
+      )}
 
       {/*
         Two-region layout: games-list sidebar · transcript. The sidebar

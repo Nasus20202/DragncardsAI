@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import zlib
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from history_service.schemas.envelope import (
@@ -15,6 +17,7 @@ from history_service.schemas.envelope import (
     StoredEvent,
     StoredSnapshot,
 )
+from history_service.schemas.transfer import BundleEvent, BundleSnapshot
 from history_service.storage.models import EventRow, SnapshotRow, utc_now
 
 
@@ -44,6 +47,31 @@ class DeletionResult:
     game_id: str
     deleted_events: int
     deleted_snapshots: int
+
+
+@dataclass(frozen=True)
+class ImportResult:
+    """Counts and seq range written by an accepted bundle import."""
+
+    game_id: str
+    imported_events: int
+    imported_snapshots: int
+    first_seq: int | None
+    last_seq: int | None
+
+
+class GameHistoryExistsError(Exception):
+    """The import target already has recorded history, so nothing was written."""
+
+
+class DuplicateImportRecordError(Exception):
+    """A bundle carried a duplicate event, so the whole import was rolled back."""
+
+
+# Rows buffered per INSERT while importing. Bounds the resident slice of a bundle
+# whose every event embeds a full board state, while keeping the round trips to
+# the database proportional to the bundle size rather than to its event count.
+IMPORT_INSERT_CHUNK = 100
 
 
 def _advisory_lock_key(game_id: str) -> int:
@@ -335,13 +363,41 @@ class Repository:
             created_at=created_at,
         )
 
-    async def list_snapshots(self, game_id: str) -> list[StoredSnapshot]:
+    async def count_snapshots(self, game_id: str) -> int:
         async with self._session_factory() as session:
             result = await session.execute(
-                select(SnapshotRow)
+                select(func.count())
+                .select_from(SnapshotRow)
                 .where(SnapshotRow.game_id == game_id)
+            )
+            return result.scalar_one()
+
+    async def list_snapshots(
+        self,
+        game_id: str,
+        *,
+        after_seq: int = 0,
+        limit: int | None = None,
+    ) -> list[StoredSnapshot]:
+        """A game's snapshots by ascending ``snapshot_at_seq``.
+
+        ``after_seq``/``limit`` page the read for callers that must not hold
+        every snapshot of a long game at once (each one is a full board state).
+        Omitting both returns them all, which is what the snapshots endpoint and
+        the cadence check want.
+        """
+        async with self._session_factory() as session:
+            statement = (
+                select(SnapshotRow)
+                .where(
+                    SnapshotRow.game_id == game_id,
+                    SnapshotRow.snapshot_at_seq > after_seq,
+                )
                 .order_by(SnapshotRow.snapshot_at_seq.asc())
             )
+            if limit is not None:
+                statement = statement.limit(limit)
+            result = await session.execute(statement)
             return [_to_stored_snapshot(row) for row in result.scalars().all()]
 
     async def get_latest_snapshot_at_or_before(
@@ -359,6 +415,120 @@ class Repository:
             )
             row = result.scalar_one_or_none()
             return _to_stored_snapshot(row) if row is not None else None
+
+    # -- import -------------------------------------------------------------
+
+    async def import_game_history(
+        self,
+        game_id: str,
+        records: AsyncIterator[BundleEvent | BundleSnapshot],
+    ) -> ImportResult:
+        """Persist a validated bundle under ``game_id`` in one transaction.
+
+        Non-destructive: the target must have no recorded history. That check and
+        the writes share one transaction, held under the same per-game advisory
+        lock ``commit_event`` takes, so a concurrent import or a live ingest for
+        the same game cannot slip between the check and the writes. Every field is
+        written verbatim — ``seq``, ``event_id``, ``idempotency_key``,
+        ``occurred_at`` and ``recorded_at`` included — so an imported game reads
+        back identical to the game it was exported from rather than being
+        re-sequenced or re-timestamped.
+
+        ``records`` is consumed lazily while the transaction is open, so a
+        producer that fails partway (a malformed line, an oversized body) aborts
+        the transaction and leaves nothing behind. Callers therefore never
+        observe a partial import.
+        """
+        imported_events = 0
+        imported_snapshots = 0
+        first_seq: int | None = None
+        last_seq: int | None = None
+
+        async with self._session_factory() as session:
+            try:
+                async with session.begin():
+                    if session.bind.dialect.name == "postgresql":
+                        await session.execute(
+                            text("SELECT pg_advisory_xact_lock(:key)"),
+                            {"key": _advisory_lock_key(game_id)},
+                        )
+                    existing = await session.execute(
+                        select(EventRow.seq).where(EventRow.game_id == game_id).limit(1)
+                    )
+                    if existing.scalar_one_or_none() is not None:
+                        raise GameHistoryExistsError(
+                            f"game {game_id!r} already has recorded history; "
+                            "import into a different game_id, or delete that "
+                            "game's history first"
+                        )
+
+                    event_values: list[dict[str, Any]] = []
+                    snapshot_values: list[dict[str, Any]] = []
+
+                    async for record in records:
+                        if isinstance(record, BundleEvent):
+                            event_values.append(
+                                {
+                                    "event_id": record.event_id,
+                                    "game_id": game_id,
+                                    "seq": record.seq,
+                                    "envelope_version": record.envelope_version,
+                                    "actor": record.actor,
+                                    "event_type": record.event_type,
+                                    "payload_json": record.payload,
+                                    "occurred_at": record.occurred_at,
+                                    "recorded_at": record.recorded_at,
+                                    "idempotency_key": record.idempotency_key,
+                                    "producer_offset": (
+                                        None
+                                        if record.producer_offset is None
+                                        else str(record.producer_offset)
+                                    ),
+                                }
+                            )
+                            imported_events += 1
+                            if first_seq is None:
+                                first_seq = record.seq
+                            last_seq = record.seq
+                            if len(event_values) >= IMPORT_INSERT_CHUNK:
+                                await session.execute(insert(EventRow), event_values)
+                                event_values = []
+                        else:
+                            snapshot_values.append(
+                                {
+                                    "game_id": game_id,
+                                    "snapshot_at_seq": record.snapshot_at_seq,
+                                    "snapshot_json": record.snapshot,
+                                    "created_at": record.created_at,
+                                }
+                            )
+                            imported_snapshots += 1
+                            if len(snapshot_values) >= IMPORT_INSERT_CHUNK:
+                                await session.execute(
+                                    insert(SnapshotRow), snapshot_values
+                                )
+                                snapshot_values = []
+
+                    if event_values:
+                        await session.execute(insert(EventRow), event_values)
+                    if snapshot_values:
+                        await session.execute(insert(SnapshotRow), snapshot_values)
+            except IntegrityError as exc:
+                # The bundle violated a uniqueness constraint the store owns —
+                # a repeated (game_id, idempotency_key) or (game_id, seq). The
+                # transaction is already rolled back, so nothing was imported.
+                raise DuplicateImportRecordError(
+                    "bundle contains duplicate events (a repeated "
+                    "idempotency_key or seq); nothing was imported"
+                ) from exc
+
+        return ImportResult(
+            game_id=game_id,
+            imported_events=imported_events,
+            imported_snapshots=imported_snapshots,
+            first_seq=first_seq,
+            last_seq=last_seq,
+        )
 
     # -- deletion -----------------------------------------------------------
 

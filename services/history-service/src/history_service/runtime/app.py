@@ -8,7 +8,14 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from history_service.api.routers import events, games, meta, restore, snapshots
+from history_service.api.routers import (
+    events,
+    games,
+    meta,
+    restore,
+    snapshots,
+    transfer,
+)
 from history_service.config import Settings
 from history_service.integrations.game_service import GameServiceClient
 from history_service.integrations.orchestrator import OrchestratorClient
@@ -147,5 +154,6 @@ def create_app(
     app.include_router(events.router)
     app.include_router(snapshots.router)
     app.include_router(restore.router)
+    app.include_router(transfer.router)
 
     return app
