@@ -1,8 +1,26 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+# Job metadata key holding the skills a prompt loads into its own turn. The
+# prompt endpoint writes only validated names here, so the worker can render
+# them without re-checking the client.
+JOB_INLINE_SKILLS_KEY = "inline_skills"
+
+# How many skills one prompt may load. A `SKILL.md` is thousands of tokens, and
+# a message that needs more than a handful at once is a mistake rather than a
+# use case.
+MAX_INLINE_SKILLS = 4
+
+_INLINE_SKILL_PREAMBLE = (
+    "The user loaded the following skill(s) into this message. Their full"
+    " instructions are already below — do not call `load_skill` for them again."
+    " Use `load_skill_reference(<skill_name>, <reference_name>)` if you need one"
+    " of the reference files each skill lists."
+)
 
 
 def enabled_skill_assignments(assignments: list[Any]) -> list[Any]:
@@ -167,3 +185,48 @@ class SkillRegistry:
         reference_lines = ["## Available references", ""]
         reference_lines.extend(f"- {reference_name}" for reference_name in references)
         return f"{skill_markdown}\n\n" + "\n".join(reference_lines)
+
+
+def dedupe_skill_names(skill_names: Sequence[str]) -> list[str]:
+    """The given names with repeats dropped, first occurrence winning."""
+    return list(dict.fromkeys(skill_names))
+
+
+def render_prompt_with_inline_skills(
+    registry: SkillRegistry,
+    skill_names: Sequence[str],
+    prompt: str,
+) -> tuple[str, list[str]]:
+    """
+    The user message for a turn whose prompt loaded skills into itself.
+
+    Each named skill contributes exactly what `load_skill` would have returned —
+    `SKILL.md` plus the inventory of its reference files — placed ahead of the
+    text the user typed, so the instructions are in context on the turn that
+    asked for them instead of after a tool round trip.
+
+    Only the message handed to the model changes: the job's stored prompt stays
+    the typed text, which is what the transcript shows and what a later turn
+    replays, so a mention costs its tokens once.
+
+    A name that no longer resolves on disk is skipped rather than failing the
+    job — the skill directory may have gone away between submission and
+    execution. Returns the message and the names actually rendered.
+    """
+    blocks: list[str] = []
+    loaded: list[str] = []
+    for skill_name in dedupe_skill_names(skill_names):
+        try:
+            content = registry.load_skill_content(skill_name)
+        except FileNotFoundError, OSError:
+            continue
+        blocks.append(f"## Skill: {skill_name}\n\n{content}")
+        loaded.append(skill_name)
+
+    if not blocks:
+        return prompt, []
+
+    return (
+        "\n\n".join([_INLINE_SKILL_PREAMBLE, *blocks, "---", prompt]),
+        loaded,
+    )

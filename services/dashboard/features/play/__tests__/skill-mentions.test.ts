@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  completeSkillMention,
   filterMentionableSkills,
+  findMentionedSkillNames,
   findSkillMention,
-  removeSkillMention,
 } from "@/features/play/lib/skill-mentions";
 import { SkillDefinitionResponse } from "@/features/shared/lib/types";
 
@@ -72,36 +73,83 @@ describe("findSkillMention", () => {
   });
 });
 
-describe("removeSkillMention", () => {
-  it("drops the token and reports the resulting caret", () => {
+describe("completeSkillMention", () => {
+  it("completes the token and reports the caret after it", () => {
     expect(
-      removeSkillMention("play @mar", { start: 5, end: 9, query: "mar" })
-    ).toEqual({ text: "play ", caret: 5 });
+      completeSkillMention(
+        "play @mar",
+        { start: 5, end: 9, query: "mar" },
+        "marvel-champions-play"
+      )
+    ).toEqual({ text: "play @marvel-champions-play ", caret: 28 });
   });
 
   it("keeps the text that follows the caret", () => {
     expect(
-      removeSkillMention("@mar now", { start: 0, end: 4, query: "mar" })
-    ).toEqual({ text: " now", caret: 0 });
+      completeSkillMention(
+        "@mar now",
+        { start: 0, end: 4, query: "mar" },
+        "board-reader"
+      )
+    ).toEqual({ text: "@board-reader now", caret: 13 });
+  });
+
+  it("completes a bare trigger", () => {
+    expect(
+      completeSkillMention("@", { start: 0, end: 1, query: "" }, "board-reader")
+    ).toEqual({ text: "@board-reader ", caret: 14 });
+  });
+});
+
+describe("findMentionedSkillNames", () => {
+  const known = ["marvel-champions-play", "board-reader"];
+
+  it("finds a mention that starts the message", () => {
+    expect(findMentionedSkillNames("@board-reader go", known)).toEqual([
+      "board-reader",
+    ]);
+  });
+
+  it("finds a mention at the end of the message", () => {
+    expect(findMentionedSkillNames("go @board-reader", known)).toEqual([
+      "board-reader",
+    ]);
+  });
+
+  it("keeps first-mention order and drops repeats", () => {
+    expect(
+      findMentionedSkillNames(
+        "@board-reader then @marvel-champions-play then @board-reader",
+        known
+      )
+    ).toEqual(["board-reader", "marvel-champions-play"]);
+  });
+
+  it("ignores a token that matches no known skill", () => {
+    expect(findMentionedSkillNames("@nonesuch go", known)).toEqual([]);
+  });
+
+  it("ignores a trigger inside a word", () => {
+    expect(findMentionedSkillNames("mail@board-reader", known)).toEqual([]);
+  });
+
+  it("finds nothing in text without a mention", () => {
+    expect(findMentionedSkillNames("play the villain phase", known)).toEqual(
+      []
+    );
   });
 });
 
 describe("filterMentionableSkills", () => {
-  it("offers every unattached skill for an empty query", () => {
-    expect(filterMentionableSkills(skills, "", [])).toEqual(skills);
+  it("offers every available skill for an empty query", () => {
+    expect(filterMentionableSkills(skills, "")).toEqual(skills);
   });
 
   it("matches on a case-insensitive substring of the name", () => {
-    expect(filterMentionableSkills(skills, "BOARD", [])).toEqual([skills[1]]);
+    expect(filterMentionableSkills(skills, "BOARD")).toEqual([skills[1]]);
   });
 
-  it("excludes skills already attached to the session", () => {
-    expect(filterMentionableSkills(skills, "", ["board-reader"])).toEqual([
-      skills[0],
-    ]);
-  });
-
-  it("returns nothing when no unattached skill matches", () => {
-    expect(filterMentionableSkills(skills, "nonesuch", [])).toEqual([]);
+  it("returns nothing when no skill matches", () => {
+    expect(filterMentionableSkills(skills, "nonesuch")).toEqual([]);
   });
 });

@@ -125,6 +125,51 @@ describe("PlayWorkspace skill attachment from the composer", () => {
     );
   });
 
+  it("names a mentioned skill when the prompt is submitted", async () => {
+    api.getSession.mockResolvedValue(withSkillA);
+
+    renderPlayWorkspace();
+    await waitForLoadedSession();
+    await waitFor(() =>
+      expect(screen.getByTestId("prompt-attached-skills")).toHaveTextContent(
+        "skill-a"
+      )
+    );
+
+    fireEvent.change(screen.getByLabelText("Prompt input"), {
+      target: { value: "@skill-a play the villain phase" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /submit prompt/i }));
+
+    await waitFor(() =>
+      expect(api.submitPrompt).toHaveBeenCalledWith(
+        "session-1",
+        "@skill-a play the villain phase",
+        ["skill-a"]
+      )
+    );
+  });
+
+  it("names nothing for an @ token that is not an attached skill", async () => {
+    api.getSession.mockResolvedValue(withSkillA);
+
+    renderPlayWorkspace();
+    await waitForLoadedSession();
+
+    fireEvent.change(screen.getByLabelText("Prompt input"), {
+      target: { value: "mail me at me@example.com about @skill-b" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /submit prompt/i }));
+
+    await waitFor(() =>
+      expect(api.submitPrompt).toHaveBeenCalledWith(
+        "session-1",
+        "mail me at me@example.com about @skill-b",
+        []
+      )
+    );
+  });
+
   it("surfaces a rejected attachment and leaves the skill unattached", async () => {
     api.addSkill.mockRejectedValueOnce(new Error("Unknown skill"));
 

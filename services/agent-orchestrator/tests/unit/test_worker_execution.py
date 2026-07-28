@@ -4,6 +4,7 @@ import pytest
 
 from agent_orchestrator.integrations.bifrost import ChatResponse, ToolCall
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
+from agent_orchestrator.runtime.skills import JOB_INLINE_SKILLS_KEY
 from agent_orchestrator.storage.repository import Repository
 
 from .worker_test_support import (
@@ -209,3 +210,92 @@ async def test_worker_live_stream_events_reference_snapshot_rows(
         event.payload_json["snapshot_event_id"] == str(model_output_event.id)
         for event in model_output_live
     )
+
+
+@pytest.mark.asyncio
+async def test_worker_loads_prompt_skills_into_the_turn(
+    repository: Repository, skill_registry
+):
+    """A prompt that loaded a skill gets its content in that turn's user message.
+
+    The stored prompt stays the typed text, so the transcript and the replay of
+    this turn are unaffected, and the load shows up as a `skill_loaded` event.
+    """
+    session = await prepare_session(repository)
+    job = await repository.enqueue_prompt_job(
+        session.id,
+        prompt="@demo-skill play",
+        metadata_json={JOB_INLINE_SKILLS_KEY: ["demo-skill"]},
+        max_attempts=1,
+    )
+    assert job is not None
+    claimed = await repository.claim_next_job()
+    assert claimed is not None
+
+    bifrost = FakeBifrost(
+        responses=[ChatResponse(content="finished", tool_calls=[], raw={})]
+    )
+    worker = make_worker(
+        skill_registry=skill_registry,
+        repository=repository,
+        bifrost_client=bifrost,
+        mcp_client=FakeMcp(),
+    )
+
+    await worker._run_job(claimed)
+
+    user_message = next(
+        message
+        for message in reversed(bifrost.calls[0]["messages"])
+        if message["role"] == "user"
+    )
+    assert "follow instructions" in user_message["content"]
+    assert user_message["content"].endswith("@demo-skill play")
+
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.prompt == "@demo-skill play"
+
+    events = await repository.list_events(job.id)
+    loaded = [event for event in events if event.event_type == "skill_loaded"]
+    assert [event.payload_json["skill_name"] for event in loaded] == ["demo-skill"]
+
+
+@pytest.mark.asyncio
+async def test_worker_runs_without_a_prompt_skill_that_vanished(
+    repository: Repository, skill_registry
+):
+    session = await prepare_session(repository)
+    job = await repository.enqueue_prompt_job(
+        session.id,
+        prompt="play",
+        metadata_json={JOB_INLINE_SKILLS_KEY: ["gone-skill"]},
+        max_attempts=1,
+    )
+    assert job is not None
+    claimed = await repository.claim_next_job()
+    assert claimed is not None
+
+    bifrost = FakeBifrost(
+        responses=[ChatResponse(content="finished", tool_calls=[], raw={})]
+    )
+    worker = make_worker(
+        skill_registry=skill_registry,
+        repository=repository,
+        bifrost_client=bifrost,
+        mcp_client=FakeMcp(),
+    )
+
+    await worker._run_job(claimed)
+
+    user_message = next(
+        message
+        for message in reversed(bifrost.calls[0]["messages"])
+        if message["role"] == "user"
+    )
+    assert user_message["content"] == "play"
+    stored = await repository.get_job(job.id)
+    assert stored is not None
+    assert stored.status == "completed"
+    events = await repository.list_events(job.id)
+    assert not [event for event in events if event.event_type == "skill_loaded"]
