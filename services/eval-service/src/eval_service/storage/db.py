@@ -7,9 +7,13 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from eval_service.telemetry import instrument_sqlalchemy_engine
+
 
 def create_engine(database_url: str) -> AsyncEngine:
-    return create_async_engine(database_url, future=True)
+    engine = create_async_engine(database_url, future=True)
+    instrument_sqlalchemy_engine(engine)
+    return engine
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

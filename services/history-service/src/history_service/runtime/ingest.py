@@ -12,8 +12,10 @@ from history_service.runtime.snapshots import SnapshotService
 from history_service.schemas.envelope import EventEnvelope
 from history_service.storage.repository import CommitResult, Repository
 from history_service.storage.valkey import RespConnection, RespError
+from history_service.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 
 ENVELOPE_FIELD = "envelope_json"
 
@@ -139,30 +141,42 @@ class StreamIngester:
         Reclaims stale pending entries first so a crashed replica's or a
         previously-failed entry's work is recovered before new entries are read.
         """
-        await self.reclaim_pending()
-        response = await self._client.execute(
-            "XREADGROUP",
-            "GROUP",
-            self._group,
-            self._consumer,
-            "COUNT",
-            str(self._settings.ingester_batch_size),
-            "BLOCK",
-            str(self._settings.ingester_poll_block_ms),
-            "STREAMS",
-            self._stream,
-            ">",
-        )
-        if not response:
+        # One span per batch, not per event: the ingester polls continuously, so
+        # a span per entry would swamp the collector with idle no-op spans. Only
+        # stream/group identity and counts go on it — never an event payload.
+        with tracer.start_as_current_span(
+            "history.ingest_batch",
+            attributes={
+                "history.stream": self._stream,
+                "history.consumer_group": self._group,
+            },
+        ) as span:
+            await self.reclaim_pending()
+            response = await self._client.execute(
+                "XREADGROUP",
+                "GROUP",
+                self._group,
+                self._consumer,
+                "COUNT",
+                str(self._settings.ingester_batch_size),
+                "BLOCK",
+                str(self._settings.ingester_poll_block_ms),
+                "STREAMS",
+                self._stream,
+                ">",
+            )
+            if not response:
+                span.set_attribute("history.events_processed", 0)
+                await self._check_lag()
+                return 0
+            _, entries = response[0]
+            processed = 0
+            for entry_id, fields in entries:
+                await self._handle_entry(entry_id, fields)
+                processed += 1
+            span.set_attribute("history.events_processed", processed)
             await self._check_lag()
-            return 0
-        _, entries = response[0]
-        processed = 0
-        for entry_id, fields in entries:
-            await self._handle_entry(entry_id, fields)
-            processed += 1
-        await self._check_lag()
-        return processed
+            return processed
 
     async def reclaim_pending(self) -> int:
         """Reclaim and re-process stale pending entries; returns the count claimed.

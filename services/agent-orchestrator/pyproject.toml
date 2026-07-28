@@ -18,11 +18,9 @@ dependencies = [
     "aiosqlite>=0.21.0",
     "mcp>=1.17.0",
     "tiktoken>=0.9.0",
-    "opentelemetry-sdk>=1.41.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.41.0",
-    "opentelemetry-instrumentation-fastapi>=0.62b0",
-    "opentelemetry-instrumentation-httpx>=0.62b0",
-    "opentelemetry-instrumentation-sqlalchemy>=0.62b0",
+    # OpenTelemetry (SDK, OTLP exporters, FastAPI/httpx/SQLAlchemy
+    # instrumentation) arrives with dragncards-common, which owns the shared
+    # telemetry bootstrap this service's `telemetry.py` binds to.
     "dragncards-common",
 ]
 

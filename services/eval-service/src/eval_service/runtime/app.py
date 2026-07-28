@@ -23,6 +23,7 @@ from eval_service.runtime.worker import EvaluationWorker
 from eval_service.schema_migrations import ensure_schema
 from eval_service.storage.db import create_engine, create_session_factory
 from eval_service.storage.repository import Repository
+from eval_service.telemetry import instrument_fastapi_app, shutdown_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,7 @@ def create_app(
                 await created_judge.aclose()
             if created_engine is not None:
                 await created_engine.dispose()
+            shutdown_telemetry()
 
     app = FastAPI(
         title="Eval Service",
@@ -152,6 +154,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.settings = settings
+    instrument_fastapi_app(app)
 
     # Strict CORS allowlist (configurable). The dashboard reaches eval-service
     # through a server-side proxy, not browser-direct, so the allowlist does not

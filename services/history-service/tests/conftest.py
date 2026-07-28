@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from history_service.config import Settings
 
 from .settings_env import scrub_settings_env, settings_env_var_names
+
+# The suite must not start real OTLP exporters or background export threads that
+# fire at a collector that is not running. `setdefault`, so a developer can flip
+# it off deliberately to inspect telemetry from a test run.
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
 _SETTINGS_ENV_VAR_NAMES = settings_env_var_names(Settings)
 # tests/integration/conftest.py reads these two at import time to reach the real

@@ -40,8 +40,25 @@ context: |
   - **agent-orchestrator** (`services/agent-orchestrator/`): Python/FastAPI service.
     Manages LLM sessions, job queues, skill assignment, and MCP wiring. Persists
     state in a dedicated PostgreSQL and fans out SSE events via Valkey.
+  - **history-service** (`services/history-service/`): Python/FastAPI service.
+    Ingests the Valkey `history:ingest` stream into its own PostgreSQL as an
+    ordered, per-game event store with periodic snapshots, and can restore a
+    session to any past moment.
+  - **eval-service** (`services/eval-service/`): Python/FastAPI service. Reads
+    recorded games from the history-service and produces per-player
+    move/round/game evaluations, judging through Bifrost under a dedicated
+    `eval-judge` identity and writing verdicts back to history. Uses its own
+    PostgreSQL.
   - **dashboard** (`services/dashboard/`): Next.js UI for interacting with the
-    agent-orchestrator and game-service.
+    agent-orchestrator, game-service, history-service, and eval-service.
+  - **otel-lgtm**: `grafana/otel-lgtm` container in `docker-compose.infra.yaml`.
+    Receives OTLP traces, metrics, and logs from every first-party service and the
+    Bifrost gateway. The Python services share one bootstrap in
+    `dragncards_common.telemetry`; see `openspec/specs/observability/spec.md`.
+  - **dragncards-common** (`services/shared/`): Internal Python library shared by
+    agent-orchestrator, history-service, and eval-service — schema-migration
+    runner, RESP/Valkey client, typed Bifrost errors, httpx base client, and the
+    OpenTelemetry bootstrap.
   - **bifrost** (`services/bifrost/`): Maximilian AI gateway (`maximhq/bifrost`).
     Routes LLM requests to configured providers. Local LM Studio traffic is routed
     via `lmstudio-proxy` (see below).

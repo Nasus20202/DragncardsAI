@@ -8,8 +8,10 @@ from history_service.integrations.game_service import GameServiceClient
 from history_service.integrations.orchestrator import OrchestratorClient
 from history_service.schemas.envelope import StoredEvent, StoredSnapshot
 from history_service.storage.repository import Repository
+from history_service.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 
 RestoreMode = Literal["new", "in_place"]
 
@@ -52,6 +54,38 @@ class RestoreService:
         target_seq: int,
         mode: RestoreMode = "new",
         ephemeral: bool = False,
+    ) -> RestoreResult:
+        """Traced entry point; the workflow itself is :meth:`_restore`.
+
+        Restore is a multi-step, repo-specific workflow (snapshot load, forward
+        replay, agent-context restore, verify) that generic library
+        instrumentation cannot explain, so it gets one span covering the whole
+        thing. Only identifiers and mode flags are attached — never the replayed
+        events or the restored state.
+        """
+        with tracer.start_as_current_span(
+            "history.restore",
+            attributes={
+                "game.id": game_id,
+                "history.target_seq": target_seq,
+                "history.restore_mode": mode,
+                "history.ephemeral": ephemeral,
+            },
+        ):
+            return await self._restore(
+                game_id,
+                target_seq=target_seq,
+                mode=mode,
+                ephemeral=ephemeral,
+            )
+
+    async def _restore(
+        self,
+        game_id: str,
+        *,
+        target_seq: int,
+        mode: RestoreMode,
+        ephemeral: bool,
     ) -> RestoreResult:
         # 1. Validate target_seq is in range BEFORE mutating anything.
         latest_seq = await self._repository.get_latest_seq(game_id)

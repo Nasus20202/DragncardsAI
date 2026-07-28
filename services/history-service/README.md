@@ -33,6 +33,23 @@ All settings have secret-free defaults; secrets live only in
 | `GAME_SERVICE_BASE_URL` | `http://localhost:4001` | Snapshot export/import + replay |
 | `AGENT_ORCHESTRATOR_BASE_URL` | `http://localhost:4002` | Resume-from-context |
 
+Standard OpenTelemetry variables (`OTEL_SERVICE_NAME`,
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SDK_DISABLED`)
+are read too; see Observability below.
+
+## Observability
+
+Traces, metrics and logs are exported over OTLP/HTTP to `otel-lgtm` (Grafana on
+http://localhost:3004). The bootstrap is `dragncards_common.telemetry`, bound to
+this service's name in `history_service/telemetry.py`; the instrumented edges are
+the HTTP server, outbound HTTP, PostgreSQL via SQLAlchemy, and Valkey via the
+shared RESP client. Manual spans cover `history.ingest_batch` (one per polled
+batch), `history.take_snapshot` and `history.restore`.
+
+Set `OTEL_SDK_DISABLED=true` to run with telemetry off; the service is otherwise
+unaffected. Spans carry identifiers, seqs and counts only — never an event
+payload, a snapshot document, or a restored game state.
+
 ## HTTP API
 
 - `POST /games/{game_id}/events` — HTTP backfill ingestion (same envelope).

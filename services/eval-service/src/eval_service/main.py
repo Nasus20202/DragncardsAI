@@ -7,6 +7,7 @@ import uvicorn
 
 from eval_service.config import Settings
 from eval_service.runtime.app import create_app
+from eval_service.telemetry import setup_telemetry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
+    setup_telemetry()
     settings = Settings()
     logger.info(
         "Starting eval-service on %s:%s",
