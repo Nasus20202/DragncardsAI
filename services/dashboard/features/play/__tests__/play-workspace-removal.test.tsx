@@ -16,14 +16,66 @@ function summary(overrides: Partial<SessionSummary>): SessionSummary {
   return { ...sessionSummary, ...overrides };
 }
 
+/** Open the confirmation modal for a session and press its danger action. */
+async function removeAndConfirm(sessionId: string) {
+  fireEvent.click(screen.getByTestId(`remove-${sessionId}`));
+  fireEvent.click(await screen.findByTestId("remove-session-confirm"));
+}
+
 describe("PlayWorkspace session removal", () => {
   beforeEach(() => {
     resetPlayWorkspaceEnvironment();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("asks for confirmation naming the session and removes nothing until confirmed", async () => {
+    const sessionOne = summary({ id: "session-1", name: "First session" });
+    api.listSessions.mockResolvedValue([sessionOne]);
+
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-id")).toHaveTextContent(
+        "session-1"
+      )
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("remove-session-1"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveAccessibleName("Confirm session removal");
+    expect(screen.getByTestId("remove-session-name")).toHaveTextContent(
+      "First session"
+    );
+    expect(api.terminateSession).not.toHaveBeenCalled();
+  });
+
+  it("cancelling the confirmation leaves the session in place", async () => {
+    const sessionOne = summary({ id: "session-1", name: "First session" });
+    api.listSessions.mockResolvedValue([sessionOne]);
+
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-id")).toHaveTextContent(
+        "session-1"
+      )
+    );
+
+    fireEvent.click(screen.getByTestId("remove-session-1"));
+    fireEvent.click(await screen.findByTestId("remove-session-cancel"));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    );
+    expect(api.terminateSession).not.toHaveBeenCalled();
+    expect(screen.getByTestId("visible-session-ids")).toHaveTextContent(
+      "session-1"
+    );
   });
 
   it("drops the removed session from the sidebar and reselects the next visible one", async () => {
@@ -45,7 +97,7 @@ describe("PlayWorkspace session removal", () => {
       "session-1,session-2"
     );
 
-    fireEvent.click(screen.getByTestId("remove-session-1"));
+    await removeAndConfirm("session-1");
 
     await waitFor(() =>
       expect(api.terminateSession).toHaveBeenCalledWith("session-1")
@@ -118,7 +170,7 @@ describe("PlayWorkspace session removal", () => {
       )
     );
 
-    fireEvent.click(screen.getByTestId("remove-session-1"));
+    await removeAndConfirm("session-1");
 
     await waitFor(() =>
       expect(api.terminateSession).toHaveBeenCalledWith("session-1")
