@@ -2,7 +2,8 @@
 
 **Referenced by:** SKILL.md | **Rules source:** `marvel-champions-rules-reference/resources/round-structure.md`
 
-Every game-service tool below takes the `session_id` recorded at setup. Player-scoped tools take
+Every game-service tool below takes the `session_id` recorded at setup — either the session UUID
+or the room slug (e.g. `lively-fog-1234`), both accepted everywhere. Player-scoped tools take
 `player_n` (`player1`..`player4`); card-scoped tools take an `instance_id` from the board.
 
 ---
@@ -123,4 +124,5 @@ Accumulated acceleration tokens are orchestrator bookkeeping. Carry the count in
 | 8     | delegated state read                        | confirm hands, villain HP, main scheme target before round 1                       |
 
 `attach_game` and `lookup_session_by_slug` are for resuming an existing DragnCards room rather than
-creating one; `list_games` and `delete_game` are session housekeeping and are not part of the loop.
+creating one (`lookup_session_by_slug` only reads metadata — a slug already works as `session_id`);
+`list_games` and `delete_game` are session housekeeping and are not part of the loop.

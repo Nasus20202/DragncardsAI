@@ -14,7 +14,17 @@ class SessionError(Exception):
 
 
 class SessionNotFoundError(SessionError):
-    """Raised when a session ID is not found."""
+    """Raised when a session identifier matches no managed session."""
+
+
+class AmbiguousSessionIdentifierError(SessionError):
+    """Raised when a room slug maps to more than one managed session.
+
+    DragnCards room slugs are unique per room, but ``attach_game`` can create
+    several sessions pointing at the same room, so a slug is not guaranteed to
+    identify exactly one session. When it does not, the caller must use the
+    canonical UUID ``session_id`` instead of guessing.
+    """
 
 
 class BadGameStateError(SessionError):

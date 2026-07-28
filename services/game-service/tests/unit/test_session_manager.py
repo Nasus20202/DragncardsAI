@@ -19,8 +19,10 @@ import pytest
 
 from game_service.coordination.session_store import InMemorySessionStore
 from game_service.logic.exceptions import (
+    AmbiguousSessionIdentifierError,
     BadGameStateError,
     SessionError,
+    SessionLockedError,
     SessionNotFoundError,
     SnapshotValidationError,
     StateUnavailableError,
@@ -487,11 +489,11 @@ async def test_auto_seat_falls_back_to_player_data():
 
 
 # ---------------------------------------------------------------------------
-# Slug lookup is LOOKUP-ONLY; state/mutation/delete paths remain UUID-only.
+# Session identification: a UUID `session_id` OR a human-readable room slug.
 #
-# The room slug is low-entropy (~27 bits) and visible in DragnCards URLs, so it
-# must never authorize a state read, mutation, or delete. It may only be used
-# through the dedicated, non-mutating `lookup_session_by_slug` resolver.
+# `resolve_session_id` is the single shared resolver behind every
+# session-identifying path (state reads, mutations, and delete), so an operator or
+# an agent can address a session as `lively-fog-1234` instead of a UUID.
 # ---------------------------------------------------------------------------
 
 _TEST_SESSION_UUID = "11111111-1111-1111-1111-111111111111"
@@ -528,7 +530,7 @@ async def _register(manager: SessionManager, session: GameSession) -> None:
     manager._sessions[session.session_id] = session
 
 
-# --- Dedicated slug lookup (the ONLY place a slug is accepted) ---
+# --- Slug metadata lookup ---
 
 
 @pytest.mark.asyncio
@@ -562,7 +564,84 @@ async def test_lookup_session_by_slug_unknown_slug_raises_not_found():
         await manager.lookup_session_by_slug("no-such-room")
 
 
-# --- State/mutation/delete paths are UUID-only ---
+# --- Shared identifier resolution ---
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_passes_through_canonical_uuid():
+    manager = _make_manager_with_store(InMemorySessionStore())
+
+    # No store round-trip is needed: a well-formed UUID is its own answer, which
+    # is what keeps an already-removed session resolvable (idempotent delete).
+    assert await manager.resolve_session_id(_TEST_SESSION_UUID) == _TEST_SESSION_UUID
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_normalizes_non_canonical_uuid():
+    manager = _make_manager_with_store(InMemorySessionStore())
+
+    resolved = await manager.resolve_session_id("{" + _TEST_SESSION_UUID.upper() + "}")
+
+    assert resolved == _TEST_SESSION_UUID
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_resolves_slug_from_the_pool():
+    manager = _make_manager_with_store(InMemorySessionStore())
+    await _register(manager, _make_uuid_session())
+
+    assert await manager.resolve_session_id(_TEST_ROOM_SLUG) == _TEST_SESSION_UUID
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_resolves_slug_from_the_store_index():
+    # Session not loaded in this process's pool — the store's slug index answers.
+    store = InMemorySessionStore()
+    await store.put_session(_make_uuid_session().to_metadata())
+    manager = _make_manager_with_store(store)
+
+    assert await manager.resolve_session_id(_TEST_ROOM_SLUG) == _TEST_SESSION_UUID
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_unknown_identifier_raises_not_found():
+    manager = _make_manager_with_store(InMemorySessionStore())
+
+    with pytest.raises(SessionNotFoundError):
+        await manager.resolve_session_id("no-such-room")
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_ambiguous_slug_raises():
+    # `attach_session` may create several sessions for one DragnCards room, so a
+    # slug is not guaranteed to identify exactly one session.
+    manager = _make_manager_with_store(InMemorySessionStore())
+    first = _make_uuid_session()
+    second = _make_uuid_session()
+    second.session_id = "22222222-2222-2222-2222-222222222222"
+    await _register(manager, first)
+    manager._sessions[second.session_id] = second
+
+    with pytest.raises(AmbiguousSessionIdentifierError) as excinfo:
+        await manager.resolve_session_id(_TEST_ROOM_SLUG)
+
+    assert _TEST_SESSION_UUID in str(excinfo.value)
+    assert second.session_id in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_ignores_stale_slug_index_entry():
+    store = InMemorySessionStore()
+    await store.put_session(_make_uuid_session().to_metadata())
+    # Drop the record but leave the slug index pointing at it.
+    store._records.pop(_TEST_SESSION_UUID)
+    manager = _make_manager_with_store(store)
+
+    with pytest.raises(SessionNotFoundError):
+        await manager.resolve_session_id(_TEST_ROOM_SLUG)
+
+
+# --- State/mutation/delete paths accept either form ---
 
 
 @pytest.mark.asyncio
@@ -587,13 +666,13 @@ async def test_get_session_normalizes_non_canonical_uuid():
 
 
 @pytest.mark.asyncio
-async def test_get_session_with_slug_does_not_resolve():
-    # A slug must NOT authorize a state read even when the session exists.
+async def test_get_session_returns_session_by_room_slug():
     manager = _make_manager_with_store(InMemorySessionStore())
     await _register(manager, _make_uuid_session())
 
-    with pytest.raises(SessionNotFoundError):
-        await manager.get_session(_TEST_ROOM_SLUG)
+    session = await manager.get_session(_TEST_ROOM_SLUG)
+
+    assert session.session_id == _TEST_SESSION_UUID
 
 
 @pytest.mark.asyncio
@@ -619,23 +698,33 @@ async def test_delete_session_by_uuid_removes_index_entry():
 
 
 @pytest.mark.asyncio
-async def test_delete_session_with_slug_does_not_resolve():
-    # A slug must NOT authorize a delete; the session must survive untouched.
+async def test_delete_session_by_room_slug_removes_the_session():
     manager = _make_manager_with_store(InMemorySessionStore())
     session = _make_uuid_session()
     session.client.leave = AsyncMock()
     session.client.disconnect = AsyncMock()
     await _register(manager, session)
 
-    with pytest.raises(SessionNotFoundError):
-        await manager.delete_session(_TEST_ROOM_SLUG)
+    await manager.delete_session(_TEST_ROOM_SLUG)
 
-    assert _TEST_SESSION_UUID in manager._sessions
-    assert await manager._session_store.get_session(_TEST_SESSION_UUID) is not None
-    assert (
-        await manager._session_store.get_session_id_by_slug(_TEST_ROOM_SLUG)
-        == _TEST_SESSION_UUID
-    )
+    assert _TEST_SESSION_UUID not in manager._sessions
+    assert await manager._session_store.get_session(_TEST_SESSION_UUID) is None
+    assert await manager._session_store.get_session_id_by_slug(_TEST_ROOM_SLUG) is None
+
+
+@pytest.mark.asyncio
+async def test_session_operation_lock_shares_one_key_for_uuid_and_slug():
+    # A slug-addressed and a UUID-addressed operation must contend for the same
+    # lock, so resolution has to happen before the lock key is derived.
+    manager = _make_manager_with_store(InMemorySessionStore())
+    await _register(manager, _make_uuid_session())
+
+    async with manager.session_operation_lock(_TEST_ROOM_SLUG):
+        with pytest.raises(SessionLockedError):
+            async with manager.session_operation_lock(
+                _TEST_SESSION_UUID, wait_timeout=0.05
+            ):
+                pass
 
 
 # ---------------------------------------------------------------------------

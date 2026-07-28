@@ -124,7 +124,9 @@ end-of-phase step does that for everyone at once.
 Inside an agent session the game-service tools are exposed with the registry name
 prefixed: `game-service_get_game_state`, `game-service_move_card`, and so on. This skill
 writes the bare names (`get_game_state`, `move_card`). Use whichever form your tool list
-shows. Every tool takes `session_id` as its first argument — the UUID, never the room slug.
+shows. Every tool takes `session_id` as its first argument — either the session UUID or the
+DragnCards room slug (e.g. `lively-fog-1234`); both work everywhere. Pass through whichever
+identifier you were handed.
 
 ---
 

@@ -1,7 +1,8 @@
 # Tool reference
 
-Every tool takes `session_id` (the session **UUID**, never the room slug) plus the
-arguments listed. In an agent session the names are prefixed with the MCP registry name:
+Every tool takes `session_id` — either the session **UUID** or the DragnCards **room
+slug** (e.g. `lively-fog-1234`), both accepted everywhere — plus the arguments listed. In
+an agent session the names are prefixed with the MCP registry name:
 `game-service_move_card`, etc.
 
 Every mutating tool returns:

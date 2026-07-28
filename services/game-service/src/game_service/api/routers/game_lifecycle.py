@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -24,15 +23,6 @@ from game_service.logic.session_manager import SessionError, SessionManager
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["game-lifecycle"])
-
-
-def _is_uuid(value: str) -> bool:
-    """True when ``value`` is a well-formed UUID (a real session identifier)."""
-    try:
-        uuid.UUID(str(value))
-    except ValueError, AttributeError, TypeError:
-        return False
-    return True
 
 
 @router.post(
@@ -105,11 +95,12 @@ async def list_games(manager: SessionManager = Depends(get_manager)):
     summary="Look up a session by its room slug",
     description=(
         "Resolve a human-readable DragnCards room slug (e.g. `lively-fog-1234`) to "
-        "its session metadata, including the canonical UUID `session_id`. This is a "
-        "read-only lookup and the ONLY endpoint that accepts a room slug. State, "
-        "mutation, and delete endpoints remain UUID-only because the slug is "
-        "low-entropy and guessable; use the returned `session_id` to address those "
-        "endpoints."
+        "its session metadata, including the canonical UUID `session_id`. Read-only: "
+        "it never creates, modifies, or destroys a session. You do NOT need this "
+        "before acting on a session — every session endpoint accepts a room slug "
+        "directly in the `session_id` position. Use it when you want the session's "
+        "full metadata, or its UUID `session_id` to disambiguate a slug shared by "
+        "more than one session."
     ),
     operation_id="lookup_session_by_slug",
 )
@@ -137,27 +128,27 @@ async def delete_game(
     manager: SessionManager = Depends(get_manager),
 ):
     logger.info("delete_game: session_id=%s close_room=%s", session_id, close_room)
-    async with manager.session_operation_lock(session_id):
+    # Resolve the identifier (UUID or room slug) once, so the response reports the
+    # canonical session id and an unresolvable identifier surfaces as 404 before any
+    # teardown is attempted.
+    resolved_id = await manager.resolve_session_id(session_id)
+    async with manager.session_operation_lock(resolved_id):
         if close_room:
-            session = await manager.get_session(session_id)
+            session = await manager.get_session(resolved_id)
             await session.close_room()
         else:
             # Idempotent fast-path teardown: an ephemeral reconstruction may have
             # already been reclaimed by the server-side reaper (or by a prior
-            # teardown), so a valid-UUID session that is already gone is treated
-            # as already-deleted rather than a 404. The client teardown is
-            # best-effort and never needs to distinguish "I deleted it" from "it
-            # was already gone". A non-UUID identifier (e.g. a guessable room
-            # slug) is NOT a valid session id and must still surface as 404 — it
-            # never authorizes a delete.
+            # teardown), so a resolvable session that is already gone is treated as
+            # already-deleted rather than a 404. The client teardown is best-effort
+            # and never needs to distinguish "I deleted it" from "it was already
+            # gone".
             try:
-                await manager.delete_session(session_id)
+                await manager.delete_session(resolved_id)
             except SessionNotFoundError:
-                if not _is_uuid(session_id):
-                    raise
                 logger.info(
                     "delete_game: session_id=%s already gone (idempotent)",
-                    session_id,
+                    resolved_id,
                 )
-    logger.info("delete_game: session_id=%s -> deleted", session_id)
-    return DeleteGameResponse(session_id=session_id)
+    logger.info("delete_game: session_id=%s -> deleted", resolved_id)
+    return DeleteGameResponse(session_id=resolved_id)

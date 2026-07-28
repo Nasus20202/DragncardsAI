@@ -157,5 +157,6 @@ with `type_code: "hero"` (attack / thwart / defense / hand size) and once with
 - `get_session_actions(session_id)` — **large.** Returns every plugin action list and all
   group metadata. It will flood your context. Do not call it during play; this skill
   already contains what you would learn from it.
-- `list_games()`, `lookup_session_by_slug(room_slug)` — session discovery. Use
-  `lookup_session_by_slug` only if you were handed a slug instead of a UUID.
+- `list_games()`, `lookup_session_by_slug(room_slug)` — session discovery. You do not need
+  `lookup_session_by_slug` to act on a session: a room slug works directly as `session_id`
+  on every tool. Call it only when you want the session's full metadata or its UUID.
