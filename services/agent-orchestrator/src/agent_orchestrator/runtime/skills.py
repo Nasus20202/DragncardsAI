@@ -2,6 +2,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+
+def enabled_skill_assignments(assignments: list[Any]) -> list[Any]:
+    """
+    Keep only the assignments a session currently has switched on.
+
+    A `SessionEnabledSkill` row is a soft toggle: disabling a skill flips
+    `enabled` instead of deleting the row, so every consumer that turns
+    assignments into agent-visible behaviour must filter on the flag.
+    """
+    return [
+        assignment
+        for assignment in assignments or []
+        if getattr(assignment, "enabled", True)
+    ]
 
 
 def _parse_frontmatter(content: str) -> tuple[dict[str, object], str]:

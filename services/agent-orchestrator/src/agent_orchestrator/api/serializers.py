@@ -9,6 +9,7 @@ from agent_orchestrator.schemas.jobs import (
     SessionToolResponse,
 )
 from agent_orchestrator.runtime.player_agents import unfold_reasoning
+from agent_orchestrator.runtime.skills import enabled_skill_assignments
 from agent_orchestrator.schemas.players import PlayerConfigResponse
 from agent_orchestrator.schemas.sessions import (
     McpAssignmentResponse,
@@ -39,7 +40,8 @@ def serialize_session_summary(item) -> SessionSummary:
             else serialize_model_config(item.model_config)
         ),
         skills=[
-            serialize_session_enabled_skill(skill) for skill in item.enabled_skills
+            serialize_session_enabled_skill(skill)
+            for skill in enabled_skill_assignments(item.enabled_skills)
         ],
         mcps=[serialize_mcp_assignment(em) for em in item.enabled_mcps],
         players=[serialize_player_config(config) for config in item.player_configs],

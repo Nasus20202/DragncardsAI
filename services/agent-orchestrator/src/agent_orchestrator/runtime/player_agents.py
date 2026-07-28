@@ -17,6 +17,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent_orchestrator.runtime.skills import enabled_skill_assignments
+
 # Marvel Champions seats. The `player<N>` form matches DragnCards' own seat
 # naming and eval-service's seat regex, so a move tagged here is attributable
 # end to end without translation.
@@ -137,8 +139,9 @@ def resolve_player_agent_config(
     if stored_skills is None:
         skills = [
             assignment.skill_name
-            for assignment in getattr(parent_session, "enabled_skills", []) or []
-            if assignment.enabled
+            for assignment in enabled_skill_assignments(
+                getattr(parent_session, "enabled_skills", [])
+            )
         ]
     else:
         skills = list(stored_skills)

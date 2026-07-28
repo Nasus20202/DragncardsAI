@@ -359,9 +359,11 @@ async def test_remove_assignments_and_filter_events_with_after(app):
             client.delete(f"/sessions/{session_id}/mcps/game-service").status_code
             == 204
         )
+        # Disabling a skill is idempotent, so a repeat delete is a no-op rather
+        # than an error. MCPs still reject a repeat delete.
         assert (
             client.delete(f"/sessions/{session_id}/skills/demo-skill").status_code
-            == 404
+            == 204
         )
         assert (
             client.delete(f"/sessions/{session_id}/mcps/game-service").status_code

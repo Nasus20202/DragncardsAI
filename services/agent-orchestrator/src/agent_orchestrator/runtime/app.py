@@ -76,6 +76,29 @@ async def _ensure_default_mcp_registry(repo: Repository, settings: Settings) -> 
     )
 
 
+async def _sync_skill_registry(repo: Repository, registry: SkillRegistry) -> None:
+    """
+    Mirror the on-disk skills into the persistent `skill_registries` table.
+
+    Enabling a skill for a session needs a registry row (the session/skill join
+    is a foreign key), and rows used to appear only as a side effect of the
+    enable-by-POST route. That left the table a partial, stale view of the skill
+    roots: a skill shipped on disk but never enabled through that one route
+    could not be enabled at all. Syncing at boot makes the table reflect the
+    filesystem instead. Upsert-only — rows for skills that are no longer on disk
+    are kept so existing session assignments keep their foreign key.
+    """
+    definitions = registry.list_skills()
+    for name, definition in sorted(definitions.items()):
+        await repo.add_skill_registry(
+            name=name,
+            skill_path=str(definition.path),
+            description=definition.description,
+            metadata_json=dict(definition.metadata),
+        )
+    logger.info("Synced %d on-disk skills into the skill registry", len(definitions))
+
+
 def create_app(
     *,
     settings: Settings | None = None,
@@ -155,6 +178,7 @@ def create_app(
         app.state.mcp_tool_catalog = McpToolCatalog(app.state.mcp_client)
         # Initialize default game-service MCP
         await _ensure_default_mcp_registry(app.state.repository, settings)
+        await _sync_skill_registry(app.state.repository, app.state.skill_registry)
         app.state.job_event_stream = JobEventStreamService(
             repository=app.state.repository,
             live_event_bus=app.state.live_event_bus,

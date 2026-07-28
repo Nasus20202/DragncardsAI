@@ -147,11 +147,12 @@ def test_seat_skills_are_registered_so_a_player_agent_can_enable_them(app):
         session_id = _create_session(client)
 
         # Enabling a skill only succeeds once it has a global registry row, so
-        # this PATCH is a direct probe for one.
+        # this PATCH is a direct probe for one. Any skill present in the skill
+        # roots has a row, because startup syncs them.
         before = client.patch(
             f"/sessions/{session_id}/skills/demo-skill", json={"enabled": True}
         )
-        assert before.status_code == 404
+        assert before.status_code == 200
 
         client.put(
             f"/sessions/{session_id}/players/player1", json={"skills": ["demo-skill"]}
