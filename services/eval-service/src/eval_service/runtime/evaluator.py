@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 # Callback invoked with each incremental judge text delta (for SSE token push).
 TokenSink = Callable[[str], Awaitable[None]]
+# Callback invoked with the detail of a failure hit DURING an evaluation (a judge
+# attempt that will be retried), so live subscribers learn about it as it happens
+# rather than only at the terminal transition. The detail is already durable on
+# the target row by the time the sink runs.
+ErrorSink = Callable[[str], Awaitable[None]]
 
 
 class JudgeNotConfiguredError(Exception):
@@ -55,9 +60,16 @@ class Evaluator:
     """Evaluates a single claimed target: assemble -> judge -> write back.
 
     Failure isolation: a judge call is retried with bounded backoff up to the
-    configured attempt limit, then the target is SKIPPED (recorded as such) so
+    configured attempt limit, then the target is marked FAILED with the reason so
     one failing target never blocks the rest. The bookkeeping record is
     finalized to ``completed`` only AFTER a successful history write-back.
+
+    Errors are reported as they happen, not only at the end: every failed attempt
+    is recorded on the target row (Postgres) while the target is still ``running``
+    and pushed through ``on_error``, so a retry storm or a definitive
+    misconfiguration is visible during the run. ``skipped`` is reserved for a
+    DELIBERATE skip (a non-strategic action, which carries no decision to grade)
+    so a client can never mistake an error for a designed skip.
     """
 
     def __init__(
@@ -103,6 +115,7 @@ class Evaluator:
         player: str | None = None,
         judge_config: ResolvedJudgeConfig | None = None,
         on_token: TokenSink | None = None,
+        on_error: ErrorSink | None = None,
     ) -> None:
         # The target arrives already claimed as ``running`` by the worker, so
         # all transitions below are conditional on it still being running: a
@@ -113,7 +126,7 @@ class Evaluator:
         config = judge_config or self._default_config()
 
         if not config.model.strip():
-            await self._repository.mark_skipped(
+            await self._repository.mark_failed(
                 target_id,
                 "no judge model configured (EVAL_JUDGE_MODEL unset)",
             )
@@ -151,8 +164,12 @@ class Evaluator:
             # earlier-completed targets in this cascade just wrote back.
             events = await self._latest_events(game_id, events)
 
+        # Every branch below is an ERROR, not a skip: it is recorded as ``failed``
+        # with its reason so the UI can show what went wrong, and so it is never
+        # conflated with the deliberate non-strategic skip above.
         try:
             verdict = await self._produce_verdict(
+                target_id=target_id,
                 game_id=game_id,
                 target_seq=target_seq,
                 scope=scope,
@@ -160,18 +177,17 @@ class Evaluator:
                 player=player,
                 config=config,
                 on_token=on_token,
+                on_error=on_error,
             )
         except BoundaryUndetectedError as exc:
-            await self._repository.mark_skipped(
-                target_id, f"boundary undetected: {exc}"
-            )
+            await self._fail(target_id, f"boundary undetected: {exc}", on_error)
             return
         except ValueError as exc:
-            await self._repository.mark_skipped(target_id, f"assembly error: {exc}")
+            await self._fail(target_id, f"assembly error: {exc}", on_error)
             return
         except JudgeAttemptsExhaustedError as exc:
-            await self._repository.mark_skipped(
-                target_id, f"judge failed after retry limit: {exc}"
+            await self._fail(
+                target_id, f"judge failed after retry limit: {exc}", on_error
             )
             return
 
@@ -179,9 +195,7 @@ class Evaluator:
             # Defensive: exhausted retries raise JudgeAttemptsExhaustedError above
             # (with the gateway's reason), so this only guards a verdict-less
             # return that no current path produces.
-            await self._repository.mark_skipped(
-                target_id, "judge failed after retry limit"
-            )
+            await self._fail(target_id, "judge failed after retry limit", on_error)
             return
 
         # Re-check the durable status IMMEDIATELY before writing back: a cancel
@@ -214,14 +228,37 @@ class Evaluator:
                 scope,
                 exc,
             )
-            await self._repository.mark_skipped(target_id, f"write-back failed: {exc}")
+            await self._fail(target_id, f"write-back failed: {exc}", on_error)
             return
 
         await self._repository.finalize_completed(target_id, verdict.model_dump())
 
+    async def _fail(
+        self, target_id: int, detail: str, on_error: ErrorSink | None
+    ) -> None:
+        """Mark a target ``failed`` with its reason and push the reason live."""
+        await self._repository.mark_failed(target_id, detail)
+        if on_error is not None:
+            await on_error(detail)
+
+    async def _report_attempt_error(
+        self, target_id: int, detail: str, on_error: ErrorSink | None
+    ) -> None:
+        """Surface a failure hit mid-evaluation, while the target keeps running.
+
+        The detail is written to the target row in Postgres (durable, readable by
+        any poller or a stream re-reading the snapshot) and pushed through the
+        live sink, so a failed attempt is reported as it happens instead of being
+        logged and forgotten with only the LAST one surviving to the terminal row.
+        """
+        await self._repository.record_attempt_error(target_id, detail)
+        if on_error is not None:
+            await on_error(detail)
+
     async def _produce_verdict(
         self,
         *,
+        target_id: int,
         game_id: str,
         target_seq: int,
         scope: str,
@@ -229,6 +266,7 @@ class Evaluator:
         player: str | None,
         config: ResolvedJudgeConfig,
         on_token: TokenSink | None,
+        on_error: ErrorSink | None = None,
     ) -> VerdictPayload | None:
         """Assemble input, call the judge with retry, and parse a verdict.
 
@@ -319,6 +357,16 @@ class Evaluator:
                     game_id,
                     target_seq,
                     exc,
+                )
+                # Report the attempt failure NOW rather than only when the target
+                # reaches a terminal state: without this, the first attempts of a
+                # retry storm were logged and dropped, and the user saw nothing
+                # until the run finished (and then only the last error).
+                await self._report_attempt_error(
+                    target_id,
+                    f"judge attempt {attempt}/{self._settings.eval_max_attempts} "
+                    f"failed: {exc}",
+                    on_error,
                 )
                 # Honor the gateway's retryability signal: a non-retryable
                 # BifrostError (e.g. a 4xx that won't change on a retry) fails

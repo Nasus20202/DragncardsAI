@@ -371,6 +371,12 @@ export interface EvaluationQueueTarget {
   /** The player this target pertains to (e.g. "player1"); null for legacy. */
   player?: string | null;
   status: EvaluationTargetStatus;
+  /**
+   * Why this target failed (or, for `skipped`, why it was skipped). Present on a
+   * still-`running` target too: the eval-service records a failed judge attempt
+   * while it retries, so an error is readable during the run.
+   */
+  error?: string | null;
 }
 
 /** A request summary from the cross-game `GET /evaluations` listing. */

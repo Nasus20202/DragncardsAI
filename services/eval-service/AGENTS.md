@@ -83,21 +83,37 @@ commits game state a player could get wrong — searching for a card cannot be a
 wrong decision, taking one into hand can be — NOT whether the tool reads or
 writes. Anything the taxonomy does not recognise is EVALUATED; only widen the skip
 list deliberately, because over-skipping degrades evaluation quality invisibly. A
-skipped target is recorded as `skipped` with its reason through the same
-`mark_skipped` channel a judge failure uses.
+skipped target is recorded as `skipped` with its reason. `skipped` means "there
+was no decision to grade here" and is reserved for exactly that: an ERROR is
+recorded as `failed`, never as a skip, so a client can tell the two apart.
 
 ### Write-back and failure isolation
 
 Verdicts are written back to history as `evaluator` events. The bookkeeping row
 is finalized to `completed` only AFTER a successful write-back. A judge call is
-retried with backoff to the attempt limit, then the target is skipped — one
-failing target never blocks the rest, and eval never blocks ingestion or play.
+retried with backoff to the attempt limit, then the target is marked `failed`
+with the reason — one failing target never blocks the rest, and eval never blocks
+ingestion or play.
+
+### Errors are reported live, not only at the end
+
+Every failed judge attempt is written to the target row (`error`, while the row
+stays `running`) and pushed through the worker's live sink, so a retry storm or a
+definitive misconfiguration is visible DURING the run instead of only in the final
+status. Never hold error detail in the worker: a poller has to be able to read it,
+which means Postgres.
+
+All error text passes through `error_detail.sanitize_error_detail` at the
+repository boundary (`mark_failed` / `mark_skipped` / `record_attempt_error`) —
+gateway messages can embed an `Authorization` header or a provider body echoing
+the whole prompt. Record errors through those methods only; never write the
+`error` column directly.
 
 ## Working Rules
 
 - Use `uv run` for all commands inside the service directory.
 - Never store state in memory: all durable state is in this service's own Postgres.
-- Health/readiness must never echo secrets.
+- Health/readiness must never echo secrets, and neither must recorded error text.
 - `except A, B:` paren-free tuple-catch is valid PEP 758 on 3.14 — do not add parens.
 
 ## Testing

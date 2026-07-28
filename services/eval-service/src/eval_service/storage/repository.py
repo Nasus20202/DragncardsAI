@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from eval_service.error_detail import sanitize_error_detail
 from eval_service.storage.models import (
     NON_TERMINAL_STATUSES,
     EvaluatedTargetRow,
@@ -234,10 +235,42 @@ class Repository:
         )
 
     async def mark_skipped(self, target_id: int, error: str) -> None:
-        await self._transition_running(target_id, status="skipped", error=error)
+        """Record a DELIBERATE skip (a non-strategic action) with its reason.
+
+        Reserved for "there was no decision to grade here". A failure uses
+        ``mark_failed`` so a client can tell an error apart from a designed skip.
+        """
+        await self._transition_running(
+            target_id, status="skipped", error=sanitize_error_detail(error)
+        )
 
     async def mark_failed(self, target_id: int, error: str) -> None:
-        await self._transition_running(target_id, status="failed", error=error)
+        await self._transition_running(
+            target_id, status="failed", error=sanitize_error_detail(error)
+        )
+
+    async def record_attempt_error(self, target_id: int, error: str) -> bool:
+        """Record a mid-evaluation failure on a target that is still ``running``.
+
+        A judge attempt that failed and will be retried is detail the user must be
+        able to read WHILE the evaluation continues, so it is written to Postgres
+        rather than held in the worker — any poller or stream then reads it from
+        the authoritative snapshot. The status is left untouched (the target is
+        still being worked on), and the ``status='running'`` guard means a
+        concurrent cancel or force re-claim is never clobbered. Returns whether a
+        row was actually updated.
+        """
+        async with self._session_factory() as session:
+            async with session.begin():
+                result = await session.execute(
+                    update(EvaluatedTargetRow)
+                    .where(
+                        EvaluatedTargetRow.id == target_id,
+                        EvaluatedTargetRow.status == "running",
+                    )
+                    .values(error=sanitize_error_detail(error), updated_at=utc_now())
+                )
+                return (result.rowcount or 0) > 0
 
     async def _transition_running(self, target_id: int, **values: Any) -> None:
         """Move a target out of ``running`` to a terminal state, conditionally.
