@@ -1,6 +1,18 @@
 import { Button, Switch, Tooltip } from "@heroui/react";
 import { ReactNode } from "react";
 
+/**
+ * One row of a settings list: a full-width HeroUI `Switch` labelled with its
+ * setting name, an optional description beneath it, an optional info trigger
+ * whose tooltip carries longer detail, and an optional inline action button
+ * (used for destructive per-row actions such as removing a custom MCP).
+ *
+ * The switch control is rendered *inside* `Switch.Content` so clicking the
+ * visual toggle flips it, not only the adjacent label text.
+ *
+ * Used by the Play settings panel, its MCP section, and the History tab's judge
+ * configuration.
+ */
 export function ToggleInfoRow({
   label,
   description,
@@ -12,6 +24,7 @@ export function ToggleInfoRow({
   tooltipPlacement = "left",
   action,
   actionVisibility = "always",
+  testId,
 }: {
   label: string;
   description?: string;
@@ -36,6 +49,8 @@ export function ToggleInfoRow({
       | "danger-soft";
   };
   actionVisibility?: "always" | "hover";
+  /** Placed on the clickable switch content, so activating it toggles the row. */
+  testId?: string;
 }) {
   const actionClassName =
     actionVisibility === "hover"
@@ -54,7 +69,10 @@ export function ToggleInfoRow({
         >
           {/* Switch.Content is the clickable SwitchButton; it must wrap the
               control so clicking the toggle itself (not just the label) works. */}
-          <Switch.Content className="flex w-full items-center justify-between gap-3">
+          <Switch.Content
+            className="flex w-full items-center justify-between gap-3"
+            data-testid={testId}
+          >
             <div className="flex flex-1 flex-col justify-center">
               <div className="flex items-center gap-2 leading-none">
                 <div className="text-sm text-foreground">{label}</div>

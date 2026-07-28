@@ -1,5 +1,12 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { useState } from "react";
 
@@ -8,6 +15,7 @@ import {
   JudgeDraft,
   createDefaultJudgeDraft,
 } from "@/features/history/lib/judge-config";
+import { installResizeObserver } from "@/features/shared/__tests__/heroui-test-env";
 import { DashboardConfig, ProviderResponse } from "@/features/shared/lib/types";
 
 const requestEvaluation = vi.fn();
@@ -68,12 +76,43 @@ function ControlHarness({ initial }: { initial: JudgeDraft }) {
   );
 }
 
+beforeAll(installResizeObserver);
+
 afterEach(() => {
   vi.clearAllMocks();
 });
 
+/**
+ * Open a HeroUI `Select` by its trigger test id and choose the option with the
+ * given accessible name. HeroUI renders a listbox popover rather than a native
+ * `<select>`, so the choice has to be clicked.
+ */
+async function chooseOption(
+  user: ReturnType<typeof userEvent.setup>,
+  triggerTestId: string,
+  optionName: string
+) {
+  await user.click(screen.getByTestId(triggerTestId));
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: optionName })).toBeInTheDocument()
+  );
+  await user.click(screen.getByRole("option", { name: optionName }));
+}
+
+/**
+ * Flip the switch inside the toggle row carrying the given test id. The row is a
+ * HeroUI `Switch`, so the control to activate is the `switch` role within it.
+ */
+async function flipSwitch(
+  user: ReturnType<typeof userEvent.setup>,
+  testId: string
+) {
+  await user.click(within(screen.getByTestId(testId)).getByRole("switch"));
+}
+
 describe("EvaluationControl judge config", () => {
   it("assembles the judge object from selected provider/model/reasoning/skills/prompt", async () => {
+    const user = userEvent.setup();
     requestEvaluation.mockResolvedValue({
       request_id: "req-1",
       game_id: "g1",
@@ -88,14 +127,10 @@ describe("EvaluationControl judge config", () => {
     render(<ControlHarness initial={createDefaultJudgeDraft(CONFIG)} />);
 
     // Pick provider anthropic -> model clamps to claude-x.
-    fireEvent.change(screen.getByTestId("judge-provider"), {
-      target: { value: "anthropic" },
-    });
+    await chooseOption(user, "judge-provider", "anthropic");
     // Enable reasoning + effort high.
-    fireEvent.click(screen.getByTestId("judge-reasoning-enabled"));
-    fireEvent.change(screen.getByTestId("judge-reasoning-effort"), {
-      target: { value: "high" },
-    });
+    await flipSwitch(user, "judge-reasoning-enabled");
+    await chooseOption(user, "judge-reasoning-effort", "High");
     fireEvent.change(screen.getByTestId("judge-reasoning-max-tokens"), {
       target: { value: "2048" },
     });
@@ -103,7 +138,7 @@ describe("EvaluationControl judge config", () => {
     fireEvent.change(screen.getByTestId("judge-prompt"), {
       target: { value: "be strict" },
     });
-    fireEvent.click(screen.getByTestId("judge-skill-core-rules"));
+    await flipSwitch(user, "judge-skill-core-rules");
 
     fireEvent.click(screen.getByTestId("eval-submit"));
 

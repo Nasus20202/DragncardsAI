@@ -1,16 +1,6 @@
 "use client";
 
-import {
-  Button,
-  Input,
-  Label,
-  ListBox,
-  ListBoxItem,
-  Select,
-  Separator,
-  TextArea,
-  TextField,
-} from "@heroui/react";
+import { Button, Separator } from "@heroui/react";
 import {
   McpAssignmentResponse,
   McpRegistryResponse,
@@ -18,191 +8,15 @@ import {
   SessionDraft,
   SkillDefinitionResponse,
 } from "@/features/shared/lib/types";
-import { ComboSelect } from "@/features/shared/components/combo-select";
+import {
+  ComboSelectField,
+  SelectField,
+  SkillToggleList,
+  SwitchField,
+  TextInputField,
+  TextareaField,
+} from "@/features/shared/components/form-fields";
 import { McpSection } from "@/features/play/components/mcp-section";
-import { ToggleInfoRow } from "@/features/play/components/toggle-info-row";
-
-/* ── Reusable field wrappers ─────────────────────────────────────── */
-
-function FieldLabel({
-  id,
-  children,
-}: {
-  id: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Label
-      className="block text-xs font-semibold uppercase tracking-wider text-default-400"
-      htmlFor={id}
-    >
-      {children}
-    </Label>
-  );
-}
-
-function TextInputField({
-  id,
-  label,
-  placeholder,
-  value,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  placeholder?: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="grid gap-1">
-      <FieldLabel id={id}>{label}</FieldLabel>
-      <TextField fullWidth aria-label={label}>
-        <Input
-          id={id}
-          placeholder={placeholder}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      </TextField>
-    </div>
-  );
-}
-
-function TextareaField({
-  id,
-  label,
-  description,
-  rows,
-  value,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  description?: string;
-  rows: number;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="grid gap-1">
-      <FieldLabel id={id}>{label}</FieldLabel>
-      {description && <p className="text-xs text-default-400">{description}</p>}
-      <TextField fullWidth aria-label={label}>
-        <TextArea
-          id={id}
-          rows={rows}
-          value={value}
-          className="font-mono text-xs"
-          onChange={(e) => onChange(e.target.value)}
-        />
-      </TextField>
-    </div>
-  );
-}
-
-function SelectField({
-  id,
-  label,
-  items,
-  value,
-  disabled,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  items: { value: string; label: string }[];
-  value: string;
-  disabled?: boolean;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="grid gap-1">
-      <FieldLabel id={id}>{label}</FieldLabel>
-      <Select
-        fullWidth
-        aria-label={label}
-        isDisabled={disabled}
-        value={value}
-        onChange={(nextValue) => {
-          if (nextValue != null) {
-            onChange(String(nextValue));
-          }
-        }}
-      >
-        <Select.Trigger aria-label={label}>
-          <Select.Value />
-          <Select.Indicator />
-        </Select.Trigger>
-        <Select.Popover>
-          <ListBox aria-label={label}>
-            {items.map((item) => (
-              <ListBoxItem
-                key={item.value}
-                id={item.value}
-                textValue={item.label}
-              >
-                {item.label}
-              </ListBoxItem>
-            ))}
-          </ListBox>
-        </Select.Popover>
-      </Select>
-    </div>
-  );
-}
-
-function ComboSelectField({
-  id,
-  label,
-  items,
-  value,
-  disabled,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  items: { value: string; label: string }[];
-  value: string;
-  disabled?: boolean;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="grid gap-1">
-      <FieldLabel id={id}>{label}</FieldLabel>
-      <ComboSelect
-        label={label}
-        items={items}
-        value={value}
-        disabled={disabled}
-        inputId={id}
-        onChange={onChange}
-      />
-    </div>
-  );
-}
-
-function SwitchField({
-  label,
-  description,
-  checked,
-  onChange,
-}: {
-  id?: string;
-  label: string;
-  description?: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <ToggleInfoRow
-      label={label}
-      description={description}
-      checked={checked}
-      onChange={onChange}
-    />
-  );
-}
 
 function ReasoningSection({
   draft,
@@ -253,64 +67,6 @@ function ReasoningSection({
         </>
       )}
     </>
-  );
-}
-
-function SkillsSection({
-  draft,
-  skills,
-  set,
-}: {
-  draft: SessionDraft;
-  skills: SkillDefinitionResponse[];
-  set: <K extends keyof SessionDraft>(key: K, value: SessionDraft[K]) => void;
-}) {
-  if (skills.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="grid gap-2">
-      <p className="text-xs font-semibold uppercase tracking-wider text-default-400">
-        Skills
-      </p>
-      <div className="grid gap-1 rounded-lg border border-default-200/60 px-3 py-2">
-        {skills.map((skill) => {
-          const metaStr = Object.entries(skill.metadata ?? {})
-            .map(([key, value]) => `${key}: ${value}`)
-            .join(" · ");
-          const hasInfo = Boolean(skill.description || metaStr);
-          return (
-            <ToggleInfoRow
-              key={skill.name}
-              label={skill.name}
-              checked={draft.selectedSkills.includes(skill.name)}
-              onChange={(checked) =>
-                set(
-                  "selectedSkills",
-                  checked
-                    ? [...draft.selectedSkills, skill.name]
-                    : draft.selectedSkills.filter((name) => name !== skill.name)
-                )
-              }
-              infoLabel={hasInfo ? `Info about ${skill.name}` : undefined}
-              infoContent={
-                hasInfo ? (
-                  <div className="space-y-1 p-1">
-                    {skill.description && (
-                      <p className="text-xs">{skill.description}</p>
-                    )}
-                    {metaStr && (
-                      <p className="text-[11px] opacity-70">{metaStr}</p>
-                    )}
-                  </div>
-                ) : undefined
-              }
-            />
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
@@ -457,7 +213,11 @@ export function PlayConfigPanel({
 
             <Separator />
 
-            <SkillsSection draft={draft} skills={skills} set={set} />
+            <SkillToggleList
+              skills={skills}
+              selectedSkills={draft.selectedSkills}
+              onChange={(next) => set("selectedSkills", next)}
+            />
 
             <Separator />
 
