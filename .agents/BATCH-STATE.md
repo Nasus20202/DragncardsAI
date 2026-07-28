@@ -21,15 +21,26 @@ copy.
 
 | Branch | Issue | State |
 | --- | --- | --- |
-| `stanislaw/dra-14-eval-round-boundaries` | DRA-14 | merged |
-| `stanislaw/dra-18-eval-errors-surfaced` | DRA-18 | merged |
+| `stanislaw/dra-14-eval-round-boundaries` | DRA-14 | merged as `e7dac43` |
+| `stanislaw/dra-18-eval-errors-surfaced` | DRA-18 | merged as `0cae61e` |
+| `stanislaw/dra-15-skill-into-message` | DRA-15 | merged as `97b7761` |
 | `stanislaw/dra-10-round-scoped-evaluation` | DRA-10 | in progress |
 | `stanislaw/dra-13-export-import-history` | DRA-13 | in progress |
-| `stanislaw/dra-15-skill-into-message` | DRA-15 | in progress |
 | `stanislaw/dra-16-agent-personas` | DRA-16 | in progress |
 | `stanislaw/dra-17-history-perf-scroll` | DRA-17 | in progress |
 
 Merged worktrees are removed as soon as their branch lands; the branch is kept.
+
+**Remote hygiene.** Feature branches live only locally — the batch's seven `stanislaw/dra-*` branches
+were briefly pushed for durability, then deleted from `origin` at the owner's instruction once
+durability moved to frequent local commits. Do not push feature branches. `origin` should carry only
+`main`, `features/bug-batch-20260727`, and the `renovate/*` branches (which have open PRs #306, #307,
+#230 and are the bot's — never delete those).
+
+**Merge procedure that works here:** rebase the feature branch onto the integration tip *first*
+(otherwise the squash reverts newer integration-branch commits — see the `TBD` trap below), grep the
+change directory for placeholders, check whether it edited `openspec/specs/` directly, then
+`git merge --squash` and commit with a single-line subject ending ` (DRA-<n>)`.
 
 **No pull request is open, and none may be opened without the owner asking in that moment.** PR #305
 was closed earlier; it reopens with `gh pr reopen 305` only on an explicit request.
@@ -69,8 +80,9 @@ was closed earlier; it reopens with `gh pr reopen 305` only on an explicit reque
 
 - `./scripts/lint.sh` — clean.
 - eval-service unit: **210 passed** (178 at the start of the batch).
-- dashboard unit: **346 passed / 54 files** (340 at the start).
-- game-service 378, agent-orchestrator 309, history-service 100, shared 16.
+- dashboard unit: **349 passed** (340 at the start).
+- agent-orchestrator unit: **322 passed** (309 at the start).
+- game-service 378, history-service 100, shared 16.
 - `openspec validate --all` — 16 passed, 1 failed (the pre-existing one above).
 
 ## Owed before anything is Done
