@@ -20,9 +20,15 @@ logger = logging.getLogger(__name__)
 class EvaluationWorker:
     """Background loop that drains pending targets from Postgres.
 
-    Concurrency is bounded by a global semaphore and per-game semaphores
-    (cost controls, design Decision 9). All durable state lives in Postgres;
-    the worker holds only transient in-flight bookkeeping for one drain cycle.
+    Multiple targets are evaluated CONCURRENTLY, and the concurrency is bounded by
+    the durable claim itself: ``claim_pending_targets`` counts the rows already
+    ``running`` and takes only the remaining global / per-game capacity, so the
+    worker keeps no semaphore, queue, or per-game dictionary of its own. That is
+    what makes the cap hold across a restart and across a second replica — and it
+    is required here, because this repo forbids services from keeping state in
+    memory. The only transient structures left are the live-event bus and the
+    in-flight task registry, which exist for SSE push and cancellation, not for
+    bounding work.
     """
 
     def __init__(
@@ -42,20 +48,11 @@ class EvaluationWorker:
         self._evaluator = evaluator
         self._poll_interval = poll_interval_seconds
         self._stop = asyncio.Event()
-        self._global_sem = asyncio.Semaphore(settings.eval_global_concurrency)
-        self._game_sems: dict[str, asyncio.Semaphore] = {}
         self._wake = asyncio.Event()
         # Transient live-push channel + in-flight task registry (durable state
         # stays in Postgres; these are only for live SSE push and cancellation).
         self._live_bus = live_bus
         self._inflight = inflight
-
-    def _game_sem(self, game_id: str) -> asyncio.Semaphore:
-        sem = self._game_sems.get(game_id)
-        if sem is None:
-            sem = asyncio.Semaphore(self._settings.eval_per_game_concurrency)
-            self._game_sems[game_id] = sem
-        return sem
 
     def notify(self) -> None:
         """Wake the worker immediately after new targets are enqueued."""
@@ -83,21 +80,37 @@ class EvaluationWorker:
                 self._wake.clear()
 
     async def drain_once(self) -> int:
-        """Process one batch of pending targets. Returns how many were handled.
+        """Process one batch of pending targets, concurrently.
+
+        Returns how many targets made PROGRESS — reached a terminal state or wrote
+        a verdict — NOT how many rows were touched. A round/game roll-up whose
+        children are still in flight is re-deferred to ``pending`` and made no
+        progress; reporting those as handled would make ``run_forever`` skip its
+        wait and hot-loop on the database while the children run. A cycle where
+        everything deferred therefore reports 0 and is treated as idle.
 
         Targets are claimed atomically (pending -> running) so two replicas
-        draining concurrently never both evaluate the same row.
+        draining concurrently never both evaluate the same row, and the claim is
+        capacity-bounded so the in-flight count respects the configured caps
+        without any in-process registry of running work.
         """
-        claimed = await self._repository.claim_pending_targets(limit=64)
+        claimed = await self._repository.claim_pending_targets(
+            limit=64,
+            global_limit=self._settings.eval_global_concurrency,
+            per_game_limit=self._settings.eval_per_game_concurrency,
+        )
         if not claimed:
             return 0
+        # Counts the targets that progressed. A plain int is not shared mutable
+        # state across cycles -- it is a local tally for this call.
+        progressed = 0
 
         # Read each game's timeline once per batch (shared across its targets).
         by_game: dict[str, list[EvaluatedTargetRow]] = defaultdict(list)
         for target in claimed:
             by_game[target.game_id].append(target)
 
-        tasks: list[asyncio.Task[None]] = []
+        tasks: list[asyncio.Task[bool]] = []
         for game_id, targets in by_game.items():
             try:
                 events = await self._history.list_all_events(game_id)
@@ -110,6 +123,8 @@ class EvaluationWorker:
                         target.id, f"history read failed: {exc}"
                     )
                     self._publish_status(target.request_id)
+                    # A failure is a terminal outcome, so the cycle did progress.
+                    progressed += 1
                 continue
             for target in targets:
                 task = asyncio.create_task(self._process_one(target, events))
@@ -120,8 +135,11 @@ class EvaluationWorker:
                 tasks.append(task)
 
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        return len(claimed)
+            outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+            # A cancelled task surfaces as an exception here; cancellation is a
+            # terminal transition, so it counts as progress just like a verdict.
+            progressed += sum(1 for outcome in outcomes if outcome is not False)
+        return progressed
 
     def _publish_status(self, request_id: str) -> None:
         if self._live_bus is not None:
@@ -169,49 +187,57 @@ class EvaluationWorker:
 
     async def _process_one(
         self, target: EvaluatedTargetRow, events: list[StoredEvent]
-    ) -> None:
+    ) -> bool:
+        """Evaluate one claimed target. Returns whether it made progress.
+
+        False means the target was re-deferred to ``pending`` because the children
+        it depends on are still being graded; see :meth:`drain_once` for why that
+        distinction matters. Concurrency is NOT gated here — the capacity-bounded
+        claim in :meth:`drain_once` already limits how many of these run at once,
+        so there is no semaphore to acquire and no per-game structure to keep.
+        """
         # Snapshot the per-target judge config (None -> server defaults).
         config = ResolvedJudgeConfig.from_json(target.judge_config_json)
-        async with self._global_sem:
-            async with self._game_sem(target.game_id):
-                # Signal the running transition (claim already wrote it durably).
-                self._publish_status(target.request_id)
-                try:
-                    await self._evaluator.evaluate_target(
-                        target_id=target.id,
-                        game_id=target.game_id,
-                        target_seq=target.target_seq,
-                        scope=target.scope,
-                        events=events,
-                        player=target.player or None,
-                        judge_config=config,
-                        on_token=self._make_token_sink(target),
-                        on_error=self._make_error_sink(target),
-                    )
-                except JudgeNotConfiguredError:
-                    # Already marked failed with a clear config error.
-                    logger.warning("Target %s failed: judge not configured", target.id)
-                except asyncio.CancelledError:
-                    # Cancelled in-flight: the cancel handler already set the
-                    # durable ``cancelled`` status and writes no verdict. Do not
-                    # re-mark; just surface the transition and stop.
-                    logger.info("Target %s cancelled in-flight", target.id)
-                    self._publish_status(target.request_id)
-                    raise
-                except Exception as exc:  # noqa: BLE001 - isolate failures
-                    logger.warning(
-                        "Unexpected error evaluating target %s: %s",
-                        target.id,
-                        exc,
-                        exc_info=True,
-                    )
-                    await self._repository.mark_failed(target.id, str(exc))
-                finally:
-                    if self._inflight is not None:
-                        # Only drop the registry entry if it is still THIS task:
-                        # a force re-claim may have registered a fresh task for
-                        # the same target_id, which must stay cancellable.
-                        self._inflight.unregister(target.id, asyncio.current_task())
-                    # Terminal (or token) transition -> wake subscribers to
-                    # re-read the snapshot and emit a verdict/status event.
-                    self._publish_status(target.request_id)
+        # Signal the running transition (claim already wrote it durably).
+        self._publish_status(target.request_id)
+        try:
+            return await self._evaluator.evaluate_target(
+                target_id=target.id,
+                game_id=target.game_id,
+                target_seq=target.target_seq,
+                scope=target.scope,
+                events=events,
+                player=target.player or None,
+                judge_config=config,
+                on_token=self._make_token_sink(target),
+                on_error=self._make_error_sink(target),
+            )
+        except JudgeNotConfiguredError:
+            # Already marked failed with a clear config error.
+            logger.warning("Target %s failed: judge not configured", target.id)
+            return True
+        except asyncio.CancelledError:
+            # Cancelled in-flight: the cancel handler already set the durable
+            # ``cancelled`` status and writes no verdict. Do not re-mark; just
+            # surface the transition and stop.
+            logger.info("Target %s cancelled in-flight", target.id)
+            self._publish_status(target.request_id)
+            raise
+        except Exception as exc:  # noqa: BLE001 - isolate failures
+            logger.warning(
+                "Unexpected error evaluating target %s: %s",
+                target.id,
+                exc,
+                exc_info=True,
+            )
+            await self._repository.mark_failed(target.id, str(exc))
+            return True
+        finally:
+            if self._inflight is not None:
+                # Only drop the registry entry if it is still THIS task: a force
+                # re-claim may have registered a fresh task for the same
+                # target_id, which must stay cancellable.
+                self._inflight.unregister(target.id, asyncio.current_task())
+            # Terminal (or token) transition -> wake subscribers to re-read the
+            # snapshot and emit a verdict/status event.
+            self._publish_status(target.request_id)

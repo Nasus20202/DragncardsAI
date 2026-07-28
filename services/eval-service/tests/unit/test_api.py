@@ -178,6 +178,80 @@ def test_create_request_returns_targets(repo_factory):
         assert status["status"] == "pending"
 
 
+def _multi_round_game(game_id="g1"):
+    """Two rounds of play; roundNumber 0 is the FIRST round, not "setup"."""
+    return [
+        state_event(game_id=game_id, seq=1, round_number=0),
+        agent_event(game_id=game_id, seq=2),
+        agent_event(game_id=game_id, seq=3),
+        state_event(game_id=game_id, seq=4, round_number=1),
+        agent_event(game_id=game_id, seq=5),
+        state_event(game_id=game_id, seq=6, round_number=1, status="win"),
+    ]
+
+
+def test_list_rounds_returns_selectable_labelled_rounds(repo_factory):
+    settings = Settings(eval_judge_model="anthropic/claude-x")
+    history = FakeHistoryClient({"g1": _multi_round_game()})
+    judge = StubJudgeClient()
+    with _client(repo_factory, history, judge, settings) as client:
+        resp = client.get("/games/g1/rounds")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["game_id"] == "g1"
+        first = body["rounds"][0]
+        # round_number is the round OF PLAY, which is what selection.rounds
+        # accepts: DragnCards' raw roundNumber 0 is reported as round 1.
+        assert first["round_number"] == 1
+        assert first["label"] == "Round 1"
+        # The round closes AT the seq-4 state event that first reported the new
+        # round -- the event that closed it.
+        assert (first["from_seq"], first["to_seq"]) == (1, 4)
+        assert first["move_count"] == 2
+        assert first["players"] == ["player1"]
+
+
+def test_list_rounds_unknown_game_404(repo_factory):
+    settings = Settings(eval_judge_model="anthropic/claude-x")
+    with _client(repo_factory, FakeHistoryClient({}), StubJudgeClient(), settings) as c:
+        assert c.get("/games/none/rounds").status_code == 404
+
+
+def test_list_rounds_rejects_a_malformed_game_id(repo_factory):
+    settings = Settings(eval_judge_model="anthropic/claude-x")
+    history = FakeHistoryClient({"g1": _multi_round_game()})
+    with _client(repo_factory, history, StubJudgeClient(), settings) as client:
+        assert client.get("/games/bad%20id/rounds").status_code == 404
+
+
+def test_round_scope_request_needs_only_round_numbers(repo_factory):
+    """The reporter's complaint: grading a round must not require a move's id.
+
+    A round-scope request naming ONLY the round numbers from the listing expands
+    to that round's targets, with no ``seqs`` and no ``seq_range`` supplied.
+    """
+    settings = Settings(eval_judge_model="anthropic/claude-x")
+    history = FakeHistoryClient({"g1": _multi_round_game()})
+    judge = StubJudgeClient()
+    with _client(repo_factory, history, judge, settings) as client:
+        listed = client.get("/games/g1/rounds").json()["rounds"]
+        resp = client.post(
+            "/games/g1/evaluations",
+            json={
+                "scope": "round",
+                "selection": {"rounds": [listed[0]["round_number"]]},
+            },
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        scopes = {t["scope"] for t in body["targets"]}
+        # The cascade claims the round's moves plus one per-player round roll-up.
+        assert scopes == {"move", "round"}
+        round_target = next(t for t in body["targets"] if t["scope"] == "round")
+        assert round_target["round_span"] == [1, 4]
+        assert body["created_count"] == 3
+
+
 def test_create_request_empty_selection_422(repo_factory):
     settings = Settings(eval_judge_model="anthropic/claude-x")
     history = FakeHistoryClient({"g1": _game()})

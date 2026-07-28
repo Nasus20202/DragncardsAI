@@ -82,5 +82,76 @@ describe("HistoryScorecard", () => {
     expect(screen.queryAllByTestId(/^history-scorecard-player-/)).toHaveLength(
       2
     );
+    // A single evaluator version -> nothing to disclose.
+    expect(
+      screen.queryByTestId("history-scorecard-version-notice")
+    ).not.toBeInTheDocument();
+  });
+
+  it("averages only the newest evaluator version and discloses what it left out", () => {
+    // eval-1 graded a move with a small fixed neighbour window and no
+    // multi-action-play instruction, so its scores are on a different scale.
+    // Averaging the two together would produce a number describing neither.
+    const events: HistoryEvent[] = [
+      evaluator(1, {
+        scope: "move",
+        target_seq: 1,
+        player: "player1",
+        overall_score: 2,
+        evaluator: { evaluator_version: "eval-1" },
+      }),
+      evaluator(2, {
+        scope: "move",
+        target_seq: 2,
+        player: "player1",
+        overall_score: 3,
+        evaluator: { evaluator_version: "eval-1" },
+      }),
+      evaluator(3, {
+        scope: "move",
+        target_seq: 3,
+        player: "player1",
+        overall_score: 8,
+        evaluator: { evaluator_version: "eval-2" },
+      }),
+    ];
+    render(<HistoryScorecard events={events} onClose={vi.fn()} />);
+
+    const p1 = screen.getByTestId("history-scorecard-player-player1");
+    // Only the eval-2 verdict is averaged: 8, not (2 + 3 + 8) / 3.
+    expect(within(p1).getByText("8/10")).toBeInTheDocument();
+    const notice = screen.getByTestId("history-scorecard-version-notice");
+    expect(notice).toHaveTextContent("2 verdicts");
+    expect(notice).toHaveTextContent(/earlier evaluator version/i);
+    expect(screen.getByTestId("history-scorecard")).toHaveTextContent(
+      "Graded by eval-2."
+    );
+  });
+
+  it("treats unversioned verdicts as their own group", () => {
+    // A verdict with no recorded version is legacy; when the newest verdict has a
+    // version, the unversioned ones are excluded rather than mixed in.
+    const events: HistoryEvent[] = [
+      evaluator(1, {
+        scope: "move",
+        target_seq: 1,
+        player: "player1",
+        overall_score: 1,
+      }),
+      evaluator(2, {
+        scope: "move",
+        target_seq: 2,
+        player: "player1",
+        overall_score: 9,
+        evaluator: { evaluator_version: "eval-2" },
+      }),
+    ];
+    render(<HistoryScorecard events={events} onClose={vi.fn()} />);
+
+    const p1 = screen.getByTestId("history-scorecard-player-player1");
+    expect(within(p1).getByText("9/10")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("history-scorecard-version-notice")
+    ).toHaveTextContent("1 verdict ");
   });
 });

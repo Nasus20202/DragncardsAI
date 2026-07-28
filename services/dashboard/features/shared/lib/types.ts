@@ -284,6 +284,35 @@ export type EvaluationTargetStatus =
 export type EvaluationRequestStatus =
   "pending" | "running" | "completed" | "partial" | "failed" | "cancelled";
 
+/**
+ * One round the eval-service detects for a game, from `GET /games/{id}/rounds`.
+ * Offered so the user can pick a ROUND to evaluate without first selecting a
+ * move inside it.
+ */
+export interface EvaluationRound {
+  /**
+   * The 1-based round OF PLAY — exactly what `EvaluationSelection.rounds`
+   * accepts, so a client echoes it back untranslated. NOT DragnCards' raw
+   * `roundNumber`, which counts *completed* rounds and reads 0 throughout the
+   * first round of play; the eval-service has already converted it.
+   */
+  round_number: number;
+  /** Presentation label built from `round_number` ("Round 1"). */
+  label: string;
+  from_seq: number;
+  to_seq: number;
+  /** Agent moves recorded in the span. */
+  move_count: number;
+  /** Players who made an agent move in the span; empty when none did. */
+  players: string[];
+}
+
+/** Response from `GET /games/{id}/rounds`. */
+export interface EvaluationRoundsResponse {
+  game_id: string;
+  rounds: EvaluationRound[];
+}
+
 /** Target selection sent with a `POST /games/{id}/evaluations` request. */
 export interface EvaluationSelection {
   seqs?: number[];

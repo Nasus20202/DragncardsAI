@@ -6,7 +6,29 @@ import {
   EvaluationRequestAck,
   EvaluationRequestBody,
   EvaluationRequestStatusResponse,
+  EvaluationRound,
+  EvaluationRoundsResponse,
 } from "@/features/shared/lib/types";
+
+/**
+ * The rounds the eval-service detects for a game, so the user can pick a ROUND
+ * to evaluate instead of picking a move inside one.
+ *
+ * Deliberately server-sourced rather than re-derived from the timeline: round
+ * boundaries are the eval-service's own detection, so a round offered here is a
+ * round it can actually grade, and the two cannot drift apart.
+ * Calls `GET /api/proxy/eval/games/{gameId}/rounds`.
+ */
+export async function listGameRounds(
+  gameId: string
+): Promise<EvaluationRound[]> {
+  const response = await fetch(
+    `/api/proxy/eval/games/${encodeURIComponent(gameId)}/rounds`,
+    { cache: "no-store" }
+  );
+  const body = await readJson<EvaluationRoundsResponse>(response);
+  return body.rounds ?? [];
+}
 
 /**
  * List in-progress and recent evaluation requests across all games (newest

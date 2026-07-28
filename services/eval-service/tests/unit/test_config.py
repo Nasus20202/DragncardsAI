@@ -10,8 +10,9 @@ def test_defaults_are_secret_free():
     assert settings.http_port == 4005
     assert settings.history_service_base_url == "http://localhost:4004"
     assert settings.bifrost_url == "http://localhost:4003"
-    # eval-2: round boundaries now close at the event that closed the round, so
-    # round/game verdicts recorded under eval-1 are not comparable to newer ones.
+    # eval-2 carries both the corrected round boundaries and the round-scoped move
+    # context with its multi-action-play instruction, so eval-1 scores are not on
+    # the same scale as eval-2 ones.
     assert settings.evaluator_version == "eval-2"
     # No judge model by default -> not configured.
     assert settings.eval_judge_model == ""
@@ -125,10 +126,12 @@ def test_cors_origins_default_and_parse(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_move_context_window_defaults_and_override(monkeypatch: pytest.MonkeyPatch):
-    # A neighbouring-action window, not the whole history: enough to see the play
-    # a single tool call belongs to.
-    assert Settings().eval_judge_move_context_before == 8
-    assert Settings().eval_judge_move_context_after == 3
+    # The window is the graded move's ROUND; these are only backstops against a
+    # pathological round, so they default high enough never to clip a normal one
+    # (the same ceiling a round roll-up uses for its move list).
+    assert Settings().eval_judge_move_context_before == 100
+    assert Settings().eval_judge_move_context_after == 100
+    assert Settings().eval_judge_max_round_moves == 100
     assert Settings().eval_judge_move_context_reasoning_chars == 400
     monkeypatch.setenv("EVAL_JUDGE_MOVE_CONTEXT_BEFORE", "2")
     monkeypatch.setenv("EVAL_JUDGE_MOVE_CONTEXT_AFTER", "0")

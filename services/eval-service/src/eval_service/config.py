@@ -100,11 +100,16 @@ class Settings(BaseSettings):
         ),
     )
     # Recorded on every verdict and folded into the write-back idempotency key, so
-    # it is how a change in what the judge is asked stays traceable. Bumped to
-    # ``eval-2`` when round-boundary detection was corrected (a round now ends at
-    # the event that closed it, and rounds are numbered as rounds of play): round
-    # and game verdicts recorded under ``eval-1`` graded a span shifted by one
-    # event at each boundary and are NOT comparable to ``eval-2`` ones.
+    # it is how a change in what the judge is asked stays traceable. Bump it
+    # whenever what the judge is SHOWN or ASKED changes, because scores from two
+    # regimes are not on the same scale and must not be averaged together.
+    #
+    # ``eval-2`` carries two such changes: round-boundary detection was corrected
+    # (a round now ends at the event that closed it, and rounds are numbered as
+    # rounds of play), and a move is now judged in the context of its whole round
+    # under an instruction that a play spans several actions. ``eval-1`` verdicts
+    # graded a span shifted by one event at each boundary AND marked multi-action
+    # plays down once per action, so they are NOT comparable to ``eval-2`` ones.
     evaluator_version: str = Field(
         default="eval-2",
         validation_alias=AliasChoices("evaluator_version", "EVALUATOR_VERSION"),
@@ -154,9 +159,16 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Concurrency caps on in-flight judge calls.
+    # Concurrency caps on in-flight judge calls. Enforced by the DURABLE claim
+    # (``Repository.claim_pending_targets`` counts the ``running`` rows and takes
+    # only the remaining capacity), never by an in-process semaphore or registry,
+    # so the caps survive a restart and hold for a second worker replica.
+    #
+    # Per-game is 4 rather than 2 so the moves of one round actually grade in
+    # parallel: a whole-game cascade at 2 was close to serial. Global stays at 8
+    # as the guard against a game-wide evaluation stampeding the provider.
     eval_per_game_concurrency: int = Field(
-        default=2,
+        default=4,
         validation_alias=AliasChoices(
             "eval_per_game_concurrency", "EVAL_PER_GAME_CONCURRENCY"
         ),
@@ -193,29 +205,30 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Size of the NEIGHBOURING-ACTION window included with a per-move judge
-    # prompt, in agent moves either side of the one being graded.
+    # SAFETY BACKSTOPS on the per-move context window, in agent moves either side
+    # of the one being graded. They are NOT the mechanism: a move is judged in the
+    # context of ITS ROUND, so the window is the round and these caps only bound a
+    # pathological one. The defaults are set at the same ceiling a round roll-up
+    # uses (EVAL_JUDGE_MAX_ROUND_MOVES), i.e. high enough that a normal round is
+    # never clipped.
     #
-    # Why a window and not the whole history: the move prompt already carries the
-    # correlated prior/resulting board, which summarises everything that happened
-    # before, so replaying the full move list would add cost without adding
-    # signal. What a board cannot show is that one tool call is a fragment of a
-    # larger play -- a Marvel Champions play is typically 2-4 calls (play the
-    # card, assign damage, exhaust the character) and a whole player turn runs
-    # ~6-10 -- and judging a fragment alone produces confidently wrong verdicts.
+    # Why the round and not a small fixed count: a Marvel Champions play is
+    # normally 2-4 calls (play the card, exhaust to pay the cost, assign the
+    # damage) and a whole player turn runs ~6-10, so a fixed count both crosses
+    # into the previous round (a different turn on a different board) and stops
+    # inside the current one (hiding the rest of the play). Judging a fragment
+    # against the four rubric criteria produces confidently low scores for a
+    # perfectly good play -- the defect DRA-10 was filed for.
     #
-    # Defaults therefore cover a typical player turn's worth of preceding calls
-    # and just enough following calls to see whether a play completed. Measured
-    # on real recorded games the whole window costs ~600 prompt tokens.
     # ``EVAL_JUDGE_MOVE_CONTEXT_AFTER=0`` removes hindsight entirely.
     eval_judge_move_context_before: int = Field(
-        default=8,
+        default=100,
         validation_alias=AliasChoices(
             "eval_judge_move_context_before", "EVAL_JUDGE_MOVE_CONTEXT_BEFORE"
         ),
     )
     eval_judge_move_context_after: int = Field(
-        default=3,
+        default=100,
         validation_alias=AliasChoices(
             "eval_judge_move_context_after", "EVAL_JUDGE_MOVE_CONTEXT_AFTER"
         ),

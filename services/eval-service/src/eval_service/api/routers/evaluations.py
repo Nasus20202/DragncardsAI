@@ -10,6 +10,7 @@ from eval_service.api.deps import (
     get_live_bus,
     get_repository,
     get_request_service,
+    get_rounds_service,
     get_stream_service,
     get_worker,
 )
@@ -20,6 +21,7 @@ from eval_service.runtime.requests import (
     RequestError,
     RequestService,
 )
+from eval_service.runtime.rounds import RoundsService
 from eval_service.runtime.status import request_status, to_target_result
 from eval_service.runtime.stream import EvaluationStreamService
 from eval_service.runtime.worker import EvaluationWorker
@@ -31,6 +33,7 @@ from eval_service.schemas.api import (
     EvaluationListResponse,
     EvaluationRequestBody,
     RequestStatusResponse,
+    RoundListResponse,
 )
 from eval_service.storage.models import NON_TERMINAL_STATUSES
 from eval_service.storage.repository import Repository
@@ -120,6 +123,26 @@ async def delete_evaluation(
         )
     await repo.delete_request(request_id)
     return None
+
+
+@router.get("/games/{game_id}/rounds", response_model=RoundListResponse)
+async def list_game_rounds(
+    game_id: str = Depends(validate_game_id),
+    service: RoundsService = Depends(get_rounds_service),
+) -> RoundListResponse:
+    """The rounds the eval-service detects for a game.
+
+    Exists so a client can select a ROUND to evaluate without naming a sequence
+    inside it — previously the only way to grade a round was to pick a move in it
+    and let the server resolve the containing round. Each round carries the raw
+    ``round_number`` that ``selection.rounds`` accepts alongside its display label
+    (the round OF PLAY, ``round_number + 1``), so a client never translates
+    between the two.
+    """
+    try:
+        return await service.list_rounds(game_id)
+    except GameNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post(

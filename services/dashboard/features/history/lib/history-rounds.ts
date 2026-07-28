@@ -121,6 +121,22 @@ export function evaluatorModel(event: HistoryEvent): string | null {
 }
 
 /**
+ * The evaluator version recorded on a verdict ("eval-2"), or null for a verdict
+ * that carries none.
+ *
+ * The version identifies what the judge was SHOWN and ASKED. `eval-2` grades a
+ * move in the context of its round and instructs the judge that a play spans
+ * several actions; `eval-1` used a small fixed-count neighbour window and gave no
+ * such instruction, so it systematically scored multi-action plays down. Scores
+ * from two versions are not on the same scale, which is why aggregates must not
+ * mix them.
+ */
+export function evaluatorVersion(event: HistoryEvent): string | null {
+  const version = event.payload.evaluator?.evaluator_version;
+  return typeof version === "string" && version ? version : null;
+}
+
+/**
  * A human scope label for an evaluator verdict, so a round/range/game-level
  * verdict does not read as if it graded one move. Uses the verdict's `scope`
  * and `round_span` ([from, to]) from its payload.
@@ -191,6 +207,19 @@ export interface PlayerScorecard {
   game: PlayerLevelScores;
 }
 
+/**
+ * The scorecard: per-player rows plus what was left out of them.
+ *
+ * `evaluatorVersion` is the version the rows were computed from, and
+ * `excludedCount` is how many attributed verdicts belonged to an older version
+ * and were therefore not averaged in.
+ */
+export interface Scorecard {
+  rows: PlayerScorecard[];
+  evaluatorVersion: string | null;
+  excludedCount: number;
+}
+
 function emptyLevel(): PlayerLevelScores {
   return { scores: [], average: null };
 }
@@ -202,26 +231,57 @@ function withAverage(scores: number[]): PlayerLevelScores {
 }
 
 /**
+ * The newest evaluator version among a game's attributed verdicts, taken as the
+ * last one seen in timeline order.
+ *
+ * "Newest" is deliberately recency, not a version-string comparison: the version
+ * is an opaque operator-set label (`EVALUATOR_VERSION`), so ordering it
+ * lexically would be a guess. History is append-only, so the most recently
+ * written verdict is by definition from the most recent regime. Verdicts with no
+ * recorded version are treated as their own (legacy) group under the `null` key.
+ */
+function newestEvaluatorVersion(events: HistoryEvent[]): string | null {
+  let newest: string | null = null;
+  for (const event of events) {
+    if (event.actor !== "evaluator") continue;
+    if (!verdictPlayer(event)) continue;
+    newest = evaluatorVersion(event);
+  }
+  return newest;
+}
+
+/**
  * A per-player scorecard derived from the evaluation events: each player's
  * move/round/game overall scores side by side, so players can be compared.
  * Players are listed in first-seen order; only attributed verdicts (with a
- * `player`) contribute. Returns an empty array when there are no per-player
- * verdicts yet.
+ * `player`) contribute. Returns no rows when there are no per-player verdicts.
+ *
+ * Only the NEWEST evaluator version is averaged. A change to what the judge is
+ * shown or asked moves the scale — DRA-10's round-scoped context and
+ * multi-action-play instruction raise scores for exactly the multi-call plays
+ * `eval-1` marked down — so averaging two versions together would produce a
+ * number that describes neither. Older-version verdicts are counted in
+ * `excludedCount` and disclosed rather than silently folded in; they remain
+ * visible on the timeline under their own version.
  */
-export function buildPlayerScorecard(
-  events: HistoryEvent[]
-): PlayerScorecard[] {
+export function buildPlayerScorecard(events: HistoryEvent[]): Scorecard {
+  const version = newestEvaluatorVersion(events);
   const byPlayer = new Map<
     string,
     { move: number[]; round: number[]; game: number[] }
   >();
   const order: string[] = [];
+  let excludedCount = 0;
   for (const event of events) {
     if (event.actor !== "evaluator") continue;
     const player = verdictPlayer(event);
     if (!player) continue;
     const score = event.payload.overall_score;
     if (typeof score !== "number" || Number.isNaN(score)) continue;
+    if (evaluatorVersion(event) !== version) {
+      excludedCount += 1;
+      continue;
+    }
     let entry = byPlayer.get(player);
     if (!entry) {
       entry = { move: [], round: [], game: [] };
@@ -230,7 +290,7 @@ export function buildPlayerScorecard(
     }
     entry[verdictLevel(event)].push(score);
   }
-  return order.map((player) => {
+  const rows = order.map((player) => {
     const entry = byPlayer.get(player) ?? { move: [], round: [], game: [] };
     return {
       player,
@@ -239,6 +299,7 @@ export function buildPlayerScorecard(
       game: entry.game.length ? withAverage(entry.game) : emptyLevel(),
     };
   });
+  return { rows, evaluatorVersion: version, excludedCount };
 }
 
 /**

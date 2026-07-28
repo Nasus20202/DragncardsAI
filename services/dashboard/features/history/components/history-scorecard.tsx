@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Chip } from "@heroui/react";
+import { Alert, Button, Chip } from "@heroui/react";
 import { useMemo } from "react";
 
 import { RightDrawer } from "@/features/shared/components/right-drawer";
@@ -48,7 +48,10 @@ export function HistoryScorecard({
   events: HistoryEvent[];
   onClose: () => void;
 }) {
-  const rows = useMemo(() => buildPlayerScorecard(events), [events]);
+  const { rows, evaluatorVersion, excludedCount } = useMemo(
+    () => buildPlayerScorecard(events),
+    [events]
+  );
 
   return (
     <RightDrawer
@@ -64,6 +67,7 @@ export function HistoryScorecard({
           </span>
           <span className="text-xs text-default-400">
             Move, round, and game scores per player, side by side.
+            {evaluatorVersion ? ` Graded by ${evaluatorVersion}.` : ""}
           </span>
         </div>
         <Button
@@ -87,45 +91,65 @@ export function HistoryScorecard({
             Evaluate panel to score each player.
           </div>
         ) : (
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="text-left text-xs font-semibold uppercase tracking-wide text-default-400">
-                <th className="py-2 pr-3">Player</th>
-                <th className="py-2 pr-3">Move</th>
-                <th className="py-2 pr-3">Round</th>
-                <th className="py-2">Game</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr
-                  key={row.player}
-                  data-testid={`history-scorecard-player-${row.player}`}
-                  className="border-t border-default-200/60"
-                >
-                  <td className="py-2 pr-3">
-                    <Chip
-                      size="sm"
-                      variant="soft"
-                      color="default"
-                      className="bg-secondary/15 text-secondary"
-                    >
-                      {row.player}
-                    </Chip>
-                  </td>
-                  <td className="py-2 pr-3">
-                    <ScoreCell level={row.move} />
-                  </td>
-                  <td className="py-2 pr-3">
-                    <ScoreCell level={row.round} />
-                  </td>
-                  <td className="py-2">
-                    <ScoreCell level={row.game} />
-                  </td>
+          <>
+            {excludedCount > 0 && (
+              <Alert
+                status="warning"
+                className="mb-3"
+                data-testid="history-scorecard-version-notice"
+              >
+                <Alert.Content>
+                  <Alert.Description>
+                    {excludedCount} verdict{excludedCount === 1 ? "" : "s"} from
+                    an earlier evaluator version{" "}
+                    {excludedCount === 1 ? "is" : "are"} not averaged here.
+                    Scores only compare within one version, because a change to
+                    what the judge is shown or asked moves the scale.
+                    Re-evaluate those targets to bring them onto this scale.
+                  </Alert.Description>
+                </Alert.Content>
+              </Alert>
+            )}
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-default-400">
+                  <th className="py-2 pr-3">Player</th>
+                  <th className="py-2 pr-3">Move</th>
+                  <th className="py-2 pr-3">Round</th>
+                  <th className="py-2">Game</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr
+                    key={row.player}
+                    data-testid={`history-scorecard-player-${row.player}`}
+                    className="border-t border-default-200/60"
+                  >
+                    <td className="py-2 pr-3">
+                      <Chip
+                        size="sm"
+                        variant="soft"
+                        color="default"
+                        className="bg-secondary/15 text-secondary"
+                      >
+                        {row.player}
+                      </Chip>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <ScoreCell level={row.move} />
+                    </td>
+                    <td className="py-2 pr-3">
+                      <ScoreCell level={row.round} />
+                    </td>
+                    <td className="py-2">
+                      <ScoreCell level={row.game} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
         )}
       </div>
     </RightDrawer>

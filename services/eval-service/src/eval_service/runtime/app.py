@@ -17,6 +17,7 @@ from eval_service.runtime.evaluator import Evaluator
 from eval_service.runtime.inflight import InflightRegistry
 from eval_service.runtime.live_events import LiveEventBus
 from eval_service.runtime.requests import RequestService
+from eval_service.runtime.rounds import RoundsService
 from eval_service.runtime.stream import EvaluationStreamService
 from eval_service.runtime.worker import EvaluationWorker
 from eval_service.schema_migrations import ensure_schema
@@ -85,6 +86,7 @@ def create_app(
             skill_resolver=skill_resolver,
             inflight=inflight,
         )
+        app.state.rounds_service = RoundsService(history=app.state.history_client)
         evaluator = Evaluator(
             settings=settings,
             repository=app.state.repository,

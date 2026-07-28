@@ -8,6 +8,7 @@ from eval_service.integrations.history import HistoryClient
 from eval_service.runtime.inflight import InflightRegistry
 from eval_service.runtime.live_events import LiveEventBus
 from eval_service.runtime.requests import RequestService
+from eval_service.runtime.rounds import RoundsService
 from eval_service.runtime.stream import EvaluationStreamService
 from eval_service.runtime.worker import EvaluationWorker
 from eval_service.storage.repository import Repository
@@ -31,6 +32,10 @@ def get_judge_client(request: Request) -> BifrostJudgeClient:
 
 def get_request_service(request: Request) -> RequestService:
     return request.app.state.request_service
+
+
+def get_rounds_service(request: Request) -> RoundsService:
+    return request.app.state.rounds_service
 
 
 def get_worker(request: Request) -> EvaluationWorker | None:

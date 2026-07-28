@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from eval_service.judge.actions import non_strategic_reason
+from eval_service.judge.rounds import neighbour_events, round_span_containing
 from eval_service.schemas.history import StoredEvent
 
 
@@ -36,10 +37,16 @@ class MoveInput:
     arguments: Any
     prior_state: dict[str, Any] | None
     resulting_state: dict[str, Any] | None
-    # A window of the agent's own neighbouring moves, so the judge can see the
-    # sequence a move belongs to without being handed the whole game history.
+    # The agent's own moves from the ROUND this move belongs to, split either side
+    # of it, so the judge grades a move as the step it is within the play its
+    # round reveals rather than as an action that stood alone.
     context_before: list["NeighbourMove"] = field(default_factory=list)
     context_after: list["NeighbourMove"] = field(default_factory=list)
+    # The round the context was drawn from. ``None`` means no detected round
+    # contains this move, in which case the context is a plain neighbour count
+    # over the whole timeline.
+    round_number: int | None = None
+    round_span: tuple[int, int] | None = None
 
 
 @dataclass
@@ -156,14 +163,20 @@ def assemble_move_input(
     Correlates the nearest ``game-service`` state at-or-before (prior state) and
     at-or-after (resulting state) the move's seq so the judge sees before/after.
 
-    ``context_before``/``context_after`` bound a WINDOW of the agent's own
-    neighbouring moves included as context. A window rather than the whole
-    history: the two correlated states already summarise everything that happened
-    earlier, so replaying the full move list adds cost without adding signal,
-    while the immediate neighbours carry information the states cannot — a single
-    Marvel Champions play is typically 2-4 tool calls (play the card, assign
-    damage, exhaust the character), and judging one of them alone invites a
-    confidently wrong verdict.
+    The move is judged IN THE CONTEXT OF ITS ROUND, not as an isolated action: the
+    agent moves of the graded move's own round are attached either side of it,
+    because a Marvel Champions play is normally several tool calls (play the card,
+    pay the cost by exhausting a character, assign the damage) and grading one
+    call alone produces a confidently wrong verdict on a perfectly good play.
+    Context does not extend into an adjacent round (a different turn on a
+    different board) and does not stop inside the round (which would hide the rest
+    of the play). When no detected round contains the move — before any recorded
+    state carries a round number — the context falls back to the nearest moves
+    across the whole timeline so the move is not left with none.
+
+    ``context_before``/``context_after`` are SAFETY BACKSTOPS against a
+    pathological round, not the mechanism: they keep the moves nearest the graded
+    one, and ``context_after=0`` removes hindsight entirely.
     """
     target = _find_event(events, target_seq)
     if target is None:
@@ -176,6 +189,8 @@ def assemble_move_input(
     payload = target.payload
     prior = _nearest_state(events, target_seq, direction="before")
     resulting = _nearest_state(events, target_seq, direction="after")
+    boundary = round_span_containing(detect_round_boundaries(events), target_seq)
+    span = (boundary[1], boundary[2]) if boundary else None
     return MoveInput(
         game_id=target.game_id,
         target_seq=target_seq,
@@ -185,30 +200,25 @@ def assemble_move_input(
         prior_state=prior.payload.get("state") if prior else None,
         resulting_state=resulting.payload.get("state") if resulting else None,
         context_before=_neighbour_window(
-            events, target_seq, count=context_before, direction="before"
+            events, target_seq, count=context_before, direction="before", span=span
         ),
         context_after=_neighbour_window(
-            events, target_seq, count=context_after, direction="after"
+            events, target_seq, count=context_after, direction="after", span=span
         ),
+        round_number=boundary[0] if boundary else None,
+        round_span=span,
     )
 
 
 def _neighbour_window(
-    events: list[StoredEvent], target_seq: int, *, count: int, direction: str
+    events: list[StoredEvent],
+    target_seq: int,
+    *,
+    count: int,
+    direction: str,
+    span: tuple[int, int] | None = None,
 ) -> list[NeighbourMove]:
-    """The ``count`` agent moves nearest to ``target_seq`` on one side, in order."""
-    if count <= 0:
-        return []
-    candidates = [
-        event
-        for event in events
-        if event.actor == "agent"
-        and (
-            event.seq < target_seq if direction == "before" else event.seq > target_seq
-        )
-    ]
-    candidates.sort(key=lambda e: e.seq)
-    window = candidates[-count:] if direction == "before" else candidates[:count]
+    """The agent moves of ``span`` on one side of ``target_seq``, in seq order."""
     return [
         NeighbourMove(
             seq=event.seq,
@@ -216,7 +226,9 @@ def _neighbour_window(
             arguments=event.payload.get("arguments"),
             reasoning=event.payload.get("reasoning"),
         )
-        for event in window
+        for event in neighbour_events(
+            events, target_seq, direction=direction, limit=count, span=span
+        )
     ]
 
 

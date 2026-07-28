@@ -469,8 +469,9 @@ async def test_judge_raises_bifrost_error_on_gateway_failure():
     await client.aclose()
 
 
-def test_move_prompt_renders_the_neighbour_window_with_hindsight_labelled():
-    move = MoveInput(
+def _windowed_move() -> MoveInput:
+    """The reporter's case: `exhaust_card` then `modify_tokens` inside one round."""
+    return MoveInput(
         game_id="g1",
         target_seq=10,
         intended_action="modify_tokens",
@@ -494,15 +495,41 @@ def test_move_prompt_renders_the_neighbour_window_with_hindsight_labelled():
                 reasoning="x" * 900,
             )
         ],
+        # Already the round OF PLAY, as detect_round_boundaries reports it.
+        round_number=1,
+        round_span=(5, 14),
     )
-    user = build_move_messages(move, max_context_reasoning_chars=100)[1]["content"]
-    assert "immediately PRECEDING move(s)" in user
+
+
+def test_move_prompt_renders_the_round_window_with_hindsight_labelled():
+    user = build_move_messages(_windowed_move(), max_context_reasoning_chars=100)[1][
+        "content"
+    ]
+    assert "EARLIER IN THIS ROUND" in user
     assert 'seq 8: action="exhaust_card"' in user
-    assert "immediately FOLLOWING move(s)" in user
+    assert "LATER IN THIS ROUND" in user
     assert "do not judge the decision on hindsight" in user
     # A verbose neighbour cannot bloat the prompt.
     assert "[+" in user
     assert len(user) < 3000
+
+
+def test_move_prompt_names_the_round_of_play_and_its_span():
+    # The prompt must name the round of PLAY. Showing a judge DragnCards' raw
+    # counter -- 0 throughout the first round -- would misstate the position.
+    user = build_move_messages(_windowed_move())[1]["content"]
+    assert "in Round 1 (seqs 5-14)" in user
+    assert "Round 0" not in user
+
+
+def test_move_prompt_tells_the_judge_a_play_spans_several_actions():
+    # Without this instruction a judge asked "was this a strong strategic choice"
+    # about `exhaust_card` alone answers no, which is the reported defect.
+    system = build_move_messages(_windowed_move())[0]["content"]
+    assert "SEVERAL recorded actions" in system
+    assert "STEP IT IS within the play" in system
+    assert "do NOT score it down for being incomplete" in system
+    assert "charge the same play against every action" in system
 
 
 def test_move_prompt_omits_the_window_blocks_when_empty():
@@ -516,8 +543,10 @@ def test_move_prompt_omits_the_window_blocks_when_empty():
         resulting_state=None,
     )
     user = build_move_messages(move)[1]["content"]
-    assert "PRECEDING" not in user
-    assert "FOLLOWING" not in user
+    assert "EARLIER IN THIS ROUND" not in user
+    assert "LATER IN THIS ROUND" not in user
+    # No detected round -> no round claim in the prompt either.
+    assert "in Round" not in user
 
 
 def test_move_prompt_projects_a_raw_recorded_state():

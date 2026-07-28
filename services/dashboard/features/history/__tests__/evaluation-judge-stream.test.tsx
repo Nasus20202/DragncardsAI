@@ -22,6 +22,7 @@ const requestEvaluation = vi.fn();
 
 vi.mock("@/features/history/lib/eval-api", () => ({
   requestEvaluation: (...args: unknown[]) => requestEvaluation(...args),
+  listGameRounds: () => Promise.resolve([]),
 }));
 
 const CONFIG: DashboardConfig = {
