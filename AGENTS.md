@@ -43,7 +43,8 @@ Service-specific AGENTS.md files override these instructions:
 ## Working Preferences
 
 - Do substantive work in an isolated git worktree rather than directly on the checked-out branch.
-- Remove a worktree as soon as its work is merged or abandoned, in the same session that finishes it — do not leave worktrees behind for a later cleanup. Each dashboard worktree costs roughly 250k inodes once its `node_modules` is installed, and a scratch filesystem that runs out of inodes stops *every* write, including the writes needed to clean it up. Delete `node_modules` when a worktree's checks are done, remove the worktree when its branch merges, and `git worktree prune` after. Removing a worktree does not delete its branch, so it is always the reversible half of the cleanup; deleting the branch is not, and needs the owner's say.
+- Remove a worktree as soon as its work is merged or abandoned, in the same session that finishes it — do not leave worktrees behind for a later cleanup. Each dashboard worktree costs roughly 250k inodes once its `node_modules` is installed, and a scratch filesystem that runs out of inodes stops *every* write, including the writes needed to clean it up. Delete `node_modules` when a worktree's checks are done, remove the worktree when its branch merges, and `git worktree prune` after. Removing a worktree does not delete its branch, so it is always the reversible half of the cleanup.
+- **Delete a feature branch once its work is merged into the integration branch.** A merged branch is leftover clutter, not a safety net — the work lives in the integration branch's history. Do this as part of the same cleanup that removes the worktree, so branches do not accumulate across sessions. Two cautions: squash-merging means a merged branch is *not* an ancestor of the integration branch, so `git branch --merged` will not list it and ancestry is the wrong test — match the branch to the OpenSpec change that archived its work instead. And record the branch tips (`git branch --format='%(refname:short) %(objectname)'`) somewhere outside the repo before a bulk delete, so a mistake stays recoverable. Never delete `main`, the current integration branch, a branch that is checked out in some worktree, or a `features/*` branch the owner created; and never delete a remote branch that backs an open pull request.
 - Delegate as much as reasonably possible to delegated agents; fan out independent pieces in parallel.
 - Run implementation agents on the most capable model available, never a fast or cheap tier (in Claude Code, pass `model: opus`).
 - Multi-feature sessions branch off a single integration branch: each feature/agent gets its own worktree branch off the integration branch, works independently, then merges back as **one squash commit per feature**.
@@ -78,6 +79,23 @@ Assistant-facing skills like that one live under `.agents/skills/` and are symli
 that is a *runtime* skill root, enumerated by the agent-orchestrator and eval-service and copied
 into their images, so anything placed there is offered to the game-playing agent and the judge as
 a Marvel Champions skill. `skills/` is for game and domain knowledge only.
+
+### Work order when pulling issues from Linear
+
+Sort the fetched issues by, in this order:
+
+1. **Priority** — Urgent, then High, Medium, Low, then No priority.
+2. **Manual order** — the position the owner set by dragging in the Linear UI.
+3. **Size, biggest first** — the estimate, largest first, so the heavy work starts earliest rather than being left until capacity is gone.
+
+Do not substitute "quickest first". Starting with the small items feels productive and leaves the
+expensive work stranded at the end of a session.
+
+Known gap to be honest about: the Linear MCP's `list_issues` exposes `orderBy` for `createdAt` and
+`updatedAt` only, and its results carry `priority` but not the manual `sortOrder`. So priority is
+sortable directly, size is sortable when estimates are set, and manual order has to be read from the
+Linear UI or supplied by the owner. Say which keys were actually available rather than implying a
+full sort happened.
 
 ### One issue per unit of work
 
