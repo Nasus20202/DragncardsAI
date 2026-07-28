@@ -54,10 +54,14 @@ describe("PlayPromptBox", () => {
         isBusy={false}
         cancelPending={false}
         contextMetadata={null}
+        skills={[]}
+        attachedSkills={[]}
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
         onCancelExecution={vi.fn()}
         onCompact={vi.fn()}
+        onAttachSkill={vi.fn()}
+        onDetachSkill={vi.fn()}
       />
     );
 
@@ -82,10 +86,14 @@ describe("PlayPromptBox", () => {
         isBusy={false}
         cancelPending={false}
         contextMetadata={null}
+        skills={[]}
+        attachedSkills={[]}
         onPromptChange={vi.fn()}
         onSubmit={onSubmit}
         onCancelExecution={vi.fn()}
         onCompact={vi.fn()}
+        onAttachSkill={vi.fn()}
+        onDetachSkill={vi.fn()}
       />
     );
 
@@ -108,10 +116,14 @@ describe("PlayPromptBox", () => {
         isBusy={false}
         cancelPending={false}
         contextMetadata={metadata}
+        skills={[]}
+        attachedSkills={[]}
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
         onCancelExecution={vi.fn()}
         onCompact={onCompact}
+        onAttachSkill={vi.fn()}
+        onDetachSkill={vi.fn()}
       />
     );
 
@@ -128,10 +140,14 @@ describe("PlayPromptBox", () => {
         isBusy={true}
         cancelPending={false}
         contextMetadata={null}
+        skills={[]}
+        attachedSkills={[]}
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
         onCancelExecution={vi.fn()}
         onCompact={vi.fn()}
+        onAttachSkill={vi.fn()}
+        onDetachSkill={vi.fn()}
       />
     );
 
@@ -149,10 +165,14 @@ describe("PlayPromptBox", () => {
         isBusy={false}
         cancelPending={false}
         contextMetadata={metadata}
+        skills={[]}
+        attachedSkills={[]}
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
         onCancelExecution={vi.fn()}
         onCompact={vi.fn()}
+        onAttachSkill={vi.fn()}
+        onDetachSkill={vi.fn()}
       />
     );
 
@@ -174,10 +194,14 @@ describe("PlayPromptBox", () => {
         isBusy={false}
         cancelPending={false}
         contextMetadata={null}
+        skills={[]}
+        attachedSkills={[]}
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
         onCancelExecution={onCancelExecution}
         onCompact={vi.fn()}
+        onAttachSkill={vi.fn()}
+        onDetachSkill={vi.fn()}
       />
     );
 
@@ -196,10 +220,14 @@ describe("PlayPromptBox", () => {
         isBusy={false}
         cancelPending={true}
         contextMetadata={null}
+        skills={[]}
+        attachedSkills={[]}
         onPromptChange={vi.fn()}
         onSubmit={vi.fn()}
         onCancelExecution={vi.fn()}
         onCompact={vi.fn()}
+        onAttachSkill={vi.fn()}
+        onDetachSkill={vi.fn()}
       />
     );
 

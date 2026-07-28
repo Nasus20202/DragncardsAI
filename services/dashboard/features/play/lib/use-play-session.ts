@@ -1,6 +1,7 @@
 import {
   addMcp,
   addMcpRegistry,
+  addSkill,
   enableMcpForSession,
   getSession,
   getContextMetadata,
@@ -8,6 +9,7 @@ import {
   listSessions,
   removeMcp,
   removeMcpRegistry,
+  removeSkill,
   setModelConfig,
 } from "@/features/play/lib/client-api";
 import { writeLastUsedDraft } from "@/features/play/lib/last-used-draft";
@@ -80,6 +82,7 @@ interface UsePlaySessionResult {
     childJobId: string,
     outcome: "completed" | "failed"
   ) => void;
+  toggleSkill: (skillName: string, enabled: boolean) => Promise<void>;
   toggleMcp: (mcpName: string, enabled: boolean) => Promise<void>;
   addMcpToRegistry: (mcp: McpRegistryResponse) => Promise<void>;
   deleteMcpFromRegistry: (mcpName: string) => Promise<void>;
@@ -357,6 +360,65 @@ export function usePlaySession(): UsePlaySessionResult {
     []
   );
 
+  /**
+   * Assign or unassign one skill for the selected session, right away.
+   *
+   * This is the composer's `@`-mention path, and it drives the *same* session
+   * skill assignment the settings panel's toggle list drives: the persisted call
+   * is the one `saveConfiguration` replays, and the draft's `selectedSkills` —
+   * which the settings toggles read — is updated in step, so a skill attached
+   * from chat shows as enabled in the panel and vice versa. Applying it
+   * immediately rather than on Save mirrors how MCP assignment already behaves.
+   *
+   * Only the named skill's membership changes, so unsaved edits the user has made
+   * to other skills in the settings panel survive.
+   */
+  const toggleSkill = useCallback(
+    async (skillName: string, enabled: boolean) => {
+      if (!selectedSession) {
+        return;
+      }
+      setIsBusy(true);
+      setStatusText(enabled ? "Attaching skill..." : "Detaching skill...");
+      try {
+        if (enabled) {
+          await addSkill(selectedSession.id, skillName);
+        } else {
+          await removeSkill(selectedSession.id, skillName);
+        }
+        setDraft((current) =>
+          current
+            ? {
+                ...current,
+                selectedSkills: enabled
+                  ? current.selectedSkills.includes(skillName)
+                    ? current.selectedSkills
+                    : [...current.selectedSkills, skillName]
+                  : current.selectedSkills.filter((name) => name !== skillName),
+              }
+            : current
+        );
+        await refreshSelectedSession(selectedSession.id);
+        setStatusText(enabled ? "Skill attached" : "Skill detached");
+      } catch (error) {
+        setErrorText(
+          error instanceof Error ? error.message : "Failed to update skill"
+        );
+        setStatusText("Skill update failed");
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [
+      refreshSelectedSession,
+      selectedSession,
+      setDraft,
+      setErrorText,
+      setIsBusy,
+      setStatusText,
+    ]
+  );
+
   const toggleMcp = useCallback(
     async (mcpName: string, enabled: boolean) => {
       if (!selectedSession) {
@@ -495,6 +557,7 @@ export function usePlaySession(): UsePlaySessionResult {
     submitSessionPrompt,
     cancelExecution,
     recordSubagentOutcome,
+    toggleSkill,
     toggleMcp,
     addMcpToRegistry,
     deleteMcpFromRegistry,
