@@ -46,7 +46,8 @@ Service-specific AGENTS.md files override these instructions:
 - Remove a worktree as soon as its work is merged or abandoned, in the same session that finishes it — do not leave worktrees behind for a later cleanup. Each dashboard worktree costs roughly 250k inodes once its `node_modules` is installed, and a scratch filesystem that runs out of inodes stops *every* write, including the writes needed to clean it up. Delete `node_modules` when a worktree's checks are done, remove the worktree when its branch merges, and `git worktree prune` after. Removing a worktree does not delete its branch, so it is always the reversible half of the cleanup; deleting the branch is not, and needs the owner's say.
 - Delegate as much as reasonably possible to delegated agents; fan out independent pieces in parallel.
 - Run implementation agents on the most capable model available, never a fast or cheap tier (in Claude Code, pass `model: opus`).
-- Multi-feature sessions branch off a single integration branch: each feature/agent gets its own worktree branch off the integration branch, works independently, then merges back as **one squash commit per feature**. The PR is opened from the integration branch.
+- Multi-feature sessions branch off a single integration branch: each feature/agent gets its own worktree branch off the integration branch, works independently, then merges back as **one squash commit per feature**.
+- **Never open a pull request unless the owner explicitly asks for it in that moment.** Merging features into the integration branch and pushing it is the end of the agent's job; the PR is the owner's call, every time. A rule stating that PRs are opened from the integration branch describes *which branch* a PR comes from — it is not standing permission to open one, and neither is an unanswered earlier question about it. Silence is not consent.
 - **One** integration branch per session, chosen once and kept. Work that arrives later in the session joins the existing integration branch — a new source of work (issues instead of chat reports, a new batch of bugs) is not a new session and does not justify a second integration branch. Two live integration branches mean two PRs that stack on each other for no reason.
 - Skip the worktree/delegation overhead for trivial one-off edits.
 - Commits use a single-line message and must NOT include any AI attribution (no `Co-Authored-By` trailer naming an assistant).
@@ -66,8 +67,15 @@ Workspace: team **DragncardsAI**, issue prefix `DRA`. Statuses `Backlog → Todo
 Done`, plus `Canceled` and `Duplicate`. Labels `Bug`, `Feature`, `Improvement`.
 
 The step-by-step procedure and the comment templates live in the `linear-workflow` skill
-([`skills/linear-workflow/SKILL.md`](skills/linear-workflow/SKILL.md)); the rules below are the
-policy it implements. Reaching Linear needs a Linear MCP server configured in the assistant setup.
+([`.agents/skills/linear-workflow/SKILL.md`](.agents/skills/linear-workflow/SKILL.md)); the rules
+below are the policy it implements. Reaching Linear needs a Linear MCP server configured in the
+assistant setup.
+
+Assistant-facing skills like that one live under `.agents/skills/` and are symlinked into
+`.claude/skills/` and `.opencode/skills/`. They must NOT go in the repo-root `skills/` directory:
+that is a *runtime* skill root, enumerated by the agent-orchestrator and eval-service and copied
+into their images, so anything placed there is offered to the game-playing agent and the judge as
+a Marvel Champions skill. `skills/` is for game and domain knowledge only.
 
 ### One issue per unit of work
 
