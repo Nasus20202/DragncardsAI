@@ -19,12 +19,12 @@ The repository SHALL track upstream external projects as git submodules under `e
 The full stack SHALL be startable with `docker compose build && docker compose up -d` from the repository root without any additional arguments or path changes.
 
 #### Scenario: Root compose includes external services
-- **WHEN** `docker-compose.yml` at the repo root is parsed
-- **THEN** it SHALL include `external/docker/docker-compose.yml` via the `include:` directive, pulling in postgres, mc-plugin, backend, and frontend
+- **WHEN** `docker-compose.yaml` at the repo root is parsed
+- **THEN** it SHALL include `external/docker/docker-compose.yaml` via the `include:` directive, pulling in postgres, mc-plugin, backend, and frontend
 
 #### Scenario: Root compose adds game-service
 - **WHEN** `docker compose up` is run
-- **THEN** the `game-service` service defined in the root `docker-compose.yml` SHALL start alongside the included external services and depend on `backend`
+- **THEN** the `game-service` service defined in the root `docker-compose.yaml` SHALL start alongside the included external services and depend on `backend`
 
 #### Scenario: Root compose adds agent orchestration services
 - **WHEN** `docker compose up` is run
@@ -32,7 +32,29 @@ The full stack SHALL be startable with `docker compose build && docker compose u
 
 #### Scenario: Root compose adds local observability services
 - **WHEN** `docker compose up` is run
-- **THEN** the stack SHALL also start a local `grafana/otel-lgtm:0.27.1` service for observability and wire the first-party services plus the Bifrost gateway to export OTLP telemetry to it
+- **THEN** the stack SHALL also start a local pinned `grafana/otel-lgtm` service for observability and wire the first-party services plus the Bifrost gateway to export OTLP telemetry to it
+
+### Requirement: Infrastructure-only lifecycle helper
+`scripts/docker-infrastructure.sh` SHALL start, stop, and restart every infrastructure service and no application service, deriving the service list from the compose files that define infrastructure instead of hardcoding names, so that a newly added infrastructure service is covered without editing the script.
+
+Infrastructure is every service defined in `docker-compose.infra.yaml` or `external/docker/docker-compose.yaml`; the application services are the ones defined in `docker-compose.yaml` itself (`game-service`, `agent-orchestrator`, `history-service`, `eval-service`, `dashboard`). Services gated behind an optional compose profile are excluded, so the `smoke` model runtime is never started or stopped by the infrastructure helper.
+
+#### Scenario: Stopping infrastructure leaves no infrastructure running
+- **WHEN** a developer runs `make infra-down` (`scripts/docker-infrastructure.sh stop`) against a running stack
+- **THEN** every infrastructure container SHALL be stopped, including those that only ever started as an implicit `depends_on` dependency such as `dragncards-postgres`, `otel-lgtm`, and `lmstudio-proxy`
+- **AND** only the application services SHALL be left running
+
+#### Scenario: A new infrastructure service is covered without a script edit
+- **WHEN** a service is added to `docker-compose.infra.yaml` or `external/docker/docker-compose.yaml`
+- **THEN** `infra-up`, `infra-down`, and `infra-restart` SHALL cover it with no change to `scripts/docker-infrastructure.sh`
+
+#### Scenario: Actions target the combined compose project
+- **WHEN** the helper runs any of its actions
+- **THEN** it SHALL invoke `docker compose -f docker-compose.yaml` — the file that `include:`s the infrastructure compose files — so the containers acted on are the ones the full stack runs under, rather than a separate standalone project
+
+#### Scenario: Infrastructure containers are stopped, not removed
+- **WHEN** `scripts/docker-infrastructure.sh stop` completes
+- **THEN** the infrastructure containers SHALL be stopped but still present, leaving `scripts/docker.sh down` and `down-clean` as the way to remove containers and volumes
 
 ### Requirement: Local smoke-model runtime wiring
 The repository SHALL provide a documented local runtime path for a small `llama.cpp` model used by smoke tests, including the environment configuration needed for the dashboard and agent-orchestrator to target that model.
@@ -147,10 +169,10 @@ The infrastructure compose configuration in `docker-compose.infra.yaml` SHALL de
 - **THEN** the agent-orchestrator SHALL connect to the dedicated orchestrator PostgreSQL service rather than `dragncards-postgres` or any other shared database service
 
 ### Requirement: External compose is independently usable
-The external compose file at `external/docker/docker-compose.yml` SHALL be runnable on its own to bring up the DragnCards stack without the Game Service.
+The external compose file at `external/docker/docker-compose.yaml` SHALL be runnable on its own to bring up the DragnCards stack without the Game Service.
 
 #### Scenario: External compose standalone startup
-- **WHEN** a developer runs `docker compose -f external/docker/docker-compose.yml up -d` from the repo root
+- **WHEN** a developer runs `docker compose -f external/docker/docker-compose.yaml up -d` from the repo root
 - **THEN** postgres, mc-plugin, backend, and frontend SHALL start successfully without requiring game-service
 
 ### Requirement: Eval Service Docker configuration

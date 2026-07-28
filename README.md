@@ -122,4 +122,24 @@ make test-integration
 # Rebuild images
 scripts/docker.sh build
 make build
+
+# Stop and remove the stack (add down-clean to also drop volumes)
+scripts/docker.sh down
+make down
+
+# Start/stop/restart infrastructure only, leaving the app services alone
+scripts/docker-infrastructure.sh start   # or stop, or restart
+make infra-up
+make infra-down
+make infra-restart
 ```
+
+"Infrastructure" is every service defined in `docker-compose.infra.yaml` or
+`external/docker/docker-compose.yaml`: the DragnCards frontend, backend, database and MC
+plugin builder, both Valkey instances, the orchestrator/history/eval PostgreSQL databases,
+Bifrost, `lmstudio-proxy`, and `otel-lgtm`. The list is derived from those two compose
+files, so a newly added infra service is covered automatically. The app services —
+`game-service`, `agent-orchestrator`, `history-service`, `eval-service`, `dashboard` — are
+defined in `docker-compose.yaml` itself and are left untouched, so you can run them from
+source with `make run` on top of Dockerised infrastructure. `infra-down` stops containers
+without removing them; use `make down` to remove them.
