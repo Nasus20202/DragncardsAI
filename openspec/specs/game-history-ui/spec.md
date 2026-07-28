@@ -1,7 +1,12 @@
 # game-history-ui Specification
 
 ## Purpose
-TBD - created by archiving change history-event-store. Update Purpose after archive.
+Let a person read a finished or in-flight game the way they would read a transcript — top to bottom,
+in one scrollable column, with every recorded event visible in `seq` order under its round heading.
+The dashboard surface for `history-event-store`, deliberately mirroring the Play tab's transcript so
+that reviewing a past game and watching a live one feel like the same activity. Reconstruction
+mechanics (snapshots, cursors, page boundaries) are implementation detail and stay invisible: the
+reader sees moves and rounds, never the machinery that fetched them.
 ## Requirements
 ### Requirement: Game history timeline view
 The dashboard SHALL present a recorded game's history as a **continuous, vertically-scrolling

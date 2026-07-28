@@ -1,7 +1,13 @@
 # agent-move-evaluation Specification
 
 ## Purpose
-TBD - created by archiving change agent-move-evaluation. Update Purpose after archive.
+Judge how well the game-playing agent actually played, so that play quality is measurable rather
+than a matter of impression. A dedicated `eval-service` replays recorded moves and rounds from the
+history event store on request, hands each one to a judge LLM under its own provider identity, and
+persists the verdicts durably — separating "what happened in the game" (owned by
+`history-event-store`) from "how good was it" (owned here). Evaluation is user-initiated and
+asynchronous: it never sits on the path of a live game, and it never keeps request, idempotency, or
+verdict state in process memory.
 ## Requirements
 ### Requirement: Evaluation service boundary and persistence
 The system SHALL provide a dedicated `eval-service` (Python/FastAPI) that evaluates how well the game-playing agent played by judging recorded moves and rounds on user request, and SHALL NOT retain evaluation state in process memory; durable evaluation requests, idempotency, and bookkeeping data SHALL live in a dedicated PostgreSQL database not shared with other services.
