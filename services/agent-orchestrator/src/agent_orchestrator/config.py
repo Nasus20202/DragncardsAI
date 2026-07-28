@@ -14,6 +14,7 @@ REQUIRED_PROVIDER_IDS = (
     "openai",
     "lmstudio",
     "gemini",
+    "opencodego",
 )
 
 
@@ -248,4 +249,5 @@ class Settings(BaseSettings):
             "openai": "openai",
             "lmstudio": "lmstudio",
             "gemini": "gemini",
+            "opencodego": "opencodego",
         }
