@@ -1,13 +1,13 @@
-"""OpenTelemetry wiring for the agent-orchestrator.
+"""OpenTelemetry wiring for the history-service.
 
 The bootstrap itself lives in :mod:`dragncards_common.telemetry` and is shared
 with the other first-party Python services; this module only binds this
 service's ``service.name`` default so call sites here read the same as they do
 elsewhere and the name is stated in exactly one place.
 
-This service assembles agent prompts and carries model responses. Neither, nor
-any conversation content, may become a span attribute: spans here carry job,
-session, provider and model identifiers plus the job outcome, and nothing else.
+Never attach a recorded event payload, a game state, or a Valkey value to a
+span: telemetry leaves the process, and a recorded game state is exactly the
+kind of content that must not.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from dragncards_common.telemetry import (
     shutdown_telemetry,
 )
 
-DEFAULT_SERVICE_NAME = "agent-orchestrator"
+DEFAULT_SERVICE_NAME = "history-service"
 
 __all__ = [
     "DEFAULT_SERVICE_NAME",

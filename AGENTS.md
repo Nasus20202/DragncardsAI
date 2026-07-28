@@ -23,6 +23,8 @@ Write rules in terms of *what* to do, naming a specific tool or command only as 
 - Start with [`README.md`](README.md) for local setup, test commands, and service URLs.
 - Read [`services/game-service/README.md`](services/game-service/README.md) when working on DragnCards session control, MCP tools, or game actions.
 - Read [`services/agent-orchestrator/README.md`](services/agent-orchestrator/README.md) when working on agent sessions, skills, providers, or background jobs.
+- Read [`services/history-service/README.md`](services/history-service/README.md) when working on the recorded event store, snapshots, or restore.
+- Read [`services/eval-service/README.md`](services/eval-service/README.md) when working on move/round/game evaluation or the judge.
 - Read files nearest to the change before introducing new patterns.
 
 ## Service-Level Guides
@@ -32,6 +34,8 @@ Service-specific AGENTS.md files override these instructions:
 - [`services/dashboard/AGENTS.md`](services/dashboard/AGENTS.md) - Frontend development with Hero UI components
 - [`services/game-service/AGENTS.md`](services/game-service/AGENTS.md) - Game service patterns, DragnLang actions, Phoenix Channels
 - [`services/agent-orchestrator/AGENTS.md`](services/agent-orchestrator/AGENTS.md) - Session lifecycle, jobs, provider configuration
+- [`services/history-service/AGENTS.md`](services/history-service/AGENTS.md) - Event envelope, ordering and idempotency, snapshots and restore
+- [`services/eval-service/AGENTS.md`](services/eval-service/AGENTS.md) - Judge identity, prompt projection, round boundaries, verdict write-back
 
 ## Working Rules
 
@@ -196,6 +200,62 @@ and say in the final report which ancillary files you updated.
 - Use `scripts/test.sh integration` for integration tests when the Docker stack is running.
 - Use `scripts/docker.sh build` when a rebuild is needed.
 - Follow existing structure inside each service instead of forcing one pattern across the monorepo.
+
+## Adding or Changing a Service
+
+**README, OpenTelemetry configuration, Docker/infrastructure configuration, and the
+`Makefile`/`scripts/` entries are kept current by whatever change requires it.** They are part
+of that change, not follow-up work: a change that leaves them stale has left the repository
+describing a system that no longer exists.
+
+A service is also not finished when its own code works. A fixed set of files enumerates
+services, and a service missing from one of them is broken in a way its own tests cannot
+detect. DRA-23 is the worked example: `history-service` and `eval-service` shipped with their
+`OTEL_*` variables set in `docker-compose.yaml` and **zero** OpenTelemetry code anywhere in
+`src/` or `docker/`, so every easily inspected surface looked correct while the two services
+exported nothing at all for their whole existence.
+
+Work through this list when adding a service, and re-check the affected entries when changing
+one:
+
+- **Telemetry, in code — not only in configuration.** Setting `OTEL_*` environment variables
+  wires nothing on its own. A new Python service MUST: depend on `dragncards-common`; add a
+  `src/<service>/telemetry.py` that binds its own `DEFAULT_SERVICE_NAME` to
+  `dragncards_common.telemetry`; call `setup_telemetry()` in its entrypoint *before* the app
+  is built; call `instrument_fastapi_app(app)` in its app factory and `shutdown_telemetry()`
+  in the lifespan teardown; call `instrument_sqlalchemy_engine(engine)` inside `create_engine`
+  if it has a database; and pass `get_tracer(__name__)` into the shared `RespConnection` if it
+  talks to Valkey — that client is silent unless it is handed a tracer. Add manual spans
+  around the repo-specific workflows generic library instrumentation cannot explain. Do NOT
+  write a fresh per-service bootstrap: `game-service` predates the shared helper and keeps its
+  own equivalent copy, and a third copy is how the pattern drifts apart. Set
+  `OTEL_SDK_DISABLED=true` in the test root `conftest.py` so the suite starts no exporters.
+- **Prove the wiring with a test, not by inspection.** Each service has a
+  `tests/unit/test_telemetry.py` asserting its identity, that the entrypoint initialises
+  telemetry, and that each edge it owns is instrumented. That is the check the missing
+  instrumentation would have failed.
+- **Never put a request body, prompt, model response, recorded game state, or credential on a
+  span attribute.** Spans carry identifiers, scopes, counts and outcomes. Telemetry leaves the
+  process and the collector is readable by anyone who can reach it, so a span attribute is a
+  real exfiltration path — pin the permitted attribute keys in a test rather than trusting
+  review.
+- **`docker-compose.yaml`**: the service definition and port mapping, its `OTEL_SERVICE_NAME`,
+  `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL` and `OTEL_RESOURCE_ATTRIBUTES`,
+  and a `depends_on` entry for `otel-lgtm` with `condition: service_healthy`.
+- **`services/<service>/.env.example`**: every setting the service reads, with placeholder
+  values only, including the commented OpenTelemetry block for a direct local run. Never a
+  real key, token, or connection secret in a committed file.
+- **`scripts/service-helpers.sh`**: `list_services`, `service_test_command`,
+  `service_start_command`, and `service_http_port`.
+- **`scripts/lint.sh`**: the per-language loop that formats and checks the service.
+- **`README.md`**: the service URL table, the architecture diagram, the prose describing what
+  the service does, and the Observability section if the wiring changed.
+- **`AGENTS.md`**: this file's *Useful Reading* and *Service-Level Guides* lists, plus a
+  `services/<service>/AGENTS.md` of the service's own.
+- **`openspec/specs/`**: the capability spec that now covers the service — including
+  `observability`, whose requirements name the services they apply to. A requirement that does
+  not name a service does not constrain it, which is exactly how the omission above survived
+  review.
 
 ## Data Storage
 

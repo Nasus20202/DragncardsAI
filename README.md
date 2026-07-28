@@ -95,7 +95,37 @@ The system runs DragnCards (frontend + backend) with PostgreSQL. The game-servic
 
 The game-service and agent-orchestrator publish game/agent events onto a Valkey `history:ingest` stream. The **history-service** ingests that stream into its own PostgreSQL as an ordered, per-game event store with periodic snapshots (fetched from the game-service), and can restore a session to any past moment (seeding a resumed agent-orchestrator session). A recorded game can also be exported to, and imported from, a human-readable NDJSON bundle (see [`services/history-service/README.md`](services/history-service/README.md#history-bundles-export--import)). The **eval-service** reads recorded games from the history-service and produces hierarchical per-player move/round/game evaluations, judging via Bifrost and writing verdicts back to the history-service; it uses its own dedicated PostgreSQL. A move is judged in the context of the ROUND it belongs to, not as an isolated action, because a single play is normally several recorded actions (play the card, exhaust to pay the cost, assign the damage) and grading one of them alone marks a good play down once per action. Rounds are selected by round number from `GET /games/{game_id}/rounds` rather than by naming a move inside them, and multiple targets are graded in parallel under durable per-game and global concurrency caps. The dashboard provides a UI over all of these — live play, game history, evaluations, and persona authoring.
 
-The Python services (agent-orchestrator, history-service, eval-service) share the internal **dragncards-common** library (schema-migration runner, RESP/Valkey client, typed Bifrost errors, and an httpx base client). All services send telemetry to otel-lgtm for observability.
+The Python services (agent-orchestrator, history-service, eval-service) share the internal **dragncards-common** library (schema-migration runner, RESP/Valkey client, typed Bifrost errors, an httpx base client, and the OpenTelemetry bootstrap). All services send telemetry to otel-lgtm for observability.
+
+## Observability
+
+Every first-party service exports traces, metrics and logs over OTLP/HTTP to the
+`otel-lgtm` container; browse them in Grafana at http://localhost:3004.
+
+The Python services get this from `dragncards_common.telemetry`: each one has a
+thin `telemetry.py` that binds its own `service.name` and calls the shared
+bootstrap, which sets up the tracer/meter/logger providers, the OTLP exporters,
+and instrumentation for the HTTP server, outbound HTTP, SQLAlchemy and Valkey
+edges. `game-service` predates the shared helper and keeps its own equivalent
+copy. The `dashboard` does the equivalent in `instrumentation.ts`, and the
+Bifrost gateway exports through its `otel` plugin in
+`services/bifrost/config.json`.
+
+Configuration is read from the standard OpenTelemetry environment variables, set
+per service in `docker-compose.yaml` and documented in each service's
+`.env.example`. Two knobs matter day to day:
+
+```bash
+# Send somewhere other than the compose collector (e.g. a direct local run)
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+
+# Turn telemetry off entirely; the service still starts and runs normally
+OTEL_SDK_DISABLED=true
+```
+
+Spans carry identifiers, counts and outcomes only. Prompts, model responses and
+recorded game state must never be attached as span attributes — the collector is
+readable by anyone who can reach it. See `openspec/specs/observability/spec.md`.
 
 ## Development
 

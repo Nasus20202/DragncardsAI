@@ -13,8 +13,10 @@ from eval_service.runtime.live_events import LiveEventBus
 from eval_service.schemas.history import StoredEvent
 from eval_service.storage.models import EvaluatedTargetRow
 from eval_service.storage.repository import Repository
+from eval_service.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 
 
 class EvaluationWorker:
@@ -198,46 +200,69 @@ class EvaluationWorker:
         """
         # Snapshot the per-target judge config (None -> server defaults).
         config = ResolvedJudgeConfig.from_json(target.judge_config_json)
-        # Signal the running transition (claim already wrote it durably).
-        self._publish_status(target.request_id)
-        try:
-            return await self._evaluator.evaluate_target(
-                target_id=target.id,
-                game_id=target.game_id,
-                target_seq=target.target_seq,
-                scope=target.scope,
-                events=events,
-                player=target.player or None,
-                judge_config=config,
-                on_token=self._make_token_sink(target),
-                on_error=self._make_error_sink(target),
-            )
-        except JudgeNotConfiguredError:
-            # Already marked failed with a clear config error.
-            logger.warning("Target %s failed: judge not configured", target.id)
-            return True
-        except asyncio.CancelledError:
-            # Cancelled in-flight: the cancel handler already set the durable
-            # ``cancelled`` status and writes no verdict. Do not re-mark; just
-            # surface the transition and stop.
-            logger.info("Target %s cancelled in-flight", target.id)
+        # One span per graded target: the judge lifecycle is the repo-specific
+        # workflow generic instrumentation cannot explain, and it is where the
+        # latency lives. Identifiers, scope and outcome ONLY — never the
+        # assembled prompt, the recorded events, or the judge's response.
+        with tracer.start_as_current_span(
+            "eval.evaluate_target",
+            attributes={
+                "eval.target_id": target.id,
+                "eval.request_id": target.request_id,
+                "eval.scope": target.scope,
+                "eval.target_seq": target.target_seq,
+                "eval.events_considered": len(events),
+                "game.id": target.game_id,
+            },
+        ) as target_span:
+            # Signal the running transition (claim already wrote it durably).
             self._publish_status(target.request_id)
-            raise
-        except Exception as exc:  # noqa: BLE001 - isolate failures
-            logger.warning(
-                "Unexpected error evaluating target %s: %s",
-                target.id,
-                exc,
-                exc_info=True,
-            )
-            await self._repository.mark_failed(target.id, str(exc))
-            return True
-        finally:
-            if self._inflight is not None:
-                # Only drop the registry entry if it is still THIS task: a force
-                # re-claim may have registered a fresh task for the same
-                # target_id, which must stay cancellable.
-                self._inflight.unregister(target.id, asyncio.current_task())
-            # Terminal (or token) transition -> wake subscribers to re-read the
-            # snapshot and emit a verdict/status event.
-            self._publish_status(target.request_id)
+            try:
+                evaluated = await self._evaluator.evaluate_target(
+                    target_id=target.id,
+                    game_id=target.game_id,
+                    target_seq=target.target_seq,
+                    scope=target.scope,
+                    events=events,
+                    player=target.player or None,
+                    judge_config=config,
+                    on_token=self._make_token_sink(target),
+                    on_error=self._make_error_sink(target),
+                )
+                target_span.set_attribute("eval.outcome", "evaluated")
+                return evaluated
+            except JudgeNotConfiguredError:
+                # Already marked failed with a clear config error.
+                target_span.set_attribute("eval.outcome", "not_configured")
+                logger.warning("Target %s failed: judge not configured", target.id)
+                return True
+            except asyncio.CancelledError:
+                # Cancelled in-flight: the cancel handler already set the durable
+                # ``cancelled`` status and writes no verdict. Do not re-mark; just
+                # surface the transition and stop.
+                target_span.set_attribute("eval.outcome", "cancelled")
+                logger.info("Target %s cancelled in-flight", target.id)
+                self._publish_status(target.request_id)
+                raise
+            except Exception as exc:  # noqa: BLE001 - isolate failures
+                # The exception text can embed a gateway body; record it durably
+                # (sanitized at the repository boundary) but keep only the
+                # outcome on the span.
+                target_span.set_attribute("eval.outcome", "failed")
+                logger.warning(
+                    "Unexpected error evaluating target %s: %s",
+                    target.id,
+                    exc,
+                    exc_info=True,
+                )
+                await self._repository.mark_failed(target.id, str(exc))
+                return True
+            finally:
+                if self._inflight is not None:
+                    # Only drop the registry entry if it is still THIS task: a
+                    # force re-claim may have registered a fresh task for the
+                    # same target_id, which must stay cancellable.
+                    self._inflight.unregister(target.id, asyncio.current_task())
+                # Terminal (or token) transition -> wake subscribers to re-read
+                # the snapshot and emit a verdict/status event.
+                self._publish_status(target.request_id)

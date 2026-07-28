@@ -1,13 +1,14 @@
-"""OpenTelemetry wiring for the agent-orchestrator.
+"""OpenTelemetry wiring for the eval-service.
 
 The bootstrap itself lives in :mod:`dragncards_common.telemetry` and is shared
 with the other first-party Python services; this module only binds this
 service's ``service.name`` default so call sites here read the same as they do
 elsewhere and the name is stated in exactly one place.
 
-This service assembles agent prompts and carries model responses. Neither, nor
-any conversation content, may become a span attribute: spans here carry job,
-session, provider and model identifiers plus the job outcome, and nothing else.
+This service handles the two most sensitive payloads in the repository — the
+judge prompt and the recorded game state it is assembled from. Neither, nor any
+part of either, nor a judge's raw response, may ever become a span attribute.
+Spans here carry identifiers, scopes, counts and outcomes only.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from dragncards_common.telemetry import (
     shutdown_telemetry,
 )
 
-DEFAULT_SERVICE_NAME = "agent-orchestrator"
+DEFAULT_SERVICE_NAME = "eval-service"
 
 __all__ = [
     "DEFAULT_SERVICE_NAME",

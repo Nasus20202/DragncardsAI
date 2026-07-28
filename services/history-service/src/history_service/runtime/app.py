@@ -26,6 +26,7 @@ from history_service.storage.db import create_engine, create_session_factory
 from history_service.storage.migrations import ensure_schema
 from history_service.storage.repository import Repository
 from history_service.storage.valkey import RespConnection
+from history_service.telemetry import instrument_fastapi_app, shutdown_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,7 @@ def create_app(
                 await created_valkey.aclose()
             if created_engine is not None:
                 await created_engine.dispose()
+            shutdown_telemetry()
 
     app = FastAPI(
         title="History Service",
@@ -137,6 +139,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.settings = settings
+    instrument_fastapi_app(app)
 
     app.add_middleware(
         CORSMiddleware,

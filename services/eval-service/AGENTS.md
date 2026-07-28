@@ -135,6 +135,29 @@ does not hold for a second replica. `EvaluationWorker.drain_once` reports PROGRE
 rather than rows touched, so a cycle where every roll-up merely re-deferred is
 idle and the worker waits instead of hot-looping on the database.
 
+### Observability
+
+Telemetry comes from `dragncards_common.telemetry`; `eval_service/telemetry.py`
+only binds `DEFAULT_SERVICE_NAME = "eval-service"` to it. Three edges are wired
+and all three must stay wired — this service shipped with its `OTEL_*` variables
+set in compose and no instrumentation at all (DRA-23), which exported nothing:
+
+- `main.py` calls `setup_telemetry()` before the app is built.
+- `runtime/app.py` calls `instrument_fastapi_app(app)` and `shutdown_telemetry()`.
+- `storage/db.py` calls `instrument_sqlalchemy_engine(engine)` in `create_engine`.
+
+`runtime/worker.py` opens one `eval.evaluate_target` span per graded target: the
+judge lifecycle is where the latency lives and generic instrumentation cannot
+explain it. The span records the outcome (`evaluated`, `not_configured`,
+`cancelled`, `failed`) and nothing further about it.
+
+This service handles the two most sensitive payloads in the repository — the judge
+prompt and the recorded game state it is assembled from. NEVER attach either, a
+judge response, or a gateway error message (which can echo a whole request body)
+to a span attribute. Error detail belongs on the target row via
+`sanitize_error_detail`; the span gets an outcome word. The permitted attribute
+keys are pinned in `tests/unit/test_telemetry.py`.
+
 ## Working Rules
 
 - Use `uv run` for all commands inside the service directory.

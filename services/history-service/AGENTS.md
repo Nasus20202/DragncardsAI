@@ -48,6 +48,29 @@ game-state (nearest snapshot + forward replay of `game-service` mutating events)
 and agent-context (latest `agent` event's captured conversation context handed
 to the orchestrator). Agent events are never replayed as game mutations.
 
+### Observability
+
+Telemetry comes from `dragncards_common.telemetry`; `history_service/telemetry.py`
+only binds `DEFAULT_SERVICE_NAME = "history-service"` to it. Four edges are wired
+and all four must stay wired — this service shipped with its `OTEL_*` variables
+set in compose and no instrumentation at all (DRA-23), which exported nothing:
+
+- `main.py` calls `setup_telemetry()` before the app is built.
+- `runtime/app.py` calls `instrument_fastapi_app(app)` and `shutdown_telemetry()`.
+- `storage/db.py` calls `instrument_sqlalchemy_engine(engine)` in `create_engine`.
+- `storage/valkey.py` subclasses the shared `RespConnection` to inject this
+  module's tracer. The shared client emits NO span without one, so dropping that
+  subclass silently loses every Valkey span.
+
+Manual spans cover the workflows library instrumentation cannot explain:
+`history.ingest_batch` (one span per polled batch, never per event — the ingester
+polls continuously, so per-event spans would be mostly idle noise),
+`history.take_snapshot`, and `history.restore`.
+
+A span attribute must never carry an event payload, a snapshot document, or a
+restored game state; the permitted attribute keys are pinned in
+`tests/unit/test_telemetry.py`. Identifiers, seqs, counts and mode flags only.
+
 ## Working Rules
 
 - Use `uv run` for all commands inside the service directory.

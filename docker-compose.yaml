@@ -94,6 +94,8 @@ services:
         condition: service_healthy
       agent-orchestrator:
         condition: service_started
+      otel-lgtm:
+        condition: service_healthy
     ports:
       - "${HISTORY_SERVICE_HOST_PORT:-4004}:4004"
     environment:
@@ -129,6 +131,8 @@ services:
       history-service:
         condition: service_started
       bifrost:
+        condition: service_healthy
+      otel-lgtm:
         condition: service_healthy
     ports:
       - "${EVAL_SERVICE_HOST_PORT:-4005}:4005"

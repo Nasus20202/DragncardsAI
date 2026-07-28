@@ -50,6 +50,24 @@ evaluate (and reports readiness `degraded`) until it is set. See `.env.example`.
 | `EVAL_NON_STRATEGIC_ACTIONS` | _(built-in taxonomy)_ | Replaces the skip list; anything unlisted is evaluated |
 | `EVAL_CORS_ALLOW_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001` | Comma-separated CORS allowlist (dashboard reaches the service via a server-side proxy, so a strict list is safe) |
 
+Standard OpenTelemetry variables (`OTEL_SERVICE_NAME`,
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SDK_DISABLED`)
+are read too; see Observability below.
+
+## Observability
+
+Traces, metrics and logs are exported over OTLP/HTTP to `otel-lgtm` (Grafana on
+http://localhost:3004). The bootstrap is `dragncards_common.telemetry`, bound to
+this service's name in `eval_service/telemetry.py`; the instrumented edges are the
+HTTP server, outbound HTTP (so judge calls through Bifrost are traced), and
+PostgreSQL via SQLAlchemy. The worker opens one `eval.evaluate_target` span per
+graded target, carrying the target/request identifiers, the scope and the outcome.
+
+Set `OTEL_SDK_DISABLED=true` to run with telemetry off; the service is otherwise
+unaffected. The judge prompt, the recorded state it is assembled from, the judge's
+response, and gateway error text are never attached as span attributes — error
+detail goes to the target row through `sanitize_error_detail` instead.
+
 ## What the judge is sent
 
 A judge prompt is deliberately small, and small in the right places.

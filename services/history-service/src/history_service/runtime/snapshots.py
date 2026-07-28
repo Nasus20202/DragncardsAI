@@ -7,8 +7,10 @@ from history_service.config import Settings
 from history_service.integrations.game_service import GameServiceClient
 from history_service.schemas.envelope import StoredSnapshot
 from history_service.storage.repository import Repository
+from history_service.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
+tracer = get_tracer(__name__)
 
 
 class SnapshotService:
@@ -75,12 +77,20 @@ class SnapshotService:
             return None
 
     async def take_snapshot(self, game_id: str, snapshot_at_seq: int) -> StoredSnapshot:
-        document = await self._game_service.get_snapshot(game_id)
-        stored = await self._repository.write_snapshot(
-            game_id, snapshot_at_seq, document
-        )
-        logger.info("Stored snapshot for game=%s at seq=%s", game_id, snapshot_at_seq)
-        return stored
+        # Identifiers and the seq only: the snapshot document is a full recorded
+        # game state and must never become a span attribute.
+        with tracer.start_as_current_span(
+            "history.take_snapshot",
+            attributes={"game.id": game_id, "history.snapshot_at_seq": snapshot_at_seq},
+        ):
+            document = await self._game_service.get_snapshot(game_id)
+            stored = await self._repository.write_snapshot(
+                game_id, snapshot_at_seq, document
+            )
+            logger.info(
+                "Stored snapshot for game=%s at seq=%s", game_id, snapshot_at_seq
+            )
+            return stored
 
 
 def _utc_now() -> datetime:
