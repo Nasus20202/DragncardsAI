@@ -1,7 +1,14 @@
 # history-event-store Specification
 
 ## Purpose
-TBD - created by archiving change history-event-store. Update Purpose after archive.
+Keep an authoritative, append-only record of what happened in every game, so that a game can be
+reconstructed, reviewed, and judged after the fact rather than only observed live. A dedicated
+`history-service` ingests events emitted by `game-service` and the orchestrator, stores them with
+periodic game-state snapshots in its own PostgreSQL database, and replays them on demand. It is the
+single source of truth for game history: nothing about a played game is retained in process memory,
+and consumers such as `game-history-ui` and `agent-move-evaluation` read from here rather than
+keeping their own copies. Ingest isolates per-entry failures so one bad event cannot cost a game its
+log.
 ## Requirements
 ### Requirement: History service boundary and persistence
 The system SHALL provide a dedicated `history-service` (Python/FastAPI) that persists a per-game append-only event log and periodic game-state snapshots in a dedicated PostgreSQL database, and SHALL NOT retain game history in process memory.
