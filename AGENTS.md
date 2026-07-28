@@ -166,6 +166,29 @@ Post to the issue at three moments, and not per commit:
 Do the work, say plainly in the final report that it was not recorded, and write the missing
 comments once Linear is reachable again. Never let the chat log become the record by default.
 
+## Keep the Surrounding Files Current
+
+A change is not finished when the code works. Every change must also update whatever else it made
+stale — in the same change, not as a follow-up:
+
+- **`README.md`** (root and the service's own) — setup steps, service URLs and ports, test commands,
+  and any list that enumerates the services.
+- **OpenTelemetry configuration** — a service that emits no telemetry is invisible in production.
+  Adding or renaming a service means wiring its tracing, metrics, and logs the same way the existing
+  services do, reusing the shared setup helper rather than hand-rolling per-service bootstrap.
+- **Docker and infrastructure configuration** — `docker-compose.yaml`, the service `Dockerfile`,
+  `.env.example` files, and anything that derives the infra service list.
+- **Scripts and make targets** — `scripts/*.sh` and any equivalent make targets, especially the ones
+  that enumerate services to lint, test, build, or start. A script with a hardcoded service list is a
+  place a new service gets silently omitted.
+- **Swagger / API index** and any other page that lists endpoints or services.
+
+The recurring failure this prevents: a service is added, its code works, and it is quietly missing
+from the telemetry stack, the API index, and half the scripts — each omission found weeks later as a
+separate bug. When a change touches the set of services, or a port, or a required environment
+variable, grep for the *existing* services by name to find every list that will need the new one too,
+and say in the final report which ancillary files you updated.
+
 ## Repo Conventions
 
 - Use `scripts/test.sh unit` for unit tests.
