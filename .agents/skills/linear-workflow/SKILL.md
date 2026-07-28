@@ -6,8 +6,8 @@ metadata:
 ---
 
 Linear is where work and its state live; `openspec/` is where a change is specified; a chat log
-is not a record. The policy is in [`AGENTS.md`](../../AGENTS.md) under **Task Management (Linear)** —
-this skill is the procedure for carrying it out.
+is not a record. The policy is in [`AGENTS.md`](../../../AGENTS.md) under **Task Management
+(Linear)** — this skill is the procedure for carrying it out.
 
 Requires a Linear MCP server. Workspace: team **DragncardsAI**, prefix `DRA`.
 
@@ -58,7 +58,7 @@ Attach screenshots and recordings to the issue. They must not be left in the rep
 | Worktree directory | `wt-dra<n>` |
 | Squash commit subject | one line, ends with ` (DRA-<n>)`, no AI attribution |
 | OpenSpec change directory | `dra-<n>-<slug>` |
-| PR body | one `Fixes DRA-<n>` line per issue in the batch |
+| PR body | one `Fixes DRA-<n>` line per issue in the batch — but do NOT open the PR unless the owner asks for it in that moment |
 
 ## Delegation
 
