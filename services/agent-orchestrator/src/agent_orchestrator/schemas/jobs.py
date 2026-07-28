@@ -43,6 +43,40 @@ class JobEventResponse(BaseModel):
     created_at: datetime
 
 
+class QuestionAnswerRequest(BaseModel):
+    """An answer to a question the agent asked.
+
+    Exactly one field is accepted. ``choice_value`` must be one of the values the
+    model actually offered — the endpoint checks it against the stored question,
+    never against anything carried in this request.
+    """
+
+    choice_value: str | None = None
+    text: str | None = None
+
+
+class QuestionChoiceResponse(BaseModel):
+    label: str
+    value: str
+    description: str | None = None
+
+
+class JobQuestionResponse(BaseModel):
+    id: str
+    job_id: str
+    status: str
+    question: str
+    choices: list[QuestionChoiceResponse]
+    allow_free_text: bool
+    answer_source: str | None
+    answer_value: str | None
+    answer_label: str | None
+    answer_text: str | None
+    closed_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class SessionToolResponse(BaseModel):
     name: str
     assignment_name: str

@@ -437,6 +437,41 @@ waiting, and a `subagent_failed` event with `reason: "wait_timeout"` is recorded
 the stall is visible in the session timeline. A job orphaned by a hard worker kill (SIGKILL, OOM)
 still stays `running` — nothing reclaims it yet — but it can no longer hold a parent hostage.
 
+### Asking The User
+
+Master prompt jobs also get an `ask_user` built-in tool, so a decision that belongs to the human is
+put to them as clickable choices instead of being guessed at or deferred to a new turn. The model
+supplies the question and between one and eight `{label, value}` choices, and may set
+`allow_free_text` to let the user type an answer of their own.
+
+The tool **blocks** while it waits. A job cannot suspend, so the wait happens inside the tool call,
+exactly as `wait_for_subagent` does, and the answer comes back as an ordinary tool result. The pending
+question lives in the `job_questions` table, not in the waiting worker's memory: the request that
+answers it is a different process and may be a different replica, and the question has to survive a
+browser reload and a stream reconnect.
+
+```text
+ASK_USER_TIMEOUT_SECONDS=600         # absolute budget for one question, not per poll
+ASK_USER_POLL_INTERVAL_SECONDS=2     # how often the stored question is re-read while waiting
+```
+
+The wait always ends. When the budget expires the question is closed with reason `timeout`, a
+`user_question_closed` event is recorded on the job, and the model is told nobody answered and to
+continue on its own judgement — deliberately *not* as an error result, which would invite it to ask
+the same question again immediately. Requesting the job's cancellation closes the question with reason
+`cancelled`.
+
+Answer a question with:
+
+- `POST /jobs/{job_id}/questions/{question_id}/answer`
+  Body is exactly one of `{"choice_value": "<one of the offered values>"}` or `{"text": "..."}`.
+
+The submitted choice is validated against the choices stored on the question, so a client can neither
+answer with something the model never offered nor widen what was asked. A question is answerable
+once: a second answer, an answer to a closed question, and an answer to a question whose job has
+already finished all return `409`. Choice labels and values are model-authored text, and the dashboard
+renders them as plain text, never as markup.
+
 ### Session Tools
 
 Use this to inspect the tool list that the worker will expose to the model after MCP assignments are attached.
@@ -524,9 +559,20 @@ Event types include:
 - `model_output`
 - `tool_call`
 - `tool_result`
+- `skill_loaded`
+- `compaction`
+- `subagent_started`
+- `subagent_completed`
+- `subagent_failed`
+- `user_question` — the agent asked the user something, with the offered choices
+- `user_question_answered` — the answer that was recorded
+- `user_question_closed` — the question stopped awaiting an answer (`timeout` or `cancelled`)
 - `completion`
 - `failure`
 - `cancellation`
+
+Only `completion`, `failure`, and `cancellation` are terminal and close the SSE stream. The three
+`user_question*` events are not, so the stream stays open while the user decides.
 
 ## Typical Workflow
 

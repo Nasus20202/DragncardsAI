@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from agent_orchestrator.schemas.jobs import (
     JobDetail,
     JobEventResponse,
+    JobQuestionResponse,
     JobSummary,
+    QuestionChoiceResponse,
     SessionToolResponse,
 )
 from agent_orchestrator.runtime.player_agents import unfold_reasoning
@@ -167,6 +169,31 @@ def serialize_event(item) -> JobEventResponse:
         event_type=item.event_type,
         payload=item.payload_json,
         created_at=item.created_at,
+    )
+
+
+def serialize_job_question(item) -> JobQuestionResponse:
+    return JobQuestionResponse(
+        id=item.id,
+        job_id=item.job_id,
+        status=item.status,
+        question=item.question,
+        choices=[
+            QuestionChoiceResponse(
+                label=choice.get("label", ""),
+                value=choice.get("value", ""),
+                description=choice.get("description"),
+            )
+            for choice in item.choices_json or []
+        ],
+        allow_free_text=item.allow_free_text,
+        answer_source=item.answer_source,
+        answer_value=item.answer_value,
+        answer_label=item.answer_label,
+        answer_text=item.answer_text,
+        closed_reason=item.closed_reason,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
     )
 
 

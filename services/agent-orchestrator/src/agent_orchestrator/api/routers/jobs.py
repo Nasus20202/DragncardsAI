@@ -15,9 +15,12 @@ from agent_orchestrator.api.serializers import (
     serialize_event,
     serialize_job,
     serialize_job_detail,
+    serialize_job_question,
 )
 from agent_orchestrator.api.tool_catalog import list_effective_session_tools
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
+from agent_orchestrator.repositories.questions import QUESTION_STATUS_PENDING
+from agent_orchestrator.runtime.builtin_tools import TERMINAL_JOB_STATUSES
 from agent_orchestrator.runtime.job_event_stream import JobEventStreamService
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.skills import (
@@ -29,8 +32,10 @@ from agent_orchestrator.runtime.skills import (
 from agent_orchestrator.schemas.jobs import (
     JobDetail,
     JobEventResponse,
+    JobQuestionResponse,
     JobSummary,
     PromptRequest,
+    QuestionAnswerRequest,
 )
 from agent_orchestrator.storage.repository import Repository
 
@@ -125,6 +130,102 @@ async def cancel_job(
     if item is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"job": serialize_job(item)}
+
+
+@router.post("/jobs/{job_id}/questions/{question_id}/answer")
+async def answer_job_question(
+    job_id: str,
+    question_id: str,
+    body: QuestionAnswerRequest,
+    repo: Repository = Depends(get_repository),
+    live_event_bus: LiveEventBus = Depends(get_live_event_bus),
+    item=Depends(require_job),
+) -> dict[str, JobQuestionResponse]:
+    """Record the user's answer to a question the agent asked.
+
+    The stored question is the authority for what may be answered: the submitted
+    choice is matched against the choices the model actually offered, so a client
+    can neither answer with something that was never on offer nor widen the set
+    of answers the model asked for.
+    """
+    question = await repo.get_job_question(question_id)
+    # Scoping the lookup to the path's job means a question cannot be answered
+    # through some other job's URL.
+    if question is None or question.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    if (body.choice_value is None) == (body.text is None):
+        raise HTTPException(
+            status_code=400,
+            detail="Provide exactly one of 'choice_value' or 'text'",
+        )
+
+    if question.status != QUESTION_STATUS_PENDING:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This question has already been answered"
+                if question.status == "answered"
+                else "This question is no longer awaiting an answer"
+            ),
+        )
+    # A job that has finished has nobody left waiting to read an answer. This is
+    # what covers a run whose worker died without closing its question: the row
+    # is still pending, but accepting an answer for it would be a lie.
+    if item.status in TERMINAL_JOB_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="The job that asked this question has already finished",
+        )
+
+    if body.choice_value is not None:
+        offered = {
+            choice.get("value"): choice.get("label", "")
+            for choice in question.choices_json or []
+        }
+        if body.choice_value not in offered:
+            raise HTTPException(
+                status_code=400, detail="That choice was not offered for this question"
+            )
+        answered = await repo.answer_job_question(
+            question_id,
+            source="choice",
+            value=body.choice_value,
+            label=offered[body.choice_value],
+            text=None,
+        )
+    else:
+        if not question.allow_free_text:
+            raise HTTPException(
+                status_code=400,
+                detail="This question does not accept a free-text answer",
+            )
+        text = (body.text or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="'text' must not be empty")
+        answered = await repo.answer_job_question(
+            question_id, source="free_text", value=None, label=None, text=text
+        )
+
+    # None means the conditional update found nothing pending, so another writer
+    # answered or closed the question between the check above and here.
+    if answered is None:
+        raise HTTPException(
+            status_code=409, detail="This question is no longer awaiting an answer"
+        )
+
+    payload = {
+        "question_id": answered.id,
+        "source": answered.answer_source,
+        "value": answered.answer_value,
+        "label": answered.answer_label,
+        "text": answered.answer_text,
+    }
+    await repo.append_event(
+        job_id, answered.session_id, "user_question_answered", payload
+    )
+    await live_event_bus.publish(job_id, "user_question_answered", payload)
+    return {"question": serialize_job_question(answered)}
 
 
 @router.get("/jobs/{job_id}/events")

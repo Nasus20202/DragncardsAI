@@ -88,6 +88,73 @@ export interface JobEventResponse {
   created_at: string;
 }
 
+// --- Model-initiated questions to the user (the `ask_user` tool) ---
+
+/**
+ * One offered answer in a `user_question` job event.
+ *
+ * SECURITY: `label`, `value` and `description` are model-authored strings. They
+ * may only ever be rendered as plain React text children — never through a
+ * markdown renderer, `dangerouslySetInnerHTML`, or any attribute that the
+ * browser resolves (`href`, `src`, `style`, `on*`).
+ */
+export interface UserQuestionChoicePayload {
+  label: string;
+  value: string;
+  description?: string;
+}
+
+/** Payload of a `user_question` job event. Non-terminal. */
+export interface UserQuestionEventPayload {
+  question_id: string;
+  /** Model-authored; see the security note on `UserQuestionChoicePayload`. */
+  question: string;
+  choices: UserQuestionChoicePayload[];
+  allow_free_text: boolean;
+}
+
+/** Payload of a `user_question_answered` job event. Non-terminal. */
+export interface UserQuestionAnsweredEventPayload {
+  question_id: string;
+  source: "choice" | "free_text";
+  value: string | null;
+  label: string | null;
+  text: string | null;
+}
+
+export type UserQuestionClosedReason = "timeout" | "cancelled";
+
+/** Payload of a `user_question_closed` job event. Non-terminal. */
+export interface UserQuestionClosedEventPayload {
+  question_id: string;
+  reason: UserQuestionClosedReason;
+  waited_seconds: number;
+}
+
+export type UserQuestionStatus = "pending" | "answered" | "closed";
+
+/**
+ * Body of `POST /jobs/{job_id}/questions/{question_id}/answer`. Exactly one of
+ * the two forms — the server rejects both-or-neither.
+ */
+export type UserQuestionAnswerRequest =
+  { choice_value: string } | { text: string };
+
+/** The `question` object returned by the answer endpoint. */
+export interface UserQuestionResponse {
+  id: string;
+  job_id: string;
+  status: UserQuestionStatus;
+  question: string;
+  choices: UserQuestionChoicePayload[];
+  allow_free_text: boolean;
+  answer_value: string | null;
+  answer_label: string | null;
+  answer_text: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SessionToolResponse {
   name: string;
   assignment_name: string;

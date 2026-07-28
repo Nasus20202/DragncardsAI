@@ -11,6 +11,7 @@ from agent_orchestrator.storage.models import (
     Job,
     JobEvent,
     JobOutput,
+    JobQuestion,
     McpRegistry,
     SessionEnabledMcp,
     SessionModelConfig,
@@ -264,6 +265,11 @@ class SessionRepositoryMixin:
             # Events also carry a session_id, so sweep any that outlived their job.
             await session.execute(
                 delete(JobEvent).where(JobEvent.session_id == session_id)
+            )
+            # Questions do too, and a pending one must not survive its session:
+            # nothing is left to read its answer.
+            await session.execute(
+                delete(JobQuestion).where(JobQuestion.session_id == session_id)
             )
             # Compaction records reference jobs, so they go before the jobs do.
             await session.execute(

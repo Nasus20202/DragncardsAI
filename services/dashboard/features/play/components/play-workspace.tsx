@@ -47,6 +47,7 @@ export function PlayWorkspace() {
     removeSession,
     compactPlaySession,
     submitSessionPrompt,
+    answerJobQuestion,
     cancelExecution,
     recordSubagentOutcome,
     toggleSkill,
@@ -187,6 +188,7 @@ export function PlayWorkspace() {
             setSettingsOpenOverride((current) => !(current ?? !isMobileLayout))
           }
           onViewSubagent={openSubagent}
+          onAnswerQuestion={answerJobQuestion}
           settingsOpen={isSettingsOpen}
         />
         <PlayPromptBox
