@@ -72,6 +72,18 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Ceiling on an uploaded history bundle. Deliberately far above the
+    # agent-orchestrator's MAX_REQUEST_BODY_BYTES (8 MiB): a lossless bundle
+    # carries a full board state per game-service event, so a real game runs to
+    # tens of megabytes. The import reader enforces this while streaming and
+    # answers 413 with the same body the orchestrator's cap uses.
+    history_import_max_bytes: int = Field(
+        default=64 * 1024 * 1024,
+        validation_alias=AliasChoices(
+            "history_import_max_bytes", "HISTORY_IMPORT_MAX_BYTES"
+        ),
+    )
+
     # Producer base URLs (used by snapshotting + restore orchestration).
     game_service_base_url: str = Field(
         default="http://localhost:4001",
@@ -117,6 +129,13 @@ class Settings(BaseSettings):
     def validate_claim_min_idle(cls, value: int) -> int:
         if value < 0:
             raise ValueError("history_ingest_claim_min_idle_ms must be non-negative")
+        return value
+
+    @field_validator("history_import_max_bytes")
+    @classmethod
+    def validate_import_max_bytes(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("history_import_max_bytes must be at least 1")
         return value
 
     @field_validator("snapshot_every_n_events")

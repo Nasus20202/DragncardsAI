@@ -3,6 +3,7 @@ import {
   HistoryDeleteResponse,
   HistoryEvent,
   HistoryGame,
+  HistoryImportResult,
   HistorySnapshot,
   RestoreOutcome,
   RestoreRequestBody,
@@ -136,6 +137,44 @@ export async function listHistorySnapshots(
     { snapshots?: HistorySnapshot[] } | HistorySnapshot[]
   >(response);
   return Array.isArray(payload) ? payload : (payload.snapshots ?? []);
+}
+
+/**
+ * The URL that downloads a game's whole recorded history as an NDJSON bundle.
+ * Points at `GET /api/proxy/history/games/{game_id}/export`, which answers with
+ * a `Content-Disposition: attachment` filename — so this is navigated to (or
+ * given to an anchor) rather than fetched and buffered, keeping a bundle that
+ * can run to tens of megabytes out of the tab's memory.
+ */
+export function historyExportUrl(gameId: string): string {
+  return `/api/proxy/history/games/${encodeURIComponent(gameId)}/export`;
+}
+
+/**
+ * Import an NDJSON history bundle. Calls `POST /api/proxy/history/import`,
+ * streaming the picked file as the request body. `gameId` chooses the target
+ * game; omitting it lands the history under the `game_id` recorded in the
+ * bundle. Rejects with the service's own message (which names the offending
+ * line) when the bundle is malformed, oversized, or the target already exists.
+ */
+export async function importHistoryBundle(
+  file: File,
+  options?: { gameId?: string }
+): Promise<HistoryImportResult> {
+  const params = new URLSearchParams();
+  if (options?.gameId) {
+    params.set("game_id", options.gameId);
+  }
+  const query = params.toString();
+  const response = await fetch(
+    `/api/proxy/history/import${query ? `?${query}` : ""}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/x-ndjson" },
+      body: file,
+    }
+  );
+  return readJson<HistoryImportResult>(response);
 }
 
 export async function restoreGame(

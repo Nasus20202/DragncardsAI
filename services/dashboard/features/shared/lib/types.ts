@@ -435,6 +435,18 @@ export interface HistorySnapshot {
   [key: string]: JsonValue;
 }
 
+/** Response from `POST /history/import` for an accepted history bundle. */
+export interface HistoryImportResult {
+  /** The game the history landed under (the requested target, or the bundle's). */
+  game_id: string;
+  /** The `game_id` recorded in the imported bundle's header. */
+  source_game_id: string;
+  imported_events: number;
+  imported_snapshots: number;
+  first_seq?: number | null;
+  last_seq?: number | null;
+}
+
 export type RestoreMode = "new" | "in_place";
 
 export interface RestoreRequestBody {

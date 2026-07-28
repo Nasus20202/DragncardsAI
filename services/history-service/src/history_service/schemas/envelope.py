@@ -10,6 +10,14 @@ ENVELOPE_VERSION = 1
 VALID_ACTORS = ("agent", "game-service", "evaluator", "user")
 Actor = Literal["agent", "game-service", "evaluator", "user"]
 
+# A game id is an opaque session identifier produced by the game-service. It is
+# interpolated into both database lookups and outbound internal-service URLs, so
+# it is constrained to a short, URL-safe token: no slashes, dots,
+# percent-encoding, or oversized values that could smuggle extra path segments
+# or traversal into a trusted upstream call. Enforced at the route boundary
+# (``api.validation.GameIdPath``) and on any game id read out of an import file.
+GAME_ID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
+
 
 class EventEnvelope(BaseModel):
     """Versioned event envelope as supplied by producers.
