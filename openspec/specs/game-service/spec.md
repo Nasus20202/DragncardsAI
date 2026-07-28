@@ -7,6 +7,8 @@ The Game Service is a Python backend that bridges AI/MCP clients with the DragnC
 ### Requirement: Game session lifecycle management
 The Game Service SHALL provide HTTP endpoints and MCP tools to create, query, and destroy game sessions. Each session corresponds to a single DragnCards game room with a persistent WebSocket connection.
 
+Deleting an EPHEMERAL session SHALL close its DragnCards room as part of the teardown. An ephemeral (view-only reconstruction) session created the room solely to view a past moment and owns it outright, so detaching from the channel is not enough — the room itself must go, otherwise every reconstruction leaks a room. Room closing is best-effort: a failure SHALL be logged and SHALL NOT abort the rest of the teardown. Deleting a kept (non-ephemeral) session SHALL leave its room open, because that room belongs to the user and only this client detaches from it.
+
 #### Scenario: Create a new game session via HTTP
 - **WHEN** a client sends `POST /games` with a plugin identifier (e.g., `marvel-champions`)
 - **THEN** the Game Service SHALL create a new DragnCards game room via WebSocket, load the specified plugin, initialize the game, and return a session ID with initial game metadata
@@ -22,6 +24,10 @@ The Game Service SHALL provide HTTP endpoints and MCP tools to create, query, an
 #### Scenario: Delete a game session
 - **WHEN** a client sends `DELETE /games/{id}` or invokes the `delete_game` MCP tool
 - **THEN** the Game Service SHALL close the WebSocket connection to the DragnCards room, clean up session state, and return a confirmation
+
+#### Scenario: Delete an ephemeral reconstruction session
+- **WHEN** an ephemeral session is deleted, whether by an explicit client teardown or by the TTL reaper
+- **THEN** the Game Service SHALL close its DragnCards room in addition to leaving the channel and removing the session record, leaving no orphaned room behind
 
 #### Scenario: Create session with invalid plugin
 - **WHEN** a client requests a game with an unknown plugin identifier

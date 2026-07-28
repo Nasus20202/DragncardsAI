@@ -494,6 +494,22 @@ class SessionManager:
             session = self._sessions.pop(session_id, None)
         if session is None:
             raise SessionNotFoundError(f"Session {session_id!r} not found")
+        if session.ephemeral:
+            # An ephemeral reconstruction owns its DragnCards room outright (it
+            # was created solely to view a past moment), so tearing the session
+            # down must close the room too — otherwise every "board at this
+            # event" view leaves a room behind forever. The room event has to be
+            # pushed while the channel is still joined, hence before the leave
+            # below. Best-effort: a failure here must not block the teardown.
+            try:
+                await session.close_room()
+            except Exception as exc:
+                logger.warning(
+                    "Error closing room %s for ephemeral session %s: %s",
+                    session.room_slug,
+                    session_id,
+                    exc,
+                )
         try:
             await session.client.leave(f"room:{session.room_slug}")
         except Exception as exc:

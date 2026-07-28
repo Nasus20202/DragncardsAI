@@ -80,7 +80,15 @@ export function useBoardReconstruction(
     if (sessionId) void disposeSession(sessionId);
   }, [disposeSession]);
 
-  // Tab close / refresh / backgrounding: dispose via unload-safe transport.
+  // Tab close / refresh / navigation: dispose via unload-safe transport.
+  //
+  // `pagehide` only — NOT `visibilitychange`. A hidden tab is not the end of the
+  // view: switching browser tabs, minimizing, or backgrounding the app would
+  // otherwise delete the session out from under a board the user is still
+  // looking at, leaving the embedded room orphaned and the UI claiming a
+  // reconstruction that no longer exists. `pagehide` covers unload, refresh, and
+  // navigation (including the back/forward cache), and the server-side TTL
+  // reaper is the safety net for anything it misses.
   useEffect(() => {
     const handleUnload = () => {
       const sessionId = activeSessionRef.current;
@@ -89,14 +97,9 @@ export function useBoardReconstruction(
         activeSessionRef.current = null;
       }
     };
-    const handleVisibility = () => {
-      if (document.visibilityState === "hidden") handleUnload();
-    };
     window.addEventListener("pagehide", handleUnload);
-    document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       window.removeEventListener("pagehide", handleUnload);
-      document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, []);
 
