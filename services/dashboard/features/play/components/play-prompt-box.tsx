@@ -8,9 +8,9 @@ import {
 } from "@/features/shared/lib/types";
 import { ContextHealthWidget } from "@/features/play/components/context-health-widget";
 import {
+  completeSkillMention,
   filterMentionableSkills,
   findSkillMention,
-  removeSkillMention,
   SkillMention,
 } from "@/features/play/lib/skill-mentions";
 import {
@@ -63,11 +63,8 @@ export function PlayPromptBox({
   const showCancel = activeJobId !== null;
 
   const mentionOptions = useMemo(
-    () =>
-      mention
-        ? filterMentionableSkills(skills, mention.query, attachedSkills)
-        : [],
-    [attachedSkills, mention, skills]
+    () => (mention ? filterMentionableSkills(skills, mention.query) : []),
+    [mention, skills]
   );
   const isPickerOpen = mention !== null && mentionOptions.length > 0;
   const highlighted = Math.min(highlightedIndex, mentionOptions.length - 1);
@@ -79,8 +76,8 @@ export function PlayPromptBox({
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
 
-    // Removing a mention token moves the caret; restore it once the owner has
-    // handed back the shortened text, so typing continues where it left off.
+    // Completing a mention token moves the caret; restore it once the owner has
+    // handed back the rewritten text, so typing continues where it left off.
     const caret = pendingCaretRef.current;
     if (caret !== null) {
       pendingCaretRef.current = null;
@@ -105,10 +102,15 @@ export function PlayPromptBox({
     [disabled, onPromptChange]
   );
 
+  /**
+   * Take the picker's choice: complete the token so the skill is loaded into
+   * this message, and attach it to the session so its reference files stay
+   * loadable and the settings panel agrees.
+   */
   const attachMentionedSkill = useCallback(
     (skillName: string) => {
       if (!mention) return;
-      const next = removeSkillMention(prompt, mention);
+      const next = completeSkillMention(prompt, mention, skillName);
       pendingCaretRef.current = next.caret;
       setMention(null);
       setHighlightedIndex(0);

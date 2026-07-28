@@ -140,17 +140,33 @@ describe("PlayPromptBox skill mentions", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("attaches the chosen skill and drops the mention token", () => {
+  it("attaches the chosen skill and completes the mention token", () => {
     const props = renderPromptBox();
 
     typePrompt("play @board");
     fireEvent.click(screen.getByTestId("skill-mention-option-board-reader"));
 
     expect(props.onAttachSkill).toHaveBeenCalledWith("board-reader");
-    expect(props.onPromptChange).toHaveBeenCalledWith("play ");
+    expect(props.onPromptChange).toHaveBeenCalledWith("play @board-reader ");
+    expect(screen.getByTestId("play-prompt-input")).toHaveValue(
+      "play @board-reader "
+    );
     expect(
       screen.queryByTestId("skill-mention-picker")
     ).not.toBeInTheDocument();
+  });
+
+  it("leaves the caret after the completed token", () => {
+    renderPromptBox();
+
+    typePrompt("play @board mid", 11);
+    fireEvent.click(screen.getByTestId("skill-mention-option-board-reader"));
+
+    const input = screen.getByTestId(
+      "play-prompt-input"
+    ) as HTMLTextAreaElement;
+    expect(input).toHaveValue("play @board-reader mid");
+    expect(input.selectionStart).toBe("play @board-reader".length);
   });
 
   it("chooses the highlighted skill on Enter instead of submitting", () => {
@@ -197,14 +213,16 @@ describe("PlayPromptBox skill mentions", () => {
     expect(props.onSubmit).toHaveBeenCalledOnce();
   });
 
-  it("omits already-attached skills from the picker", () => {
+  it("still offers a skill already attached to the session", () => {
+    // A mention loads the skill into *this* message, which is worth repeating on
+    // a later turn even though the session attachment is already in place.
     renderPromptBox({ attachedSkills: ["board-reader"] });
 
     typePrompt("@");
 
     expect(
-      screen.queryByTestId("skill-mention-option-board-reader")
-    ).not.toBeInTheDocument();
+      screen.getByTestId("skill-mention-option-board-reader")
+    ).toBeInTheDocument();
     expect(
       screen.getByTestId("skill-mention-option-marvel-champions-play")
     ).toBeInTheDocument();

@@ -15,6 +15,7 @@ import {
 } from "@/features/play/lib/client-api";
 import { writeLastUsedDraft } from "@/features/play/lib/last-used-draft";
 import { mergeJob } from "@/features/play/lib/play-session-events";
+import { findMentionedSkillNames } from "@/features/play/lib/skill-mentions";
 import {
   applyReasoningToGatewayOptions,
   buildDefaultSessionName,
@@ -384,9 +385,21 @@ export function usePlaySessionActions({
 
     const trimmedPrompt = prompt.trim();
     const isFirstPrompt = jobsCount === 0;
+    // An `@` mention loads that skill's instructions into this turn. Matching
+    // against the session's assigned skills is what separates a mention from
+    // prose that merely contains an `@`, and the mention picker has already
+    // attached whatever it offered.
+    const mentionedSkills = findMentionedSkillNames(
+      trimmedPrompt,
+      selectedSession.skills.map((skill) => skill.skill_name)
+    );
 
     try {
-      const summary = await submitPrompt(selectedSession.id, trimmedPrompt);
+      const summary = await submitPrompt(
+        selectedSession.id,
+        trimmedPrompt,
+        mentionedSkills
+      );
       const nextJob = await getJob(summary.id);
       setJobs((current) => mergeJob(current, nextJob));
       startStreaming(nextJob.id, nextJob.latest_event_id ?? "0");

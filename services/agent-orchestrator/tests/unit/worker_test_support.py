@@ -57,7 +57,14 @@ class FakeBifrost:
         on_delta=None,
     ):
         self.calls.append(
-            {"provider_id": provider_id, "model_name": model_name, "tools": tools}
+            {
+                "provider_id": provider_id,
+                "model_name": model_name,
+                "tools": tools,
+                # Copied: the run loop keeps appending to the same list, so a
+                # reference would show a later round's state.
+                "messages": list(messages),
+            }
         )
         if self.error is not None:
             raise self.error

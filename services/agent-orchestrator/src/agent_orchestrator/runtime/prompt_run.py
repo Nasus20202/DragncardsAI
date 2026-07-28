@@ -25,7 +25,12 @@ from agent_orchestrator.runtime.history_emitter import (
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.player_agents import session_player_id
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
-from agent_orchestrator.runtime.skills import SkillRegistry, enabled_skill_assignments
+from agent_orchestrator.runtime.skills import (
+    JOB_INLINE_SKILLS_KEY,
+    SkillRegistry,
+    enabled_skill_assignments,
+    render_prompt_with_inline_skills,
+)
 from agent_orchestrator.runtime.system_prompts import (
     build_subagent_system_prompt,
     build_system_prompt,
@@ -185,8 +190,20 @@ class PromptRunService:
                         session.id, job.id
                     )
                     messages.extend(prior)
-                messages.append({"role": "user", "content": full_job.prompt})
+                # The skills the prompt loaded into its own turn go in the model's
+                # copy of the user message only: the stored prompt stays what the
+                # user typed, so the transcript and the replay of this turn are
+                # unchanged and the content costs its tokens once.
+                user_content, inlined_skills = render_prompt_with_inline_skills(
+                    self._skill_registry,
+                    (full_job.metadata_json or {}).get(JOB_INLINE_SKILLS_KEY) or [],
+                    full_job.prompt,
+                )
+                messages.append({"role": "user", "content": user_content})
                 self._emit_user_prompt_event(session=session, prompt=full_job.prompt)
+                await self._announce_inlined_skills(
+                    job_id=job.id, session_id=session.id, skill_names=inlined_skills
+                )
                 await self._repository.append_event(
                     job.id, session.id, "progress", {"status": "running"}
                 )
@@ -627,6 +644,31 @@ class PromptRunService:
                 getattr(session, "id", "?"),
                 exc_info=True,
             )
+
+    async def _announce_inlined_skills(
+        self, *, job_id: str, session_id: str, skill_names: list[str]
+    ) -> None:
+        """Record and publish a ``skill_loaded`` event per skill the prompt loaded.
+
+        Reusing the event the ``load_skill`` built-in emits means the transcript
+        already shows "Skill loaded: <name>" for a mention, with no separate
+        rendering path to keep in step.
+        """
+        for skill_name in skill_names:
+            try:
+                reference_count = len(
+                    self._skill_registry.list_reference_files(skill_name)
+                )
+            except FileNotFoundError, OSError:
+                reference_count = 0
+            payload = {
+                "skill_name": skill_name,
+                "reference_file_count": reference_count,
+            }
+            await self._repository.append_event(
+                job_id, session_id, "skill_loaded", payload
+            )
+            await self._live_event_bus.publish(job_id, "skill_loaded", payload)
 
     def _emit_user_prompt_event(self, *, session: Any, prompt: str) -> None:
         """Fire-and-forget emission of a ``user_prompt`` history event.

@@ -35,7 +35,11 @@ describe("PlayWorkspace execution", () => {
     fireEvent.click(screen.getByRole("button", { name: /submit prompt/i }));
 
     await waitFor(() =>
-      expect(api.submitPrompt).toHaveBeenCalledWith("session-1", "Hello world")
+      expect(api.submitPrompt).toHaveBeenCalledWith(
+        "session-1",
+        "Hello world",
+        []
+      )
     );
     expect(
       screen.getByRole("status", { name: /streaming response/i })

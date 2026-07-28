@@ -20,7 +20,12 @@ from agent_orchestrator.api.tool_catalog import list_effective_session_tools
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.runtime.job_event_stream import JobEventStreamService
 from agent_orchestrator.runtime.live_events import LiveEventBus
-from agent_orchestrator.runtime.skills import SkillRegistry
+from agent_orchestrator.runtime.skills import (
+    JOB_INLINE_SKILLS_KEY,
+    MAX_INLINE_SKILLS,
+    SkillRegistry,
+    dedupe_skill_names,
+)
 from agent_orchestrator.schemas.jobs import (
     JobDetail,
     JobEventResponse,
@@ -38,12 +43,33 @@ async def submit_prompt(
     session_id: str,
     body: PromptRequest,
     repo: Repository = Depends(get_repository),
+    registry: SkillRegistry = Depends(get_skill_registry),
 ) -> dict[str, JobSummary]:
+    inline_skills = dedupe_skill_names(body.inline_skills)
+    if len(inline_skills) > MAX_INLINE_SKILLS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {MAX_INLINE_SKILLS} skills may be loaded into one prompt",
+        )
+    for skill_name in inline_skills:
+        if registry.resolve(skill_name) is None:
+            raise HTTPException(status_code=400, detail=f"Unknown skill '{skill_name}'")
+
+    # The key is derived here, never taken from the caller's free-form metadata,
+    # so a client cannot smuggle unvalidated skill names past the checks above.
+    metadata = {
+        key: value
+        for key, value in body.metadata.items()
+        if key != JOB_INLINE_SKILLS_KEY
+    }
+    if inline_skills:
+        metadata[JOB_INLINE_SKILLS_KEY] = inline_skills
+
     try:
         item = await repo.enqueue_prompt_job(
             session_id,
             prompt=body.prompt,
-            metadata_json=body.metadata,
+            metadata_json=metadata,
             max_attempts=body.max_attempts
             or request.app.state.settings.default_job_max_attempts,
         )

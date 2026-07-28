@@ -289,15 +289,22 @@ export async function deleteSession(sessionId: string) {
   );
 }
 
+/**
+ * Submit a prompt, naming the skills the message mentions.
+ *
+ * Only names travel: the orchestrator reads each skill's content from its own
+ * skill roots and puts it in front of the prompt for that turn.
+ */
 export async function submitPrompt(
   sessionId: string,
-  prompt: string
+  prompt: string,
+  inlineSkills: string[] = []
 ): Promise<JobSummary> {
   return (
     await sendJson<{ job: JobSummary }>(
       `/api/proxy/orchestrator/sessions/${sessionId}/prompts`,
       "POST",
-      { prompt }
+      { prompt, inline_skills: inlineSkills }
     )
   ).job;
 }

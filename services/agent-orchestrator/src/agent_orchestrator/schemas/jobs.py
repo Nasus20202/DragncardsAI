@@ -12,6 +12,10 @@ class PromptRequest(BaseModel):
     prompt: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     max_attempts: int | None = None
+    # Skills whose full content this prompt loads into its own turn — what the
+    # dashboard's `@` mentions resolve to. Names only; the content is read from
+    # the skill roots server-side.
+    inline_skills: list[str] = Field(default_factory=list)
 
 
 class JobSummary(BaseModel):
