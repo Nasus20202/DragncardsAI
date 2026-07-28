@@ -8,6 +8,10 @@ import {
   eventBodyText,
 } from "@/features/play/lib/play-session-events";
 import { JobEventResponse } from "@/features/shared/lib/types";
+import {
+  ToolExchangeBlock,
+  ToolExchangeProvider,
+} from "@/features/play/components/tool-exchange-block";
 
 const JOB_STATE_LABELS = {
   streaming: "Streaming…",
@@ -229,24 +233,10 @@ export function AggEventRow({
       );
     case "model_output":
       return <ModelOutputBlock text={agg.text} />;
-    case "tool_call":
-      return (
-        <CollapsibleEventBlock
-          label={`Tool call: ${typeof agg.event.payload.exposed_tool_name === "string" ? agg.event.payload.exposed_tool_name : agg.event.event_type}`}
-          dotClass="bg-default-400"
-          event={agg.event}
-        />
-      );
+    case "tool_exchange":
+      return <ToolExchangeBlock call={agg.call} result={agg.result} />;
     case "compaction":
       return <CompactionBlock text={agg.text} />;
-    case "tool_result":
-      return (
-        <CollapsibleEventBlock
-          label={`Tool result: ${typeof agg.event.payload.exposed_tool_name === "string" ? agg.event.payload.exposed_tool_name : agg.event.event_type}`}
-          dotClass="bg-default-300"
-          event={agg.event}
-        />
-      );
     case "skill_loaded":
       return (
         <CollapsibleEventBlock
@@ -362,6 +352,7 @@ export function PlayTranscript({
   isBusy,
   errorText,
   onOpenSettings,
+  onViewSubagent,
   settingsOpen,
 }: {
   jobs: JobDetail[];
@@ -372,6 +363,12 @@ export function PlayTranscript({
   isBusy: boolean;
   errorText: string | null;
   onOpenSettings: () => void;
+  /**
+   * Open the subagent output view on a child job, offered by the cards for the
+   * subagent tools. MUST be referentially stable — the transcript's blocks are
+   * memoised and this value reaches them through context.
+   */
+  onViewSubagent?: (childJobId: string, name: string) => void;
   settingsOpen: boolean;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -620,13 +617,15 @@ export function PlayTranscript({
               ) : jobs.length === 0 ? (
                 <Empty message="No messages yet. Type a prompt below." />
               ) : (
-                jobs.map((job) => (
-                  <JobThread
-                    key={job.id}
-                    job={job}
-                    isStreaming={job.id === streamingJobId}
-                  />
-                ))
+                <ToolExchangeProvider onViewSubagent={onViewSubagent}>
+                  {jobs.map((job) => (
+                    <JobThread
+                      key={job.id}
+                      job={job}
+                      isStreaming={job.id === streamingJobId}
+                    />
+                  ))}
+                </ToolExchangeProvider>
               )}
               <div ref={bottomRef} />
             </div>

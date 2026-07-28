@@ -14,7 +14,7 @@ import { PlayPromptBox } from "@/features/play/components/play-prompt-box";
 import { PlaySessionList } from "@/features/play/components/play-session-list";
 import { PlayTranscript } from "@/features/play/components/play-transcript";
 import { RemoveSessionModal } from "@/features/play/components/remove-session-modal";
-import { useState, useSyncExternalStore } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 
 export function PlayWorkspace() {
   const {
@@ -75,6 +75,11 @@ export function PlayWorkspace() {
   >(null);
   const isSessionsCollapsed = sessionsCollapsedOverride ?? isMobileLayout;
   const isSettingsOpen = settingsOpenOverride ?? !isMobileLayout;
+  // Stable identity: the transcript's memoised blocks reach this through
+  // context, so a fresh closure per render would re-render every tool card.
+  const openSubagent = useCallback((childJobId: string, name: string) => {
+    setSubagentModal({ childJobId, name });
+  }, []);
 
   if (!draft || !config) {
     return (
@@ -181,6 +186,7 @@ export function PlayWorkspace() {
           onOpenSettings={() =>
             setSettingsOpenOverride((current) => !(current ?? !isMobileLayout))
           }
+          onViewSubagent={openSubagent}
           settingsOpen={isSettingsOpen}
         />
         <PlayPromptBox

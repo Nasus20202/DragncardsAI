@@ -61,6 +61,28 @@ Example:
 </Card>
 ```
 
+### Transcript Tool Cards
+
+The Play transcript renders each tool invocation through a registry, so giving a
+system tool its own card is an entry in a table rather than a new special case:
+
+- `features/play/lib/tool-call-presentation.ts` holds `TOOL_PRESENTATIONS`
+  (tool name → presentation key) plus the bounded, redacting formatters every card
+  uses.
+- `features/play/components/tool-exchange-block.tsx` holds `RENDERERS`
+  (presentation key → renderer) and falls back to the generic card for any tool
+  absent from the table.
+
+To add a bespoke card: add the tool name to `TOOL_PRESENTATIONS`, add a renderer
+to `RENDERERS` under the same key, and build it from the shared `ToolCard` frame
+so it keeps the transcript's look. Two rules a renderer must not break:
+
+- A **collapsed** card may only use the bounded helpers (`buildToolExchangeView`,
+  `boundedValueText`, `boundedResultText`). Never serialise a whole payload
+  outside an expanded body — a tool result can carry a full board state.
+- Everything displayed is text and goes through `redactSecrets`. Tool arguments
+  are model-supplied and results are server-supplied.
+
 ## Working Rules
 
 - Use Hero UI components for all interactive elements
