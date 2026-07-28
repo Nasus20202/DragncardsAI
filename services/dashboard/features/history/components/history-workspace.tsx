@@ -1,7 +1,7 @@
 "use client";
 
 import { Button, Spinner } from "@heroui/react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   DashboardConfig,
@@ -223,18 +223,47 @@ export function HistoryWorkspace({
     };
   }, [reload]);
 
-  const handleRestore = async (targetSeq: number, mode: RestoreMode) => {
-    if (!gameId) {
-      throw new Error("No game selected.");
-    }
-    const outcome = await restoreGame(gameId, { target_seq: targetSeq, mode });
-    // A new-session restore does not alter this timeline; an in-place restore
-    // does, so refresh the events afterwards.
-    if (mode === "in_place") {
-      reload();
-    }
-    return outcome;
-  };
+  // `handleRestore` and the transcript's `board` bundle below are handed to every
+  // event row, so both are kept referentially stable — a fresh function or object
+  // literal per render would re-render the whole transcript (see the memoised
+  // `TranscriptEvent`).
+  const handleRestore = useCallback(
+    async (targetSeq: number, mode: RestoreMode) => {
+      if (!gameId) {
+        throw new Error("No game selected.");
+      }
+      const outcome = await restoreGame(gameId, {
+        target_seq: targetSeq,
+        mode,
+      });
+      // A new-session restore does not alter this timeline; an in-place restore
+      // does, so refresh the events afterwards.
+      if (mode === "in_place") {
+        reload();
+      }
+      return outcome;
+    },
+    [gameId, reload]
+  );
+
+  // Destructured so the memo depends on the individual values rather than on the
+  // hook's result object, whose identity changes on every render.
+  const {
+    isOpening: boardIsOpening,
+    error: boardError,
+    reconstruction: boardReconstruction,
+    open: openBoard,
+  } = board;
+  const transcriptBoard = useMemo(
+    () => ({
+      gameId,
+      isOpening: boardIsOpening,
+      error: boardError,
+      isOpen: boardReconstruction !== null,
+      onOpen: () => void openBoard(),
+    }),
+    [gameId, boardIsOpening, boardError, boardReconstruction, openBoard]
+  );
 
   const openDelete = (id: string) => {
     setDeleteTargetId(id);
@@ -430,13 +459,7 @@ export function HistoryWorkspace({
                 onRestore={handleRestore}
                 expandSignal={expandSignal}
                 searchQuery={searchQuery}
-                board={{
-                  gameId,
-                  isOpening: board.isOpening,
-                  error: board.error,
-                  isOpen: board.reconstruction !== null,
-                  onOpen: () => void board.open(),
-                }}
+                board={transcriptBoard}
                 reveal={reveal}
               />
             </div>
