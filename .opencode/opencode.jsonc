@@ -6,5 +6,14 @@
       "url": "http://localhost:4001/mcp/",
       "enabled": true,
     },
+    // Task tracking. AGENTS.md treats Linear as the source of truth for what work
+    // exists, so this server is what makes those rules followable. Requires an
+    // interactive OAuth login on first use; set "enabled": false if a setup cannot
+    // complete it, and say in the final report that the work went unrecorded.
+    "linear": {
+      "type": "remote",
+      "url": "https://mcp.linear.app/mcp",
+      "enabled": true,
+    },
   },
 }
