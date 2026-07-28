@@ -20,10 +20,11 @@ const listEvaluations = vi.fn();
 
 vi.mock("@/features/history/lib/history-api", () => ({
   listHistoryEvents: (...args: unknown[]) => listHistoryEvents(...args),
-  listAllHistoryEvents: async (...args: unknown[]) => ({
+  listAllHistoryTimeline: async (...args: unknown[]) => ({
     events: await listHistoryEvents(...args),
     truncated: eventsTruncated,
   }),
+  fetchHistoryEvent: vi.fn(),
   listHistorySnapshots: (...args: unknown[]) => listHistorySnapshots(...args),
   listHistoryGames: (...args: unknown[]) => listHistoryGames(...args),
   restoreGame: vi.fn(),
@@ -316,5 +317,43 @@ describe("HistoryWorkspace responsive layout", () => {
     expect(
       screen.queryByTestId("history-truncated-notice")
     ).not.toBeInTheDocument();
+  });
+
+  it("offers a jump-to-round control alongside the transcript search", async () => {
+    stubSources();
+    // Two rounds of play so the control has somewhere to jump to. The state
+    // events report `roundNumber` 0 and 1, i.e. rounds 1 and 2 as displayed.
+    listHistoryEvents.mockResolvedValue([
+      ...EVENTS,
+      {
+        seq: 2,
+        event_id: "e2",
+        game_id: "demo-001",
+        actor: "game-service",
+        event_type: "game_state",
+        payload: { state: { game: { roundNumber: 0, stepId: "1.1" } } },
+        occurred_at: "2026-06-28T00:00:02Z",
+        recorded_at: "2026-06-28T00:00:03Z",
+        payload_complete: false,
+      },
+      {
+        seq: 3,
+        event_id: "e3",
+        game_id: "demo-001",
+        actor: "game-service",
+        event_type: "game_state",
+        payload: { state: { game: { roundNumber: 1, stepId: "0.0" } } },
+        occurred_at: "2026-06-28T00:00:04Z",
+        recorded_at: "2026-06-28T00:00:05Z",
+        payload_complete: false,
+      },
+    ]);
+    render(<HistoryWorkspace initialGameId="demo-001" />);
+
+    await screen.findByTestId("history-transcript");
+    // Sits in the same toolbar row as the search field.
+    const jump = screen.getByTestId("history-round-jump");
+    const search = screen.getByTestId("history-search");
+    expect(jump.closest("div")?.parentElement).toBe(search.parentElement);
   });
 });

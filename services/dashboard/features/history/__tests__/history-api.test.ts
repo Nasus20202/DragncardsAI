@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   deleteHistoryGame,
-  listAllHistoryEvents,
+  fetchHistoryEvent,
+  listAllHistoryTimeline,
   listHistoryEventPage,
   listHistoryGames,
   listHistorySnapshots,
+  listHistoryTimelinePage,
   restoreGame,
 } from "@/features/history/lib/history-api";
 
@@ -132,8 +134,78 @@ describe("history-api client", () => {
   });
 });
 
-describe("listAllHistoryEvents", () => {
-  /** Serve `total` events in pages of `pageSize`, the way the service does. */
+describe("listHistoryTimelinePage", () => {
+  it("reads the timeline resource, not the events resource", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ events: [{ seq: 1, payload_complete: false }] })
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const page = await listHistoryTimelinePage("game 1", {
+      afterSeq: 3,
+      limit: 500,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/proxy/history/games/game%201/timeline?after_seq=3&limit=500",
+      { cache: "no-store" }
+    );
+    expect(page.events).toEqual([{ seq: 1, payload_complete: false }]);
+    expect(page.nextAfterSeq).toBeNull();
+  });
+});
+
+describe("fetchHistoryEvent", () => {
+  it("addresses one seq through the exclusive cursor", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ events: [{ seq: 7 }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const event = await fetchHistoryEvent("game-1", 7);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/proxy/history/games/game-1/events?after_seq=6&limit=1",
+      { cache: "no-store" }
+    );
+    expect(event).toEqual({ seq: 7 });
+  });
+
+  it("asks from zero for the very first event", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ events: [{ seq: 1 }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchHistoryEvent("game-1", 1);
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("after_seq=0");
+  });
+
+  it("resolves null when the seq is not recorded", async () => {
+    // The cursor is exclusive, so an absent seq yields the *next* event; that is
+    // not the one asked for and must not be mistaken for it.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ events: [{ seq: 9 }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await fetchHistoryEvent("game-1", 7)).toBeNull();
+  });
+
+  it("resolves null on an empty page", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse({ events: [] }))
+    );
+    expect(await fetchHistoryEvent("game-1", 7)).toBeNull();
+  });
+});
+
+describe("listAllHistoryTimeline", () => {
+  /** Serve `total` entries in pages of `pageSize`, the way the service does. */
   function pagingFetch(total: number, pageSize: number) {
     return vi.fn((url: string) => {
       const after = Number(
@@ -154,11 +226,11 @@ describe("listAllHistoryEvents", () => {
   }
 
   it("follows the cursor across pages until the log is exhausted", async () => {
-    // The endpoint's own default page is 100; a 122-event game must not stop there.
+    // A 122-event game must not stop at a page boundary.
     const fetchMock = pagingFetch(122, 100);
     vi.stubGlobal("fetch", fetchMock);
 
-    const timeline = await listAllHistoryEvents("game-1", { pageLimit: 100 });
+    const timeline = await listAllHistoryTimeline("game-1", { pageLimit: 100 });
 
     expect(timeline.events).toHaveLength(122);
     expect(timeline.events[121].seq).toBe(122);
@@ -167,20 +239,21 @@ describe("listAllHistoryEvents", () => {
     expect(String(fetchMock.mock.calls[1][0])).toContain("after_seq=100");
   });
 
-  it("requests the server's maximum page size by default", async () => {
-    const fetchMock = pagingFetch(5, 1000);
+  it("requests the timeline endpoint's maximum page size by default", async () => {
+    const fetchMock = pagingFetch(5, 5000);
     vi.stubGlobal("fetch", fetchMock);
 
-    await listAllHistoryEvents("game-1");
+    await listAllHistoryTimeline("game-1");
 
-    expect(String(fetchMock.mock.calls[0][0])).toContain("limit=1000");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/timeline?");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("limit=5000");
   });
 
   it("stops at a single request when the log fits in one page", async () => {
-    const fetchMock = pagingFetch(40, 1000);
+    const fetchMock = pagingFetch(40, 5000);
     vi.stubGlobal("fetch", fetchMock);
 
-    const timeline = await listAllHistoryEvents("game-1");
+    const timeline = await listAllHistoryTimeline("game-1");
 
     expect(timeline.events).toHaveLength(40);
     expect(timeline.truncated).toBe(false);
@@ -191,12 +264,28 @@ describe("listAllHistoryEvents", () => {
     const fetchMock = pagingFetch(500, 10);
     vi.stubGlobal("fetch", fetchMock);
 
-    const timeline = await listAllHistoryEvents("game-1", {
+    const timeline = await listAllHistoryTimeline("game-1", {
       pageLimit: 10,
       maxEvents: 30,
     });
 
     expect(timeline.events).toHaveLength(30);
     expect(timeline.truncated).toBe(true);
+  });
+
+  it("resumes from a cursor so a refresh only reads what is new", async () => {
+    const fetchMock = pagingFetch(120, 100);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const timeline = await listAllHistoryTimeline("game-1", {
+      pageLimit: 100,
+      afterSeq: 100,
+    });
+
+    expect(timeline.events.map((e) => e.seq)).toEqual(
+      Array.from({ length: 20 }, (_, i) => 101 + i)
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("after_seq=100");
   });
 });

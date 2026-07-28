@@ -32,6 +32,26 @@ class EventListResponse(BaseModel):
     next_after_seq: int | None = None
 
 
+class TimelineEventResponse(EventResponse):
+    """A timeline entry: the same shape as an event, with a lighter payload.
+
+    ``payload_complete`` is false for every entry a timeline listing produces, so
+    a client can tell that the unbounded payload fields (the raw DragnCards
+    ``state`` and an agent move's ``conversation_context``) were left out and must
+    be fetched per event before they are shown. ``payload["state"]["game"]`` still
+    carries ``roundNumber`` and ``stepId``, which is all the round and phase
+    labels need.
+    """
+
+    payload_complete: bool = False
+
+
+class TimelineListResponse(BaseModel):
+    game_id: str
+    events: list[TimelineEventResponse]
+    next_after_seq: int | None = None
+
+
 class SnapshotResponse(BaseModel):
     game_id: str
     snapshot_at_seq: int

@@ -384,3 +384,112 @@ async def test_well_formed_unknown_id_still_idempotent_delete(client):
         "deleted_events": 0,
         "deleted_snapshots": 0,
     }
+
+
+# -- timeline read ----------------------------------------------------------
+
+
+def _big_state_envelope(game_id, offset, *, round_number, step_id):
+    """A ``game-service`` envelope whose state is far too big to list inline."""
+    return {
+        **_envelope(game_id, "game-service", offset),
+        "event_type": "game_state",
+        "payload": {
+            "state": {
+                "deltas": [{"i": i} for i in range(50)],
+                "game": {
+                    "roundNumber": round_number,
+                    "stepId": step_id,
+                    "mode": "in progress",
+                    "cardById": {f"card-{i}": {"text": "x" * 200} for i in range(50)},
+                },
+            },
+            "status": "in progress",
+            "action_path": "actions",
+            "action_args": {"type": "next_step"},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_timeline_lists_entries_without_the_state_bulk(client):
+    c, _ = client
+    await c.post(
+        "/games/g1/events",
+        json=_big_state_envelope("g1", 0, round_number=1, step_id="0.1"),
+    )
+    body = (await c.get("/games/g1/timeline")).json()
+    (entry,) = body["events"]
+    assert entry["seq"] == 1
+    assert entry["payload_complete"] is False
+    assert entry["payload"]["state"] == {"game": {"roundNumber": 1, "stepId": "0.1"}}
+    assert entry["payload"]["action_args"] == {"type": "next_step"}
+    # The dropped bulk is what makes the listing affordable.
+    assert "cardById" not in entry["payload"]["state"]["game"]
+    assert "deltas" not in entry["payload"]["state"]
+
+
+@pytest.mark.asyncio
+async def test_timeline_entry_is_far_smaller_than_the_full_event(client):
+    c, _ = client
+    await c.post(
+        "/games/g1/events",
+        json=_big_state_envelope("g1", 0, round_number=0, step_id="1.1"),
+    )
+    timeline = await c.get("/games/g1/timeline")
+    events = await c.get("/games/g1/events")
+    assert len(timeline.content) * 10 < len(events.content)
+
+
+@pytest.mark.asyncio
+async def test_timeline_pages_with_the_same_cursor_as_the_events_read(client):
+    c, _ = client
+    for offset in range(5):
+        await c.post(
+            "/games/g1/events",
+            json=_big_state_envelope("g1", offset, round_number=0, step_id="1.1"),
+        )
+    page1 = (await c.get("/games/g1/timeline?limit=2")).json()
+    assert [e["seq"] for e in page1["events"]] == [1, 2]
+    assert page1["next_after_seq"] == 2
+    page2 = (
+        await c.get(f"/games/g1/timeline?after_seq={page1['next_after_seq']}&limit=2")
+    ).json()
+    assert [e["seq"] for e in page2["events"]] == [3, 4]
+    assert page2["next_after_seq"] == 4
+    page3 = (
+        await c.get(f"/games/g1/timeline?after_seq={page2['next_after_seq']}&limit=2")
+    ).json()
+    assert [e["seq"] for e in page3["events"]] == [5]
+    # A short page ends the walk.
+    assert page3["next_after_seq"] is None
+
+
+@pytest.mark.asyncio
+async def test_timeline_full_payload_is_reachable_per_event(client):
+    """The listing drops the bulk; the events read is where it comes back."""
+    c, _ = client
+    for offset in range(3):
+        await c.post(
+            "/games/g1/events",
+            json=_big_state_envelope("g1", offset, round_number=0, step_id="1.1"),
+        )
+    detail = (await c.get("/games/g1/events?after_seq=1&limit=1")).json()
+    (event,) = detail["events"]
+    assert event["seq"] == 2
+    assert len(event["payload"]["state"]["game"]["cardById"]) == 50
+
+
+@pytest.mark.asyncio
+async def test_timeline_unknown_game_is_empty(client):
+    c, _ = client
+    body = (await c.get("/games/missing/timeline")).json()
+    assert body == {"game_id": "missing", "events": [], "next_after_seq": None}
+
+
+@pytest.mark.asyncio
+async def test_timeline_limit_bounds_are_enforced(client):
+    c, _ = client
+    assert (await c.get("/games/g1/timeline?limit=0")).status_code == 422
+    assert (await c.get("/games/g1/timeline?limit=5001")).status_code == 422
+    assert (await c.get("/games/g1/timeline?after_seq=-1")).status_code == 422

@@ -427,6 +427,15 @@ export interface HistoryEvent {
     Record<string, JsonValue>;
   occurred_at: string;
   recorded_at: string;
+  /**
+   * False on a *timeline* entry, whose `payload` deliberately omits the
+   * unbounded fields (the raw DragnCards `state` bulk and an agent move's
+   * `conversation_context`) so a game's whole timeline is a small download.
+   * `payload.state.game` still carries `roundNumber`/`stepId`, which is what the
+   * round and phase labels need. Absent — and so implicitly complete — on an
+   * event read from the events endpoint.
+   */
+  payload_complete?: boolean;
 }
 
 export interface HistorySnapshot {

@@ -36,7 +36,11 @@ All settings have secret-free defaults; secrets live only in
 ## HTTP API
 
 - `POST /games/{game_id}/events` — HTTP backfill ingestion (same envelope).
-- `GET  /games/{game_id}/events?after_seq=&limit=` — events by ascending `seq`, paged.
+- `GET  /games/{game_id}/events?after_seq=&limit=` — events by ascending `seq`,
+  paged, payloads intact (`limit` max 1000).
+- `GET  /games/{game_id}/timeline?after_seq=&limit=` — the same events by
+  ascending `seq`, with the two unbounded payload fields removed (`limit` max
+  5000). See below.
 - `GET  /games/{game_id}/snapshots` — stored snapshots with their `seq`.
 - `POST /games/{game_id}/restore` — body `{ "target_seq": int, "mode": "new"|"in_place" }`.
 - `GET  /games/{game_id}/export` — the game's whole history as an NDJSON bundle.
@@ -44,6 +48,38 @@ All settings have secret-free defaults; secrets live only in
 - `GET  /health`, `GET /ready` — liveness/readiness (no secrets).
 
 Unknown games return empty results, not errors.
+
+### Which read to use
+
+`GET /games/{game_id}/events` serves complete payloads and is what the restore
+replay and the eval-service judge need. It is expensive to walk: a
+`game-service` event embeds the raw DragnCards room state, which is ~450-470 KB
+per event, so a whole game is tens of megabytes.
+
+`GET /games/{game_id}/timeline` is for listing a game — a transcript, a
+navigation tree, a round breakdown. It returns the same entry shape with
+`state` and `conversation_context` removed from each payload, plus
+`payload_complete: false` to say so, and keeps a projection of the state under
+`payload.state.game` holding `roundNumber` and `stepId` so round and phase
+labels still work. Pruning happens in SQL (`jsonb - 'key'` on Postgres,
+`json_remove` on sqlite), so the omitted values are never deserialized or
+re-serialized. Both reads share one cursor contract: pass `after_seq`, follow
+`next_after_seq` until it is absent.
+
+To get one event's complete payload after listing, use the events read's
+exclusive cursor: `GET /games/{game_id}/events?after_seq={seq-1}&limit=1`.
+
+Measured over loopback HTTP against game-shaped fixtures with realistic
+466 KiB state payloads (sqlite-backed; Postgres `jsonb` should be at least as
+fast, unverified):
+
+| read | 122 events | 400 events |
+| --- | --- | --- |
+| `GET /events?limit=1000` | 0.50 s, 26.2 MiB | 2.32 s, 86.0 MiB |
+| `GET /timeline?limit=5000` | 0.14 s, 82 KiB | 0.57 s, 262 KiB |
+| `GET /timeline` with nothing new after the last cursor | 1.3 ms, 58 B | 1.4 ms, 58 B |
+| one event's full payload | 7 ms, 428 KiB | 7 ms, 428 KiB |
+| `GET /games` | 8 ms | 8 ms |
 
 ## Event envelope
 

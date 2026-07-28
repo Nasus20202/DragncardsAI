@@ -1,6 +1,6 @@
 "use client";
 
-import { Chip } from "@heroui/react";
+import { Chip, Spinner } from "@heroui/react";
 import {
   Fragment,
   memo,
@@ -20,6 +20,17 @@ import {
 import { ConversationTranscript } from "@/features/history/components/conversation-transcript";
 import { RestoreControl } from "@/features/history/components/restore-control";
 import { BoardOpenControl } from "@/features/history/components/board-control";
+import { useEventDetail } from "@/features/history/lib/use-event-detail";
+import {
+  TranscriptWindow,
+  extendNewer,
+  extendOlder,
+  isAtNewest,
+  isAtOldest,
+  refitWindow,
+  tailWindow,
+  windowContaining,
+} from "@/features/history/lib/transcript-window";
 import {
   actionLabel,
   buildHeadingBySeq,
@@ -613,6 +624,15 @@ const TranscriptEvent = memo(function TranscriptEvent({
   // alternative to a setState-in-effect) by tracking the last-applied pulse in
   // state.
   const [bodyOpen, setBodyOpen] = useState(false);
+  // The listed event is a timeline entry, whose payload omits the raw game state
+  // and the agent conversation — which is exactly what the body shows. Fetch the
+  // complete event once, and only once the body is actually open.
+  const detail = useEventDetail(
+    board.gameId,
+    event.seq,
+    bodyOpen && event.payload_complete === false
+  );
+  const detailed = detail.event ?? event;
   const [lastSignalGen, setLastSignalGen] = useState(expandSignal.generation);
   if (lastSignalGen !== expandSignal.generation) {
     setLastSignalGen(expandSignal.generation);
@@ -780,10 +800,26 @@ const TranscriptEvent = memo(function TranscriptEvent({
 
         {isUser ? (
           <UserBody event={event} />
+        ) : bodyOpen && detail.isLoading ? (
+          <div
+            data-testid={`history-detail-loading-${event.seq}`}
+            className="flex items-center gap-2 text-xs text-default-400"
+          >
+            <Spinner size="sm" />
+            Loading event…
+          </div>
+        ) : bodyOpen && detail.error ? (
+          <div
+            data-testid={`history-detail-error-${event.seq}`}
+            role="alert"
+            className="text-xs text-danger"
+          >
+            {detail.error}
+          </div>
         ) : bodyOpen && isAgent ? (
-          <AgentBody event={event} />
+          <AgentBody event={detailed} />
         ) : bodyOpen ? (
-          <GameBody event={event} />
+          <GameBody event={detailed} />
         ) : null}
       </div>
 
@@ -879,6 +915,75 @@ export function HistoryTranscript({
     [primary, metaBySeq]
   );
 
+  /* ── Endless scroll ──────────────────────────────────────────────
+     Only a window of `primary` is rendered, opening at the newest end and
+     growing when the reader reaches an edge. Both edges are watched by an
+     IntersectionObserver on a sentinel, and the window is re-fitted (during
+     render, tracking the last-applied length in state) whenever the list length
+     changes under it — a search keystroke or an append from live play. */
+  const indexOfSeq = (seq: number | null) =>
+    seq == null ? -1 : primary.findIndex((event) => event.seq === seq);
+  const [window_, setWindow] = useState<TranscriptWindow>(() => {
+    // An initial selection (a deep link, or a game opened with a move already
+    // picked) has to be inside the opening window or there is nothing to scroll.
+    const opening = tailWindow(primary.length);
+    const index = indexOfSeq(selectedSeq);
+    return index < 0
+      ? opening
+      : windowContaining(opening, index, primary.length);
+  });
+  const [lastTotal, setLastTotal] = useState(primary.length);
+  if (lastTotal !== primary.length) {
+    setLastTotal(primary.length);
+    setWindow((current) => refitWindow(current, lastTotal, primary.length));
+  }
+  // A selection outside the rendered window has to bring the window with it — a
+  // round jump, or a navigation-tree click into a distant round. Adjusted during
+  // render (tracking the last-applied selection in state) rather than in an
+  // effect, matching how this file already reacts to the expand and reveal
+  // pulses; a setState inside an effect would cascade a second render.
+  const [lastSelected, setLastSelected] = useState(selectedSeq);
+  if (lastSelected !== selectedSeq) {
+    setLastSelected(selectedSeq);
+    const index = indexOfSeq(selectedSeq);
+    if (index >= 0) {
+      setWindow((current) => windowContaining(current, index, primary.length));
+    }
+  }
+  const visible = primary.slice(window_.start, window_.end);
+  const hasOlder = !isAtOldest(window_);
+  const hasNewer = !isAtNewest(window_, primary.length);
+  const olderSentinelRef = useRef<HTMLDivElement>(null);
+  const newerSentinelRef = useRef<HTMLDivElement>(null);
+  const showOlder = useCallback(() => setWindow(extendOlder), []);
+  const showNewer = useCallback(
+    () => setWindow((current) => extendNewer(current, primary.length)),
+    [primary.length]
+  );
+
+  useEffect(() => {
+    const older = olderSentinelRef.current;
+    const newer = newerSentinelRef.current;
+    const root = scrollRef.current;
+    if (!root || (!older && !newer)) return;
+    // `IntersectionObserver` is absent in jsdom and in older browsers; the
+    // explicit sentinel buttons remain the accessible fallback either way.
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          if (entry.target === older) showOlder();
+          else showNewer();
+        }
+      },
+      { root, rootMargin: "200px" }
+    );
+    if (older) observer.observe(older);
+    if (newer) observer.observe(newer);
+    return () => observer.disconnect();
+  }, [showOlder, showNewer, hasOlder, hasNewer]);
+
   const isNearBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return true;
@@ -898,8 +1003,13 @@ export function HistoryTranscript({
 
   const jumpToLatest = useCallback(() => {
     setIsLocked(true);
+    // The newest events may be outside the rendered window after a round jump,
+    // so returning to "latest" has to move the window, not just the scrollbar.
+    setWindow((current) =>
+      tailWindow(primary.length, Math.max(current.end - current.start, 1))
+    );
     scrollToBottom();
-  }, [scrollToBottom]);
+  }, [primary.length, scrollToBottom]);
 
   useEffect(() => {
     const prev = prevCountRef.current;
@@ -913,7 +1023,9 @@ export function HistoryTranscript({
 
   // Scroll the selected event into view on an explicit selection change (e.g. a
   // navigation-tree click). Guarded so it only fires when the selection truly
-  // changes, never re-running on re-render or fighting the auto-follow lock.
+  // changes, never re-running on re-render or fighting the auto-follow lock. It
+  // also runs once the window has caught up, since the element may not have been
+  // rendered when the selection first landed.
   useEffect(() => {
     if (selectedSeq == null) {
       lastScrolledSeqRef.current = null;
@@ -925,7 +1037,7 @@ export function HistoryTranscript({
     lastScrolledSeqRef.current = selectedSeq;
     suppressScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_GUARD_MS;
     el.scrollIntoView({ block: "center" });
-  }, [selectedSeq]);
+  }, [selectedSeq, window_]);
 
   if (events.length === 0) {
     return (
@@ -955,7 +1067,19 @@ export function HistoryTranscript({
               No events match “{searchQuery.trim()}”.
             </div>
           )}
-          {primary.map((event) => {
+          {hasOlder && (
+            <div ref={olderSentinelRef} className="flex justify-center">
+              <button
+                type="button"
+                data-testid="history-load-older"
+                onClick={showOlder}
+                className="rounded-full border border-default-200/60 px-3 py-1 text-xs text-default-500 transition-colors hover:bg-default-100 hover:text-foreground"
+              >
+                Show earlier events
+              </button>
+            </div>
+          )}
+          {visible.map((event) => {
             const meta = metaBySeq.get(event.seq) ?? {
               round: null,
               step: null,
@@ -1007,11 +1131,25 @@ export function HistoryTranscript({
               </Fragment>
             );
           })}
+          {hasNewer && (
+            <div ref={newerSentinelRef} className="flex justify-center">
+              <button
+                type="button"
+                data-testid="history-load-newer"
+                onClick={showNewer}
+                className="rounded-full border border-default-200/60 px-3 py-1 text-xs text-default-500 transition-colors hover:bg-default-100 hover:text-foreground"
+              >
+                Show later events
+              </button>
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
       </div>
 
-      {!isLocked && (
+      {/* Also offered while the window stops short of the newest event, which is
+          where a round jump leaves it even though the scrollbar is at the end. */}
+      {(!isLocked || hasNewer) && (
         <button
           data-testid="history-jump-to-latest"
           type="button"
