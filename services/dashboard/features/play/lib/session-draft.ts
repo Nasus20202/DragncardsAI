@@ -200,6 +200,39 @@ export function pickDefaultProviderModel(
 }
 
 /**
+ * Re-point a draft at a provider/model the user can actually use right now.
+ *
+ * Keeps the draft's own provider when that provider is working, clamping the
+ * model to the ones it currently offers; otherwise falls back to
+ * {@link pickDefaultProviderModel}. An empty {@link providers} list means the
+ * catalog has not been loaded (or failed to load), which is no evidence that the
+ * draft's provider is broken — the draft is then returned untouched so a
+ * degraded catalog cannot silently reset the user's provider and model.
+ */
+export function withUsableProviderModel(
+  config: DashboardConfig,
+  draft: SessionDraft,
+  providers: ProviderResponse[]
+): SessionDraft {
+  const current = providers.find(
+    (provider) => provider.provider_id === draft.providerId
+  );
+  if (current !== undefined && isWorking(current)) {
+    return {
+      ...draft,
+      modelName: clampModelToProvider(current, draft.modelName),
+    };
+  }
+
+  if (providers.length === 0) {
+    return draft;
+  }
+
+  const { providerId, modelName } = pickDefaultProviderModel(config, providers);
+  return { ...draft, providerId, modelName };
+}
+
+/**
  * Build the draft for a brand-new session. Carries forward the user's
  * last-used settings (provider, model, reasoning, skills, replay limits, and
  * advanced/MCP options) from {@link lastUsed} when available, falling back to
@@ -207,9 +240,8 @@ export function pickDefaultProviderModel(
  * the session name is always freshly generated.
  *
  * The carried provider/model is validated against the currently available
- * {@link providers}: when the prior provider is now unavailable or exposes no
- * usable model, the provider/model fall back to {@link pickDefaultProviderModel}
- * so a new session is never pinned to a broken provider.
+ * {@link providers} by {@link withUsableProviderModel} so a new session is never
+ * pinned to a broken provider.
  */
 export function createNewSessionDraft(
   config: DashboardConfig,
@@ -227,20 +259,7 @@ export function createNewSessionDraft(
     selectedSkills: [...lastUsed.selectedSkills],
   };
 
-  const carriedProvider = providers.find(
-    (provider) => provider.provider_id === carried.providerId
-  );
-  if (carriedProvider !== undefined && isWorking(carriedProvider)) {
-    // Clamp the carried model so a stale name the provider no longer offers
-    // can't pass through.
-    return {
-      ...carried,
-      modelName: clampModelToProvider(carriedProvider, carried.modelName),
-    };
-  }
-
-  const { providerId, modelName } = pickDefaultProviderModel(config, providers);
-  return { ...carried, providerId, modelName };
+  return withUsableProviderModel(config, carried, providers);
 }
 
 export function buildDraftFromSession(

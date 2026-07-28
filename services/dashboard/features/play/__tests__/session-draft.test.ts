@@ -179,6 +179,27 @@ describe("session draft helpers", () => {
     expect(draft.modelName).toBe("gpt-4o-mini");
   });
 
+  it("keeps the carried provider when the catalog has not loaded", () => {
+    // An empty catalog is no evidence that the carried provider is broken, so
+    // the last-used provider and model must survive a degraded `/providers`.
+    const draft = createNewSessionDraft(config, lastUsedAnthropic, []);
+
+    expect(draft.providerId).toBe("anthropic");
+    expect(draft.modelName).toBe("claude-3-5");
+  });
+
+  it("clamps the carried model to the ones the provider still offers", () => {
+    const draft = createNewSessionDraft(config, lastUsedAnthropic, [
+      provider({
+        provider_id: "anthropic",
+        models: ["claude-4", "claude-4-1"],
+      }),
+    ]);
+
+    expect(draft.providerId).toBe("anthropic");
+    expect(draft.modelName).toBe("claude-4");
+  });
+
   it("treats empty and zero replay inputs as unlimited", () => {
     expect(parseOptionalPositiveInteger("", "Recent message limit")).toBeNull();
     expect(

@@ -127,6 +127,7 @@ async def test_session_endpoints_return_404_for_missing_resources(app):
             "/sessions/missing/mcps/game-service",
             json={"enabled": True},
         )
+        delete_response = await client.delete("/sessions/missing")
 
     assert session_response.status_code == 404
     assert update_response.status_code == 404
@@ -134,6 +135,7 @@ async def test_session_endpoints_return_404_for_missing_resources(app):
     assert model_config_response.status_code == 404
     assert skill_response.status_code == 404
     assert mcp_enable_response.status_code == 404
+    assert delete_response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -251,3 +253,50 @@ async def test_session_tools_reflect_mcp_enablement_changes(app):
         tool["name"] for tool in tools_after_disable_response.json()["tools"]
     }
     assert "game-service_next_step" not in tools_after_disable_names
+
+
+@pytest.mark.asyncio
+async def test_delete_session_removes_it_and_its_history(app):
+    """`DELETE /sessions/{id}` is a hard delete, not the terminate it replaced."""
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_id = (await client.post("/sessions", json={"name": "doomed"})).json()[
+            "session"
+        ]["id"]
+        keeper_id = (await client.post("/sessions", json={"name": "keeper"})).json()[
+            "session"
+        ]["id"]
+        await client.put(
+            f"/sessions/{session_id}/model-config",
+            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+        )
+        await client.post(
+            f"/sessions/{session_id}/skills", json={"skill_name": "test-skill"}
+        )
+        job_id = (
+            await client.post(
+                f"/sessions/{session_id}/prompts", json={"prompt": "hello"}
+            )
+        ).json()["job"]["id"]
+
+        # A queued job must not block the delete: cancellation is requested first.
+        delete_response = await client.delete(f"/sessions/{session_id}")
+        get_response = await client.get(f"/sessions/{session_id}")
+        job_response = await client.get(f"/jobs/{job_id}")
+        list_response = await client.get("/sessions")
+        repeat_response = await client.delete(f"/sessions/{session_id}")
+        keeper_response = await client.get(f"/sessions/{keeper_id}")
+
+    assert delete_response.status_code == 204
+    assert delete_response.content == b""
+    # The session, and the transcript hanging off it, are gone for good.
+    assert get_response.status_code == 404
+    assert job_response.status_code == 404
+    listed_ids = [item["id"] for item in list_response.json()["sessions"]]
+    assert session_id not in listed_ids
+    # Deleting twice is a 404, not a crash.
+    assert repeat_response.status_code == 404
+    # Unrelated sessions survive.
+    assert keeper_response.status_code == 200
+    assert keeper_id in listed_ids

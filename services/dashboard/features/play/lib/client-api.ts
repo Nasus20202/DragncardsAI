@@ -277,6 +277,18 @@ export async function terminateSession(
   ).session;
 }
 
+/**
+ * Permanently remove a session and everything recorded under it. The
+ * orchestrator cancels any in-flight job before deleting, so this also covers a
+ * session that is still executing.
+ */
+export async function deleteSession(sessionId: string) {
+  await sendNoContent(
+    `/api/proxy/orchestrator/sessions/${sessionId}`,
+    "DELETE"
+  );
+}
+
 export async function submitPrompt(
   sessionId: string,
   prompt: string

@@ -12,10 +12,13 @@ import {
   compareJobsOldestFirst,
   listUnresolvedSubagentJobIds,
 } from "@/features/play/lib/play-session-events";
+import { readLastUsedDraft } from "@/features/play/lib/last-used-draft";
 import {
   buildDraftFromSession,
   createDefaultDraft,
-  pickDefaultProviderModel,
+  createNewSessionDraft,
+  isWorking,
+  withUsableProviderModel,
 } from "@/features/play/lib/session-draft";
 import { readSelectedSessionIdFromUrl } from "@/features/play/lib/workspace-state";
 import {
@@ -139,32 +142,28 @@ export function usePlaySessionLoader({
 
       setProviders(loadedProviders);
 
-      // Re-seed the selectors with a provider the user can actually use, but
-      // only while the draft still holds the untouched configuration defaults
-      // and no session has committed its own model: a user edit or a loaded
-      // session that landed first must win.
+      // Re-point the selectors at a provider the user can actually use. This
+      // runs only while no session has committed its own model, so a loaded
+      // session that landed first always wins; before that the draft holds
+      // either the configuration defaults or the restored last-used settings,
+      // and both need validating against the catalog that just arrived.
       setDraft((current) => {
-        if (
-          !current ||
-          committedModelRef.current !== null ||
-          current.providerId !== nextConfig.defaultProviderId ||
-          current.modelName !== nextConfig.defaultModelName
-        ) {
+        if (!current || committedModelRef.current !== null) {
           return current;
         }
-        const { providerId, modelName } = pickDefaultProviderModel(
-          nextConfig,
-          loadedProviders
-        );
-        return { ...current, providerId, modelName };
+        return withUsableProviderModel(nextConfig, current, loadedProviders);
       });
 
-      const unavailableProviders = loadedProviders
-        .filter((provider) => provider.available === false)
+      // A provider without an API key answers the model listing successfully but
+      // with an empty list, so it reports `available: true` while being unusable.
+      // Judge usability the same way the selectors do — `isWorking` — otherwise
+      // the most common breakage produces no notice at all.
+      const unusableProviders = loadedProviders
+        .filter((provider) => !isWorking(provider))
         .map((provider) => provider.provider_id);
       setProvidersNotice(
-        unavailableProviders.length > 0
-          ? `Unavailable provider${unavailableProviders.length > 1 ? "s" : ""}: ${unavailableProviders.join(", ")}.`
+        unusableProviders.length > 0
+          ? `No models available from ${unusableProviders.join(", ")} — check their API keys in Bifrost. The remaining providers are unaffected.`
           : null
       );
     }
@@ -201,10 +200,17 @@ export function usePlaySessionLoader({
         sessionsResult.status === "fulfilled" ? sessionsResult.value : [];
       setSessions(nextSessions);
 
-      // Seed the draft from configuration defaults so the workspace renders
-      // immediately; `applyProviders` refines the provider/model once the
-      // catalog arrives.
-      setDraft(createDefaultDraft(nextConfig));
+      // Seed the draft so the workspace renders immediately, preferring the
+      // settings the user last committed in this browser over the configuration
+      // defaults; `applyProviders` refines the provider/model once the catalog
+      // arrives, and selecting a session replaces the draft with that session's
+      // own settings.
+      const lastUsed = readLastUsedDraft();
+      setDraft(
+        lastUsed === null
+          ? createDefaultDraft(nextConfig)
+          : createNewSessionDraft(nextConfig, lastUsed)
+      );
 
       // Apply the catalog whenever it lands — never before the rest of the UI.
       void providersPromise.then((loadedProviders) => {

@@ -28,6 +28,13 @@ import { ToggleInfoRow } from "@/features/shared/components/toggle-info-row";
 export interface FieldItem {
   value: string;
   label: string;
+  /**
+   * Renders the option greyed out and unpickable. Used to keep a choice
+   * visible while explaining why it cannot be selected — a provider with no
+   * models, for instance — rather than hiding it and leaving the user
+   * wondering where it went.
+   */
+  disabled?: boolean;
 }
 
 /** Small-caps caption above a field. */
@@ -180,6 +187,7 @@ export function SelectField({
               <ListBoxItem
                 key={item.value}
                 id={item.value}
+                isDisabled={item.disabled}
                 textValue={item.label}
               >
                 {item.label}

@@ -21,6 +21,9 @@ const JOB_STATE_LABELS = {
 
 type VisibleJobStateKey = keyof typeof JOB_STATE_LABELS | "idle";
 
+/** Keys that scroll the transcript upwards, i.e. away from the newest output. */
+const UPWARD_SCROLL_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
+
 /* ── Sub-renderers ───────────────────────────────────────────────── */
 
 /**
@@ -346,35 +349,67 @@ export function PlayTranscript({
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // VSCode-style scroll lock: auto-scroll only while the user is parked at (or
-  // near) the bottom. Scrolling up unlocks it; "Jump to latest" re-locks it.
+  const contentRef = useRef<HTMLDivElement>(null);
+  // VSCode-style scroll lock: incoming output is followed only while the lock is
+  // engaged. Any user-initiated upward scroll releases it so streaming tokens
+  // stop yanking the viewport; reaching the bottom again — or pressing the
+  // follow control — re-engages it.
   const [isLocked, setIsLocked] = useState(true);
   // While a programmatic (auto-follow / jump) scroll is animating, the
   // intermediate scroll positions are far from the bottom and would otherwise
   // flip isLocked off mid-animation. Suppress onScroll handling until this
   // timestamp to keep the follow locked.
   const suppressScrollUntilRef = useRef(0);
+  const touchStartYRef = useRef<number | null>(null);
   const latestJobStatus = jobs.at(-1)?.status ?? null;
 
-  // Treat anything within this many pixels of the bottom as "at the bottom" to
-  // tolerate sub-pixel rounding and smooth-scroll lag.
-  const NEAR_BOTTOM_THRESHOLD_PX = 80;
+  // Tolerance for "the viewport is at the bottom", covering sub-pixel rounding
+  // of fractional scroll heights only — a deliberate scroll away from the
+  // bottom must always release the lock.
+  const AT_BOTTOM_EPSILON_PX = 8;
   // Smooth scrolls fire no reliable "finished" event, so ignore onScroll for a
   // short window after starting one.
   const PROGRAMMATIC_SCROLL_GUARD_MS = 600;
+  // Ignore incidental finger jitter before treating a touch drag as a scroll.
+  const TOUCH_DRAG_THRESHOLD_PX = 8;
 
-  const isNearBottom = useCallback(() => {
+  const isAtBottom = useCallback(() => {
     const el = scrollRef.current;
     if (!el) {
       return true;
     }
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    return distanceFromBottom <= NEAR_BOTTOM_THRESHOLD_PX;
+    return distanceFromBottom <= AT_BOTTOM_EPSILON_PX;
   }, []);
 
   const scrollToBottom = useCallback(() => {
     suppressScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_GUARD_MS;
+    const el = scrollRef.current;
+    // Scroll the container rather than the sentinel: `scrollIntoView` aligns the
+    // sentinel's own box, which leaves the container's bottom padding below the
+    // fold and reads back as "not at the bottom".
+    if (el && typeof el.scrollTo === "function") {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      return;
+    }
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, []);
+
+  /**
+   * Release the follow lock in response to a user gesture. This must win even
+   * mid-animation: during streaming the auto-follow re-arms the programmatic
+   * scroll guard on every token, so a plain onScroll handler would never see the
+   * user's scroll. Dropping the guard and pinning the container at its current
+   * offset also cancels the in-flight smooth scroll, leaving the viewport where
+   * the user put it.
+   */
+  const releaseFollow = useCallback(() => {
+    suppressScrollUntilRef.current = 0;
+    const el = scrollRef.current;
+    if (el && typeof el.scrollTo === "function") {
+      el.scrollTo({ top: el.scrollTop });
+    }
+    setIsLocked(false);
   }, []);
 
   const handleScroll = useCallback(() => {
@@ -383,8 +418,49 @@ export function PlayTranscript({
     if (Date.now() < suppressScrollUntilRef.current) {
       return;
     }
-    setIsLocked(isNearBottom());
-  }, [isNearBottom]);
+    setIsLocked(isAtBottom());
+  }, [isAtBottom]);
+
+  const handleWheel = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      if (event.deltaY < 0) {
+        releaseFollow();
+      }
+    },
+    [releaseFollow]
+  );
+
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (UPWARD_SCROLL_KEYS.has(event.key)) {
+        releaseFollow();
+      }
+    },
+    [releaseFollow]
+  );
+
+  const handleTouchStart = useCallback(
+    (event: React.TouchEvent<HTMLDivElement>) => {
+      touchStartYRef.current = event.touches[0]?.clientY ?? null;
+    },
+    []
+  );
+
+  const handleTouchMove = useCallback(
+    (event: React.TouchEvent<HTMLDivElement>) => {
+      const startY = touchStartYRef.current;
+      const currentY = event.touches[0]?.clientY;
+      if (startY === null || currentY === undefined) {
+        return;
+      }
+      // Dragging the finger downwards scrolls the content up, away from the
+      // newest output.
+      if (currentY - startY > TOUCH_DRAG_THRESHOLD_PX) {
+        releaseFollow();
+      }
+    },
+    [releaseFollow]
+  );
 
   const jumpToLatest = useCallback(() => {
     setIsLocked(true);
@@ -424,6 +500,32 @@ export function PlayTranscript({
     }
     scrollToBottom();
   }, [jobs, isLocked, scrollToBottom]);
+
+  // The transcript resizes for reasons the job list does not capture: markdown
+  // finishes laying out, and reasoning blocks auto-collapse once a response
+  // lands. Watching the content box keeps both directions honest — while locked,
+  // late growth is followed instead of leaving the viewport stranded short of the
+  // bottom; while released, content shrinking back within one viewport re-engages
+  // rather than stranding the follow control with nowhere to scroll to. A
+  // `scroll` event cannot stand in here: browsers do not reliably fire one when
+  // they clamp `scrollTop` for shrinking content.
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const observer = new ResizeObserver(() => {
+      if (isLocked) {
+        if (!isAtBottom()) {
+          scrollToBottom();
+        }
+      } else if (isAtBottom()) {
+        setIsLocked(true);
+      }
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [isAtBottom, isLocked, scrollToBottom]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -474,9 +576,13 @@ export function PlayTranscript({
         <div
           ref={scrollRef}
           className="h-full overflow-y-auto"
+          onKeyDown={handleKeyDown}
           onScroll={handleScroll}
+          onTouchMove={handleTouchMove}
+          onTouchStart={handleTouchStart}
+          onWheel={handleWheel}
         >
-          <div className="flex min-h-full flex-col">
+          <div ref={contentRef} className="flex min-h-full flex-col">
             {/* Spacer pushes messages to the bottom when content is short */}
             {selectedSession && jobs.length > 0 && <div className="flex-1" />}
             <div
@@ -500,17 +606,19 @@ export function PlayTranscript({
           </div>
         </div>
 
-        {/* Jump-to-latest control — shown only when scroll lock is released */}
+        {/* Follow control — shown only while the scroll lock is released, and
+            doubles as the jump-to-latest affordance */}
         {!isLocked && selectedSession && jobs.length > 0 && (
           <button
             data-testid="jump-to-latest"
             type="button"
-            aria-label="Jump to latest"
+            aria-label="Resume following the latest output"
+            title="Resume following the latest output"
             className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 rounded-full border border-default-200/60 bg-background/90 px-3 py-1.5 text-xs font-medium text-default-600 shadow-lg backdrop-blur-sm transition-colors hover:bg-default-100 hover:text-foreground"
             onClick={jumpToLatest}
           >
             <span aria-hidden="true">↓</span>
-            Jump to latest
+            Follow latest
           </button>
         )}
       </div>

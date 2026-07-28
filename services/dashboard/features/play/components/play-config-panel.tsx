@@ -16,6 +16,7 @@ import {
   TextInputField,
   TextareaField,
 } from "@/features/shared/components/form-fields";
+import { isWorking } from "@/features/play/lib/session-draft";
 import { McpSection } from "@/features/play/components/mcp-section";
 
 function ReasoningSection({
@@ -140,10 +141,19 @@ export function PlayConfigPanel({
 }: Props) {
   if (!isOpen) return null;
 
-  const providerItems = providers.map((p) => ({
-    value: p.provider_id,
-    label: p.provider_id,
-  }));
+  // A provider with no models — the state a missing API key produces — cannot be
+  // configured: its model list is empty, so picking it would strand the user on a
+  // disabled model picker holding another provider's model. Such providers stay
+  // listed and labelled (so the reason is visible, and a session already pinned
+  // to one still shows its provider) but cannot be selected.
+  const providerItems = providers.map((p) => {
+    const usable = isWorking(p);
+    return {
+      value: p.provider_id,
+      label: usable ? p.provider_id : `${p.provider_id} (no models)`,
+      disabled: !usable,
+    };
+  });
   const modelItems = modelOptions.length
     ? modelOptions.map((m) => ({ value: m, label: m }))
     : [{ value: draft.modelName, label: draft.modelName }];

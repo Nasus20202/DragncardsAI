@@ -3,6 +3,7 @@ import {
   cancelJob,
   compactSession,
   createSession,
+  deleteSession,
   getJob,
   getSession,
   listSessionMcps,
@@ -12,6 +13,7 @@ import {
   terminateSession,
   updateSession,
 } from "@/features/play/lib/client-api";
+import { writeLastUsedDraft } from "@/features/play/lib/last-used-draft";
 import { mergeJob } from "@/features/play/lib/play-session-events";
 import {
   applyReasoningToGatewayOptions,
@@ -136,6 +138,10 @@ export function usePlaySessionActions({
         await addSkill(created.id, skillName);
       }
 
+      // The settings that just created a session are the ones a later session
+      // should inherit, including after a page reload.
+      writeLastUsedDraft(nextDraft);
+
       await refreshSessions(false);
       persistSelectedSessionId(created.id);
       setStatusText("Session created");
@@ -223,6 +229,7 @@ export function usePlaySessionActions({
       setSelectedSession(hydratedSession);
       const savedDraft = buildDraftFromSession(config, hydratedSession);
       setDraft(savedDraft);
+      writeLastUsedDraft(savedDraft);
       committedModelRef.current = {
         providerId: savedDraft.providerId,
         modelName: savedDraft.modelName,
@@ -290,11 +297,14 @@ export function usePlaySessionActions({
     async (sessionId: string) => {
       setIsBusy(true);
       setErrorText(null);
-      setStatusText("Removing session...");
+      setStatusText("Deleting session...");
 
       try {
-        await terminateSession(sessionId);
-        // Refresh the shared sessions state so the terminated session actually
+        // A true delete, not a terminate: the orchestrator cancels any in-flight
+        // job and then removes the session with its configuration and transcript,
+        // so it never comes back in the list.
+        await deleteSession(sessionId);
+        // Refresh the shared sessions state so the deleted session actually
         // leaves the sidebar; reuse refreshSessions rather than fetching and
         // setting state separately.
         const remaining = await refreshSessions();
@@ -310,12 +320,12 @@ export function usePlaySessionActions({
             setSelectedSession(null);
           }
         }
-        setStatusText("Session removed");
+        setStatusText("Session deleted");
       } catch (error) {
         setErrorText(
-          error instanceof Error ? error.message : "Failed to remove session"
+          error instanceof Error ? error.message : "Failed to delete session"
         );
-        setStatusText("Remove failed");
+        setStatusText("Delete failed");
       } finally {
         setIsBusy(false);
       }

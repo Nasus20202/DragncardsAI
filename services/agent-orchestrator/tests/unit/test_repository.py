@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
 from agent_orchestrator.storage.db import create_engine, create_session_factory
 from agent_orchestrator.storage.migrations import ensure_schema
@@ -359,3 +360,140 @@ async def test_request_cancel_propagates_to_child_jobs(repository: Repository):
     assert cancelled_running is not None
     assert cancelled_running.cancellation_requested_at is not None
     assert await repository.get_job_cancellation_requested(queued_child.id) is True
+
+
+@pytest.mark.asyncio
+async def test_delete_session_removes_every_dependent_row(repository: Repository):
+    """A hard delete must leave no rows behind in any session-scoped table.
+
+    The child rows are asserted through raw counts rather than the repository's
+    own readers so the test would still catch an orphan that a filtered query
+    hides. SQLite does not enforce the declared ON DELETE CASCADE constraints,
+    which is exactly why the repository deletes each table explicitly.
+    """
+    session = await _create_session_with_model(repository, "deletable")
+    await repository.add_skill_registry(
+        name="delete-skill",
+        skill_path="/tmp/delete-skill",
+        description=None,
+        metadata_json={},
+    )
+    await repository.enable_skill_for_session(session.id, "delete-skill", True)
+    await repository.add_mcp_registry(
+        name="delete-mcp",
+        transport="streamable-http",
+        server_url="http://localhost:9/mcp",
+        headers_json={},
+    )
+    await repository.enable_mcp_for_session(session.id, "delete-mcp", True)
+    await repository.upsert_player_config(
+        session.id,
+        "player1",
+        display_name="Player One",
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
+        skills=["delete-skill"],
+    )
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="hello", metadata_json={}, max_attempts=1
+    )
+    assert job is not None
+    await repository.store_output(job.id, "some output")
+    await repository.create_compaction_record(
+        session.id,
+        summary_text="summary",
+        covers_up_to_job_id=job.id,
+        tokens_used=12,
+    )
+
+    # A session that keeps its own rows, to prove the delete is scoped.
+    survivor = await _create_session_with_model(repository, "survivor")
+    survivor_job = await repository.enqueue_prompt_job(
+        survivor.id, prompt="keep me", metadata_json={}, max_attempts=1
+    )
+    assert survivor_job is not None
+
+    assert await repository.delete_session(session.id) is True
+
+    assert await repository.get_session(session.id) is None
+    assert await repository.get_job(job.id) is None
+
+    tables = (
+        "session_model_configs",
+        "session_enabled_skills",
+        "session_enabled_mcps",
+        "session_player_configs",
+        "jobs",
+        "job_events",
+        "compaction_records",
+    )
+    async with repository._session_factory() as db:
+        assert (
+            await db.scalar(
+                text("SELECT COUNT(*) FROM agent_sessions WHERE id = :sid"),
+                {"sid": session.id},
+            )
+            == 0
+        )
+        for table in tables:
+            remaining = await db.scalar(
+                text(
+                    f"SELECT COUNT(*) FROM {table} WHERE session_id = :sid"
+                ),  # noqa: S608
+                {"sid": session.id},
+            )
+            assert remaining == 0, f"{table} still holds rows for the deleted session"
+        outputs = await db.scalar(
+            text("SELECT COUNT(*) FROM job_outputs WHERE job_id = :jid"),
+            {"jid": job.id},
+        )
+        assert outputs == 0
+        # The registries are global and must survive.
+        assert (
+            await db.scalar(
+                text(
+                    "SELECT COUNT(*) FROM skill_registries WHERE name = 'delete-skill'"
+                )
+            )
+            == 1
+        )
+        assert (
+            await db.scalar(
+                text("SELECT COUNT(*) FROM mcp_registries WHERE name = 'delete-mcp'")
+            )
+            == 1
+        )
+
+    # The unrelated session is untouched.
+    assert await repository.get_session(survivor.id) is not None
+    assert await repository.get_job(survivor_job.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_session_reports_a_missing_session(repository: Repository):
+    assert await repository.delete_session("missing") is False
+
+
+@pytest.mark.asyncio
+async def test_delete_session_detaches_subagent_children_in_other_sessions(
+    repository: Repository,
+):
+    """Child jobs living in another session must not keep a dangling parent id."""
+    parent_session = await _create_session_with_model(repository, "parent")
+    child_session = await _create_session_with_model(repository, "child")
+    parent_job = await repository.enqueue_prompt_job(
+        parent_session.id, prompt="parent", metadata_json={}, max_attempts=1
+    )
+    child_job = await repository.enqueue_prompt_job(
+        child_session.id, prompt="child", metadata_json={}, max_attempts=1
+    )
+    assert parent_job is not None and child_job is not None
+    await repository.set_parent_job_id(child_job.id, parent_job.id)
+
+    assert await repository.delete_session(parent_session.id) is True
+
+    surviving_child = await repository.get_job(child_job.id)
+    assert surviving_child is not None
+    assert surviving_child.parent_job_id is None

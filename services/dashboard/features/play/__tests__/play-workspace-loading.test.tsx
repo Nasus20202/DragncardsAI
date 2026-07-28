@@ -121,8 +121,54 @@ describe("PlayWorkspace initial loading", () => {
       "claude-3-5-haiku"
     );
     expect(screen.getByTestId("providers-notice")).toHaveTextContent(
-      /unavailable provider: openai/i
+      /no models available from openai/i
     );
+  });
+
+  it("names providers that answer with an empty model list in the notice", async () => {
+    api.listSessions.mockResolvedValue([]);
+    // The state a missing API key produces: the listing succeeds, so the
+    // provider reports itself available, but it offers nothing to select.
+    api.listProviders.mockResolvedValue([
+      {
+        provider_id: "openai",
+        model_prefix: "openai",
+        models: [],
+        available: true,
+        error: null,
+      },
+      {
+        provider_id: "anthropic",
+        model_prefix: "anthropic",
+        models: ["claude-3-5-haiku"],
+        available: true,
+        error: null,
+      },
+    ]);
+
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("providers-notice")).toHaveTextContent(
+        /no models available from openai/i
+      )
+    );
+    // The working provider is not named, and it is what the selectors default to.
+    expect(screen.getByTestId("providers-notice")).not.toHaveTextContent(
+      "anthropic,"
+    );
+    expect(screen.getByTestId("draft-provider")).toHaveTextContent("anthropic");
+  });
+
+  it("shows no notice when every provider offers models", async () => {
+    api.listSessions.mockResolvedValue([]);
+
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("draft-provider")).toHaveTextContent("openai")
+    );
+    expect(screen.queryByTestId("providers-notice")).toBeNull();
   });
 
   it("keeps providers degradation graceful without a fatal error", async () => {
