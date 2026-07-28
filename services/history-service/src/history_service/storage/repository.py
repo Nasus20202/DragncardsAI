@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import json
 import zlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, insert, select, text
+from sqlalchemy import JSON, delete, func, insert, literal, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.types import Text
 
 from history_service.schemas.envelope import (
     EventEnvelope,
@@ -72,6 +75,23 @@ class DuplicateImportRecordError(Exception):
 # whose every event embeds a full board state, while keeping the round trips to
 # the database proportional to the bundle size rather than to its event count.
 IMPORT_INSERT_CHUNK = 100
+
+#: Payload fields a *timeline* listing omits because they are unbounded in size.
+#: ``state`` is the raw DragnCards room state, measured at ~450-470 KB per
+#: ``game-service`` event (see ``eval_service.judge.state_view``), and
+#: ``conversation_context`` is an agent move's whole captured conversation. A
+#: few hundred events of either is tens of megabytes, so a listing that carries
+#: them cannot be fast no matter how it is indexed. Both stay reachable per
+#: event through ``GET /games/{game_id}/events``.
+TIMELINE_OMITTED_PAYLOAD_KEYS = ("state", "conversation_context")
+
+#: The two scalars kept out of the omitted ``state``: they are what the round and
+#: phase labels are derived from (DragnCards ``roundNumber`` counts *completed*
+#: rounds and ``stepId`` is a dotted Marvel Champions step id). They are read as
+#: text and re-attached under ``payload["state"]["game"]``, i.e. a projection of
+#: the recorded state with its shape preserved, never a substitute for it.
+_STATE_ROUND_PATH = ("state", "game", "roundNumber")
+_STATE_STEP_PATH = ("state", "game", "stepId")
 
 
 def _advisory_lock_key(game_id: str) -> int:
@@ -230,6 +250,53 @@ class Repository:
                 .limit(limit)
             )
             return [_to_stored_event(row) for row in result.scalars().all()]
+
+    async def list_event_summaries(
+        self,
+        game_id: str,
+        *,
+        after_seq: int = 0,
+        limit: int = 100,
+    ) -> list[StoredEvent]:
+        """Events by ascending ``seq`` with the unbounded payload fields removed.
+
+        The pruning happens *in the database* rather than in Python, which is the
+        whole point: the omitted fields are never deserialized into Python
+        objects and never serialized into a response, so the cost of a page stops
+        scaling with the size of the recorded game states. Measured on a
+        400-event game with realistic ~466 KiB states, a page shrinks from 86 MiB
+        to ~130 KiB.
+
+        Each returned event is a :class:`StoredEvent` whose ``payload`` carries
+        every field except :data:`TIMELINE_OMITTED_PAYLOAD_KEYS`, plus a
+        two-scalar projection of ``state`` (see :data:`_STATE_ROUND_PATH`). It is
+        deliberately the same type the full read returns, so callers render one
+        shape; ``GET /games/{game_id}/events`` is where a complete payload comes
+        from.
+        """
+        async with self._session_factory() as session:
+            dialect = session.bind.dialect.name
+            result = await session.execute(
+                select(
+                    EventRow.event_id,
+                    EventRow.game_id,
+                    EventRow.seq,
+                    EventRow.envelope_version,
+                    EventRow.actor,
+                    EventRow.event_type,
+                    EventRow.occurred_at,
+                    EventRow.recorded_at,
+                    EventRow.idempotency_key,
+                    EventRow.producer_offset,
+                    _pruned_payload(dialect).label("payload"),
+                    _json_text_path(_STATE_ROUND_PATH).label("round_number"),
+                    _json_text_path(_STATE_STEP_PATH).label("step_id"),
+                )
+                .where(EventRow.game_id == game_id, EventRow.seq > after_seq)
+                .order_by(EventRow.seq.asc())
+                .limit(limit)
+            )
+            return [_summary_to_stored_event(row) for row in result.all()]
 
     async def list_games(self) -> list[GameHistorySummary]:
         """Summarize every game with recorded history in one grouped query.
@@ -554,6 +621,104 @@ class Repository:
             deleted_events=events_result.rowcount or 0,
             deleted_snapshots=snapshots_result.rowcount or 0,
         )
+
+
+def _pruned_payload(dialect: str) -> ColumnElement[Any]:
+    """``payload_json`` minus :data:`TIMELINE_OMITTED_PAYLOAD_KEYS`.
+
+    Postgres removes a key from ``jsonb`` with the ``-`` operator (the column is
+    ``JSONB``); sqlite, which stores JSON as text, uses ``json_remove``. Both are
+    single-pass and neither needs the removed values to leave the database.
+    """
+    expression: ColumnElement[Any] = EventRow.payload_json
+    if dialect == "postgresql":
+        for key in TIMELINE_OMITTED_PAYLOAD_KEYS:
+            expression = expression.op("-", return_type=JSON)(literal(key, Text))
+        return expression
+    return func.json_remove(
+        expression,
+        *(f"$.{key}" for key in TIMELINE_OMITTED_PAYLOAD_KEYS),
+        type_=JSON,
+    )
+
+
+def _json_text_path(path: tuple[str, ...]) -> ColumnElement[Any]:
+    """A nested ``payload_json`` value read as text.
+
+    Text rather than a typed cast on purpose: ``stepId`` is a dotted string
+    (``"0.1"``) that a JSON-typed read would silently turn into the float ``0.1``,
+    and an integer cast of a malformed value would fail the whole query instead of
+    yielding a missing label. Coercion happens in Python, where it can be lenient.
+    """
+    expression: Any = EventRow.payload_json
+    for key in path:
+        expression = expression[key]
+    return expression.as_string()
+
+
+def _as_json_object(value: Any) -> dict[str, Any]:
+    """A payload read back from a pruning expression, as a dict.
+
+    Drivers differ on whether a JSON-typed *expression* (as opposed to a column)
+    comes back deserialized, so accept either and normalize. A payload that is
+    not an object at all is reported as empty rather than raising: a listing must
+    not fail because one recorded row is odd.
+    """
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, (str, bytes, bytearray)):
+        try:
+            decoded = json.loads(value)
+        except TypeError, ValueError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
+
+def _as_round_number(value: Any) -> int | None:
+    """A round number read back as text, or None when it is missing or unusable.
+
+    Lenient by design: a round label is worth losing over a malformed value, a
+    listing is not. ``float`` is tried second because sqlite has no VARCHAR
+    affinity and can hand a JSON number straight back as one.
+    """
+    if value is None:
+        return None
+    text_value = str(value)
+    try:
+        return int(text_value)
+    except ValueError:
+        pass
+    try:
+        return int(float(text_value))
+    except ValueError:
+        return None
+
+
+def _summary_to_stored_event(row: Any) -> StoredEvent:
+    payload = _as_json_object(row.payload)
+    round_number = _as_round_number(row.round_number)
+    step_id = None if row.step_id is None else str(row.step_id)
+    if round_number is not None or step_id is not None:
+        game: dict[str, Any] = {}
+        if round_number is not None:
+            game["roundNumber"] = round_number
+        if step_id is not None:
+            game["stepId"] = step_id
+        payload["state"] = {"game": game}
+    return StoredEvent(
+        event_id=row.event_id,
+        game_id=row.game_id,
+        seq=row.seq,
+        envelope_version=row.envelope_version,
+        actor=row.actor,
+        event_type=row.event_type,
+        payload=payload,
+        occurred_at=row.occurred_at,
+        recorded_at=row.recorded_at,
+        idempotency_key=row.idempotency_key,
+        producer_offset=_coerce_offset(row.producer_offset),
+    )
 
 
 def _as_utc(value: datetime) -> datetime:

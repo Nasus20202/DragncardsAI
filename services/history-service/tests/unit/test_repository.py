@@ -204,3 +204,125 @@ async def test_evaluation_event_without_player_round_trips(repository):
     events = await repository.list_events("g1")
     assert len(events) == 1
     assert "player" not in events[0].payload
+
+
+# -- timeline summaries -----------------------------------------------------
+
+
+def _state_payload(round_number: int, step_id: str, *, cards: int = 3) -> dict:
+    """A ``game-service`` payload shaped like a real recording, in miniature."""
+    return {
+        "state": {
+            "deltas": [{"i": i} for i in range(cards)],
+            "game": {
+                "roundNumber": round_number,
+                "stepId": step_id,
+                "mode": "in progress",
+                "cardById": {f"card-{i}": {"id": f"card-{i}"} for i in range(cards)},
+            },
+        },
+        "state_digest": "abc123",
+        "status": "in progress",
+        "action_path": "actions",
+        "action_args": {"type": "move_card"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_summary_omits_state_bulk_but_keeps_round_and_step(repository):
+    await repository.commit_event(
+        make_envelope("g1", producer_offset=0, payload=_state_payload(2, "0.1"))
+    )
+    (summary,) = await repository.list_event_summaries("g1")
+    # The round/step projection survives, the bulk does not.
+    assert summary.payload["state"] == {"game": {"roundNumber": 2, "stepId": "0.1"}}
+    assert "cardById" not in summary.payload["state"]["game"]
+    assert "deltas" not in summary.payload["state"]
+    # Everything else in the payload is carried through verbatim.
+    assert summary.payload["status"] == "in progress"
+    assert summary.payload["state_digest"] == "abc123"
+    assert summary.payload["action_args"] == {"type": "move_card"}
+
+
+@pytest.mark.asyncio
+async def test_summary_step_id_stays_a_dotted_string(repository):
+    """``0.0`` and ``0.1`` are step *ids*, not numbers; they must not become floats."""
+    for offset, step in enumerate(("0.0", "0.1", "1.1", "2.5")):
+        await repository.commit_event(
+            make_envelope("g1", producer_offset=offset, payload=_state_payload(0, step))
+        )
+    summaries = await repository.list_event_summaries("g1")
+    steps = [s.payload["state"]["game"]["stepId"] for s in summaries]
+    assert steps == ["0.0", "0.1", "1.1", "2.5"]
+
+
+@pytest.mark.asyncio
+async def test_summary_keeps_round_zero_distinct_from_missing(repository):
+    """Round 0 is the whole first round of play, so 0 must not read as absent."""
+    await repository.commit_event(
+        make_envelope("g1", producer_offset=0, payload=_state_payload(0, "1.1"))
+    )
+    (summary,) = await repository.list_event_summaries("g1")
+    assert summary.payload["state"]["game"]["roundNumber"] == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_omits_agent_conversation_but_keeps_the_decision(repository):
+    await repository.commit_event(
+        make_envelope(
+            "g1",
+            actor="agent",
+            producer_offset=0,
+            payload={
+                "intended_action": "move_card",
+                "reasoning": "it blocks the villain",
+                "arguments": {"card_id": "card-1"},
+                "conversation_context": [{"role": "user", "content": "x" * 5000}],
+            },
+        )
+    )
+    (summary,) = await repository.list_event_summaries("g1")
+    assert "conversation_context" not in summary.payload
+    assert summary.payload["intended_action"] == "move_card"
+    assert summary.payload["reasoning"] == "it blocks the villain"
+    assert summary.payload["arguments"] == {"card_id": "card-1"}
+    # No game state was observed, so nothing is projected under ``state``.
+    assert "state" not in summary.payload
+
+
+@pytest.mark.asyncio
+async def test_summary_paging_follows_the_same_cursor_as_the_events_read(repository):
+    for offset in range(10):
+        await repository.commit_event(
+            make_envelope(
+                "g1", producer_offset=offset, payload=_state_payload(0, "1.1")
+            )
+        )
+    page1 = await repository.list_event_summaries("g1", after_seq=0, limit=4)
+    assert [e.seq for e in page1] == [1, 2, 3, 4]
+    page2 = await repository.list_event_summaries("g1", after_seq=4, limit=4)
+    assert [e.seq for e in page2] == [5, 6, 7, 8]
+    page3 = await repository.list_event_summaries("g1", after_seq=8, limit=4)
+    assert [e.seq for e in page3] == [9, 10]
+
+
+@pytest.mark.asyncio
+async def test_summary_carries_the_envelope_identity_fields(repository):
+    await repository.commit_event(
+        make_envelope("g1", producer_offset=7, payload=_state_payload(1, "2.1"))
+    )
+    (summary,) = await repository.list_event_summaries("g1")
+    (full,) = await repository.list_events("g1")
+    assert summary.event_id == full.event_id
+    assert summary.game_id == full.game_id == "g1"
+    assert summary.actor == full.actor
+    assert summary.event_type == full.event_type
+    assert summary.envelope_version == full.envelope_version
+    assert summary.idempotency_key == full.idempotency_key
+    assert summary.producer_offset == full.producer_offset == 7
+    assert summary.occurred_at == full.occurred_at
+
+
+@pytest.mark.asyncio
+async def test_summary_of_unknown_game_is_empty(repository):
+    assert await repository.list_event_summaries("missing") == []

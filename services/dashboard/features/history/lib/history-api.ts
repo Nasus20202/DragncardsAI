@@ -45,10 +45,12 @@ export interface HistoryEventPage {
 }
 
 /**
- * The largest page the history-service will serve (`limit` is capped at 1000
- * server-side, which bounds per-request database work and response size).
+ * The largest *timeline* page the history-service will serve. It is higher than
+ * the events read's ceiling of 1000 because a timeline entry is a few hundred
+ * bytes rather than a few hundred kilobytes: that endpoint omits the raw
+ * DragnCards state and the agent conversation from each payload.
  */
-export const HISTORY_PAGE_LIMIT = 1000;
+export const HISTORY_TIMELINE_PAGE_LIMIT = 5000;
 
 /**
  * A safety bound on how much of one game's timeline the browser will hold. It
@@ -58,8 +60,9 @@ export const HISTORY_PAGE_LIMIT = 1000;
  */
 export const HISTORY_MAX_EVENTS = 20_000;
 
-export async function listHistoryEventPage(
+async function fetchEventPage(
   gameId: string,
+  resource: "events" | "timeline",
   options?: { afterSeq?: number; limit?: number }
 ): Promise<HistoryEventPage> {
   const params = new URLSearchParams();
@@ -71,7 +74,7 @@ export async function listHistoryEventPage(
   }
   const query = params.toString();
   const response = await fetch(
-    `/api/proxy/history/games/${encodeURIComponent(gameId)}/events${
+    `/api/proxy/history/games/${encodeURIComponent(gameId)}/${resource}${
       query ? `?${query}` : ""
     }`,
     { cache: "no-store" }
@@ -88,6 +91,43 @@ export async function listHistoryEventPage(
   };
 }
 
+export async function listHistoryEventPage(
+  gameId: string,
+  options?: { afterSeq?: number; limit?: number }
+): Promise<HistoryEventPage> {
+  return fetchEventPage(gameId, "events", options);
+}
+
+/**
+ * One page of a game's *timeline*: the same cursor contract and the same event
+ * shape as {@link listHistoryEventPage}, but with each payload's unbounded
+ * fields omitted server-side. This is what the history view lists; a single
+ * event's complete payload comes from {@link fetchHistoryEvent}.
+ */
+export async function listHistoryTimelinePage(
+  gameId: string,
+  options?: { afterSeq?: number; limit?: number }
+): Promise<HistoryEventPage> {
+  return fetchEventPage(gameId, "timeline", options);
+}
+
+/**
+ * One event with its payload intact, addressed by `seq`. The events read has no
+ * by-seq route, but its cursor is exclusive, so the single-event window is
+ * `after_seq = seq - 1, limit = 1`. Resolves to null when the seq is not there.
+ */
+export async function fetchHistoryEvent(
+  gameId: string,
+  seq: number
+): Promise<HistoryEvent | null> {
+  const page = await listHistoryEventPage(gameId, {
+    afterSeq: Math.max(0, seq - 1),
+    limit: 1,
+  });
+  const event = page.events[0];
+  return event && event.seq === seq ? event : null;
+}
+
 /** A game's complete timeline, and whether the safety bound cut it short. */
 export interface HistoryTimeline {
   events: HistoryEvent[];
@@ -96,22 +136,32 @@ export interface HistoryTimeline {
 }
 
 /**
- * Every event for a game, following the `after_seq` cursor page by page until
- * the history-service reports the log is exhausted. The endpoint defaults to
- * only 100 events per request, so a single call shows a fraction of a real
- * game; the cursor is the API's own answer to that. Mirrors the server-side
+ * A game's whole timeline, following the `after_seq` cursor page by page until
+ * the history-service reports the log is exhausted. Mirrors the server-side
  * precedent in `eval-service`'s `HistoryClient.list_all_events`.
+ *
+ * Reads the timeline resource rather than the events resource on purpose. The
+ * events read carries every payload in full, and a recorded DragnCards state is
+ * ~450-470 KB, so a few hundred events is tens of megabytes and several seconds
+ * on the server before a byte reaches the browser — measured at 4.3 s and 86 MiB
+ * for a 400-event game. The same walk over timeline entries is 0.6 s and 262
+ * KiB, which is what makes loading the index of a game affordable enough to keep
+ * doing it. Each event's full payload is fetched only when something needs it
+ * (see {@link fetchHistoryEvent}).
+ *
+ * `afterSeq` resumes an earlier walk: history is append-only, so a refresh only
+ * has to ask for what was recorded after the highest entry already held.
  */
-export async function listAllHistoryEvents(
+export async function listAllHistoryTimeline(
   gameId: string,
-  options?: { pageLimit?: number; maxEvents?: number }
+  options?: { pageLimit?: number; maxEvents?: number; afterSeq?: number }
 ): Promise<HistoryTimeline> {
-  const pageLimit = options?.pageLimit ?? HISTORY_PAGE_LIMIT;
+  const pageLimit = options?.pageLimit ?? HISTORY_TIMELINE_PAGE_LIMIT;
   const maxEvents = options?.maxEvents ?? HISTORY_MAX_EVENTS;
   const events: HistoryEvent[] = [];
-  let afterSeq = 0;
+  let afterSeq = options?.afterSeq ?? 0;
   for (;;) {
-    const page = await listHistoryEventPage(gameId, {
+    const page = await listHistoryTimelinePage(gameId, {
       afterSeq,
       limit: pageLimit,
     });

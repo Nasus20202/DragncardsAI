@@ -42,6 +42,12 @@ import {
   TransferNotice,
 } from "@/features/history/components/history-transfer";
 import { BoardView } from "@/features/history/components/board-control";
+import { RoundJump } from "@/features/history/components/round-jump";
+import {
+  buildMetaBySeq,
+  buildNavTree,
+  primaryEvents,
+} from "@/features/history/lib/history-rounds";
 
 export function HistoryWorkspace({
   initialGameId = null,
@@ -187,7 +193,15 @@ export function HistoryWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { events, isLoading, error, isTruncated, reload } = useHistory(gameId);
+  const { events, isLoading, error, isTruncated, reload, refresh } =
+    useHistory(gameId);
+
+  // The round breakdown behind the "Jump to round" control, shared with the
+  // sidebar navigation tree so both name rounds the same way.
+  const rounds = useMemo(
+    () => buildNavTree(primaryEvents(events), buildMetaBySeq(events)),
+    [events]
+  );
 
   // The selected game's summary carries the authoritative recorded event count,
   // which is what the truncation notice compares the loaded events against.
@@ -196,7 +210,9 @@ export function HistoryWorkspace({
   // Persistent evaluations queue: polls the cross-game listing while the panel
   // is open or anything is in flight, and refreshes the transcript whenever a
   // request settles so per-move verdicts surface as they land.
-  const queue = useEvaluationQueue(queueOpen, reload);
+  // Verdicts are appended to the log like everything else, so an incremental
+  // append is enough to surface them — no need to re-read the whole timeline.
+  const queue = useEvaluationQueue(queueOpen, refresh);
 
   // On-demand "board at this event" reconstruction (ephemeral, single live).
   const board = useBoardReconstruction(gameId, selectedSeq);
@@ -204,10 +220,11 @@ export function HistoryWorkspace({
   // Keep history live without a manual reload: refresh the games list, friendly
   // names, and the selected game's events whenever this tab regains focus or
   // visibility (e.g. switching back from the Play tab), plus a slow poll while
-  // the tab is visible. History is append-only, so re-fetching is cheap and
-  // never disturbs the current selection.
+  // the tab is visible. Because history is append-only the poll asks only for
+  // what was recorded since the last load, so its cost does not grow with the
+  // length of the game and it never disturbs the current selection.
   useEffect(() => {
-    const refresh = () => {
+    const refreshAll = () => {
       if (
         typeof document !== "undefined" &&
         document.visibilityState !== "visible"
@@ -220,17 +237,17 @@ export function HistoryWorkspace({
       listSessions()
         .then((sessions) => setGameNames(mapSessionGameNames(sessions)))
         .catch(() => {});
-      reload();
+      refresh();
     };
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    const interval = window.setInterval(refresh, 15000);
+    window.addEventListener("focus", refreshAll);
+    document.addEventListener("visibilitychange", refreshAll);
+    const interval = window.setInterval(refreshAll, 15000);
     return () => {
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refreshAll);
+      document.removeEventListener("visibilitychange", refreshAll);
       window.clearInterval(interval);
     };
-  }, [reload]);
+  }, [refresh]);
 
   // `handleRestore` and the transcript's `board` bundle below are handed to every
   // event row, so both are kept referentially stable — a fresh function or object
@@ -437,6 +454,7 @@ export function HistoryWorkspace({
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="min-w-0 flex-1 rounded-md border border-default-200/60 bg-default-50/40 px-3 py-1.5 text-sm text-foreground outline-none transition-colors placeholder:text-default-400 focus:border-primary/60 dark:bg-white/3"
                 />
+                <RoundJump rounds={rounds} onJump={navigateToEvent} />
                 <div className="flex items-center gap-1.5">
                   <Button
                     type="button"

@@ -21,10 +21,11 @@ const listAvailableSkills = vi.fn();
 
 vi.mock("@/features/history/lib/history-api", () => ({
   listHistoryEvents: (...args: unknown[]) => listHistoryEvents(...args),
-  listAllHistoryEvents: async (...args: unknown[]) => ({
+  listAllHistoryTimeline: async (...args: unknown[]) => ({
     events: await listHistoryEvents(...args),
     truncated: false,
   }),
+  fetchHistoryEvent: vi.fn(),
   listHistorySnapshots: (...args: unknown[]) => listHistorySnapshots(...args),
   restoreGame: (...args: unknown[]) => restoreGame(...args),
   listHistoryGames: (...args: unknown[]) => listHistoryGames(...args),
