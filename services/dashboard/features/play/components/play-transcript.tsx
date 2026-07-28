@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { JobDetail, SessionDetail } from "@/features/shared/lib/types";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   aggregateEvents,
   AggEvent,
@@ -26,11 +26,22 @@ const UPWARD_SCROLL_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 
 /* ── Sub-renderers ───────────────────────────────────────────────── */
 
+/*
+ * Every block below is memoised, and that is what keeps a long transcript
+ * usable. A streamed token replaces one event inside one job, but React would
+ * otherwise re-render — and, for model output, re-parse the markdown of — every
+ * block in the whole session on each token, so the cost of a single token grew
+ * with the length of the history. All of these blocks take only primitives or a
+ * `JobEventResponse` whose identity is preserved unless its payload actually
+ * changed (see `upsertStreamEvent`), so the default shallow comparison bails out
+ * on exactly the blocks that did not change.
+ */
+
 /**
  * Reasoning block — open while the job is streaming, auto-collapses once
  * a model_output event has arrived (meaning the response is ready).
  */
-function ReasoningBlock({
+const ReasoningBlock = memo(function ReasoningBlock({
   text,
   isStreaming,
   hasOutput,
@@ -93,9 +104,13 @@ function ReasoningBlock({
       )}
     </div>
   );
-}
+});
 
-function CompactionBlock({ text }: { text: string }) {
+const CompactionBlock = memo(function CompactionBlock({
+  text,
+}: {
+  text: string;
+}) {
   const [open, setOpen] = useState(true);
 
   return (
@@ -129,9 +144,13 @@ function CompactionBlock({ text }: { text: string }) {
       )}
     </div>
   );
-}
+});
 
-function ModelOutputBlock({ text }: { text: string }) {
+const ModelOutputBlock = memo(function ModelOutputBlock({
+  text,
+}: {
+  text: string;
+}) {
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none text-base leading-relaxed text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
       <ReactMarkdown
@@ -142,9 +161,9 @@ function ModelOutputBlock({ text }: { text: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});
 
-function CollapsibleEventBlock({
+const CollapsibleEventBlock = memo(function CollapsibleEventBlock({
   label,
   dotClass,
   event,
@@ -184,7 +203,7 @@ function CollapsibleEventBlock({
       )}
     </div>
   );
-}
+});
 
 export function AggEventRow({
   agg,
@@ -272,7 +291,12 @@ export function AggEventRow({
 }
 
 /* ── One prompt + its events ─────────────────────────────────────── */
-function JobThread({
+/**
+ * Memoised on the job: a streamed token replaces exactly one job in the list
+ * (see `applyStreamEventToJob`), so every settled thread above it bails out
+ * instead of re-aggregating and re-rendering its events.
+ */
+const JobThread = memo(function JobThread({
   job,
   isStreaming,
 }: {
@@ -280,7 +304,10 @@ function JobThread({
   isStreaming: boolean;
 }) {
   const isCompactionJob = job.prompt === "[COMPACTION]";
-  const aggEvents = aggregateEvents(job.events, isCompactionJob);
+  const aggEvents = useMemo(
+    () => aggregateEvents(job.events, isCompactionJob),
+    [job.events, isCompactionJob]
+  );
   const isWaiting = job.events.length === 0;
   const hasOutput = aggEvents.some((e) => e.kind === "model_output");
 
@@ -318,7 +345,7 @@ function JobThread({
       )}
     </div>
   );
-}
+});
 
 /* ── Empty state ─────────────────────────────────────────────────── */
 function Empty({ message }: { message: string }) {

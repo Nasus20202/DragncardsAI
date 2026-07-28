@@ -3,6 +3,7 @@
 import { Chip } from "@heroui/react";
 import {
   Fragment,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -55,6 +56,20 @@ export interface RevealSignal {
   mode: "body" | "evals";
   nonce: number;
 }
+
+/**
+ * Shared empty verdict list. A fresh `[]` per event would change a prop on every
+ * ungraded event on every render, defeating `TranscriptEvent`'s memoisation.
+ */
+const NO_VERDICTS: HistoryEvent[] = [];
+
+/**
+ * Default pulses, hoisted out of the parameter list: inline default literals are
+ * rebuilt on every render, which would change a prop on every memoised event row
+ * for callers that omit them.
+ */
+const NO_EXPAND_SIGNAL: ExpandSignal = { generation: 0, expanded: false };
+const NO_REVEAL: RevealSignal = { seq: null, mode: "body", nonce: 0 };
 
 function hhmmss(iso: string): string {
   const date = new Date(iso);
@@ -538,7 +553,13 @@ interface TranscriptEventProps {
   step: string | null;
   verdicts: HistoryEvent[];
   selected: boolean;
-  selectedSeq: number | null;
+  /**
+   * The current selection, but only when it is one of THIS event's verdicts —
+   * the sub-tree is the only consumer. Passing the raw `selectedSeq` to every
+   * event would change a prop on all of them whenever the selection moves,
+   * defeating the memoisation below.
+   */
+  selectedVerdictSeq: number | null;
   onSelect: (seq: number) => void;
   // Inline per-event actions, only rendered on the focused event.
   onRestore: (targetSeq: number, mode: RestoreMode) => Promise<RestoreOutcome>;
@@ -549,12 +570,19 @@ interface TranscriptEventProps {
   reveal: RevealSignal;
 }
 
-function TranscriptEvent({
+/**
+ * Memoised: a transcript of a played-out game runs to thousands of events, and
+ * without this every one of them re-rendered on each selection change, search
+ * keystroke and 15s poll refresh. All props are primitives or references the
+ * parent keeps stable, so the default shallow comparison bails out on every
+ * event the interaction did not actually touch.
+ */
+const TranscriptEvent = memo(function TranscriptEvent({
   event,
   step,
   verdicts,
   selected,
-  selectedSeq,
+  selectedVerdictSeq,
   onSelect,
   onRestore,
   board,
@@ -764,7 +792,7 @@ function TranscriptEvent({
           <VerdictSubtree
             graded={event}
             verdicts={verdicts}
-            selectedSeq={selectedSeq}
+            selectedSeq={selectedVerdictSeq}
             onSelect={onSelect}
             open={evalsOpen}
             onToggle={() => setEvalsOpen((p) => !p)}
@@ -773,7 +801,7 @@ function TranscriptEvent({
       )}
     </div>
   );
-}
+});
 
 /* ── Main transcript ─────────────────────────────────────────────── */
 
@@ -805,9 +833,9 @@ export function HistoryTranscript({
   onSelect,
   onRestore,
   board,
-  expandSignal = { generation: 0, expanded: false },
+  expandSignal = NO_EXPAND_SIGNAL,
   searchQuery = "",
-  reveal = { seq: null, mode: "body", nonce: 0 },
+  reveal = NO_REVEAL,
 }: HistoryTranscriptProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -934,7 +962,7 @@ export function HistoryTranscript({
             };
             const heading = headingBySeq.get(event.seq) ?? null;
             const roundEnd = roundEndBySeq.get(event.seq) ?? null;
-            const verdicts = evalsByTarget.get(event.seq) ?? [];
+            const verdicts = evalsByTarget.get(event.seq) ?? NO_VERDICTS;
             return (
               <Fragment key={event.event_id ?? event.seq}>
                 {heading && (
@@ -956,7 +984,11 @@ export function HistoryTranscript({
                     step={meta.step}
                     verdicts={verdicts}
                     selected={selectedSeq === event.seq}
-                    selectedSeq={selectedSeq}
+                    selectedVerdictSeq={
+                      verdicts.some((verdict) => verdict.seq === selectedSeq)
+                        ? selectedSeq
+                        : null
+                    }
                     onSelect={onSelect}
                     onRestore={onRestore}
                     board={board}
