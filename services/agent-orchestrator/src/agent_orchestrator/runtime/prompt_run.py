@@ -23,6 +23,12 @@ from agent_orchestrator.runtime.history_emitter import (
     is_game_mutating_tool,
 )
 from agent_orchestrator.runtime.live_events import LiveEventBus
+from agent_orchestrator.runtime.personas import (
+    narrow_tool_definitions,
+    persona_allowed_tools_from_snapshot,
+    persona_prompt_from_snapshot,
+    session_persona_snapshot,
+)
 from agent_orchestrator.runtime.player_agents import session_player_id
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
 from agent_orchestrator.runtime.skills import (
@@ -142,17 +148,34 @@ class PromptRunService:
                 )
                 is_subagent = job.parent_job_id is not None
                 active_skills = enabled_skill_assignments(session.enabled_skills)
+                # The persona snapshot was captured onto this session when the
+                # child was spawned. It is read here, never the persona table, so
+                # editing or deleting the persona cannot change a run in flight.
+                persona_snapshot = session_persona_snapshot(session)
                 if is_subagent:
                     system_prompt = build_subagent_system_prompt(
-                        self._skill_registry, active_skills
+                        self._skill_registry,
+                        active_skills,
+                        persona_prompt=persona_prompt_from_snapshot(persona_snapshot),
                     )
                 else:
                     system_prompt = build_system_prompt(
-                        self._skill_registry, active_skills
+                        self._skill_registry,
+                        active_skills,
+                        personas=await self._repository.list_personas(),
                     )
                 all_registries = await self._repository.list_mcp_registries()
                 tool_definitions = await self._mcp_tool_catalog.list_session_tools(
                     session.enabled_mcps, all_registries, ignore_failures=True
+                )
+                # A persona may narrow tool access and can never widen it: the
+                # allowlist is applied by filtering the definitions this session
+                # already resolved, and both the list offered to the model and the
+                # dispatch mapping are derived from the filtered result, so an
+                # excluded tool is neither advertised nor callable by name.
+                tool_definitions = narrow_tool_definitions(
+                    tool_definitions,
+                    persona_allowed_tools_from_snapshot(persona_snapshot),
                 )
                 mcp_tools = self._mcp_tool_catalog.as_openai_tools(tool_definitions)
                 tool_mapping = self._mcp_tool_catalog.as_mapping(tool_definitions)

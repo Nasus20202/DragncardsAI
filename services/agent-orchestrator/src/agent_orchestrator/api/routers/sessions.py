@@ -73,17 +73,32 @@ async def list_sessions(
     )
 
 
+async def _require_known_persona(repo: Repository, name: str | None) -> None:
+    """Reject a default subagent persona that does not exist.
+
+    Checked when the session is written rather than at spawn time, so a mistyped
+    persona is reported to whoever typed it instead of the session quietly
+    spawning plain subagents until someone reads a transcript.
+    """
+    if name is None:
+        return
+    if await repo.get_persona(name) is None:
+        raise HTTPException(status_code=400, detail=f"Unknown persona: {name}")
+
+
 @router.post("/sessions", status_code=201)
 async def create_session(
     body: SessionCreateRequest,
     repo: Repository = Depends(get_repository),
 ) -> dict[str, SessionDetail]:
+    await _require_known_persona(repo, body.default_subagent_persona)
     item = await repo.create_session(
         body.name,
         body.metadata,
         multi_turn_memory=body.multi_turn_memory,
         context_recent_message_limit=body.context_recent_message_limit,
         context_recent_tool_exchange_limit=body.context_recent_tool_exchange_limit,
+        default_subagent_persona=body.default_subagent_persona,
     )
     return {"session": serialize_session_detail(item)}
 
@@ -161,6 +176,8 @@ async def update_session(
     changes = body.model_dump(exclude_unset=True)
     if "metadata" in changes:
         changes["metadata_json"] = changes.pop("metadata")
+    if "default_subagent_persona" in changes:
+        await _require_known_persona(repo, changes["default_subagent_persona"])
     item = await repo.update_session(session_id, **changes)
     if item is None:
         raise HTTPException(status_code=404, detail="Session not found")

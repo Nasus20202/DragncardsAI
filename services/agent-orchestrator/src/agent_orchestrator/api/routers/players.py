@@ -15,6 +15,7 @@ from agent_orchestrator.api.deps import (
     get_skill_registry,
 )
 from agent_orchestrator.api.serializers import serialize_player_config
+from agent_orchestrator.api.skill_assignment import validate_and_register_skills
 from agent_orchestrator.config import Settings
 from agent_orchestrator.runtime.player_agents import (
     MAX_PLAYER_SKILLS,
@@ -70,22 +71,7 @@ async def set_player_config(
                 status_code=400,
                 detail=f"At most {MAX_PLAYER_SKILLS} skills may be assigned to a player",
             )
-        for skill_name in body.skills:
-            definition = registry.resolve(skill_name)
-            if definition is None:
-                raise HTTPException(
-                    status_code=400, detail=f"Unknown skill: {skill_name}"
-                )
-            # Register the skill globally now. A seat's skills are enabled on a
-            # child session at spawn time, and enablement requires a registry
-            # row — without this a skill only this seat uses would be silently
-            # dropped when its player agent starts.
-            await repo.add_skill_registry(
-                name=skill_name,
-                skill_path=str(definition.path),
-                description=definition.description,
-                metadata_json={},
-            )
+        await validate_and_register_skills(body.skills, registry=registry, repo=repo)
 
     gateway_options = dict(body.gateway_options)
     if body.reasoning is not None:

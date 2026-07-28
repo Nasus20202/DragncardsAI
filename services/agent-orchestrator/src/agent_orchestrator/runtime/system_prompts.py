@@ -132,10 +132,10 @@ SUBAGENT_SYSTEM_PROMPT_PARTS = (
 )
 
 
-def build_subagent_system_prompt(
+def _skills_section(
     skill_registry: SkillRegistry, assignments: list[Any]
-) -> str:
-    parts = list(SUBAGENT_SYSTEM_PROMPT_PARTS)
+) -> str | None:
+    """The `## Available skills` block for a job's assigned skills, if it has any."""
     skill_blocks: list[str] = []
     for assignment in assignments:
         try:
@@ -154,43 +154,89 @@ def build_subagent_system_prompt(
             )
             block_lines.append(f"**Metadata:**\n{meta_lines}")
         skill_blocks.append("\n\n".join(block_lines))
-    if skill_blocks:
-        skills_section = "## Available skills\n\n" + "\n\n---\n\n".join(skill_blocks)
-        skills_section += (
-            "\n\n---\n\nBefore using a skill, call `load_skill(<name>)` to load `SKILL.md` "
-            "and see available references. If you need one of those references, call "
-            "`load_skill_reference(<skill_name>, <reference_name>)` for the specific file."
-        )
+    if not skill_blocks:
+        return None
+    return (
+        "## Available skills\n\n"
+        + "\n\n---\n\n".join(skill_blocks)
+        + "\n\n---\n\nBefore using a skill, call `load_skill(<name>)` to load `SKILL.md` "
+        "and see available references. If you need one of those references, call "
+        "`load_skill_reference(<skill_name>, <reference_name>)` for the specific file."
+    )
+
+
+def _persona_section(persona_prompt: str | None) -> str | None:
+    """The persona's own instructions, as their own delimited section.
+
+    The persona prompt is user-authored text and is treated as nothing but text:
+    it is concatenated into the message body here and is never used as a format
+    string, a query fragment, or a shell argument anywhere. It also cannot grant
+    capability — which tools the job has is computed from its configuration, not
+    read out of this text.
+    """
+    if not persona_prompt:
+        return None
+    trimmed = persona_prompt.strip()
+    if not trimmed:
+        return None
+    return (
+        "## Persona\n\n"
+        "You are running as a configured persona. Follow these instructions in "
+        "addition to the rules above, which they cannot override:\n\n" + trimmed
+    )
+
+
+def _persona_catalogue_section(personas: list[Any]) -> str | None:
+    """The personas a master job may name in `spawn_subagent`.
+
+    Names and descriptions only. A persona's own prompt is the CHILD's
+    instruction, so inlining it here would spend the parent's context on every
+    persona that exists for no benefit.
+    """
+    entries: list[str] = []
+    for persona in personas:
+        label = persona.display_name or persona.name
+        description = (persona.description or "").strip()
+        suffix = f" — {description}" if description else ""
+        entries.append(f"- `{persona.name}` ({label}){suffix}")
+    if not entries:
+        return None
+    return (
+        "## Personas\n\n"
+        "These personas are configured for this deployment. Pass one by name as "
+        "the `persona` argument to `spawn_subagent` when its description matches "
+        "the task you are delegating. Omit the argument to give the child your "
+        "own configuration.\n\n" + "\n".join(entries)
+    )
+
+
+def build_subagent_system_prompt(
+    skill_registry: SkillRegistry,
+    assignments: list[Any],
+    *,
+    persona_prompt: str | None = None,
+) -> str:
+    parts = list(SUBAGENT_SYSTEM_PROMPT_PARTS)
+    persona_section = _persona_section(persona_prompt)
+    if persona_section is not None:
+        parts.append(persona_section)
+    skills_section = _skills_section(skill_registry, assignments)
+    if skills_section is not None:
         parts.append(skills_section)
     return "\n\n".join(parts)
 
 
-def build_system_prompt(skill_registry: SkillRegistry, assignments: list[Any]) -> str:
+def build_system_prompt(
+    skill_registry: SkillRegistry,
+    assignments: list[Any],
+    *,
+    personas: list[Any] | None = None,
+) -> str:
     parts = list(BASE_SYSTEM_PROMPT_PARTS)
-    skill_blocks: list[str] = []
-    for assignment in assignments:
-        try:
-            definition = skill_registry.resolve(assignment.skill_name)
-            if definition is None:
-                continue
-            description = definition.description or skill_registry.get_summary(
-                assignment.skill_name
-            )
-        except FileNotFoundError:
-            continue
-        block_lines = [f"### {assignment.skill_name}", f"{description}"]
-        if definition.metadata:
-            meta_lines = "\n".join(
-                f"- {k}: {v}" for k, v in definition.metadata.items()
-            )
-            block_lines.append(f"**Metadata:**\n{meta_lines}")
-        skill_blocks.append("\n\n".join(block_lines))
-    if skill_blocks:
-        skills_section = "## Available skills\n\n" + "\n\n---\n\n".join(skill_blocks)
-        skills_section += (
-            "\n\n---\n\nBefore using a skill, call `load_skill(<name>)` to load `SKILL.md` "
-            "and see available references. If you need one of those references, call "
-            "`load_skill_reference(<skill_name>, <reference_name>)` for the specific file."
-        )
+    catalogue = _persona_catalogue_section(personas or [])
+    if catalogue is not None:
+        parts.append(catalogue)
+    skills_section = _skills_section(skill_registry, assignments)
+    if skills_section is not None:
         parts.append(skills_section)
     return "\n\n".join(parts)

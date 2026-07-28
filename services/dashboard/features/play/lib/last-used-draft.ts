@@ -68,6 +68,12 @@ function parseDraft(raw: unknown): SessionDraft | null {
     gatewayOptionsText: candidate.gatewayOptionsText,
     providerOptionsText: candidate.providerOptionsText,
     selectedSkills: [...candidate.selectedSkills],
+    // Tolerated rather than required: a draft written before personas existed
+    // is still perfectly usable, and defaults to no persona.
+    defaultSubagentPersona:
+      typeof candidate.defaultSubagentPersona === "string"
+        ? candidate.defaultSubagentPersona
+        : "",
   };
 }
 

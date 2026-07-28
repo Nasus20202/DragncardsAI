@@ -63,6 +63,7 @@ class SessionRepositoryMixin:
         multi_turn_memory: bool = True,
         context_recent_message_limit: int | None = None,
         context_recent_tool_exchange_limit: int | None = None,
+        default_subagent_persona: str | None = None,
     ) -> AgentSession:
         async with self._session_factory() as session, session.begin():
             item = AgentSession(
@@ -71,6 +72,7 @@ class SessionRepositoryMixin:
                 multi_turn_memory=multi_turn_memory,
                 context_recent_message_limit=context_recent_message_limit,
                 context_recent_tool_exchange_limit=context_recent_tool_exchange_limit,
+                default_subagent_persona=default_subagent_persona,
             )
             session.add(item)
             await session.flush()
@@ -191,6 +193,8 @@ class SessionRepositoryMixin:
                 item.context_recent_tool_exchange_limit = changes[
                     "context_recent_tool_exchange_limit"
                 ]
+            if "default_subagent_persona" in changes:
+                item.default_subagent_persona = changes["default_subagent_persona"]
             item.updated_at = utc_now()
         return await self.get_session(session_id)
 

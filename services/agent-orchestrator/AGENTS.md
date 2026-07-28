@@ -41,6 +41,24 @@ Jobs are prompt executions:
 - Stream events via `GET /jobs/{id}/events/stream`
 - Events include: `progress`, `reasoning`, `model_output`, `tool_call`, `tool_result`, `completion`, `failure`, `cancellation`
 
+### Personas
+
+Personas are deployment-global, user-authored agent configurations stored in `agent_personas`
+(PostgreSQL), keyed by name:
+
+- A persona bundles a detailed system prompt, a skill selection, and a tool allowlist.
+- `spawn_subagent` takes an optional `persona`; a session's `default_subagent_persona` applies when
+  none is named.
+- **A persona is resolved and captured at spawn time**, materialised onto the child session's
+  model-config row, skill rows, and metadata snapshot. Nothing at child run time re-reads the persona
+  table, so editing or deleting a persona never changes a subagent already started from it.
+- **A persona may narrow tool access and must never widen it.** The allowlist is applied by filtering
+  the child's already-resolved MCP tool definitions, so it is a subset operation; MCP servers are
+  always inherited and are not nameable by a persona. Do not add a code path that lets a persona
+  attach a server, a provider, or a tool.
+- A persona prompt is user-authored text: concatenate it into the message body and never use it as a
+  format string or interpolate it anywhere text becomes code. Never store credentials on a persona.
+
 ### Provider Integration
 
 - Providers configured in `services/bifrost/config.json`

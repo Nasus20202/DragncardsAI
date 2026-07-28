@@ -119,6 +119,7 @@ export function usePlaySessionActions({
           nextDraft.recentToolExchangeLimit,
           "Recent tool exchange limit"
         ),
+        default_subagent_persona: nextDraft.defaultSubagentPersona || null,
       });
       const gatewayOptions = applyReasoningToGatewayOptions(
         parseJsonObject(nextDraft.gatewayOptionsText, "Gateway options"),
@@ -198,6 +199,7 @@ export function usePlaySessionActions({
           draft.recentToolExchangeLimit,
           "Recent tool exchange limit"
         ),
+        default_subagent_persona: draft.defaultSubagentPersona || null,
       });
       await setModelConfig(selectedSession.id, {
         provider_id: draft.providerId,

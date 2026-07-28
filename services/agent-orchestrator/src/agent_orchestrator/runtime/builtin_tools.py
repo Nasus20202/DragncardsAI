@@ -9,6 +9,11 @@ from typing import Any, Awaitable, Callable
 
 from agent_orchestrator.runtime.history_emitter import SESSION_GAME_ID_KEY
 from agent_orchestrator.runtime.live_events import LiveEventBus
+from agent_orchestrator.runtime.personas import (
+    SESSION_PERSONA_KEY,
+    ResolvedPersona,
+    resolve_persona,
+)
 from agent_orchestrator.runtime.player_agents import (
     SESSION_ORCHESTRATOR_ID_KEY,
     SESSION_PLAYER_ID_KEY,
@@ -424,7 +429,7 @@ async def _launch_child_agent(
     prompt: str,
     name: str,
     child_metadata: dict[str, Any],
-    model_config: ResolvedPlayerAgentConfig | None,
+    model_config: ResolvedPlayerAgentConfig | ResolvedPersona | None,
     skills: list[str] | None,
     schedule_child_fn: Callable[[str], Any] | None,
     monitor: Callable[..., Any],
@@ -528,12 +533,67 @@ async def _launch_child_agent(
     )
 
 
+async def _resolve_spawn_persona(
+    *,
+    repository: Repository,
+    skill_registry: SkillRegistry,
+    parent_session: Any,
+    requested_name: str,
+) -> tuple[ResolvedPersona | None, dict[str, Any] | None]:
+    """Resolve the persona a spawn should use, or the error result explaining why not.
+
+    Precedence is: the persona the caller named, then the session's default, then
+    none at all. Returning ``(None, None)`` means no persona applies and the child
+    should inherit the parent exactly as it did before personas existed.
+
+    A persona's own named skills are re-validated here, at the moment the child is
+    started, because the skill catalogue mirrors the filesystem and is re-synced
+    at every boot — a skill can stop existing between writing a persona and using
+    it. A missing skill fails the spawn by name rather than being dropped
+    silently, and nothing is created. Skills the persona INHERITED from the
+    session are not re-checked: they are the session's own assignments, not
+    something this persona claimed.
+    """
+    name = requested_name or (
+        getattr(parent_session, "default_subagent_persona", None) or ""
+    )
+    if not name:
+        return None, None
+
+    persona = await repository.get_persona(name)
+    if persona is None:
+        available = [item.name for item in await repository.list_personas()]
+        known = ", ".join(available) if available else "none"
+        return None, _text_result(
+            f"No persona named '{name}'. Available personas: {known}.",
+            is_error=True,
+        )
+
+    missing: list[str] = []
+    for skill_name in persona.skills_json or []:
+        try:
+            if skill_registry.resolve(skill_name) is None:
+                missing.append(skill_name)
+        except FileNotFoundError:
+            missing.append(skill_name)
+    if missing:
+        return None, _text_result(
+            f"Persona '{name}' names {'skills' if len(missing) > 1 else 'a skill'} "
+            f"that no longer exist: {', '.join(missing)}. "
+            "Fix the persona before starting a subagent from it.",
+            is_error=True,
+        )
+
+    return resolve_persona(parent_session, persona), None
+
+
 def make_spawn_subagent_handler(
     repository: Repository,
     live_event_bus: LiveEventBus,
     session_id: str,
     job_id: str,
     job: Any,
+    skill_registry: SkillRegistry,
     schedule_child_fn: Callable[[str], Any] | None = None,
     monitor_timeout_seconds: float = DEFAULT_SUBAGENT_WAIT_TIMEOUT_SECONDS,
     monitor_poll_interval_seconds: float = DEFAULT_SUBAGENT_WAIT_POLL_INTERVAL_SECONDS,
@@ -543,6 +603,12 @@ def make_spawn_subagent_handler(
     The handler returns immediately after enqueuing the child job. A detached
     background task monitors the child and appends subagent_completed /
     subagent_failed to the parent job when the child reaches a terminal state.
+
+    An optional ``persona`` argument (falling back to the session's default) is
+    resolved and CAPTURED here: the resolved configuration becomes the child's own
+    model-config row, skill rows, and metadata snapshot, so nothing at child run
+    time reads the persona table again and editing or deleting the persona cannot
+    change a child that has already been started.
 
     schedule_child_fn: optional async callable(child_job_id) that starts the child
     job concurrently (used to avoid deadlock when only one worker is running).
@@ -573,6 +639,22 @@ def make_spawn_subagent_handler(
         if parent_session is None:
             return _text_result("Parent session not found.", is_error=True)
 
+        requested_persona = str(arguments.get("persona") or "").strip()
+        persona, persona_error = await _resolve_spawn_persona(
+            repository=repository,
+            skill_registry=skill_registry,
+            parent_session=parent_session,
+            requested_name=requested_persona,
+        )
+        if persona_error is not None:
+            return persona_error
+
+        child_metadata: dict[str, Any] = {}
+        event_payload_extra: dict[str, Any] | None = None
+        if persona is not None:
+            child_metadata[SESSION_PERSONA_KEY] = persona.as_snapshot()
+            event_payload_extra = {"persona": persona.name}
+
         return await _launch_child_agent(
             repository=repository,
             live_event_bus=live_event_bus,
@@ -581,11 +663,12 @@ def make_spawn_subagent_handler(
             parent_session=parent_session,
             prompt=prompt,
             name=name,
-            child_metadata={},
-            model_config=None,
-            skills=None,
+            child_metadata=child_metadata,
+            model_config=persona,
+            skills=None if persona is None else persona.skills,
             schedule_child_fn=schedule_child_fn,
             monitor=monitor,
+            event_payload_extra=event_payload_extra,
         )
 
     return handle
@@ -904,7 +987,11 @@ def build_builtin_registry(
                     "direct calls inject thousands of tokens into your context permanently. "
                     "Write a fully self-contained prompt (include session ID, any known card IDs, "
                     "group IDs, and exactly what to return). Returns immediately with child_job_id; "
-                    "the child runs concurrently. Spawn multiple subagents before waiting for any."
+                    "the child runs concurrently. Spawn multiple subagents before waiting for any. "
+                    "Optionally pass `persona` to start the child from a configured persona, which "
+                    "gives it that persona's instructions, skills, and (possibly narrower) tool "
+                    "access instead of a copy of yours. Omit `persona` to give the child your own "
+                    "configuration. Only the personas listed in your system prompt exist."
                 ),
                 parameters={
                     "type": "object",
@@ -912,7 +999,15 @@ def build_builtin_registry(
                         "prompt": {
                             "type": "string",
                             "description": "The prompt to send to the child agent.",
-                        }
+                        },
+                        "persona": {
+                            "type": "string",
+                            "description": (
+                                "Optional. The name of a configured persona to start "
+                                "the child from, as listed in your system prompt. "
+                                "Omit to give the child your own configuration."
+                            ),
+                        },
                     },
                     "required": ["prompt"],
                 },
@@ -922,6 +1017,7 @@ def build_builtin_registry(
                     session_id=session_id,
                     job_id=job_id,
                     job=job,
+                    skill_registry=skill_registry,
                     schedule_child_fn=schedule_child_fn,
                     monitor_timeout_seconds=subagent_wait_timeout_seconds,
                     monitor_poll_interval_seconds=subagent_wait_poll_interval_seconds,

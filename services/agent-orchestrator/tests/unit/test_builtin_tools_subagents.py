@@ -9,6 +9,7 @@ from agent_orchestrator.runtime.builtin_tools import (
     make_wait_for_subagent_handler,
 )
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
+from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.repository import Repository
 
 from .builtin_tools_test_support import (
@@ -42,6 +43,7 @@ async def test_spawn_subagent_returns_immediately_with_child_job_id(
         session_id=parent_session.id,
         job_id=parent_job.id,
         job=make_job(parent_job_id=None, job_type="prompt"),
+        skill_registry=SkillRegistry(()),
         schedule_child_fn=fake_schedule,
     )
 
@@ -84,6 +86,7 @@ async def test_spawn_subagent_child_failure_emitted_async(
         session_id=parent_session.id,
         job_id=parent_job.id,
         job=make_job(parent_job_id=None, job_type="prompt"),
+        skill_registry=SkillRegistry(()),
         schedule_child_fn=fake_schedule_fail,
     )
 
@@ -114,6 +117,7 @@ async def test_spawn_subagent_blocked_for_child_job(
         session_id=session.id,
         job_id=job.id,
         job=make_job(parent_job_id="some-parent-id", job_type="prompt"),
+        skill_registry=SkillRegistry(()),
         schedule_child_fn=None,
     )
 
@@ -142,6 +146,7 @@ async def test_spawn_subagent_child_session_named_from_prompt(
         session_id=parent_session.id,
         job_id=parent_job.id,
         job=make_job(parent_job_id=None, job_type="prompt"),
+        skill_registry=SkillRegistry(()),
         schedule_child_fn=fake_schedule,
     )
 
@@ -173,6 +178,7 @@ async def test_spawn_subagent_requires_prompt(
         session_id=parent_session.id,
         job_id=parent_job.id,
         job=make_job(parent_job_id=None, job_type="prompt"),
+        skill_registry=SkillRegistry(()),
     )
 
     result = await handler({})

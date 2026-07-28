@@ -8,6 +8,8 @@ import {
   JobSummary,
   McpAssignmentResponse,
   McpRegistryResponse,
+  PersonaRequest,
+  PersonaResponse,
   PlayerConfigRequest,
   PlayerConfigResponse,
   ProviderResponse,
@@ -132,6 +134,7 @@ export async function createSession(
   body?: {
     context_recent_message_limit?: number | null;
     context_recent_tool_exchange_limit?: number | null;
+    default_subagent_persona?: string | null;
   }
 ): Promise<SessionDetail> {
   return (
@@ -150,6 +153,7 @@ export async function updateSession(
     metadata?: Record<string, JsonValue>;
     context_recent_message_limit?: number | null;
     context_recent_tool_exchange_limit?: number | null;
+    default_subagent_persona?: string | null;
   }
 ): Promise<SessionDetail> {
   return (
@@ -402,6 +406,36 @@ export async function deletePlayerAgent(
 ): Promise<void> {
   await sendNoContent(
     `/api/proxy/orchestrator/sessions/${sessionId}/players/${playerId}`,
+    "DELETE"
+  );
+}
+
+// --- Agent personas (reusable subagent configurations) ---
+
+export async function listPersonas(): Promise<PersonaResponse[]> {
+  return (
+    await getJson<{ personas: PersonaResponse[] }>(
+      "/api/proxy/orchestrator/personas"
+    )
+  ).personas;
+}
+
+export async function savePersona(
+  name: string,
+  body: PersonaRequest
+): Promise<PersonaResponse> {
+  return (
+    await sendJson<{ persona: PersonaResponse }>(
+      `/api/proxy/orchestrator/personas/${encodeURIComponent(name)}`,
+      "PUT",
+      body
+    )
+  ).persona;
+}
+
+export async function deletePersona(name: string): Promise<void> {
+  await sendNoContent(
+    `/api/proxy/orchestrator/personas/${encodeURIComponent(name)}`,
     "DELETE"
   );
 }

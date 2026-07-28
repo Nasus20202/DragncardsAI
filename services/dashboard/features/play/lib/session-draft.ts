@@ -141,6 +141,7 @@ export function createDefaultDraft(config: DashboardConfig): SessionDraft {
     gatewayOptionsText: safeJsonStringify({}),
     providerOptionsText: safeJsonStringify({}),
     selectedSkills: config.defaultSkills,
+    defaultSubagentPersona: "",
   };
 }
 
@@ -290,6 +291,7 @@ export function buildDraftFromSession(
       session.model_config?.provider_options ?? {}
     ),
     selectedSkills: session.skills.map((skill) => skill.skill_name),
+    defaultSubagentPersona: session.default_subagent_persona ?? "",
   };
 }
 

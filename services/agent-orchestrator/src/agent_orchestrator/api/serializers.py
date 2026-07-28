@@ -10,6 +10,7 @@ from agent_orchestrator.schemas.jobs import (
 )
 from agent_orchestrator.runtime.player_agents import unfold_reasoning
 from agent_orchestrator.runtime.skills import enabled_skill_assignments
+from agent_orchestrator.schemas.personas import PersonaResponse
 from agent_orchestrator.schemas.players import PlayerConfigResponse
 from agent_orchestrator.schemas.sessions import (
     McpAssignmentResponse,
@@ -45,7 +46,26 @@ def serialize_session_summary(item) -> SessionSummary:
         ],
         mcps=[serialize_mcp_assignment(em) for em in item.enabled_mcps],
         players=[serialize_player_config(config) for config in item.player_configs],
+        default_subagent_persona=item.default_subagent_persona,
         recent_job=None if not recent_jobs else serialize_job(recent_jobs[0]),
+    )
+
+
+def serialize_persona(item) -> PersonaResponse:
+    return PersonaResponse(
+        name=item.name,
+        display_name=item.display_name,
+        description=item.description,
+        system_prompt=item.system_prompt or "",
+        provider_id=item.provider_id,
+        model_name=item.model_name,
+        reasoning=unfold_reasoning(item.gateway_options),
+        skills=item.skills_json,
+        allowed_tools=item.allowed_tools_json,
+        gateway_options=item.gateway_options or {},
+        provider_options=item.provider_options or {},
+        created_at=item.created_at,
+        updated_at=item.updated_at,
     )
 
 
@@ -200,6 +220,7 @@ def serialize_session_detail(item) -> SessionDetail:
         skills=summary.skills,
         mcps=summary.mcps,
         players=summary.players,
+        default_subagent_persona=summary.default_subagent_persona,
         recent_job=summary.recent_job,
         recent_jobs=[serialize_job(job) for job in recent_jobs],
     )

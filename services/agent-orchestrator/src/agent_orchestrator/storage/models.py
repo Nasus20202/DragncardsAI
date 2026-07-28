@@ -75,6 +75,11 @@ class AgentSession(Base):
         Integer, nullable=True
     )
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # The persona a spawn falls back to when the agent names none. ``None`` keeps
+    # the pre-persona behaviour: a child copies this session's own configuration.
+    default_subagent_persona: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime(), default=utc_now, onupdate=utc_now
@@ -177,6 +182,45 @@ class SessionPlayerConfig(Base):
     )
 
     session: Mapped[AgentSession] = relationship(back_populates="player_configs")
+
+
+class AgentPersona(Base):
+    """A reusable, user-authored agent configuration a subagent can be started from.
+
+    A persona bundles the three things that make one agent behave differently
+    from another: a detailed system prompt, a skill selection, and a tool
+    configuration. It sits beside ``skill_registries`` and ``mcp_registries`` as a
+    deployment-global table keyed by name — the service has no user identity to
+    scope it to, and a persona exists precisely to outlive one session.
+
+    Nullable columns carry meaning:
+
+    * ``provider_id`` / ``model_name`` — inherit the spawning session's.
+    * ``skills_json`` — ``None`` inherits the session's enabled skills; a list
+      (including the empty list) replaces them.
+    * ``allowed_tools_json`` — ``None`` means no narrowing; a list is an
+      allowlist that can only REMOVE tools from what the child already exposes.
+
+    A persona holds no credentials. It names a provider and a model; API keys
+    live in the gateway configuration.
+    """
+
+    __tablename__ = "agent_personas"
+
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    system_prompt: Mapped[str] = mapped_column(Text, default="")
+    provider_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    gateway_options: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    provider_options: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    skills_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    allowed_tools_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime(), default=utc_now, onupdate=utc_now
+    )
 
 
 class McpRegistry(Base):
