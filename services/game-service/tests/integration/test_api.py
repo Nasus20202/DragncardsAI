@@ -634,11 +634,32 @@ async def test_delete_game(app, manager):
 def test_delete_game_not_found(sync_client):
     """DELETE /games/{id} is idempotent for a valid-UUID session already gone.
 
-    A well-formed session id that no longer exists returns success (the reaper
-    or a prior teardown may have removed it), while a non-UUID identifier (e.g. a
-    guessable room slug) still 404s — preserving the slug-rejection property."""
+    A well-formed session id that no longer exists returns success (the reaper or
+    a prior teardown may have removed it), while an identifier that is neither a
+    session id nor a known room slug still 404s."""
     resp = sync_client.delete("/games/00000000-0000-0000-0000-000000000000")
     assert resp.status_code == 200
 
-    slug_resp = sync_client.delete("/games/not-a-uuid-slug")
-    assert slug_resp.status_code == 404
+    unknown_resp = sync_client.delete("/games/no-such-room-slug")
+    assert unknown_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_room_slug_addresses_reads_mutations_and_delete(app, manager):
+    """The human-readable room slug works anywhere a session id is accepted."""
+    session = await manager.create_session("marvel-champions")
+    slug = session.room_slug
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        state_resp = await client.get(f"/games/{slug}/state")
+        assert state_resp.status_code == 200
+
+        action_resp = await client.post(f"/games/{slug}/actions/next_step")
+        assert action_resp.status_code == 200
+
+        delete_resp = await client.delete(f"/games/{slug}")
+        assert delete_resp.status_code == 200
+        assert delete_resp.json()["session_id"] == session.session_id
+
+        assert (await client.get(f"/games/{slug}/state")).status_code == 404

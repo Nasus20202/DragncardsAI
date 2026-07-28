@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from game_service.logic.session_manager import (
+    AmbiguousSessionIdentifierError,
     BadGameStateError,
     SessionError,
     SessionLockedError,
@@ -20,6 +21,12 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(SessionNotFoundError)
     async def not_found_handler(request, exc: SessionNotFoundError):
         return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(AmbiguousSessionIdentifierError)
+    async def ambiguous_identifier_handler(
+        request, exc: AmbiguousSessionIdentifierError
+    ):
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.exception_handler(BadGameStateError)
     async def bad_game_state_handler(request, exc: BadGameStateError):

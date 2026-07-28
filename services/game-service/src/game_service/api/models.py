@@ -83,9 +83,9 @@ class ListGamesResponse(BaseModel):
 class LookupSessionBySlugResponse(BaseModel):
     """Metadata returned when resolving a session by its room slug.
 
-    The room slug is low-entropy and guessable, so this lookup is intentionally
-    non-mutating: it only returns the canonical `session_id` (and other metadata)
-    needed to address the session on UUID-only state/mutation/delete endpoints.
+    A non-mutating convenience read. Session endpoints accept a room slug directly,
+    so this is only needed to inspect a session's full metadata or to obtain its
+    canonical `session_id`.
     """
 
     session: SessionMetadata

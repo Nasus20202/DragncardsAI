@@ -232,6 +232,31 @@ async def test_lookup_session_by_slug_tool_is_exposed_with_description():
     assert "room_slug" in tool.inputSchema.get("required", [])
 
 
+async def test_session_id_parameter_documents_both_uuid_and_room_slug():
+    """The `session_id` description is what an agent reads, so it must say that
+    either a UUID or a room slug works — on reads, mutations, and delete alike."""
+    mcp = _make_mcp()
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+
+    session_scoped = [
+        tool
+        for tool in tools
+        if "session_id" in tool.inputSchema.get("properties", {})
+        and tool.name != "lookup_session_by_slug"
+    ]
+    # Sanity: reads, mutations, and delete are all represented.
+    names = {tool.name for tool in session_scoped}
+    assert {"get_game_state", "move_card", "delete_game"} <= names
+
+    for tool in session_scoped:
+        description = tool.inputSchema["properties"]["session_id"].get(
+            "description", ""
+        )
+        assert "room slug" in description, tool.name
+        assert "UUID-only" not in description, tool.name
+
+
 # ---------------------------------------------------------------------------
 # Resources: list
 # ---------------------------------------------------------------------------

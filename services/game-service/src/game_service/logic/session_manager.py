@@ -22,6 +22,7 @@ from game_service.coordination.history_emitter import (
     NullHistoryEmitter,
 )
 from game_service.logic.exceptions import (
+    AmbiguousSessionIdentifierError,
     BadGameStateError,
     SessionError,
     SessionLockedError,
@@ -359,44 +360,86 @@ class SessionManager:
         logger.info("Session %s attached to existing room %s", session_id, room_slug)
         return session
 
-    def _normalize_session_id(self, session_id: str) -> str:
-        """Normalize a UUID ``session_id`` to its canonical string form.
+    @staticmethod
+    def _as_canonical_uuid(value: str) -> str | None:
+        """Return ``value`` as a canonical UUID string, or ``None`` if it is not one.
 
-        State/mutation/delete paths are UUID-only: a guessable, low-entropy room
-        slug must never authorize a read, mutation, or delete. A valid but
-        non-canonical UUID (e.g. uppercase or braced) is normalized so it still
-        matches the canonical id stored on the session, while a non-UUID value is
-        returned unchanged so the caller surfaces the usual ``SessionNotFoundError``.
+        A valid but non-canonical UUID (e.g. uppercase or braced) is normalized so
+        that it still matches the canonical id stored on the session.
         """
         try:
-            return str(uuid.UUID(str(session_id)))
+            return str(uuid.UUID(str(value)))
         except ValueError, AttributeError, TypeError:
-            return session_id
+            return None
+
+    async def resolve_session_id(self, identifier: str) -> str:
+        """Resolve a session UUID *or* a human-readable room slug to a session id.
+
+        Every session-identifying path (state reads, mutations, and deletes) funnels
+        through here, so an operator or an agent can work in terms of the readable
+        DragnCards room slug (`lively-fog-1234`) instead of the opaque UUID. A
+        well-formed UUID is returned in canonical form without a store round-trip, so
+        an already-removed session still resolves and delete stays idempotent;
+        anything else is treated as a room slug and resolved through the session pool
+        or the session store's slug index.
+
+        Raises ``SessionNotFoundError`` when the value is neither a UUID nor a known
+        room slug, and ``AmbiguousSessionIdentifierError`` when the slug matches more
+        than one live session.
+        """
+        canonical = self._as_canonical_uuid(identifier)
+        if canonical is not None:
+            return canonical
+        return await self._resolve_room_slug(identifier)
+
+    async def _resolve_room_slug(self, room_slug: str) -> str:
+        """Resolve a room slug to a session id via the pool, then the store index."""
+        # In-pool scan first: it is also the only place duplicate slugs are
+        # detectable, because `attach_session` may create more than one session for
+        # the same DragnCards room and the store's slug index is last-writer-wins.
+        live_matches = sorted(
+            {
+                session.session_id
+                for session in self._sessions.values()
+                if session.room_slug == room_slug
+            }
+        )
+        if len(live_matches) > 1:
+            raise AmbiguousSessionIdentifierError(
+                f"Room slug {room_slug!r} matches {len(live_matches)} sessions "
+                f"({', '.join(live_matches)}); use the session's `session_id` instead."
+            )
+        if live_matches:
+            return live_matches[0]
+
+        session_id = await self._session_store.get_session_id_by_slug(room_slug)
+        if session_id is not None:
+            if await self._session_store.get_session(session_id) is not None:
+                return session_id
+        raise SessionNotFoundError(
+            f"{room_slug!r} is neither a session id nor a known room slug"
+        )
 
     async def lookup_session_by_slug(self, room_slug: str) -> dict[str, Any]:
         """Resolve a human-readable ``room_slug`` to its session metadata.
 
-        This is the only path on which a room slug is accepted. It is a
-        non-mutating lookup that returns the canonical ``session_id`` together
-        with the rest of the session metadata, so a caller can subsequently
-        address the session by its UUID. The low-entropy slug never authorizes a
-        state read, mutation, or delete on its own. Raises
-        ``SessionNotFoundError`` when the slug is unknown.
+        A convenience read: every session endpoint already accepts a room slug in
+        the ``session_id`` position, so this is only needed when the caller wants the
+        full session metadata (including the canonical UUID ``session_id``) rather
+        than acting on the session. Raises ``SessionNotFoundError`` when the slug is
+        unknown.
         """
-        # In-pool fast path: match an active session by its room slug.
-        for session in self._sessions.values():
-            if session.room_slug == room_slug:
-                return session.to_metadata()
-
-        session_id = await self._session_store.get_session_id_by_slug(room_slug)
-        if session_id is not None:
-            record = await self._session_store.get_session(session_id)
-            if record is not None:
-                return dict(record)
-        raise SessionNotFoundError(f"Session for room slug {room_slug!r} not found")
+        session_id = await self._resolve_room_slug(room_slug)
+        session = self._sessions.get(session_id)
+        if session is not None:
+            return session.to_metadata()
+        record = await self._session_store.get_session(session_id)
+        if record is None:
+            raise SessionNotFoundError(f"Session for room slug {room_slug!r} not found")
+        return dict(record)
 
     async def get_session(self, session_id: str) -> GameSession:
-        session_id = self._normalize_session_id(session_id)
+        session_id = await self.resolve_session_id(session_id)
         session = self._sessions.get(session_id)
         if session is None:
             record = await self._session_store.get_session(session_id)
@@ -413,7 +456,9 @@ class SessionManager:
         wait_timeout: float = 5.0,
         lease_ttl: float = 30.0,
     ):
-        session_id = self._normalize_session_id(session_id)
+        # Resolve first so a slug-addressed and a UUID-addressed operation on the
+        # same session contend for the same lock key.
+        session_id = await self.resolve_session_id(session_id)
         owner_token = str(uuid.uuid4())
         acquired = await self._session_store.acquire_session_lock(
             session_id=session_id,
@@ -444,7 +489,7 @@ class SessionManager:
         logger.info("Session %s removed from pool (room closed)", session_id)
 
     async def delete_session(self, session_id: str) -> None:
-        session_id = self._normalize_session_id(session_id)
+        session_id = await self.resolve_session_id(session_id)
         async with self._lock:
             session = self._sessions.pop(session_id, None)
         if session is None:

@@ -55,6 +55,13 @@ Use these first when integrating a client.
 
 Use these to create, attach, list, and remove active game sessions.
 
+Every `{session_id}` path parameter accepts **either** the session's UUID
+`session_id` **or** its human-readable DragnCards room slug (e.g.
+`lively-fog-1234`) — reads, mutations, and delete alike. An identifier that is
+neither a well-formed session id nor a known room slug returns 404; a room slug
+with more than one live session attached returns 409, and the UUID must be used
+to disambiguate.
+
 - `POST /games`
   Create a new game session for a plugin. The requesting user is seated in the
   first available player slot.
@@ -68,11 +75,9 @@ Use these to create, attach, list, and remove active game sessions.
 
 - `GET /games/by-slug/{room_slug}`
   Resolve a human-readable DragnCards room slug (e.g. `lively-fog-1234`) to its
-  session metadata, including the canonical UUID `session_id`. This is a
-  read-only lookup and the ONLY endpoint that accepts a room slug. All state,
-  mutation, and delete endpoints remain UUID-only because the slug is
-  low-entropy and guessable; use the returned `session_id` to address those
-  endpoints.
+  session metadata, including the canonical UUID `session_id`. A read-only
+  convenience: other endpoints already take the slug directly, so use this when
+  you want the session's full metadata or its canonical id.
 
 - `DELETE /games/{session_id}`
   Delete a managed session.
@@ -174,10 +179,10 @@ MCP tools expose a minimal game-control surface:
 - `list_card_providers`
 - `search_cards_<provider>`
 
-`lookup_session_by_slug` resolves a room slug to its session metadata, including
-the canonical UUID `session_id`. The slug is accepted for lookup only; every
-other tool and endpoint that reads, mutates, or deletes a session takes the UUID
-`session_id`, never the slug.
+Every tool that takes a `session_id` accepts either the UUID `session_id` or the
+room slug, so an agent can work in terms of `lively-fog-1234`.
+`lookup_session_by_slug` remains available for reading a session's full metadata
+(and its canonical UUID) from a slug.
 
 Room control and observability endpoints (reset, seat assignment, spectator, alerts,
 replay, player count, alert buffers, GUI updates) are HTTP-only.
