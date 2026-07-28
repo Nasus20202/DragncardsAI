@@ -21,6 +21,8 @@ from agent_orchestrator.storage.db import create_engine, create_session_factory
 from agent_orchestrator.storage.migrations import ensure_schema
 from agent_orchestrator.storage.repository import Repository
 
+from .app_test_support import UNIT_ENABLED_PROVIDER_IDS
+
 
 class FakeBifrostClient(BifrostClient):
     def __init__(self):
@@ -90,7 +92,7 @@ async def build_context_test_app(tmp_path: Path, bifrost_client=None):
             bifrost_url="http://bifrost",
             bifrost_api_key="dummy",
             SKILL_ROOTS=str(skill_root),
-            ENABLED_PROVIDER_IDS="openai,gemini",
+            ENABLED_PROVIDER_IDS=UNIT_ENABLED_PROVIDER_IDS,
         ),
         repository=repository,
         bifrost_client=bifrost_client or FakeBifrostClient(),

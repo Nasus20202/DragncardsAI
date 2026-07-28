@@ -6,6 +6,8 @@ import json
 import httpx
 import pytest
 
+from .api_test_support import INTEGRATION_MODEL_CONFIG
+
 
 @pytest.mark.asyncio
 async def test_prompt_run_completes_background_job(app):
@@ -23,7 +25,7 @@ async def test_prompt_run_completes_background_job(app):
 
         await client.put(
             f"/sessions/{session_id}/model-config",
-            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+            json=INTEGRATION_MODEL_CONFIG,
         )
         await client.post(
             f"/sessions/{session_id}/skills", json={"skill_name": "test-skill"}
@@ -113,7 +115,7 @@ async def test_event_stream_replays_and_resumes(app):
         session_id = create_response.json()["session"]["id"]
         await client.put(
             f"/sessions/{session_id}/model-config",
-            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+            json=INTEGRATION_MODEL_CONFIG,
         )
         await client.post(
             f"/sessions/{session_id}/skills", json={"skill_name": "test-skill"}
@@ -251,7 +253,7 @@ async def test_event_filter_with_after_cursor_returns_later_matching_events_only
         session_id = create_response.json()["session"]["id"]
         await client.put(
             f"/sessions/{session_id}/model-config",
-            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+            json=INTEGRATION_MODEL_CONFIG,
         )
         await client.post(
             f"/sessions/{session_id}/skills", json={"skill_name": "test-skill"}

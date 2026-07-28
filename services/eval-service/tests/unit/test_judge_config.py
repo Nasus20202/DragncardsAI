@@ -17,7 +17,10 @@ from eval_service.schemas.api import JudgeConfig, JudgeReasoning
 
 
 def _settings(**overrides) -> Settings:
-    base = dict(eval_judge_model="anthropic/claude-default")
+    # `eval_judge_provider` is pinned empty so the tests below exercise the
+    # "provider derived from the model id" path deterministically, whatever a
+    # developer has EVAL_JUDGE_PROVIDER set to.
+    base = dict(eval_judge_model="anthropic/claude-default", eval_judge_provider="")
     base.update(overrides)
     return Settings(**base)
 

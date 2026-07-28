@@ -18,6 +18,20 @@ from agent_orchestrator.storage.db import create_engine, create_session_factory
 from agent_orchestrator.storage.migrations import ensure_schema
 from agent_orchestrator.storage.repository import Repository
 
+# Provider set the integration app is pinned to, and the provider/model pair the
+# tests below assign to sessions. Deliberately NOT the ambient
+# ENABLED_PROVIDER_IDS: the integration app runs against a fake Bifrost, so the
+# provider id is only a configuration token, and inheriting a narrowed `.env`
+# (for example one that disables OpenAI) would make every model-config
+# assignment fail with 400 even though the service is behaving correctly.
+INTEGRATION_ENABLED_PROVIDER_IDS = "openai,gemini,lmstudio"
+INTEGRATION_PROVIDER_ID = "openai"
+INTEGRATION_MODEL_NAME = "gpt-4o-mini"
+INTEGRATION_MODEL_CONFIG = {
+    "provider_id": INTEGRATION_PROVIDER_ID,
+    "model_name": INTEGRATION_MODEL_NAME,
+}
+
 GAME_SERVICE_HTTP_URL = os.environ.get("GAME_SERVICE_HTTP_URL", "http://localhost:4001")
 GAME_SERVICE_MCP_URL = os.environ.get(
     "GAME_SERVICE_MCP_URL", f"{GAME_SERVICE_HTTP_URL}/mcp/"
@@ -179,6 +193,7 @@ async def build_integration_app(tmp_path: Path):
         settings=Settings(
             database_url=f"sqlite+aiosqlite:///{database_path}",
             SKILL_ROOTS=str(skill_root),
+            ENABLED_PROVIDER_IDS=INTEGRATION_ENABLED_PROVIDER_IDS,
         ),
         repository=repository,
         bifrost_client=FakeBifrost(),
@@ -199,6 +214,7 @@ async def build_real_mcp_app(tmp_path: Path):
         settings=Settings(
             database_url=f"sqlite+aiosqlite:///{database_path}",
             DEFAULT_GAME_SERVICE_MCP_ENABLED=False,
+            ENABLED_PROVIDER_IDS=INTEGRATION_ENABLED_PROVIDER_IDS,
         ),
         repository=repository,
         bifrost_client=LiveGameServiceBifrost(),

@@ -9,7 +9,11 @@ from fastapi.testclient import TestClient
 
 from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError
 
-from .app_test_support import FakeBifrostClient, build_test_app
+from .app_test_support import (
+    UNIT_ENABLED_PROVIDER_IDS,
+    FakeBifrostClient,
+    build_test_app,
+)
 
 
 def test_health(app):
@@ -48,6 +52,26 @@ def test_list_providers(app):
         # filtered out for prefixed providers, so every enabled provider lists
         # no models.
         assert provider["models"] == []
+
+
+@pytest.mark.asyncio
+async def test_unit_app_pins_provider_set_regardless_of_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The unit harness must not inherit ENABLED_PROVIDER_IDS.
+
+    Guards the regression where a developer narrowing their `.env` to the
+    providers they hold keys for (for example dropping OpenAI) silently changed
+    which providers the unit suite exercised.
+    """
+    monkeypatch.setenv("ENABLED_PROVIDER_IDS", "mistral")
+    app, engine = await build_test_app(tmp_path)
+    try:
+        assert app.state.settings.enabled_provider_ids == tuple(
+            UNIT_ENABLED_PROVIDER_IDS.split(",")
+        )
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

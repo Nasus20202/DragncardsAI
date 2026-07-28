@@ -8,6 +8,7 @@ import pytest
 
 from .api_test_support import (
     GAME_SERVICE_HTTP_URL,
+    INTEGRATION_MODEL_CONFIG,
     GAME_SERVICE_MCP_URL,
     require_live_game_service,
 )
@@ -26,7 +27,7 @@ async def test_prompt_run_uses_real_game_service_mcp(real_mcp_app):
 
         await client.put(
             f"/sessions/{session_id}/model-config",
-            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+            json=INTEGRATION_MODEL_CONFIG,
         )
         await client.post(
             f"/sessions/{session_id}/mcps",

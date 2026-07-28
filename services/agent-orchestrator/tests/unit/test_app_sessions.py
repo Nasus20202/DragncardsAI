@@ -264,8 +264,9 @@ def test_rejects_unknown_provider(app):
 
 def test_rejects_disabled_provider(app):
     settings = app.state.settings
-    # Pick a provider that is supported by the build but not currently enabled,
-    # so the test holds regardless of which providers the environment enables.
+    # Pick a provider that is supported by the build but not enabled on this
+    # app, so the test names no specific vendor. The unit harness pins a partial
+    # provider set (see UNIT_ENABLED_PROVIDER_IDS), so one always exists.
     disabled_provider_id = next(
         (
             provider_id
@@ -274,8 +275,10 @@ def test_rejects_disabled_provider(app):
         ),
         None,
     )
-    if disabled_provider_id is None:
-        pytest.skip("all supported providers are enabled; no disabled provider")
+    assert disabled_provider_id is not None, (
+        "the unit app must enable only a subset of the supported providers so "
+        "this test has a genuinely disabled provider to reject"
+    )
     with TestClient(app) as client:
         session_id = client.post("/sessions", json={}).json()["session"]["id"]
         response = client.put(
