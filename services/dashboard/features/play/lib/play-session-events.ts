@@ -9,8 +9,17 @@ export type AggEvent =
   | { kind: "reasoning"; text: string }
   | { kind: "model_output"; text: string }
   | { kind: "compaction"; text: string }
-  | { kind: "tool_call"; event: JobEventResponse }
-  | { kind: "tool_result"; event: JobEventResponse }
+  /**
+   * One tool invocation: the call, and its result once it has arrived. The two
+   * events are paired by `tool_call_id` rather than shown as two separate cards,
+   * because a tool's name, its arguments and its answer are one thing to read —
+   * and because a call with no result yet is exactly what "still running" means.
+   */
+  | {
+      kind: "tool_exchange";
+      call: JobEventResponse | null;
+      result: JobEventResponse | null;
+    }
   | { kind: "skill_loaded"; event: JobEventResponse }
   | { kind: "subagent_started"; event: JobEventResponse }
   | { kind: "subagent_completed"; event: JobEventResponse }
@@ -210,6 +219,22 @@ export function aggregateEvents(
     (event, i) => event.event_type !== "failure" || i === lastFailureIndex
   );
 
+  // Index the results by the call they answer so a call can be rendered with
+  // its result even when other events, or other parallel tool calls, sit
+  // between the two. Building the index costs one pass over the same list the
+  // aggregation already walks; it does not read into any payload.
+  const resultsByCallId = new Map<string, JobEventResponse>();
+  for (const event of filteredEvents) {
+    if (event.event_type !== "tool_result") {
+      continue;
+    }
+    const callId = event.payload.tool_call_id;
+    if (typeof callId === "string" && callId && !resultsByCallId.has(callId)) {
+      resultsByCallId.set(callId, event);
+    }
+  }
+  const pairedResults = new Set<JobEventResponse>();
+
   let reasoningText = "";
   let modelText = "";
   const result: AggEvent[] = [];
@@ -260,8 +285,32 @@ export function aggregateEvents(
           typeof event.payload.text === "string" ? event.payload.text : "";
         break;
 
-      case "tool_call":
+      case "tool_call": {
+        flushReasoning();
+        flushModel();
+        const callId = event.payload.tool_call_id;
+        const paired =
+          typeof callId === "string" && callId
+            ? (resultsByCallId.get(callId) ?? null)
+            : null;
+        if (paired) {
+          pairedResults.add(paired);
+        }
+        result.push({ kind: "tool_exchange", call: event, result: paired });
+        break;
+      }
+
       case "tool_result":
+        flushReasoning();
+        flushModel();
+        // A result already shown next to its call is not repeated. One that has
+        // no call to attach to — a truncated event window, or a payload with no
+        // `tool_call_id` — is still shown, so nothing is silently dropped.
+        if (!pairedResults.has(event)) {
+          result.push({ kind: "tool_exchange", call: null, result: event });
+        }
+        break;
+
       case "skill_loaded":
       case "subagent_started":
       case "subagent_completed":
@@ -281,7 +330,7 @@ export function aggregateEvents(
       default:
         flushReasoning();
         flushModel();
-        result.push({ kind: "tool_call", event });
+        result.push({ kind: "tool_exchange", call: event, result: null });
         break;
     }
   }
