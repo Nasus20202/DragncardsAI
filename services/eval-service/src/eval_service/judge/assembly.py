@@ -50,6 +50,8 @@ class RoundInput:
     target_seq: int
     from_seq: int
     to_seq: int
+    # The 1-based round of PLAY (raw DragnCards ``roundNumber`` + 1), matching
+    # what the History UI shows -- see ``round_of_play``.
     round_number: int | None
     moves: list[MoveInput] = field(default_factory=list)
     closing_state: dict[str, Any] | None = None
@@ -92,12 +94,16 @@ _TERMINAL_STATUSES = ("win", "loss")
 
 
 def round_number_of(event: StoredEvent) -> int | None:
-    """Extract the round number from a ``game-service`` state event.
+    """Extract the RAW ``roundNumber`` from a ``game-service`` state event.
 
     DragnCards exposes the round under ``payload.state.game.roundNumber`` (raw)
     and the simplified game state exposes ``payload.state.roundNumber`` (flat).
     Both are checked so detection is robust to which representation was recorded.
     Returns None when no round number is present.
+
+    The value is DragnCards' own counter, which counts COMPLETED rounds — it is
+    0 for the whole first round of play. Use :func:`round_of_play` before showing
+    it to a judge or a user.
     """
     if event.actor != "game-service":
         return None
@@ -113,6 +119,17 @@ def round_number_of(event: StoredEvent) -> int | None:
         if isinstance(raw, int):
             return raw
     return None
+
+
+def round_of_play(raw_round_number: int) -> int:
+    """The 1-based round of play for a raw DragnCards ``roundNumber``.
+
+    ``roundNumber`` counts COMPLETED rounds (the plugin increments it as a round
+    closes), so the round being played while it reads N is round ``N + 1``. This
+    is the same convention the History UI displays, so a round verdict and the
+    transcript name the same round.
+    """
+    return raw_round_number + 1
 
 
 def event_status(event: StoredEvent) -> str | None:
@@ -204,13 +221,23 @@ def _neighbour_window(
 
 
 def detect_round_boundaries(events: list[StoredEvent]) -> list[tuple[int, int, int]]:
-    """Return ``(round_number, from_seq, to_seq)`` for each closed round.
+    """Return ``(round_of_play, from_seq, to_seq)`` for each closed round.
 
-    A round closes when the round number changes between consecutive
-    ``game-service`` state events, or at a terminal status. ``from_seq`` is the
-    first event seq of the round; ``to_seq`` (the closing seq) is the last seq
-    of the round (the state event that still belongs to the round). Rounds with
-    no detectable round number do not contribute boundaries.
+    A round closes when the raw ``roundNumber`` changes between ``game-service``
+    state events, or at a terminal status. ``from_seq`` is the first event seq of
+    the round; ``to_seq`` (the closing seq) is the LAST seq of the round.
+
+    A ``game-service`` event embeds the state AFTER its action was applied, so the
+    event whose state first reports the NEW round number is the event that CLOSED
+    the previous round: the round ends AT that event and the next round starts
+    after it. Attributing it to the next round instead (as this did before) shifted
+    every span by one event at each boundary and handed a round roll-up the board
+    from just before its own closing action. This mirrors the History UI, which
+    attributes a ``game-service`` event to the round it acted FROM.
+
+    The reported round is the 1-based round of PLAY (:func:`round_of_play`), not
+    the raw counter, so a round verdict names the round the transcript shows.
+    Rounds with no detectable round number do not contribute boundaries.
     """
     ordered = sorted(events, key=lambda e: e.seq)
     if not ordered:
@@ -219,32 +246,39 @@ def detect_round_boundaries(events: list[StoredEvent]) -> list[tuple[int, int, i
     boundaries: list[tuple[int, int, int]] = []
     current_round: int | None = None
     round_start_seq = ordered[0].seq
-    last_seq_in_round = ordered[0].seq
+    last_seq = ordered[0].seq
 
     for event in ordered:
         rn = round_number_of(event)
         if rn is not None:
             if current_round is None:
+                # Nothing has been observed yet, so there is no round this event
+                # acted FROM; its own state is the best attribution available (a
+                # timeline that begins mid-game must report the round it starts in).
                 current_round = rn
                 round_start_seq = ordered[0].seq
             elif rn != current_round:
-                # The previous round closed at the last seq before this change.
-                boundaries.append((current_round, round_start_seq, last_seq_in_round))
+                boundaries.append(
+                    (round_of_play(current_round), round_start_seq, event.seq)
+                )
                 current_round = rn
-                round_start_seq = last_seq_in_round + 1
-        last_seq_in_round = event.seq
+                round_start_seq = event.seq + 1
+        last_seq = event.seq
         if is_terminal(event):
-            # Terminal status closes the final round at this event.
-            close_round = current_round if current_round is not None else 0
-            boundaries.append((close_round, round_start_seq, event.seq))
+            # Terminal status closes the final round at this event -- unless this
+            # very event already closed a round above, which would otherwise
+            # append an empty span starting after it.
+            if round_start_seq <= event.seq:
+                close_round = (
+                    round_of_play(current_round) if current_round is not None else 1
+                )
+                boundaries.append((close_round, round_start_seq, event.seq))
             return boundaries
 
     # No terminal status reached: close the trailing open round at the last seq
     # if a round was ever detected.
-    if current_round is not None and (
-        not boundaries or boundaries[-1][2] < last_seq_in_round
-    ):
-        boundaries.append((current_round, round_start_seq, last_seq_in_round))
+    if current_round is not None and (not boundaries or boundaries[-1][2] < last_seq):
+        boundaries.append((round_of_play(current_round), round_start_seq, last_seq))
     return boundaries
 
 
@@ -288,10 +322,12 @@ def assemble_round_input(
                 continue
             moves.append(assemble_move_input(events, event.seq))
 
-    # A round's closing seq is its LAST seq, which is frequently an agent move
-    # rather than a state event -- in which case there is no state on the closing
-    # event itself. Fall back to the nearest recorded state at-or-before it so a
-    # round roll-up is never graded with no board at all.
+    # A round's closing seq is its LAST seq. A round closed by a round-number
+    # change closes at the state event that reported it, so the closing state is
+    # the board as the round ended; a trailing, still-open round can close at an
+    # agent move, which carries no state of its own. Fall back to the nearest
+    # recorded state at-or-before it so a round roll-up is never graded with no
+    # board at all.
     closing_event = _find_event(events, closing_seq)
     if closing_event is not None and closing_event.actor == "game-service":
         closing_state = closing_event.payload.get("state")

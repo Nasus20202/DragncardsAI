@@ -211,6 +211,9 @@ class RequestService:
         self, selection: Selection, events: list[StoredEvent]
     ) -> list[tuple[int, int]]:
         boundaries = detect_round_boundaries(events)
+        # ``selection.rounds`` names rounds of PLAY (1-based), the same numbers the
+        # History UI shows -- NOT the raw DragnCards ``roundNumber``, which counts
+        # completed rounds and is 0 for the first round of play.
         by_round = {b[0]: b for b in boundaries}
         chosen: dict[int, tuple[int, int]] = {}
 

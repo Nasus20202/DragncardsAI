@@ -45,6 +45,8 @@ class Selection(BaseModel):
     """A target selection. At least one field must be provided."""
 
     seqs: list[int] | None = Field(default=None, max_length=MAX_SELECTION_LIST)
+    # Rounds of PLAY, 1-based (the numbers the History tab shows), NOT the raw
+    # DragnCards ``roundNumber``, which counts completed rounds.
     rounds: list[int] | None = Field(default=None, max_length=MAX_SELECTION_LIST)
     seq_range: SeqRange | None = None
     whole_game: bool = False

@@ -8,6 +8,7 @@ from eval_service.judge.assembly import (
     assemble_round_input,
     detect_round_boundaries,
     round_number_of,
+    round_of_play,
 )
 from tests.unit.conftest import agent_event, make_event, state_event
 
@@ -47,10 +48,11 @@ def test_move_input_rejects_non_agent_seq():
 def test_round_boundary_detection_with_change_and_terminal():
     events = _recorded_game()
     boundaries = detect_round_boundaries(events)
-    # round 1 closes at seq4 (last seq before the round-2 state at seq5);
-    # round 2 closes at the terminal win at seq7.
-    assert (1, 1, 4) in boundaries
-    assert boundaries[-1] == (2, 5, 7)
+    # The state at seq5 is the POST-action state of the move that closed the
+    # round, so the round ends AT seq5 and the next one starts at seq6. Rounds
+    # are numbered as rounds of play (raw roundNumber + 1), so raw 1 is round 2.
+    assert (2, 1, 5) in boundaries
+    assert boundaries[-1] == (3, 6, 7)
 
 
 def test_round_boundary_terminal_fallback_closes_final_round():
@@ -61,7 +63,18 @@ def test_round_boundary_terminal_fallback_closes_final_round():
         state_event(game_id="g2", seq=3, round_number=1, status="loss"),
     ]
     boundaries = detect_round_boundaries(events)
-    assert boundaries == [(1, 1, 3)]
+    assert boundaries == [(2, 1, 3)]
+
+
+def test_round_change_and_terminal_on_the_same_event_closes_once():
+    # The event that closes the round is also the terminal one. It must close the
+    # round exactly once, and must NOT also open an empty round after itself.
+    events = [
+        state_event(game_id="g2b", seq=1, round_number=0),
+        agent_event(game_id="g2b", seq=2, action="next_step"),
+        state_event(game_id="g2b", seq=3, round_number=1, status="win"),
+    ]
+    assert detect_round_boundaries(events) == [(1, 1, 3)]
 
 
 def test_round_boundary_undetected_when_no_round_numbers():
@@ -82,11 +95,74 @@ def test_round_boundary_undetected_when_no_round_numbers():
 
 def test_assemble_round_input_spans_round_moves():
     events = _recorded_game()
-    rnd = assemble_round_input(events, closing_seq=4)
-    assert rnd.round_number == 1
-    assert (rnd.from_seq, rnd.to_seq) == (1, 4)
-    # moves within round 1: seq2 and seq4
+    rnd = assemble_round_input(events, closing_seq=5)
+    assert rnd.round_number == 2
+    assert (rnd.from_seq, rnd.to_seq) == (1, 5)
+    # moves within the round: seq2 and seq4
     assert [m.target_seq for m in rnd.moves] == [2, 4]
+
+
+def _dra14_recorded_game(game_id="35128894-0cad-4b53-b195-d74b7428fe2c"):
+    """The round-boundary shape of the real recorded game named in DRA-9/DRA-14.
+
+    Ground truth from that game's 122 recorded events: the raw ``roundNumber`` goes
+    0 -> 1 at seq 63 and 1 -> 2 at seq 103, and seq 63 is the ``next_step`` whose
+    PRE-action state was still the previous round's End step -- the move that ENDED
+    the first round of play. ``roundNumber`` counts completed rounds, so it reads 0
+    for that whole first round.
+    """
+    return [
+        state_event(game_id=game_id, seq=1, round_number=0),
+        agent_event(game_id=game_id, seq=61, action="play_card"),
+        agent_event(game_id=game_id, seq=62, action="next_step"),
+        # Post-action state of the move that closed the first round of play.
+        state_event(game_id=game_id, seq=63, round_number=1),
+        agent_event(game_id=game_id, seq=102, action="next_step"),
+        state_event(game_id=game_id, seq=103, round_number=2),
+        agent_event(game_id=game_id, seq=121, action="play_card"),
+        state_event(game_id=game_id, seq=122, round_number=2),
+    ]
+
+
+def test_round_spans_end_at_the_event_that_closed_the_round():
+    # Pinned to the real seqs from the game DRA-14 was confirmed against: the
+    # round-changing event closes the round it changed OUT of, so round 1 of play
+    # ends at seq 63 (not seq 62) and round 2 starts at seq 64 (not seq 63).
+    boundaries = detect_round_boundaries(_dra14_recorded_game())
+    assert boundaries == [(1, 1, 63), (2, 64, 103), (3, 104, 122)]
+    closing_seqs = [to for _rn, _frm, to in boundaries]
+    # The pre-fix behaviour: rounds closed one event early, at the last seq BEFORE
+    # the round-number change.
+    assert 62 not in closing_seqs
+    assert 102 not in closing_seqs
+
+
+def test_round_numbers_are_rounds_of_play_not_the_completed_round_counter():
+    # DragnCards `roundNumber` counts COMPLETED rounds, so it is 0 for the whole
+    # first round of play. A judge (and a user) must be told "round 1", never
+    # "round 0" -- the same convention the History UI displays.
+    rounds = [rn for rn, _frm, _to in detect_round_boundaries(_dra14_recorded_game())]
+    assert rounds == [1, 2, 3]
+    assert round_of_play(0) == 1
+
+
+def test_round_closing_move_is_graded_inside_the_round_it_closed():
+    events = _dra14_recorded_game()
+    first = assemble_round_input(events, closing_seq=63)
+    assert first.round_number == 1
+    assert (first.from_seq, first.to_seq) == (1, 63)
+    # The `next_step` at seq 62 ended this round; it belongs to it, and so does the
+    # play before it.
+    assert [m.target_seq for m in first.moves] == [61, 62]
+    # And the round's closing board is the state recorded at its closing seq -- one
+    # completed round -- not the state from before the closing action.
+    assert first.closing_state is not None
+    assert first.closing_state["roundNumber"] == 1
+
+    second = assemble_round_input(events, closing_seq=103)
+    assert second.round_number == 2
+    assert (second.from_seq, second.to_seq) == (64, 103)
+    assert [m.target_seq for m in second.moves] == [102]
 
 
 def test_round_number_of_reads_raw_game_shape():
@@ -131,23 +207,28 @@ def test_round_input_omits_non_strategic_moves_and_counts_them():
     ]
     rnd = assemble_round_input(
         events,
-        closing_seq=3,
+        closing_seq=4,
         skip_actions=frozenset({"search_cards_marvel_champions"}),
     )
     assert [m.target_seq for m in rnd.moves] == [3]
     assert rnd.omitted_non_strategic == 1
     # Without a skip set the round still lists every move.
-    every = assemble_round_input(events, closing_seq=3)
+    every = assemble_round_input(events, closing_seq=4)
     assert [m.target_seq for m in every.moves] == [2, 3]
     assert every.omitted_non_strategic == 0
 
 
 def test_round_closing_state_falls_back_to_the_nearest_recorded_state():
-    # A round's closing seq is its LAST seq, which is usually an agent move and
-    # therefore carries no state. Grading a round with no board at all is what
-    # this guards against.
-    events = _recorded_game()
+    # A still-open trailing round closes at the last recorded seq, which can be an
+    # agent move and therefore carries no state of its own. Grading a round with no
+    # board at all is what this guards against.
+    events = [
+        state_event(game_id="g6", seq=1, round_number=1),
+        agent_event(game_id="g6", seq=2),
+        state_event(game_id="g6", seq=3, round_number=2),
+        agent_event(game_id="g6", seq=4),
+    ]
     rnd = assemble_round_input(events, closing_seq=4)
     assert rnd.to_seq == 4
     assert rnd.closing_state is not None
-    assert rnd.closing_state["roundNumber"] == 1
+    assert rnd.closing_state["roundNumber"] == 2

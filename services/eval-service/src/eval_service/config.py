@@ -99,8 +99,14 @@ class Settings(BaseSettings):
             "eval_judge_bifrost_key_name", "EVAL_JUDGE_BIFROST_KEY_NAME"
         ),
     )
+    # Recorded on every verdict and folded into the write-back idempotency key, so
+    # it is how a change in what the judge is asked stays traceable. Bumped to
+    # ``eval-2`` when round-boundary detection was corrected (a round now ends at
+    # the event that closed it, and rounds are numbered as rounds of play): round
+    # and game verdicts recorded under ``eval-1`` graded a span shifted by one
+    # event at each boundary and are NOT comparable to ``eval-2`` ones.
     evaluator_version: str = Field(
-        default="eval-1",
+        default="eval-2",
         validation_alias=AliasChoices("evaluator_version", "EVALUATOR_VERSION"),
     )
 

@@ -70,12 +70,13 @@ async def test_round_scope_targets_closed_rounds(repository):
     body = EvaluationRequestBody(scope="round", selection=Selection(whole_game=True))
     resp = await service.create("g1", body)
     # A round request now CASCADES: it claims the move targets each round depends
-    # on (scope=move) plus a per-player round roll-up (scope=round). round 1
-    # closes at seq4, round 2 (terminal) closes at seq7.
+    # on (scope=move) plus a per-player round roll-up (scope=round). The first
+    # round closes AT the seq-5 state that reported the round change, so the next
+    # round runs 6-7 and closes on the terminal event at seq7.
     round_spans = {
         t.target_seq: t.round_span for t in resp.targets if t.scope == "round"
     }
-    assert round_spans == {4: [1, 4], 7: [5, 7]}
+    assert round_spans == {5: [1, 5], 7: [6, 7]}
     move_seqs = sorted(t.target_seq for t in resp.targets if t.scope == "move")
     assert move_seqs == [2, 4, 6]
 
@@ -128,17 +129,17 @@ async def test_selection_matching_nothing_400s(repository):
 
 @pytest.mark.asyncio
 async def test_round_scope_mid_round_seq_resolves_to_containing_round(repository):
-    # seq6 is a mid-round agent move inside round 2 (span 5-7); round scope
+    # seq6 is a mid-round agent move inside the final round (span 6-7); round scope
     # must map it to that round's closing target rather than 400ing.
     service = _service(repository, _game())
     body = EvaluationRequestBody(scope="round", selection=Selection(seqs=[6]))
     resp = await service.create("g1", body)
-    # The round roll-up resolves to round 2 (closes at seq7), plus the move
+    # The round roll-up resolves to the round containing seq6, plus the move
     # targets that round depends on (the cascade).
     round_targets = [t for t in resp.targets if t.scope == "round"]
     assert len(round_targets) == 1
-    assert round_targets[0].target_seq == 7  # round 2 closes at seq7
-    assert round_targets[0].round_span == [5, 7]
+    assert round_targets[0].target_seq == 7  # closed by the terminal event
+    assert round_targets[0].round_span == [6, 7]
     move_seqs = sorted(t.target_seq for t in resp.targets if t.scope == "move")
     assert move_seqs == [6]
 
