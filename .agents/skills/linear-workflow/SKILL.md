@@ -11,6 +11,16 @@ is not a record. The policy is in [`AGENTS.md`](../../../AGENTS.md) under **Task
 
 Requires a Linear MCP server. Workspace: team **DragncardsAI**, prefix `DRA`.
 
+## Choosing what to work on
+
+When pulling a set of issues, order them by **priority**, then the owner's **manual order** (the
+drag-and-drop position), then **size with the biggest first**. Not quickest-first: small items first
+feels productive and strands the expensive work at the end of a session.
+
+`list_issues` only accepts `orderBy` of `createdAt`/`updatedAt` and returns `priority` but not
+`sortOrder`, so sort client-side and state which keys were actually available — priority always, size
+when estimates are set, manual order only if the owner supplies it.
+
 ## Before starting work
 
 1. Find or create the issue. Search first (`list_issues`) — reported work is often already filed.
@@ -45,8 +55,12 @@ Do not mark `Done` on a delegated agent's report. Verify yourself, then:
 2. Run the full check set on the merged tip (`./scripts/lint.sh`, `./scripts/test.sh unit`, the
    service test suites, `openspec validate --all`).
 3. Drive the running app through the feature or the fixed path — Playwright MCP, not tests alone.
-4. Archive the OpenSpec change and sync `openspec/specs/`.
+4. Archive the OpenSpec change and sync `openspec/specs/`. Replace every placeholder the archive
+   generated — a `TBD` `## Purpose` left behind becomes a false record of what the system does.
 5. Post the **finishing** comment, then move the issue to `Done`.
+6. Remove the worktree and **delete the merged branch**. Squash-merging means the branch is not an
+   ancestor of the integration branch, so `git branch --merged` will not list it — match it to the
+   archived change instead of trusting ancestry.
 
 Attach screenshots and recordings to the issue. They must not be left in the repo working tree.
 
