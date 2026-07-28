@@ -109,6 +109,40 @@ export function requestPlayers(request: EvaluationQueueRequest): string[] {
   return players;
 }
 
+/** One target's failure, ready to render on the queue row. */
+export interface EvaluationQueueError {
+  /** The target it happened on, e.g. "Move #12". */
+  label: string;
+  status: EvaluationTargetStatus;
+  detail: string;
+}
+
+/**
+ * The failures a request has hit so far, in target order.
+ *
+ * Includes errors on targets that are still `running` — the eval-service records
+ * a failed judge attempt on the target row while it retries — so a problem shows
+ * up during the run rather than only in the request's final status. A deliberate
+ * `skipped` reason (a non-strategic action, which carries no decision to grade)
+ * and `cancelled` bookkeeping are not failures and are left out.
+ */
+export function requestErrors(
+  request: EvaluationQueueRequest
+): EvaluationQueueError[] {
+  const errors: EvaluationQueueError[] = [];
+  for (const target of request.targets) {
+    const detail = target.error;
+    if (typeof detail !== "string" || detail.trim() === "") continue;
+    if (target.status === "skipped" || target.status === "cancelled") continue;
+    errors.push({
+      label: targetScopeLabel(target),
+      status: target.status,
+      detail,
+    });
+  }
+  return errors;
+}
+
 /**
  * A human scope label for a queued request. A single target reads as the target
  * itself ("Move #12" / "Round 3" / "Whole game"); multiple targets summarize

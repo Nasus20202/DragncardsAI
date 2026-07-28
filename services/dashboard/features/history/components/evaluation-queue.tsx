@@ -10,9 +10,13 @@ import {
 import {
   isRequestActive,
   progressLabel,
+  requestErrors,
   requestPlayers,
   requestScopeLabel,
 } from "@/features/history/lib/eval-queue";
+
+/** How many per-target failures a row lists before summarizing the rest. */
+const MAX_SHOWN_ERRORS = 3;
 
 /** Whether any listed request is terminal (clearable). */
 function hasTerminalRequest(requests: EvaluationQueueRequest[]): boolean {
@@ -44,8 +48,12 @@ function gameLabel(gameId: string, gameNames: Record<string, string>): string {
  * The persistent, cross-game evaluations queue. Lists in-progress and recent
  * requests (newest first) with their game, scope label, status, and progress,
  * and offers a per-request Cancel while non-terminal or a per-request Clear once
- * terminal, plus a header "Clear all" for every terminal request. Presentational
- * only — all polling/cancel/clear lifecycle lives in `useEvaluationQueue`.
+ * terminal, plus a header "Clear all" for every terminal request.
+ *
+ * A row also lists the per-target failures the request has hit, including ones
+ * recorded while it is still running, so an evaluation error is visible as it
+ * happens rather than only as a final status. Presentational only — all
+ * polling/cancel/clear lifecycle lives in `useEvaluationQueue`.
  */
 export function EvaluationQueue({
   requests,
@@ -128,6 +136,7 @@ export function EvaluationQueue({
             {requests.map((request) => {
               const active = isRequestActive(request);
               const players = requestPlayers(request);
+              const errors = requestErrors(request);
               return (
                 <li
                   key={request.request_id}
@@ -177,6 +186,26 @@ export function EvaluationQueue({
                           {player}
                         </Chip>
                       ))}
+                    </div>
+                  )}
+                  {errors.length > 0 && (
+                    <div
+                      role="alert"
+                      data-testid={`history-eval-queue-errors-${request.request_id}`}
+                      className="flex flex-col gap-1 rounded-lg border border-danger/30 bg-danger/10 px-2 py-1.5 text-xs text-danger"
+                    >
+                      {errors.slice(0, MAX_SHOWN_ERRORS).map((entry) => (
+                        <span
+                          key={`${entry.label}-${entry.detail}`}
+                          className="break-words"
+                        >
+                          <span className="font-medium">{entry.label}:</span>{" "}
+                          {entry.detail}
+                        </span>
+                      ))}
+                      {errors.length > MAX_SHOWN_ERRORS && (
+                        <span>+{errors.length - MAX_SHOWN_ERRORS} more</span>
+                      )}
                     </div>
                   )}
                   <div className="flex justify-end">

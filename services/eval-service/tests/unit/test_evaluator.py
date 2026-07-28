@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from eval_service.config import Settings
+from eval_service.error_detail import MAX_ERROR_DETAIL_CHARS
 from eval_service.integrations.bifrost import BifrostError
 from eval_service.judge.writeback import verdict_idempotency_key
 from eval_service.runtime.evaluator import Evaluator, JudgeNotConfiguredError
@@ -106,7 +107,7 @@ async def test_judge_retries_then_succeeds(repository):
 
 
 @pytest.mark.asyncio
-async def test_failing_judge_skips_target_without_writeback(repository):
+async def test_failing_judge_fails_target_without_writeback(repository):
     events = _events()
     history = FakeHistoryClient({"g1": events})
     judge = StubJudgeClient(error=BifrostError("gateway_error", "down", retryable=True))
@@ -121,7 +122,9 @@ async def test_failing_judge_skips_target_without_writeback(repository):
         target_id=target_id, game_id="g1", target_seq=2, scope="move", events=events
     )
     row = await repository.get_target_by_id(target_id)
-    assert row.status == "skipped"
+    # An error is FAILED, never ``skipped``: ``skipped`` means "there was no
+    # decision to grade", which a client must be able to tell apart.
+    assert row.status == "failed"
     assert row.error
     # Nothing written back when the judge never produced a verdict.
     assert history.written == []
@@ -146,13 +149,13 @@ async def test_non_retryable_judge_error_fails_fast(repository):
         target_id=target_id, game_id="g1", target_seq=2, scope="move", events=events
     )
     row = await repository.get_target_by_id(target_id)
-    assert row.status == "skipped"
+    assert row.status == "failed"
     # Only one judge call despite eval_max_attempts=3 -> failed fast.
     assert len(judge.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_skip_reason_carries_the_gateway_error(repository):
+async def test_failure_reason_carries_the_gateway_error(repository):
     """The gateway's own message must reach the target, not a generic "failed".
 
     A missing dedicated judge key is reported by Bifrost as a definitive 400; if
@@ -177,12 +180,12 @@ async def test_skip_reason_carries_the_gateway_error(repository):
         target_id=target_id, game_id="g1", target_seq=2, scope="move", events=events
     )
     row = await repository.get_target_by_id(target_id)
-    assert row.status == "skipped"
+    assert row.status == "failed"
     assert message in row.error
 
 
 @pytest.mark.asyncio
-async def test_writeback_failure_marks_skipped(repository):
+async def test_writeback_failure_marks_failed(repository):
     events = _events()
     history = FakeHistoryClient({"g1": events})
     history.write_error = RuntimeError("history down")
@@ -195,7 +198,8 @@ async def test_writeback_failure_marks_skipped(repository):
         target_id=target_id, game_id="g1", target_seq=2, scope="move", events=events
     )
     row = await repository.get_target_by_id(target_id)
-    assert row.status == "skipped"
+    assert row.status == "failed"
+    assert "write-back failed" in row.error
 
 
 @pytest.mark.asyncio
@@ -262,7 +266,7 @@ async def test_refuses_when_no_judge_model(repository):
             events=events,
         )
     row = await repository.get_target_by_id(target_id)
-    assert row.status == "skipped"
+    assert row.status == "failed"
     assert judge.calls == []  # never invoked a default model
 
 
@@ -424,3 +428,194 @@ async def test_move_prompt_carries_the_configured_neighbour_window(repository):
     prompt = judge.calls[0]["messages"][1]["content"]
     assert 'seq 2: action="move_card"' in prompt
     assert 'seq 4: action="exhaust_card"' in prompt
+
+
+@pytest.mark.asyncio
+async def test_mid_evaluation_attempt_error_is_recorded_and_pushed_live(repository):
+    """A failed attempt must surface WHILE the evaluation is still running.
+
+    Before this, each retried attempt's failure was only logged at info level, so
+    a client watching the evaluation saw nothing at all until the target reached a
+    terminal state -- and then only the LAST error. Every attempt now lands on the
+    target row (Postgres) while the row is still ``running``, and is pushed
+    through the live sink so a connected client learns about it as it happens.
+    """
+    events = _events()
+    history = FakeHistoryClient({"g1": events})
+    judge = StubJudgeClient(fail_times=2)  # fails twice, succeeds on the 3rd
+    evaluator = Evaluator(
+        settings=_settings(), repository=repository, history=history, judge=judge
+    )
+    target_id = await _claim_move(repository)
+
+    # The sink reads the durable row at the moment it is notified, which proves
+    # the detail is persisted (not held in the worker) and readable mid-run.
+    observed: list[tuple[str, str, str]] = []
+
+    async def on_error(detail: str) -> None:
+        row = await repository.get_target_by_id(target_id)
+        observed.append((detail, row.status, row.error))
+
+    await evaluator.evaluate_target(
+        target_id=target_id,
+        game_id="g1",
+        target_seq=2,
+        scope="move",
+        events=events,
+        on_error=on_error,
+    )
+
+    assert [d for d, _s, _e in observed] == [
+        "judge attempt 1/3 failed: boom",
+        "judge attempt 2/3 failed: boom",
+    ]
+    # Reported live: the target was still running and already carried the reason.
+    assert [s for _d, s, _e in observed] == ["running", "running"]
+    assert [e for _d, _s, e in observed] == [
+        "judge attempt 1/3 failed: boom",
+        "judge attempt 2/3 failed: boom",
+    ]
+    # The retry eventually succeeded, so the target completes and the transient
+    # error is cleared rather than left behind as a false failure.
+    row = await repository.get_target_by_id(target_id)
+    assert row.status == "completed"
+    assert row.error is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_failure_detail_is_pushed_live_too(repository):
+    events = _events()
+    history = FakeHistoryClient({"g1": events})
+    judge = StubJudgeClient(
+        error=BifrostError("gateway_error", "gateway exploded", retryable=False)
+    )
+    evaluator = Evaluator(
+        settings=_settings(), repository=repository, history=history, judge=judge
+    )
+    target_id = await _claim_move(repository)
+
+    pushed: list[str] = []
+
+    async def on_error(detail: str) -> None:
+        pushed.append(detail)
+
+    await evaluator.evaluate_target(
+        target_id=target_id,
+        game_id="g1",
+        target_seq=2,
+        scope="move",
+        events=events,
+        on_error=on_error,
+    )
+
+    # The attempt failure AND the terminal failure both reach the sink, and the
+    # terminal one carries the gateway's own reason.
+    assert pushed == [
+        "judge attempt 1/3 failed: gateway exploded",
+        "judge failed after retry limit: gateway exploded",
+    ]
+    row = await repository.get_target_by_id(target_id)
+    assert row.status == "failed"
+    assert "gateway exploded" in row.error
+
+
+@pytest.mark.asyncio
+async def test_recorded_error_detail_is_redacted_and_bounded(repository):
+    """Error detail is surfaced to the client, so it must carry no credential.
+
+    The gateway's message can embed the request it tried (headers included) or a
+    provider body echoing the whole prompt; neither may be stored verbatim.
+    """
+    events = _events()
+    history = FakeHistoryClient({"g1": events})
+    leaky = (
+        "upstream refused POST /openai/chat/completions "
+        "headers={'Authorization': 'Bearer sk-ant-api03-SUPERSECRETVALUE0001', "
+        "'x-bf-api-key': 'eval-judge'} body=" + ("Q" * 5_000)
+    )
+    judge = StubJudgeClient(error=BifrostError("gateway_error", leaky))
+    evaluator = Evaluator(
+        settings=_settings(eval_max_attempts=1),
+        repository=repository,
+        history=history,
+        judge=judge,
+    )
+    target_id = await _claim_move(repository)
+
+    await evaluator.evaluate_target(
+        target_id=target_id, game_id="g1", target_seq=2, scope="move", events=events
+    )
+
+    row = await repository.get_target_by_id(target_id)
+    assert row.status == "failed"
+    assert "sk-ant-api03-SUPERSECRETVALUE0001" not in row.error
+    assert "SUPERSECRET" not in row.error
+    assert "[REDACTED]" in row.error
+    assert len(row.error) <= MAX_ERROR_DETAIL_CHARS
+    # The useful part survives: the operator still sees what was being attempted.
+    assert "upstream refused" in row.error
+
+
+@pytest.mark.asyncio
+async def test_mid_run_attempt_error_detail_is_redacted_too(repository):
+    events = _events()
+    history = FakeHistoryClient({"g1": events})
+    judge = StubJudgeClient(
+        error=BifrostError(
+            "gateway_error",
+            "rejected Authorization: Bearer sk-or-v1-LEAKEDKEYVALUE00001",
+            retryable=True,
+        )
+    )
+    evaluator = Evaluator(
+        settings=_settings(eval_max_attempts=2),
+        repository=repository,
+        history=history,
+        judge=judge,
+    )
+    target_id = await _claim_move(repository)
+
+    seen: list[str] = []
+
+    async def on_error(_detail: str) -> None:
+        row = await repository.get_target_by_id(target_id)
+        seen.append(row.error)
+
+    await evaluator.evaluate_target(
+        target_id=target_id,
+        game_id="g1",
+        target_seq=2,
+        scope="move",
+        events=events,
+        on_error=on_error,
+    )
+
+    assert seen, "expected at least one mid-run attempt error"
+    for stored in seen:
+        assert "sk-or-v1-LEAKEDKEYVALUE00001" not in stored
+        assert "[REDACTED]" in stored
+
+
+@pytest.mark.asyncio
+async def test_attempt_error_does_not_overwrite_a_cancelled_row(repository):
+    # A cancel that lands mid-retry owns the row; a later attempt error must not
+    # replace its recorded outcome.
+    events = _events()
+    history = FakeHistoryClient({"g1": events})
+    judge = StubJudgeClient(error=BifrostError("gateway_error", "boom", retryable=True))
+    evaluator = Evaluator(
+        settings=_settings(eval_max_attempts=3),
+        repository=repository,
+        history=history,
+        judge=judge,
+    )
+    target_id = await _claim_move(repository)
+    await repository.cancel_request_targets("r1")
+
+    await evaluator.evaluate_target(
+        target_id=target_id, game_id="g1", target_seq=2, scope="move", events=events
+    )
+
+    row = await repository.get_target_by_id(target_id)
+    assert row.status == "cancelled"
+    assert row.error == "cancelled by request"

@@ -103,7 +103,7 @@ async def test_verdict_records_actual_model_and_provider(repo):
 
 
 @pytest.mark.asyncio
-async def test_no_model_configured_skips(repo):
+async def test_no_model_configured_fails(repo):
     settings = Settings(eval_judge_model="", eval_max_attempts=1)
     history = FakeHistoryClient({"g1": _events()})
     judge = StubJudgeClient()
@@ -121,4 +121,4 @@ async def test_no_model_configured_skips(repo):
             judge_config=None,
         )
     target = await repo.get_target_by_id(target_id)
-    assert target.status == "skipped"
+    assert target.status == "failed"

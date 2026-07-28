@@ -159,6 +159,107 @@ describe("EvaluationQueue panel", () => {
     expect(within(players).getByText("player2")).toBeInTheDocument();
   });
 
+  it("shows the failure detail of a still-running request", () => {
+    // The reported bug: an evaluation that hit an error showed nothing but a
+    // status. The detail must be on the row WHILE the request is still running.
+    renderQueue({
+      requests: [
+        {
+          request_id: "req-e",
+          game_id: "g1",
+          status: "pending",
+          created_at: "2026-06-28T00:04:00Z",
+          targets: [
+            {
+              target_seq: 12,
+              scope: "move",
+              round_span: null,
+              status: "running",
+              error:
+                "judge attempt 1/3 failed: Bifrost judge request timed out",
+            },
+            {
+              target_seq: 14,
+              scope: "move",
+              round_span: null,
+              status: "pending",
+            },
+          ],
+        },
+      ],
+    });
+
+    const errors = screen.getByTestId("history-eval-queue-errors-req-e");
+    expect(errors).toHaveTextContent("Move #12");
+    expect(errors).toHaveTextContent(
+      "judge attempt 1/3 failed: Bifrost judge request timed out"
+    );
+  });
+
+  it("shows terminal failure detail and summarizes the overflow", () => {
+    renderQueue({
+      requests: [
+        {
+          request_id: "req-f",
+          game_id: "g1",
+          status: "failed",
+          created_at: "2026-06-28T00:05:00Z",
+          targets: [1, 2, 3, 4].map((seq) => ({
+            target_seq: seq,
+            scope: "move" as const,
+            round_span: null,
+            status: "failed" as const,
+            error: `judge failed after retry limit: boom ${seq}`,
+          })),
+        },
+      ],
+    });
+
+    const errors = screen.getByTestId("history-eval-queue-errors-req-f");
+    expect(errors).toHaveTextContent("boom 1");
+    expect(errors).toHaveTextContent("boom 3");
+    expect(errors).not.toHaveTextContent("boom 4");
+    expect(errors).toHaveTextContent("+1 more");
+  });
+
+  it("does not show a deliberate non-strategic skip as a failure", () => {
+    renderQueue({
+      requests: [
+        {
+          request_id: "req-g",
+          game_id: "g1",
+          status: "partial",
+          created_at: "2026-06-28T00:06:00Z",
+          targets: [
+            {
+              target_seq: 12,
+              scope: "move",
+              round_span: null,
+              status: "skipped",
+              error:
+                "non-strategic action 'search_cards_marvel_champions': a card " +
+                "search cannot be a wrong play",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(
+      screen.queryByTestId("history-eval-queue-errors-req-g")
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders no error block when nothing failed", () => {
+    renderQueue();
+    expect(
+      screen.queryByTestId("history-eval-queue-errors-req-a")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("history-eval-queue-errors-req-b")
+    ).not.toBeInTheDocument();
+  });
+
   it("renders an empty state when there are no requests", () => {
     renderQueue({ requests: [], gameNames: {} });
     expect(screen.getByTestId("history-eval-queue-empty")).toBeInTheDocument();

@@ -187,10 +187,10 @@ async def test_forced_reeval_with_different_config_is_not_deduped(postgres_repos
 
 
 @pytest.mark.asyncio
-async def test_failing_judge_skips_without_blocking_others(postgres_repository):
+async def test_failing_judge_fails_without_blocking_others(postgres_repository):
     events = _recorded_game()
     history = FakeHistoryClient({"g1": events})
-    # Judge always fails -> all targets skipped, none block the others.
+    # Judge always fails -> all targets FAILED (not skipped), none block the others.
     judge = StubJudgeClient(error=BifrostError("gateway_error", "down", retryable=True))
     request_service, worker = _wire(
         postgres_repository, history, judge, _settings(eval_max_attempts=1)
@@ -202,6 +202,8 @@ async def test_failing_judge_skips_without_blocking_others(postgres_repository):
     await worker.drain_once()
 
     targets = await postgres_repository.list_targets_for_request(resp.request_id)
-    assert {t.status for t in targets} == {"skipped"}
+    assert {t.status for t in targets} == {"failed"}
+    # Each carries the gateway's reason, so the failure is explainable in the UI.
+    assert all("down" in (t.error or "") for t in targets)
     # A judge outage never writes advisory events and never errors out the batch.
     assert history.written == []

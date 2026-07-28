@@ -101,12 +101,15 @@ class EvaluationWorker:
         for game_id, targets in by_game.items():
             try:
                 events = await self._history.list_all_events(game_id)
-            except Exception as exc:  # noqa: BLE001 - skip this game's targets
+            except Exception as exc:  # noqa: BLE001 - fail this game's targets
                 logger.warning("Failed to read history for game=%s: %s", game_id, exc)
                 for target in targets:
-                    await self._repository.mark_skipped(
+                    # An unreadable timeline is an error, not a deliberate skip:
+                    # record it as ``failed`` with the reason so the UI shows it.
+                    await self._repository.mark_failed(
                         target.id, f"history read failed: {exc}"
                     )
+                    self._publish_status(target.request_id)
                 continue
             for target in targets:
                 task = asyncio.create_task(self._process_one(target, events))
@@ -147,6 +150,23 @@ class EvaluationWorker:
 
         return sink
 
+    def _make_error_sink(self, target: EvaluatedTargetRow):
+        """Wake live subscribers when a mid-evaluation failure is recorded.
+
+        The detail itself is already durable on the target row, so — exactly like
+        a status transition — this only signals "something changed" and the stream
+        re-reads the authoritative snapshot from Postgres. Unlike the token sink
+        this fires even with nobody watching (it is rare, and a client connecting
+        later must still find the error in the snapshot, which it does).
+        """
+        if self._live_bus is None:
+            return None
+
+        async def sink(_detail: str) -> None:
+            self._publish_status(target.request_id)
+
+        return sink
+
     async def _process_one(
         self, target: EvaluatedTargetRow, events: list[StoredEvent]
     ) -> None:
@@ -166,12 +186,11 @@ class EvaluationWorker:
                         player=target.player or None,
                         judge_config=config,
                         on_token=self._make_token_sink(target),
+                        on_error=self._make_error_sink(target),
                     )
                 except JudgeNotConfiguredError:
-                    # Already marked skipped with a clear config error.
-                    logger.warning(
-                        "Skipping target %s: judge not configured", target.id
-                    )
+                    # Already marked failed with a clear config error.
+                    logger.warning("Target %s failed: judge not configured", target.id)
                 except asyncio.CancelledError:
                     # Cancelled in-flight: the cancel handler already set the
                     # durable ``cancelled`` status and writes no verdict. Do not

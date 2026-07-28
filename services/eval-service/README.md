@@ -110,11 +110,40 @@ evaluated too: wrongly skipping a strategic action degrades evaluation quality
 where nobody will notice, while wrongly evaluating a trivial one only costs one
 judge call.
 
-A skipped target is recorded as `skipped` with the reason on the target row — the
-same channel a judge failure uses — so it can never be mistaken for a passing
-verdict. Round roll-ups leave non-strategic moves out of their move list and state
-how many were omitted. On the recorded games in this stack this skips **32.0% of
-agent moves**.
+A skipped target is recorded as `skipped` with the reason on the target row, so it
+can never be mistaken for a passing verdict. `skipped` means "there was no
+decision to grade here" and nothing else — a judge or assembly *failure* is
+recorded as `failed` (see [Errors are reported live](#errors-are-reported-live)),
+so a deliberate skip and an error are never conflated. Round roll-ups leave
+non-strategic moves out of their move list and state how many were omitted. On the
+recorded games in this stack this skips **32.0% of agent moves**.
+
+## Errors are reported live
+
+An evaluation that hits an error says so **while it is running**, with the reason,
+not only as a terminal status:
+
+- **`failed` is for errors, `skipped` is for "nothing to grade".** A judge call
+  that exhausts its retries, an assembly error, an undetected round boundary, an
+  unreadable timeline, a failed write-back and a missing `EVAL_JUDGE_MODEL` all
+  record the target as `failed` with the reason on `error`. Only a non-strategic
+  action is `skipped`.
+- **Every failed attempt is recorded as it happens.** A retried judge attempt
+  writes its reason to the target row *while the row is still `running`*, so
+  `GET /games/{id}/evaluations/{request_id}`, the cross-game `GET /evaluations`
+  listing and the SSE stream all report it immediately. Nothing is held in the
+  worker — the detail lives in Postgres, so any replica or poller reads the same
+  thing. The dashboard's evaluations queue lists these per-target failures on the
+  request row on its normal refresh, so a problem is visible mid-run.
+- **The live channel is woken on every recorded failure**, so a connected SSE
+  client re-reads the snapshot at once rather than waiting for the next transition.
+- **Detail is redacted and truncated.** `error_detail.sanitize_error_detail` runs
+  at the repository boundary on every recorded error: `Authorization`/`Bearer`
+  values, `x-bf-api-key`, `api_key`/`access_token`/`client_secret`/`password`
+  fields and bare provider key literals (`sk-…`, `sk-or-v1-…`, `xai-…`, `gsk_…`,
+  `AIza…`) become `[REDACTED]`, and the text is capped at 1,000 characters so a
+  provider echoing the full request body (prompt and recorded game state) cannot
+  be persisted or pushed to a client.
 
 ## Judge identity
 
@@ -155,7 +184,7 @@ back to a game-playing key:
 - If the key is missing or its `env.` reference is unset, Bifrost rejects the
   call with `no supported key found with name "eval-judge" for provider: <p>`.
   That is a definitive 4xx, so it is not retried, and the message is recorded as
-  the target's skip reason and shown in the UI.
+  the target's `failed` reason and shown in the UI.
 
 ## HTTP API
 
