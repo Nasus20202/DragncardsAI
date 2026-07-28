@@ -123,6 +123,8 @@ The same settings panel SHALL expose structured controls for session memory repl
 
 Each toggle control SHALL be fully clickable: clicking the visual switch (its track or thumb) SHALL flip the toggle, not only clicking the adjacent text label.
 
+Model selection SHALL use one shared searchable picker component, so that every place in the dashboard that chooses a model from the provider catalog filters that catalog the same way. The picker SHALL retain what the user has typed across re-renders of the panel that owns it, so an unrelated state change elsewhere in that panel does not discard an in-progress search.
+
 #### Scenario: Configure model and provider
 - **WHEN** a user edits the model/provider configuration for a session
 - **THEN** the dashboard SHALL provide a filterable ComboBox for model selection and a Select for provider, and SHALL submit changes to the agent-orchestrator
@@ -349,6 +351,8 @@ The dashboard SHALL provide a per-session removal control in the Play session li
 
 The removal control SHALL require an explicit confirmation before terminating, and SHALL NOT introduce a new backend endpoint.
 
+That confirmation SHALL be presented as an in-application modal dialog rather than a browser-native confirmation prompt. The dialog SHALL name the session being removed, SHALL offer a cancel action alongside a danger-styled confirm action, and SHALL leave the removal trigger in the session list unchanged.
+
 #### Scenario: Remove a session from the list
 - **WHEN** a user activates the per-session removal control for a session in the Play session list and confirms the action
 - **THEN** the dashboard SHALL terminate that session through the existing agent-orchestrator termination flow
@@ -361,6 +365,15 @@ The removal control SHALL require an explicit confirmation before terminating, a
 #### Scenario: Removal requires confirmation
 - **WHEN** a user activates the removal control but does not confirm the destructive action
 - **THEN** the dashboard SHALL NOT terminate the session
+
+#### Scenario: Confirmation dialog names the session at risk
+- **WHEN** a user activates the removal control for a session
+- **THEN** the dashboard SHALL open a modal confirmation dialog that names that session and warns the action cannot be undone
+- **AND** SHALL NOT have terminated the session at the point the dialog appears
+
+#### Scenario: Dismissing the confirmation cancels the removal
+- **WHEN** a user cancels or dismisses the removal confirmation dialog
+- **THEN** the dialog SHALL close, the session SHALL remain in the session list, and no termination request SHALL be sent
 
 ### Requirement: New sessions preserve last-used settings
 The dashboard SHALL create new Play sessions seeded with the user's last-used settings — provider, model, reasoning enabled state and effort, selected skills, recent message and tool-exchange limits, and advanced/MCP option selections — instead of resetting every field to configuration defaults.

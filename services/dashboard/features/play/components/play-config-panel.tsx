@@ -2,7 +2,6 @@
 
 import {
   Button,
-  ComboBox,
   Input,
   Label,
   ListBox,
@@ -12,7 +11,6 @@ import {
   TextArea,
   TextField,
 } from "@heroui/react";
-import { useEffect, useState } from "react";
 import {
   McpAssignmentResponse,
   McpRegistryResponse,
@@ -20,6 +18,7 @@ import {
   SessionDraft,
   SkillDefinitionResponse,
 } from "@/features/shared/lib/types";
+import { ComboSelect } from "@/features/shared/components/combo-select";
 import { McpSection } from "@/features/play/components/mcp-section";
 import { ToggleInfoRow } from "@/features/play/components/toggle-info-row";
 
@@ -168,66 +167,17 @@ function ComboSelectField({
   disabled?: boolean;
   onChange: (v: string) => void;
 }) {
-  const [inputValue, setInputValue] = useState(
-    () => items.find((i) => i.value === value)?.label ?? value
-  );
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setInputValue(items.find((i) => i.value === value)?.label ?? value);
-  }, [value, items]);
-
-  const filtered = inputValue
-    ? items.filter((i) =>
-        i.label.toLowerCase().includes(inputValue.toLowerCase())
-      )
-    : items;
-
   return (
     <div className="grid gap-1">
       <FieldLabel id={id}>{label}</FieldLabel>
-      <ComboBox
-        fullWidth
-        aria-label={label}
-        isDisabled={disabled}
+      <ComboSelect
+        label={label}
+        items={items}
         value={value}
-        inputValue={inputValue}
-        onInputChange={setInputValue}
-        onOpenChange={(isOpen) => {
-          if (isOpen) {
-            // Clear the input so the full list is shown
-            setInputValue("");
-          } else {
-            // Restore the label of the committed value if nothing was selected
-            setInputValue(items.find((i) => i.value === value)?.label ?? value);
-          }
-        }}
-        onChange={(nextValue) => {
-          if (nextValue) {
-            const item = items.find((i) => i.value === String(nextValue));
-            setInputValue(item?.label ?? String(nextValue));
-            onChange(String(nextValue));
-          }
-        }}
-      >
-        <ComboBox.InputGroup>
-          <Input id={id} />
-          <ComboBox.Trigger />
-        </ComboBox.InputGroup>
-        <ComboBox.Popover>
-          <ListBox aria-label={label}>
-            {filtered.map((item) => (
-              <ListBoxItem
-                key={item.value}
-                id={item.value}
-                textValue={item.label}
-              >
-                {item.label}
-              </ListBoxItem>
-            ))}
-          </ListBox>
-        </ComboBox.Popover>
-      </ComboBox>
+        disabled={disabled}
+        inputId={id}
+        onChange={onChange}
+      />
     </div>
   );
 }

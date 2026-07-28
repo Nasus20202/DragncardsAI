@@ -13,6 +13,7 @@ import { SubagentList } from "@/features/play/components/subagent-list";
 import { PlayPromptBox } from "@/features/play/components/play-prompt-box";
 import { PlaySessionList } from "@/features/play/components/play-session-list";
 import { PlayTranscript } from "@/features/play/components/play-transcript";
+import { RemoveSessionModal } from "@/features/play/components/remove-session-modal";
 import { useState, useSyncExternalStore } from "react";
 
 export function PlayWorkspace() {
@@ -54,6 +55,10 @@ export function PlayWorkspace() {
   } = usePlaySession();
   const [subagentModal, setSubagentModal] = useState<{
     childJobId: string;
+    name: string;
+  } | null>(null);
+  const [removalTarget, setRemovalTarget] = useState<{
+    id: string;
     name: string;
   } | null>(null);
   const isMobileLayout = useSyncExternalStore(
@@ -133,13 +138,11 @@ export function PlayWorkspace() {
           }
           onSelect={selectSession}
           onRemove={(id) => {
-            if (
-              typeof window !== "undefined" &&
-              !window.confirm("Remove this session? This cannot be undone.")
-            ) {
-              return;
-            }
-            void removeSession(id);
+            const target = sessions.find((session) => session.id === id);
+            setRemovalTarget({
+              id,
+              name: target?.name ?? "this session",
+            });
           }}
         />
       </aside>
@@ -211,6 +214,19 @@ export function PlayWorkspace() {
         onAddMcp={addMcpToRegistry}
         onDeleteMcp={deleteMcpFromRegistry}
       />
+
+      {removalTarget && (
+        <RemoveSessionModal
+          sessionName={removalTarget.name}
+          isBusy={isBusy}
+          onCancel={() => setRemovalTarget(null)}
+          onConfirm={() => {
+            const { id } = removalTarget;
+            setRemovalTarget(null);
+            void removeSession(id);
+          }}
+        />
+      )}
 
       {subagentModal && (
         <SubagentOutputModal

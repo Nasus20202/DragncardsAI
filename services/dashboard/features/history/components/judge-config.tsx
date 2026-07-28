@@ -8,6 +8,7 @@ import {
   JudgeDraft,
   modelOptionsForProvider,
 } from "@/features/history/lib/judge-config";
+import { ComboSelect } from "@/features/shared/components/combo-select";
 
 export interface JudgeConfigPanelProps {
   draft: JudgeDraft;
@@ -41,6 +42,14 @@ export function JudgeConfigPanel({
     draft.providerId,
     draft.modelName
   );
+
+  // Keep the drafted model selectable even when the provider does not offer it,
+  // mirroring the fallback `<option>` the plain select used to render.
+  const modelItems = (
+    modelOptions.includes(draft.modelName)
+      ? modelOptions
+      : [draft.modelName, ...modelOptions]
+  ).map((model) => ({ value: model, label: model }));
 
   return (
     <fieldset
@@ -86,26 +95,17 @@ export function JudgeConfigPanel({
         </select>
       </label>
 
-      <label className="flex flex-col gap-1 text-sm">
+      <div className="flex flex-col gap-1 text-sm">
         <span className="text-xs text-default-500">Model</span>
-        <select
-          aria-label="Judge model"
-          data-testid="judge-model"
-          className={inputClass}
+        <ComboSelect
+          label="Judge model"
+          items={modelItems}
           value={draft.modelName}
           disabled={disabled || modelOptions.length === 0}
-          onChange={(event) => set("modelName", event.target.value)}
-        >
-          {!modelOptions.includes(draft.modelName) && (
-            <option value={draft.modelName}>{draft.modelName}</option>
-          )}
-          {modelOptions.map((model) => (
-            <option key={model} value={model}>
-              {model}
-            </option>
-          ))}
-        </select>
-      </label>
+          inputTestId="judge-model"
+          onChange={(model) => set("modelName", model)}
+        />
+      </div>
 
       <div className="flex flex-col gap-2">
         <label className="flex items-center gap-1.5 text-sm">

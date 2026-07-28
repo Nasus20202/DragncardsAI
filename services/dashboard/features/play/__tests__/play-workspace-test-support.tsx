@@ -44,8 +44,54 @@ export function getApi() {
   return apiMocks;
 }
 
+type MockChildrenProps = {
+  children?: React.ReactNode;
+  className?: string;
+};
+
+// PlayWorkspace renders the (unmocked) RemoveSessionModal, so the Hero UI mock
+// has to cover the Modal compound parts and Button it uses.
 vi.mock("@heroui/react", () => ({
   Spinner: () => <div>Loading spinner</div>,
+  Button: ({
+    children,
+    onPress,
+    isDisabled,
+    "data-testid": dataTestId,
+  }: MockChildrenProps & {
+    onPress?: () => void;
+    isDisabled?: boolean;
+    "data-testid"?: string;
+  }) => (
+    <button
+      data-testid={dataTestId}
+      disabled={isDisabled}
+      type="button"
+      onClick={onPress}
+    >
+      {children}
+    </button>
+  ),
+  Modal: Object.assign(
+    ({ children, isOpen }: MockChildrenProps & { isOpen?: boolean }) =>
+      isOpen === false ? null : <div>{children}</div>,
+    {
+      Backdrop: ({ children }: MockChildrenProps) => <div>{children}</div>,
+      Container: ({ children }: MockChildrenProps) => <div>{children}</div>,
+      Dialog: ({
+        children,
+        "aria-label": ariaLabel,
+      }: MockChildrenProps & { "aria-label"?: string }) => (
+        <div aria-label={ariaLabel} aria-modal="true" role="dialog">
+          {children}
+        </div>
+      ),
+    }
+  ),
+  ModalHeader: ({ children }: MockChildrenProps) => <div>{children}</div>,
+  ModalHeading: ({ children }: MockChildrenProps) => <h2>{children}</h2>,
+  ModalBody: ({ children }: MockChildrenProps) => <div>{children}</div>,
+  ModalFooter: ({ children }: MockChildrenProps) => <div>{children}</div>,
 }));
 
 vi.mock("@/features/play/components/play-session-list", () => ({
