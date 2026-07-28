@@ -2,7 +2,7 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { ToggleInfoRow } from "@/features/play/components/toggle-info-row";
+import { ToggleInfoRow } from "@/features/shared/components/toggle-info-row";
 
 // Faithful HeroUI 3 Switch mock: only `Switch.Content` renders the clickable
 // label + hidden input; `Switch.Control`/`Switch.Thumb` are plain spans. This

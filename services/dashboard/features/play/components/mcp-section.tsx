@@ -19,7 +19,7 @@ import type {
   McpAssignmentResponse,
   McpRegistryResponse,
 } from "@/features/shared/lib/types";
-import { ToggleInfoRow } from "@/features/play/components/toggle-info-row";
+import { ToggleInfoRow } from "@/features/shared/components/toggle-info-row";
 
 const SUPPORTED_TRANSPORTS = [
   { value: "streamable-http", label: "Streamable HTTP" },

@@ -125,6 +125,8 @@ Each toggle control SHALL be fully clickable: clicking the visual switch (its tr
 
 Model selection SHALL use one shared searchable picker component, so that every place in the dashboard that chooses a model from the provider catalog filters that catalog the same way. The picker SHALL retain what the user has typed across re-renders of the panel that owns it, so an unrelated state change elsewhere in that panel does not discard an in-progress search.
 
+The labelled field wrappers used by this panel — the field label, text input, textarea, select, searchable select, toggle row, and skills toggle list — SHALL live in one shared component module rather than inside a single feature's panel, so any other panel that configures a provider, model, reasoning, prompt, or skill set renders the same controls instead of hand-rolling equivalents. A panel in one feature SHALL NOT import these controls from another feature's directory. Sharing these wrappers SHALL NOT change what this settings panel renders.
+
 #### Scenario: Configure model and provider
 - **WHEN** a user edits the model/provider configuration for a session
 - **THEN** the dashboard SHALL provide a filterable ComboBox for model selection and a Select for provider, and SHALL submit changes to the agent-orchestrator
@@ -145,6 +147,10 @@ Model selection SHALL use one shared searchable picker component, so that every 
 #### Scenario: Clicking the toggle control flips the switch
 - **WHEN** a user clicks directly on a session-config toggle's switch control (its track or thumb), not the text label
 - **THEN** the dashboard SHALL flip that toggle, because the switch control is rendered inside the clickable switch content rather than as a sibling of it
+
+#### Scenario: Field wrappers are shared, not per-feature
+- **WHEN** another dashboard panel needs a labelled provider select, model picker, reasoning toggle, numeric or text field, prompt textarea, or skills toggle list
+- **THEN** it SHALL render the shared field components used by this settings panel, and this settings panel's own rendered output SHALL be unaffected by that reuse
 
 ### Requirement: Replay settings are visible in session details
 The dashboard SHALL display the active session's replay settings in the same configuration flow used to inspect and edit model and memory behavior.

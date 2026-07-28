@@ -1,0 +1,322 @@
+"use client";
+
+import {
+  Input,
+  Label,
+  ListBox,
+  ListBoxItem,
+  Select,
+  TextArea,
+  TextField,
+} from "@heroui/react";
+import { SkillDefinitionResponse } from "@/features/shared/lib/types";
+import { ComboSelect } from "@/features/shared/components/combo-select";
+import { ToggleInfoRow } from "@/features/shared/components/toggle-info-row";
+
+/**
+ * The labelled field wrappers every configuration panel in the dashboard is
+ * built from: a small-caps field label, and the HeroUI text input, textarea,
+ * select, searchable select, toggle row, and skills toggle list that sit under
+ * one. They exist so the panels that configure the same things — the Play
+ * settings panel and the History tab's judge configuration — render identical
+ * controls instead of each hand-rolling its own.
+ *
+ * Presentational only: callers own the values, the change handlers, and which
+ * fields to show.
+ */
+
+export interface FieldItem {
+  value: string;
+  label: string;
+}
+
+/** Small-caps caption above a field. */
+export function FieldLabel({
+  id,
+  children,
+}: {
+  id: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Label
+      className="block text-xs font-semibold uppercase tracking-wider text-default-400"
+      htmlFor={id}
+    >
+      {children}
+    </Label>
+  );
+}
+
+export function TextInputField({
+  id,
+  label,
+  ariaLabel,
+  placeholder,
+  value,
+  disabled,
+  inputTestId,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  /** Accessible name, when it needs to differ from the visible label. */
+  ariaLabel?: string;
+  placeholder?: string;
+  value: string;
+  disabled?: boolean;
+  inputTestId?: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="grid gap-1">
+      <FieldLabel id={id}>{label}</FieldLabel>
+      <TextField
+        fullWidth
+        aria-label={ariaLabel ?? label}
+        isDisabled={disabled}
+      >
+        <Input
+          id={id}
+          data-testid={inputTestId}
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </TextField>
+    </div>
+  );
+}
+
+export function TextareaField({
+  id,
+  label,
+  ariaLabel,
+  description,
+  placeholder,
+  rows,
+  value,
+  disabled,
+  inputTestId,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  /** Accessible name, when it needs to differ from the visible label. */
+  ariaLabel?: string;
+  description?: string;
+  placeholder?: string;
+  rows: number;
+  value: string;
+  disabled?: boolean;
+  inputTestId?: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="grid gap-1">
+      <FieldLabel id={id}>{label}</FieldLabel>
+      {description && <p className="text-xs text-default-400">{description}</p>}
+      <TextField
+        fullWidth
+        aria-label={ariaLabel ?? label}
+        isDisabled={disabled}
+      >
+        <TextArea
+          id={id}
+          data-testid={inputTestId}
+          placeholder={placeholder}
+          rows={rows}
+          value={value}
+          className="font-mono text-xs"
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </TextField>
+    </div>
+  );
+}
+
+export function SelectField({
+  id,
+  label,
+  ariaLabel,
+  items,
+  value,
+  disabled,
+  triggerTestId,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  /** Accessible name, when it needs to differ from the visible label. */
+  ariaLabel?: string;
+  items: FieldItem[];
+  value: string;
+  disabled?: boolean;
+  triggerTestId?: string;
+  onChange: (v: string) => void;
+}) {
+  const name = ariaLabel ?? label;
+  return (
+    <div className="grid gap-1">
+      <FieldLabel id={id}>{label}</FieldLabel>
+      <Select
+        fullWidth
+        aria-label={name}
+        isDisabled={disabled}
+        value={value}
+        onChange={(nextValue) => {
+          if (nextValue != null) {
+            onChange(String(nextValue));
+          }
+        }}
+      >
+        <Select.Trigger aria-label={name} data-testid={triggerTestId}>
+          <Select.Value />
+          <Select.Indicator />
+        </Select.Trigger>
+        <Select.Popover>
+          <ListBox aria-label={name}>
+            {items.map((item) => (
+              <ListBoxItem
+                key={item.value}
+                id={item.value}
+                textValue={item.label}
+              >
+                {item.label}
+              </ListBoxItem>
+            ))}
+          </ListBox>
+        </Select.Popover>
+      </Select>
+    </div>
+  );
+}
+
+export function ComboSelectField({
+  id,
+  label,
+  ariaLabel,
+  items,
+  value,
+  disabled,
+  inputTestId,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  /** Accessible name, when it needs to differ from the visible label. */
+  ariaLabel?: string;
+  items: FieldItem[];
+  value: string;
+  disabled?: boolean;
+  inputTestId?: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="grid gap-1">
+      <FieldLabel id={id}>{label}</FieldLabel>
+      <ComboSelect
+        label={ariaLabel ?? label}
+        items={items}
+        value={value}
+        disabled={disabled}
+        inputId={id}
+        inputTestId={inputTestId}
+        onChange={onChange}
+      />
+    </div>
+  );
+}
+
+export function SwitchField({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  id?: string;
+  label: string;
+  description?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <ToggleInfoRow
+      label={label}
+      description={description}
+      checked={checked}
+      onChange={onChange}
+    />
+  );
+}
+
+/**
+ * The bordered list of skill toggles shared by every panel that assigns skills.
+ * A skill's description and metadata, when it has either, are reachable from the
+ * row's info trigger. Renders nothing when no skills are offered.
+ */
+export function SkillToggleList({
+  skills,
+  selectedSkills,
+  disabled,
+  testId,
+  skillTestId,
+  onChange,
+}: {
+  skills: SkillDefinitionResponse[];
+  selectedSkills: string[];
+  disabled?: boolean;
+  testId?: string;
+  /** Per-row test id, derived from the skill name. */
+  skillTestId?: (skillName: string) => string;
+  onChange: (nextSelectedSkills: string[]) => void;
+}) {
+  if (skills.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="grid gap-2" data-testid={testId}>
+      <p className="text-xs font-semibold uppercase tracking-wider text-default-400">
+        Skills
+      </p>
+      <div className="grid gap-1 rounded-lg border border-default-200/60 px-3 py-2">
+        {skills.map((skill) => {
+          const metaStr = Object.entries(skill.metadata ?? {})
+            .map(([key, value]) => `${key}: ${value}`)
+            .join(" · ");
+          const hasInfo = Boolean(skill.description || metaStr);
+          return (
+            <ToggleInfoRow
+              key={skill.name}
+              label={skill.name}
+              checked={selectedSkills.includes(skill.name)}
+              disabled={disabled}
+              testId={skillTestId?.(skill.name)}
+              onChange={(checked) =>
+                onChange(
+                  checked
+                    ? [...selectedSkills, skill.name]
+                    : selectedSkills.filter((name) => name !== skill.name)
+                )
+              }
+              infoLabel={hasInfo ? `Info about ${skill.name}` : undefined}
+              infoContent={
+                hasInfo ? (
+                  <div className="space-y-1 p-1">
+                    {skill.description && (
+                      <p className="text-xs">{skill.description}</p>
+                    )}
+                    {metaStr && (
+                      <p className="text-[11px] opacity-70">{metaStr}</p>
+                    )}
+                  </div>
+                ) : undefined
+              }
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}

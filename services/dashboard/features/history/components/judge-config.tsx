@@ -8,7 +8,14 @@ import {
   JudgeDraft,
   modelOptionsForProvider,
 } from "@/features/history/lib/judge-config";
-import { ComboSelect } from "@/features/shared/components/combo-select";
+import {
+  ComboSelectField,
+  SelectField,
+  SkillToggleList,
+  TextInputField,
+  TextareaField,
+} from "@/features/shared/components/form-fields";
+import { ToggleInfoRow } from "@/features/shared/components/toggle-info-row";
 
 export interface JudgeConfigPanelProps {
   draft: JudgeDraft;
@@ -18,14 +25,20 @@ export interface JudgeConfigPanelProps {
   onChange: (next: JudgeDraft) => void;
 }
 
-const inputClass =
-  "rounded border border-default-200 bg-background px-2 py-1 text-sm text-foreground";
+const EFFORT_ITEMS = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
 
 /**
  * Play-parity judge configuration controls for the Evaluate panel: provider +
  * model selects (sourced from listProviders), reasoning toggle/effort/max
  * tokens, a custom prompt/rubric textarea, and a skills multiselect (from
  * listAvailableSkills). All values feed {@link assembleJudgeConfig}.
+ *
+ * Every control is one of the shared field components the Play settings panel is
+ * built from, so the same setting looks and behaves the same in both tabs.
  */
 export function JudgeConfigPanel({
   draft,
@@ -51,6 +64,19 @@ export function JudgeConfigPanel({
       : [draft.modelName, ...modelOptions]
   ).map((model) => ({ value: model, label: model }));
 
+  // With no catalogue at all the drafted provider is still the current one, so
+  // offer it rather than an empty list.
+  const providerItems =
+    providers.length === 0
+      ? [{ value: draft.providerId, label: draft.providerId }]
+      : providers.map((provider) => ({
+          value: provider.provider_id,
+          label:
+            provider.available === false
+              ? `${provider.provider_id} (unavailable)`
+              : provider.provider_id,
+        }));
+
   return (
     <fieldset
       className="flex flex-col gap-3 rounded-lg border border-default-200/60 p-3"
@@ -61,147 +87,92 @@ export function JudgeConfigPanel({
         Judge
       </span>
 
-      <label className="flex flex-col gap-1 text-sm">
-        <span className="text-xs text-default-500">Provider</span>
-        <select
-          aria-label="Judge provider"
-          data-testid="judge-provider"
-          className={inputClass}
-          value={draft.providerId}
-          disabled={disabled}
-          onChange={(event) => {
-            const providerId = event.target.value;
-            const nextModels = modelOptionsForProvider(
-              providers,
-              providerId,
-              draft.modelName
-            );
-            // Clamp the model to the newly-selected provider's offerings.
-            const modelName = nextModels.includes(draft.modelName)
-              ? draft.modelName
-              : (nextModels[0] ?? draft.modelName);
-            onChange({ ...draft, providerId, modelName });
-          }}
-        >
-          {providers.length === 0 && (
-            <option value={draft.providerId}>{draft.providerId}</option>
-          )}
-          {providers.map((provider) => (
-            <option key={provider.provider_id} value={provider.provider_id}>
-              {provider.provider_id}
-              {provider.available === false ? " (unavailable)" : ""}
-            </option>
-          ))}
-        </select>
-      </label>
+      <SelectField
+        id="judge-provider-field"
+        label="Provider"
+        ariaLabel="Judge provider"
+        items={providerItems}
+        value={draft.providerId}
+        disabled={disabled}
+        triggerTestId="judge-provider"
+        onChange={(providerId) => {
+          const nextModels = modelOptionsForProvider(
+            providers,
+            providerId,
+            draft.modelName
+          );
+          // Clamp the model to the newly-selected provider's offerings.
+          const modelName = nextModels.includes(draft.modelName)
+            ? draft.modelName
+            : (nextModels[0] ?? draft.modelName);
+          onChange({ ...draft, providerId, modelName });
+        }}
+      />
 
-      <div className="flex flex-col gap-1 text-sm">
-        <span className="text-xs text-default-500">Model</span>
-        <ComboSelect
-          label="Judge model"
-          items={modelItems}
-          value={draft.modelName}
-          disabled={disabled || modelOptions.length === 0}
-          inputTestId="judge-model"
-          onChange={(model) => set("modelName", model)}
-        />
-      </div>
+      <ComboSelectField
+        id="judge-model-field"
+        label="Model"
+        ariaLabel="Judge model"
+        items={modelItems}
+        value={draft.modelName}
+        disabled={disabled || modelOptions.length === 0}
+        inputTestId="judge-model"
+        onChange={(model) => set("modelName", model)}
+      />
 
-      <div className="flex flex-col gap-2">
-        <label className="flex items-center gap-1.5 text-sm">
-          <input
-            type="checkbox"
-            data-testid="judge-reasoning-enabled"
-            checked={draft.reasoningEnabled}
+      <ToggleInfoRow
+        label="Reasoning"
+        checked={draft.reasoningEnabled}
+        disabled={disabled}
+        testId="judge-reasoning-enabled"
+        onChange={(enabled) => set("reasoningEnabled", enabled)}
+      />
+
+      {draft.reasoningEnabled && (
+        <>
+          <SelectField
+            id="judge-effort-field"
+            label="Reasoning effort"
+            items={EFFORT_ITEMS}
+            value={draft.reasoningEffort}
             disabled={disabled}
-            onChange={(event) => set("reasoningEnabled", event.target.checked)}
+            triggerTestId="judge-reasoning-effort"
+            onChange={(effort) =>
+              set("reasoningEffort", effort as "low" | "medium" | "high")
+            }
           />
-          Reasoning
-        </label>
-        {draft.reasoningEnabled && (
-          <div className="flex flex-wrap items-center gap-2 pl-5">
-            <select
-              aria-label="Reasoning effort"
-              data-testid="judge-reasoning-effort"
-              className={inputClass}
-              value={draft.reasoningEffort}
-              disabled={disabled}
-              onChange={(event) =>
-                set(
-                  "reasoningEffort",
-                  event.target.value as "low" | "medium" | "high"
-                )
-              }
-            >
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </select>
-            <input
-              type="number"
-              aria-label="Reasoning max tokens"
-              data-testid="judge-reasoning-max-tokens"
-              className={`w-28 ${inputClass}`}
-              value={draft.reasoningMaxTokens}
-              disabled={disabled}
-              placeholder="max tokens"
-              onChange={(event) =>
-                set("reasoningMaxTokens", event.target.value)
-              }
-            />
-          </div>
-        )}
-      </div>
-
-      <label className="flex flex-col gap-1 text-sm">
-        <span className="text-xs text-default-500">Custom prompt / rubric</span>
-        <textarea
-          aria-label="Custom prompt or rubric"
-          data-testid="judge-prompt"
-          rows={3}
-          className={`${inputClass} font-mono text-xs`}
-          value={draft.promptOverride}
-          disabled={disabled}
-          placeholder="Leave blank to use the default rubric."
-          onChange={(event) => set("promptOverride", event.target.value)}
-        />
-      </label>
-
-      {skills.length > 0 && (
-        <div className="flex flex-col gap-1" data-testid="judge-skills">
-          <span className="text-xs text-default-500">Skills</span>
-          <div className="flex flex-col gap-1 rounded border border-default-200/60 px-2 py-1.5">
-            {skills.map((skill) => {
-              const checked = draft.selectedSkills.includes(skill.name);
-              return (
-                <label
-                  key={skill.name}
-                  className="flex items-center gap-1.5 text-sm"
-                  title={skill.description || undefined}
-                >
-                  <input
-                    type="checkbox"
-                    data-testid={`judge-skill-${skill.name}`}
-                    checked={checked}
-                    disabled={disabled}
-                    onChange={(event) =>
-                      set(
-                        "selectedSkills",
-                        event.target.checked
-                          ? [...draft.selectedSkills, skill.name]
-                          : draft.selectedSkills.filter(
-                              (name) => name !== skill.name
-                            )
-                      )
-                    }
-                  />
-                  {skill.name}
-                </label>
-              );
-            })}
-          </div>
-        </div>
+          <TextInputField
+            id="judge-max-tokens-field"
+            label="Reasoning max tokens"
+            placeholder="e.g. 4096"
+            value={draft.reasoningMaxTokens}
+            disabled={disabled}
+            inputTestId="judge-reasoning-max-tokens"
+            onChange={(maxTokens) => set("reasoningMaxTokens", maxTokens)}
+          />
+        </>
       )}
+
+      <TextareaField
+        id="judge-prompt-field"
+        label="Custom prompt / rubric"
+        ariaLabel="Custom prompt or rubric"
+        rows={3}
+        placeholder="Leave blank to use the default rubric."
+        value={draft.promptOverride}
+        disabled={disabled}
+        inputTestId="judge-prompt"
+        onChange={(prompt) => set("promptOverride", prompt)}
+      />
+
+      <SkillToggleList
+        skills={skills}
+        selectedSkills={draft.selectedSkills}
+        disabled={disabled}
+        testId="judge-skills"
+        skillTestId={(name) => `judge-skill-${name}`}
+        onChange={(next) => set("selectedSkills", next)}
+      />
     </fieldset>
   );
 }
