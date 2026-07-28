@@ -196,6 +196,10 @@ class PromptRunService:
                     subagent_wait_poll_interval_seconds=(
                         self._settings.subagent_wait_poll_interval_seconds
                     ),
+                    ask_user_timeout_seconds=self._settings.ask_user_timeout_seconds,
+                    ask_user_poll_interval_seconds=(
+                        self._settings.ask_user_poll_interval_seconds
+                    ),
                 )
                 tools = builtin_registry.as_openai_tools() + mcp_tools
 

@@ -5,13 +5,28 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   aggregateEvents,
   AggEvent,
+  deriveUserQuestionResolutions,
   eventBodyText,
+  parseUserQuestionEvent,
+  TERMINAL_JOB_STATUSES,
+  UserQuestionResolution,
 } from "@/features/play/lib/play-session-events";
-import { JobEventResponse } from "@/features/shared/lib/types";
 import {
   ToolExchangeBlock,
   ToolExchangeProvider,
 } from "@/features/play/components/tool-exchange-block";
+import { UserQuestionCard } from "@/features/play/components/user-question-card";
+import {
+  JobEventResponse,
+  UserQuestionAnswerRequest,
+} from "@/features/shared/lib/types";
+
+/** Answers a question the model asked through `ask_user`. */
+export type AnswerQuestionHandler = (
+  jobId: string,
+  questionId: string,
+  body: UserQuestionAnswerRequest
+) => Promise<void>;
 
 const JOB_STATE_LABELS = {
   streaming: "Streaming…",
@@ -214,12 +229,25 @@ export function AggEventRow({
   isStreaming,
   hasOutput,
   isLast = false,
+  jobId,
+  questionResolutions,
+  isJobTerminal = false,
+  onAnswerQuestion,
 }: {
   agg: AggEvent;
   isStreaming: boolean;
   hasOutput: boolean;
   /** Whether this is the last event in the list — used to keep the active reasoning block open. */
   isLast?: boolean;
+  /**
+   * The job these events belong to. Optional because the read-only subagent
+   * output view renders rows without an answering path.
+   */
+  jobId?: string;
+  /** Per-question resolutions derived from the job's durable event list. */
+  questionResolutions?: Map<string, UserQuestionResolution>;
+  isJobTerminal?: boolean;
+  onAnswerQuestion?: AnswerQuestionHandler;
 }) {
   switch (agg.kind) {
     case "reasoning":
@@ -245,6 +273,34 @@ export function AggEventRow({
           event={agg.event}
         />
       );
+    case "user_question": {
+      const prompt = parseUserQuestionEvent(agg.event);
+      if (!prompt) {
+        // Unusable payload: fall back to the generic block rather than
+        // rendering a question nobody can answer.
+        return (
+          <CollapsibleEventBlock
+            label="Question for you"
+            dotClass="bg-primary/60"
+            event={agg.event}
+          />
+        );
+      }
+      return (
+        <UserQuestionCard
+          question={prompt}
+          resolution={
+            questionResolutions?.get(prompt.questionId) ?? { status: "pending" }
+          }
+          isJobTerminal={isJobTerminal}
+          onAnswer={
+            jobId && onAnswerQuestion
+              ? (questionId, body) => onAnswerQuestion(jobId, questionId, body)
+              : undefined
+          }
+        />
+      );
+    }
     case "subagent_started":
     case "subagent_completed":
     case "subagent_failed": {
@@ -289,15 +345,24 @@ export function AggEventRow({
 const JobThread = memo(function JobThread({
   job,
   isStreaming,
+  onAnswerQuestion,
 }: {
   job: JobDetail;
   isStreaming: boolean;
+  onAnswerQuestion?: AnswerQuestionHandler;
 }) {
   const isCompactionJob = job.prompt === "[COMPACTION]";
   const aggEvents = useMemo(
     () => aggregateEvents(job.events, isCompactionJob),
     [job.events, isCompactionJob]
   );
+  // Keyed off the same events array as the aggregation, so a settled thread
+  // recomputes neither.
+  const questionResolutions = useMemo(
+    () => deriveUserQuestionResolutions(job.events),
+    [job.events]
+  );
+  const isJobTerminal = TERMINAL_JOB_STATUSES.has(job.status);
   const isWaiting = job.events.length === 0;
   const hasOutput = aggEvents.some((e) => e.kind === "model_output");
 
@@ -329,6 +394,10 @@ const JobThread = memo(function JobThread({
               isStreaming={isStreaming}
               hasOutput={hasOutput}
               isLast={i === aggEvents.length - 1}
+              jobId={job.id}
+              questionResolutions={questionResolutions}
+              isJobTerminal={isJobTerminal}
+              onAnswerQuestion={onAnswerQuestion}
             />
           ))}
         </div>
@@ -353,6 +422,7 @@ export function PlayTranscript({
   errorText,
   onOpenSettings,
   onViewSubagent,
+  onAnswerQuestion,
   settingsOpen,
 }: {
   jobs: JobDetail[];
@@ -369,6 +439,11 @@ export function PlayTranscript({
    * memoised and this value reaches them through context.
    */
   onViewSubagent?: (childJobId: string, name: string) => void;
+  /**
+   * Answers a model question. Optional so a transcript can be rendered without
+   * an answering path; questions then show as pending but read-only.
+   */
+  onAnswerQuestion?: AnswerQuestionHandler;
   settingsOpen: boolean;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -623,6 +698,7 @@ export function PlayTranscript({
                       key={job.id}
                       job={job}
                       isStreaming={job.id === streamingJobId}
+                      onAnswerQuestion={onAnswerQuestion}
                     />
                   ))}
                 </ToolExchangeProvider>

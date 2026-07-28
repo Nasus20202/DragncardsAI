@@ -9,7 +9,7 @@ These instructions apply to the dashboard service and override the repository-le
 ## Tech Stack
 
 - **Framework**: Next.js 16 with React 19
-- **UI Library**: Hero UI (`@heroui/react`, `@heroui/styles` v3.0.5)
+- **UI Library**: Hero UI (`@heroui/react`, `@heroui/styles` v3.2.2 — the **v3** API)
 - **Styling**: Tailwind CSS 4 with Hero UI preset
 - **TypeScript**: Strict mode enabled
 - **Testing**: Vitest with React Testing Library
@@ -36,13 +36,21 @@ import { Button, Card, Chip, Spinner, Input, Modal } from "@heroui/react";
 
 Common component mappings:
 
-- Buttons: `Button` (not `<button>`)
-- Cards: `Card` for containers, `CardBody` for content
-- Form inputs: `Input`, `Textarea`, `Select`
-- Layout: `Card` with `divider` prop, or Hero UI `Spacer`
+- Buttons: `Button` (not `<button>`) — variants in use are `primary`, `ghost`, `danger`, `danger-soft`
+- Cards: `Card` for containers
+- Form inputs: `TextField` wrapping `Input`, `TextArea`, `Select`, `ComboBox`
+- Layout: `Separator`
 - Loading: `Spinner`
-- Badges: `Chip`
-- Modals: `Modal`, `ModalContent`, `ModalHeader`, `ModalBody`, `ModalFooter`
+- Badges: `Chip` (always `size="sm" variant="soft"`)
+- Modals: `Modal`, `ModalHeader`, `ModalHeading`, `ModalBody`, `ModalFooter`, `ModalCloseTrigger`
+
+This is the **v3** API, so use `onPress` (not `onClick`) and `isDisabled` (not `disabled`) on Hero UI
+components. `CardBody`, `ModalContent`, `Textarea`, `RadioGroup`, and `Checkbox` are v2 names and are
+not available — check what the code already imports before reaching for a component.
+
+Hero UI belongs to the _chrome_ (composer, dialogs, panels, config drawers). The chat transcript is
+deliberately hand-rolled `div`/`button` plus Tailwind theme tokens: match the surrounding blocks there
+rather than converting them, and never restyle an existing component.
 
 ### Styling
 

@@ -1,5 +1,6 @@
 import {
   addSkill,
+  answerUserQuestion,
   cancelJob,
   compactSession,
   createSession,
@@ -33,6 +34,7 @@ import {
   SessionDetail,
   SessionDraft,
   SessionSummary,
+  UserQuestionAnswerRequest,
 } from "@/features/shared/lib/types";
 import { Dispatch, RefObject, SetStateAction, useCallback } from "react";
 
@@ -436,6 +438,33 @@ export function usePlaySessionActions({
     startStreaming,
   ]);
 
+  /**
+   * Answer a question the model asked through `ask_user`.
+   *
+   * Errors are deliberately not routed through `setErrorText`: the question row
+   * shows them inline (a 409 detail belongs next to the question it refers to),
+   * so this rethrows for the caller instead of banner-ing it.
+   */
+  const answerJobQuestion = useCallback(
+    async (
+      jobId: string,
+      questionId: string,
+      body: UserQuestionAnswerRequest
+    ) => {
+      await answerUserQuestion(jobId, questionId, body);
+      // The answer only becomes visible once the durable event list carries the
+      // `user_question_answered` event; the stream normally delivers it, and
+      // this refresh makes the flip immediate and survives a dropped stream.
+      try {
+        const refreshed = await getJob(jobId);
+        setJobs((current) => mergeJob(current, refreshed));
+      } catch {
+        // Non-fatal: the stream still carries the answered event.
+      }
+    },
+    [setJobs]
+  );
+
   const cancelExecution = useCallback(async () => {
     if (!streamingJobId || cancelPending) {
       return;
@@ -479,6 +508,7 @@ export function usePlaySessionActions({
     removeSession,
     compactPlaySession,
     submitSessionPrompt,
+    answerJobQuestion,
     cancelExecution,
   };
 }

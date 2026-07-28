@@ -89,6 +89,7 @@ async def test_session_tools_ignores_unreachable_mcp_assignments(tmp_path: Path)
             "load_skill_reference",
             "spawn_subagent",
             "wait_for_subagent",
+            "ask_user",
         ]
     finally:
         await engine.dispose()

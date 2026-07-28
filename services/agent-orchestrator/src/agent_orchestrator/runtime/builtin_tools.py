@@ -7,6 +7,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from agent_orchestrator.repositories.questions import (
+    QUESTION_STATUS_ANSWERED,
+    QUESTION_STATUS_CLOSED,
+)
 from agent_orchestrator.runtime.history_emitter import SESSION_GAME_ID_KEY
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.personas import (
@@ -886,6 +890,344 @@ async def _announce_wait_timeout(
         )
 
 
+DEFAULT_ASK_USER_TIMEOUT_SECONDS = 600.0
+DEFAULT_ASK_USER_POLL_INTERVAL_SECONDS = 2.0
+
+MAX_ASK_USER_CHOICES = 8
+MAX_ASK_USER_QUESTION_LENGTH = 2000
+MAX_ASK_USER_LABEL_LENGTH = 200
+MAX_ASK_USER_VALUE_LENGTH = 200
+MAX_ASK_USER_DESCRIPTION_LENGTH = 500
+
+
+@dataclass(frozen=True)
+class AskUserChoices:
+    """A validated question, or the reason the model's arguments were rejected."""
+
+    error: str | None = None
+    question: str = ""
+    choices: tuple[dict[str, str], ...] = ()
+    allow_free_text: bool = False
+
+
+def _validate_choice(index: int, raw: Any) -> tuple[str | None, dict[str, str]]:
+    """Validate one choice, returning its normalized form or a reason to reject."""
+    position = f"choices[{index}]"
+    if not isinstance(raw, dict):
+        return f"{position} must be an object with 'label' and 'value'.", {}
+
+    normalized: dict[str, str] = {}
+    for field, limit in (
+        ("label", MAX_ASK_USER_LABEL_LENGTH),
+        ("value", MAX_ASK_USER_VALUE_LENGTH),
+    ):
+        raw_field = raw.get(field)
+        if not isinstance(raw_field, str) or not raw_field.strip():
+            return f"{position}.{field} must be a non-empty string.", {}
+        if len(raw_field) > limit:
+            return f"{position}.{field} must be at most {limit} characters.", {}
+        normalized[field] = raw_field.strip()
+
+    description = raw.get("description")
+    if description is not None:
+        if not isinstance(description, str):
+            return f"{position}.description must be a string when present.", {}
+        if len(description) > MAX_ASK_USER_DESCRIPTION_LENGTH:
+            return (
+                f"{position}.description must be at most "
+                f"{MAX_ASK_USER_DESCRIPTION_LENGTH} characters.",
+                {},
+            )
+        stripped = description.strip()
+        if stripped:
+            normalized["description"] = stripped
+
+    return None, normalized
+
+
+def validate_ask_user_arguments(arguments: dict[str, Any]) -> AskUserChoices:
+    """Validate an ask_user call before any question is recorded.
+
+    A malformed question is the model's mistake to correct, not a failure of the
+    run, so every rejection names the offending field. Nothing is written until
+    the whole argument set is known to be good.
+    """
+    question = arguments.get("question")
+    if not isinstance(question, str) or not question.strip():
+        return AskUserChoices(error="question must be a non-empty string.")
+    if len(question) > MAX_ASK_USER_QUESTION_LENGTH:
+        return AskUserChoices(
+            error=(
+                "question must be at most "
+                f"{MAX_ASK_USER_QUESTION_LENGTH} characters."
+            )
+        )
+
+    raw_choices = arguments.get("choices")
+    if not isinstance(raw_choices, list) or not raw_choices:
+        return AskUserChoices(
+            error="choices must be a non-empty array of {label, value} objects."
+        )
+    if len(raw_choices) > MAX_ASK_USER_CHOICES:
+        return AskUserChoices(
+            error=f"choices must contain at most {MAX_ASK_USER_CHOICES} entries."
+        )
+
+    normalized: list[dict[str, str]] = []
+    seen_values: set[str] = set()
+    for index, raw in enumerate(raw_choices):
+        error, choice = _validate_choice(index, raw)
+        if error is not None:
+            return AskUserChoices(error=error)
+        # Duplicate values would make an answer ambiguous: the endpoint matches
+        # an answer to a choice by value, so two choices sharing one cannot be
+        # told apart.
+        if choice["value"] in seen_values:
+            return AskUserChoices(
+                error=(
+                    f"choices[{index}].value duplicates an earlier choice; "
+                    "every value must be unique."
+                )
+            )
+        seen_values.add(choice["value"])
+        normalized.append(choice)
+
+    allow_free_text = arguments.get("allow_free_text", False)
+    if not isinstance(allow_free_text, bool):
+        return AskUserChoices(error="allow_free_text must be true or false.")
+
+    return AskUserChoices(
+        question=question.strip(),
+        choices=tuple(normalized),
+        allow_free_text=allow_free_text,
+    )
+
+
+@dataclass(frozen=True)
+class QuestionOutcome:
+    """How a question ended, as far as the waiting run could observe.
+
+    ``kind`` is ``answered`` when the user answered, ``timeout`` when the wait
+    budget ran out, ``cancelled`` when the job's cancellation was requested,
+    ``missing`` when the question row is gone (its session was deleted), or the
+    reason recorded by whoever else closed it.
+    """
+
+    kind: str
+    question: Any | None = None
+
+
+async def resolve_question_outcome(
+    *,
+    repository: Repository,
+    question_id: str,
+    timeout_seconds: float = DEFAULT_ASK_USER_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = DEFAULT_ASK_USER_POLL_INTERVAL_SECONDS,
+    abandon_when: Callable[[], Awaitable[bool]] | None = None,
+) -> QuestionOutcome:
+    """Wait for the user to answer, bounded by an absolute deadline.
+
+    The stored question is the only authority. Unlike a subagent wait, this one
+    does not consume the live event bus: the answer is recorded by an HTTP
+    request that may land on a different replica, and subscribing to this job's
+    own stream would replay the run's entire event history back at it. A short
+    poll interval is cheaper than that, and the user never perceives it — the
+    browser shows the answer from its own response, not from the run resuming.
+
+    The wait always ends, and the question is always closed before the run stops
+    waiting on it, so a click arriving afterwards is refused rather than recorded
+    against a question nobody is reading.
+    """
+    deadline = time.monotonic() + timeout_seconds
+
+    while True:
+        question = await repository.get_job_question(question_id)
+        if question is None:
+            return QuestionOutcome(kind="missing")
+        if question.status == QUESTION_STATUS_ANSWERED:
+            return QuestionOutcome(kind="answered", question=question)
+        if question.status == QUESTION_STATUS_CLOSED:
+            return QuestionOutcome(
+                kind=question.closed_reason or "closed", question=question
+            )
+
+        if abandon_when is not None and await abandon_when():
+            return await _close_or_take_late_answer(
+                repository=repository, question_id=question_id, reason="cancelled"
+            )
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.warning(
+                "Gave up after %.0fs waiting for an answer to question %s",
+                timeout_seconds,
+                question_id,
+            )
+            return await _close_or_take_late_answer(
+                repository=repository, question_id=question_id, reason="timeout"
+            )
+        await asyncio.sleep(min(poll_interval_seconds, remaining))
+
+
+async def _close_or_take_late_answer(
+    *, repository: Repository, question_id: str, reason: str
+) -> QuestionOutcome:
+    """Close a question, unless an answer won the transition first.
+
+    Closing is a conditional update, so it reports whether it actually happened.
+    Losing that race means the user answered in the same instant the wait gave
+    up, and their answer is the better outcome to return.
+    """
+    if await repository.close_job_question(question_id, reason=reason) is not None:
+        return QuestionOutcome(kind=reason)
+    question = await repository.get_job_question(question_id)
+    if question is not None and question.status == QUESTION_STATUS_ANSWERED:
+        return QuestionOutcome(kind="answered", question=question)
+    return QuestionOutcome(kind=reason, question=question)
+
+
+def describe_question_outcome(outcome: QuestionOutcome, timeout_seconds: float) -> str:
+    """Render an unanswered outcome as one line the agent can act on."""
+    if outcome.kind == "timeout":
+        return (
+            f"Nobody answered within {timeout_seconds:.0f}s. Continue using your "
+            "own best judgement, or report that you are blocked and why. Do not "
+            "ask this question again immediately."
+        )
+    if outcome.kind == "cancelled":
+        return "Stopped waiting for an answer because this job was cancelled."
+    if outcome.kind == "missing":
+        return (
+            "The question could not be found any more, so no answer can arrive. "
+            "Continue without it or report that you are blocked."
+        )
+    return (
+        f"The question stopped awaiting an answer ({outcome.kind}). Continue "
+        "without it or report that you are blocked."
+    )
+
+
+def make_ask_user_handler(
+    repository: Repository,
+    live_event_bus: LiveEventBus,
+    session_id: str,
+    job_id: str,
+    job: Any,
+    timeout_seconds: float = DEFAULT_ASK_USER_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = DEFAULT_ASK_USER_POLL_INTERVAL_SECONDS,
+) -> BuiltinHandler:
+    """Return an ask_user handler that blocks until the user answers.
+
+    The wait happens inside the tool call because a job cannot suspend, and the
+    answer comes back as an ordinary tool result so it re-enters the model's
+    context through the same message history every other tool result uses.
+    """
+
+    async def handle(arguments: dict[str, Any]) -> dict[str, Any]:
+        if not is_master_job(job):
+            return _text_result(
+                "ask_user may only be called from a top-level (master) job — a "
+                "subagent has no user attached to it.",
+                is_error=True,
+            )
+
+        validated = validate_ask_user_arguments(arguments)
+        if validated.error is not None:
+            return _text_result(validated.error, is_error=True)
+
+        choices = [dict(choice) for choice in validated.choices]
+        question = await repository.create_job_question(
+            job_id,
+            session_id,
+            question=validated.question,
+            choices=choices,
+            allow_free_text=validated.allow_free_text,
+        )
+        payload = {
+            "question_id": question.id,
+            "question": validated.question,
+            "choices": choices,
+            "allow_free_text": validated.allow_free_text,
+        }
+        await repository.append_event(job_id, session_id, "user_question", payload)
+        await live_event_bus.publish(job_id, "user_question", payload)
+
+        async def job_was_cancelled() -> bool:
+            if not job_id:
+                return False
+            return await repository.get_job_cancellation_requested(job_id)
+
+        outcome = await resolve_question_outcome(
+            repository=repository,
+            question_id=question.id,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            abandon_when=job_was_cancelled,
+        )
+
+        if outcome.kind == "answered":
+            answered = outcome.question
+            assert answered is not None
+            if answered.answer_source == "free_text":
+                return _text_result(
+                    f"The user answered in their own words: {answered.answer_text}"
+                )
+            return _text_result(
+                f'The user chose "{answered.answer_label}" '
+                f'(value: "{answered.answer_value}").'
+            )
+
+        await _announce_question_closed(
+            repository=repository,
+            live_event_bus=live_event_bus,
+            session_id=session_id,
+            job_id=job_id,
+            question_id=question.id,
+            reason=outcome.kind,
+            waited_seconds=timeout_seconds,
+        )
+        # A timeout is a normal outcome, not a transient failure: marking it an
+        # error invites the model to retry the tool straight away, which asks the
+        # same unanswered question again.
+        return _text_result(
+            describe_question_outcome(outcome, timeout_seconds),
+            is_error=outcome.kind in ("cancelled", "missing"),
+        )
+
+    return handle
+
+
+async def _announce_question_closed(
+    *,
+    repository: Repository,
+    live_event_bus: LiveEventBus,
+    session_id: str,
+    job_id: str,
+    question_id: str,
+    reason: str,
+    waited_seconds: float,
+) -> None:
+    """Record on the job's timeline that a question stopped awaiting an answer."""
+    if not job_id or not session_id:
+        return
+    payload = {
+        "question_id": question_id,
+        "reason": reason,
+        "waited_seconds": waited_seconds,
+    }
+    try:
+        await repository.append_event(
+            job_id, session_id, "user_question_closed", payload
+        )
+        await live_event_bus.publish(job_id, "user_question_closed", payload)
+    except Exception:
+        logger.exception(
+            "Failed to record the closure of question %s on job %s",
+            question_id,
+            job_id,
+        )
+
+
 def build_builtin_registry(
     skill_registry: SkillRegistry,
     repository: Repository,
@@ -900,6 +1242,8 @@ def build_builtin_registry(
     subagent_wait_poll_interval_seconds: float = (
         DEFAULT_SUBAGENT_WAIT_POLL_INTERVAL_SECONDS
     ),
+    ask_user_timeout_seconds: float = DEFAULT_ASK_USER_TIMEOUT_SECONDS,
+    ask_user_poll_interval_seconds: float = DEFAULT_ASK_USER_POLL_INTERVAL_SECONDS,
 ) -> BuiltinToolRegistry:
     """Build a per-job BuiltinToolRegistry with all handlers bound to job context.
 
@@ -909,6 +1253,9 @@ def build_builtin_registry(
     subagent_wait_timeout_seconds / subagent_wait_poll_interval_seconds: bound
     how long the parent will wait on a child and how often it re-reads the
     child's persisted status while waiting.
+
+    ask_user_timeout_seconds / ask_user_poll_interval_seconds: bound how long the
+    run will wait on a human and how often it re-reads the stored question.
 
     player_configs: the session's player-agent roster. The player tools are
     registered only when a roster exists, so sessions that are not running an
@@ -1054,6 +1401,91 @@ def build_builtin_registry(
                     job_id=job_id,
                     timeout_seconds=subagent_wait_timeout_seconds,
                     poll_interval_seconds=subagent_wait_poll_interval_seconds,
+                ),
+            )
+        )
+
+        registry.register(
+            BuiltinToolDefinition(
+                name="ask_user",
+                description=(
+                    "Ask the human a question and wait for their answer. "
+                    "ONLY available to top-level jobs. "
+                    "Use this instead of guessing whenever a decision is the "
+                    "user's to make — which hero to play, which of two legal "
+                    "plays they prefer, whether to continue — and instead of "
+                    "ending your turn to ask in prose, which loses this run's "
+                    "context. "
+                    "Offer between 1 and 8 concrete choices; each needs a short "
+                    "'label' the user will see on a button and a stable 'value' "
+                    "you will get back. Set allow_free_text only when an answer "
+                    "outside your list would actually be useful. "
+                    "Blocks until the user answers or the wait is given up, and "
+                    "always returns: if nobody answers you are told so and should "
+                    "continue on your own judgement rather than asking again."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": (
+                                "The question to put to the user, in plain text."
+                            ),
+                        },
+                        "choices": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": MAX_ASK_USER_CHOICES,
+                            "description": (
+                                "The answers to offer, one button each. Values "
+                                "must be unique."
+                            ),
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "label": {
+                                        "type": "string",
+                                        "description": (
+                                            "Short text shown on the button."
+                                        ),
+                                    },
+                                    "value": {
+                                        "type": "string",
+                                        "description": (
+                                            "Stable identifier returned to you "
+                                            "when this choice is picked."
+                                        ),
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "description": (
+                                            "Optional one-line explanation shown "
+                                            "under the label."
+                                        ),
+                                    },
+                                },
+                                "required": ["label", "value"],
+                            },
+                        },
+                        "allow_free_text": {
+                            "type": "boolean",
+                            "description": (
+                                "Also let the user type an answer of their own "
+                                "instead of picking one of the choices."
+                            ),
+                        },
+                    },
+                    "required": ["question", "choices"],
+                },
+                handler=make_ask_user_handler(
+                    repository=repository,
+                    live_event_bus=live_event_bus,
+                    session_id=session_id,
+                    job_id=job_id,
+                    job=job,
+                    timeout_seconds=ask_user_timeout_seconds,
+                    poll_interval_seconds=ask_user_poll_interval_seconds,
                 ),
             )
         )

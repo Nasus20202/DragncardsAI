@@ -3,6 +3,7 @@ import {
   JobEventResponse,
   JobSummary,
   JsonValue,
+  UserQuestionClosedReason,
 } from "@/features/shared/lib/types";
 
 export type AggEvent =
@@ -24,6 +25,7 @@ export type AggEvent =
   | { kind: "subagent_started"; event: JobEventResponse }
   | { kind: "subagent_completed"; event: JobEventResponse }
   | { kind: "subagent_failed"; event: JobEventResponse }
+  | { kind: "user_question"; event: JobEventResponse }
   | { kind: "failure"; event: JobEventResponse }
   | { kind: "cancellation"; event: JobEventResponse };
 
@@ -44,6 +46,21 @@ export const SUBAGENT_TERMINAL_EVENT_TYPES = new Set([
   "subagent_completed",
   "subagent_failed",
 ]);
+/**
+ * Job statuses that mean the job will never run again, so a question it left
+ * pending can no longer be answered.
+ */
+export const TERMINAL_JOB_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+/**
+ * Every SSE event name the job stream listens for. `use-job-streaming`
+ * registers one named listener per entry — there is deliberately no
+ * `onmessage` fallback — so an event type missing here is silently dropped.
+ */
 export const STREAM_EVENT_TYPES = [
   "progress",
   "reasoning",
@@ -58,6 +75,9 @@ export const STREAM_EVENT_TYPES = [
   "subagent_started",
   "subagent_completed",
   "subagent_failed",
+  "user_question",
+  "user_question_answered",
+  "user_question_closed",
 ] as const;
 
 function sameEventPayload(
@@ -186,6 +206,145 @@ export function applyStreamEventToJob(
   };
 }
 
+/* ── Model-initiated questions (`ask_user`) ──────────────────────── */
+
+/**
+ * One offered answer, as the transcript consumes it.
+ *
+ * SECURITY: every field here is model-authored. Render as plain text children
+ * only — never through markdown, `dangerouslySetInnerHTML`, or a resolved
+ * attribute — and never use `value` as a React key (choices may repeat one).
+ */
+export interface UserQuestionChoice {
+  label: string;
+  value: string;
+  description?: string;
+}
+
+/** A `user_question` event, validated into the shape the card renders. */
+export interface UserQuestionPrompt {
+  questionId: string;
+  /** Model-authored; see the security note on `UserQuestionChoice`. */
+  question: string;
+  choices: UserQuestionChoice[];
+  allowFreeText: boolean;
+}
+
+/**
+ * Whether a question is still awaiting an answer, and what settled it.
+ *
+ * Always derived from the job's durable event list rather than held as its own
+ * state: the orchestrator persists all three question event types in
+ * `job_events` and the dashboard replays from `after=0` on reconnect, so a page
+ * reload restores the resolved state with no extra fetch.
+ */
+export type UserQuestionResolution =
+  | { status: "pending" }
+  | {
+      status: "answered";
+      source: "choice" | "free_text";
+      value: string | null;
+      label: string | null;
+      text: string | null;
+    }
+  | {
+      status: "closed";
+      reason: UserQuestionClosedReason;
+      waitedSeconds: number | null;
+    };
+
+function payloadString(value: JsonValue | undefined): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * Read a `user_question` event, or null when the payload does not carry a
+ * usable question. Choices that are not `{label, value}` string pairs are
+ * dropped rather than rendered half-formed.
+ */
+export function parseUserQuestionEvent(
+  event: JobEventResponse
+): UserQuestionPrompt | null {
+  const questionId = payloadString(event.payload.question_id);
+  const question = payloadString(event.payload.question);
+  if (!questionId || question === null) {
+    return null;
+  }
+
+  const rawChoices = Array.isArray(event.payload.choices)
+    ? event.payload.choices
+    : [];
+  const choices: UserQuestionChoice[] = [];
+  for (const raw of rawChoices) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      continue;
+    }
+    const label = payloadString(raw.label);
+    const value = payloadString(raw.value);
+    if (label === null || value === null) {
+      continue;
+    }
+    const description = payloadString(raw.description);
+    choices.push(
+      description === null ? { label, value } : { label, value, description }
+    );
+  }
+
+  return {
+    questionId,
+    question,
+    choices,
+    allowFreeText: event.payload.allow_free_text === true,
+  };
+}
+
+/**
+ * Fold the question events of one job into a per-question resolution. The
+ * answered/closed events render no transcript row of their own; they resolve
+ * the question row that the `user_question` event produced.
+ */
+export function deriveUserQuestionResolutions(
+  events: JobEventResponse[]
+): Map<string, UserQuestionResolution> {
+  const resolutions = new Map<string, UserQuestionResolution>();
+  for (const event of events) {
+    const questionId = payloadString(event.payload.question_id);
+    if (!questionId) {
+      continue;
+    }
+    switch (event.event_type) {
+      case "user_question":
+        // Never downgrade an already-settled question: a replay could hand the
+        // question back after its resolution.
+        if (!resolutions.has(questionId)) {
+          resolutions.set(questionId, { status: "pending" });
+        }
+        break;
+      case "user_question_answered":
+        resolutions.set(questionId, {
+          status: "answered",
+          source: event.payload.source === "free_text" ? "free_text" : "choice",
+          value: payloadString(event.payload.value),
+          label: payloadString(event.payload.label),
+          text: payloadString(event.payload.text),
+        });
+        break;
+      case "user_question_closed":
+        resolutions.set(questionId, {
+          status: "closed",
+          reason:
+            event.payload.reason === "cancelled" ? "cancelled" : "timeout",
+          waitedSeconds:
+            typeof event.payload.waited_seconds === "number"
+              ? event.payload.waited_seconds
+              : null,
+        });
+        break;
+    }
+  }
+  return resolutions;
+}
+
 export function compactionText(event: JobEventResponse): string {
   if (typeof event.payload.summary_text === "string") {
     return event.payload.summary_text;
@@ -285,6 +444,13 @@ export function aggregateEvents(
           typeof event.payload.text === "string" ? event.payload.text : "";
         break;
 
+      // A question is its own transcript row, not a collapsible tool block.
+      // Its answered/closed siblings deliberately produce no row: they resolve
+      // the row this one created (see `deriveUserQuestionResolutions`).
+      case "user_question_answered":
+      case "user_question_closed":
+        break;
+
       case "tool_call": {
         flushReasoning();
         flushModel();
@@ -315,6 +481,7 @@ export function aggregateEvents(
       case "subagent_started":
       case "subagent_completed":
       case "subagent_failed":
+      case "user_question":
       case "failure":
       case "cancellation":
       case "compaction":

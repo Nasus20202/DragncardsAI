@@ -330,6 +330,46 @@ class JobOutput(Base):
     job: Mapped[Job] = relationship(back_populates="outputs")
 
 
+class JobQuestion(Base):
+    """A question the agent asked the user, and the answer it is waiting for.
+
+    Lives in the database rather than in the waiting run's memory: the worker
+    that asks and the HTTP request that answers are separate processes and may
+    be separate replicas, and a pending question has to survive a browser
+    reload and a stream reconnect.
+
+    ``choices_json`` is the authority a submitted answer is checked against, so
+    a client cannot answer with something the model never offered.
+    """
+
+    __tablename__ = "job_questions"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"), index=True
+    )
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.id", ondelete="CASCADE"), index=True
+    )
+    question: Mapped[str] = mapped_column(Text)
+    choices_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    allow_free_text: Mapped[bool] = mapped_column(Boolean, default=False)
+    # pending -> answered | closed. Both transitions out of pending are applied
+    # conditionally on this column, so exactly one caller can make each.
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    answer_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    answer_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answer_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    closed_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime(), default=utc_now, onupdate=utc_now
+    )
+
+
 class CompactionRecord(Base):
     __tablename__ = "compaction_records"
 

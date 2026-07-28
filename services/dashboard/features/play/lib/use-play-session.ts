@@ -35,6 +35,7 @@ import {
   SessionDraft,
   SessionSummary,
   SkillDefinitionResponse,
+  UserQuestionAnswerRequest,
 } from "@/features/shared/lib/types";
 import {
   Dispatch,
@@ -77,6 +78,12 @@ interface UsePlaySessionResult {
   removeSession: (sessionId: string) => Promise<void>;
   compactPlaySession: () => Promise<void>;
   submitSessionPrompt: () => Promise<void>;
+  /** Answers a model question; rejects with the server's detail (e.g. a 409). */
+  answerJobQuestion: (
+    jobId: string,
+    questionId: string,
+    body: UserQuestionAnswerRequest
+  ) => Promise<void>;
   cancelExecution: () => Promise<void>;
   recordSubagentOutcome: (
     childJobId: string,
@@ -320,6 +327,7 @@ export function usePlaySession(): UsePlaySessionResult {
     removeSession,
     compactPlaySession,
     submitSessionPrompt,
+    answerJobQuestion,
     cancelExecution,
   } = usePlaySessionActions({
     config,
@@ -555,6 +563,7 @@ export function usePlaySession(): UsePlaySessionResult {
     removeSession,
     compactPlaySession,
     submitSessionPrompt,
+    answerJobQuestion,
     cancelExecution,
     recordSubagentOutcome,
     toggleSkill,

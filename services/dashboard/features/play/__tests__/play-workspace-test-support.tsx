@@ -22,6 +22,7 @@ const apiMocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   listSessionJobs: vi.fn(),
   getJob: vi.fn(),
+  answerUserQuestion: vi.fn(),
   getContextMetadata: vi.fn(),
   setModelConfig: vi.fn(),
   createSession: vi.fn(),

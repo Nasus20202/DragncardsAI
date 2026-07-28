@@ -18,6 +18,8 @@ import {
   SessionSummary,
   SkillDefinitionResponse,
   JsonValue,
+  UserQuestionAnswerRequest,
+  UserQuestionResponse,
 } from "@/features/shared/lib/types";
 
 interface DashboardConfigResponse {
@@ -334,6 +336,27 @@ export async function getJobEvents(jobId: string): Promise<JobEventResponse[]> {
       `/api/proxy/orchestrator/jobs/${jobId}/events`
     )
   ).events;
+}
+
+/**
+ * Answer a question the model asked through `ask_user`.
+ *
+ * Rejects with the server's `detail` — notably the 409 raised once the question
+ * is no longer pending (already answered, timed out, or the job reached a
+ * terminal status) — so the caller can show it verbatim instead of retrying.
+ */
+export async function answerUserQuestion(
+  jobId: string,
+  questionId: string,
+  body: UserQuestionAnswerRequest
+): Promise<UserQuestionResponse> {
+  return (
+    await sendJson<{ question: UserQuestionResponse }>(
+      `/api/proxy/orchestrator/jobs/${jobId}/questions/${questionId}/answer`,
+      "POST",
+      body
+    )
+  ).question;
 }
 
 export async function getContextMetadata(
