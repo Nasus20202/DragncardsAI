@@ -19,6 +19,7 @@ from agent_orchestrator.runtime.builtin_tools import (
     make_wait_for_subagent_handler,
 )
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus, LiveJobEvent
+from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.repository import Repository
 
 from .builtin_tools_test_support import make_job
@@ -399,6 +400,7 @@ async def test_child_monitor_reports_the_real_crash_reason(
         session_id=parent_session.id,
         job_id=parent_job.id,
         job=make_job(parent_job_id=None, job_type="prompt"),
+        skill_registry=SkillRegistry(()),
         schedule_child_fn=run_the_child,
         monitor_timeout_seconds=BUDGET,
         monitor_poll_interval_seconds=POLL,

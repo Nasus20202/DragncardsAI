@@ -86,6 +86,7 @@ export function AppShell({
             <NavLink href="/play">Play</NavLink>
             <NavLink href="/games">Games</NavLink>
             <NavLink href="/history">History</NavLink>
+            <NavLink href="/personas">Personas</NavLink>
             <NavLink href="/swagger">Swagger</NavLink>
             <ExternalNavLink href={bifrostUrl}>Bifrost</ExternalNavLink>
           </nav>

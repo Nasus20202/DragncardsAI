@@ -26,6 +26,7 @@ const storedDraft: Omit<SessionDraft, "name"> & { name: string } = {
   gatewayOptionsText: '{"temperature":0.4}',
   providerOptionsText: "{}",
   selectedSkills: ["skill-b"],
+  defaultSubagentPersona: "",
 };
 
 function storeLastUsedDraft(overrides: Partial<SessionDraft> = {}) {

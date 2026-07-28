@@ -317,6 +317,109 @@ that seat's row, tagged with the seat id and the session's `game_id`, so every m
 is attributed to it without inference. Pair it with the standard `wait_for_subagent`. The
 `marvel-champions-orchestrator` skill is the playbook for driving this.
 
+### Agent Personas
+
+A **persona** is a reusable, user-authored bundle of the three things that make one agent behave
+differently from another: a detailed system prompt, a skill selection, and a tool configuration. A
+subagent can be started from one, so "run this child as a rules lawyer with only the rules skills and
+no board-mutating tools" is a stored configuration rather than a prompt someone retypes.
+
+- `GET /personas`
+- `GET /personas/{name}`
+- `PUT /personas/{name}` — upsert
+- `DELETE /personas/{name}`
+
+Personas live in the `agent_personas` PostgreSQL table (migration `0009`) and are **global to the
+deployment**, keyed by name, exactly like the skill and MCP registries beside them. The service
+carries no user identity to scope them to, and per-session scoping would defeat the point — outliving
+one session is why a persona exists rather than a per-seat row. `name` is the identity, so renaming a
+persona is a delete plus a create, and an agent can name a persona in a tool argument.
+
+```json
+{
+  "display_name": "Rules Lawyer",
+  "description": "Checks rule interactions against the printed rules.",
+  "system_prompt": "Answer only from the printed rules. Cite the rule you used.",
+  "provider_id": "openai",
+  "model_name": "gpt-4o-mini",
+  "reasoning": { "enabled": true, "effort": "high" },
+  "skills": ["marvel-champions-learn-to-play"],
+  "allowed_tools": ["game-service_get_game_state"],
+  "gateway_options": {},
+  "provider_options": {}
+}
+```
+
+- `provider_id` / `model_name` unset — inherit the spawning session's model config. A named provider
+  must be in `ENABLED_PROVIDER_IDS`.
+- `gateway_options` / `provider_options` — *overlaid* on the session's, not replacing them.
+- `reasoning` — folded into the resolved `gateway_options.reasoning`; `{"enabled": false}` removes it.
+- `skills` unset — inherit the session's enabled skills; a list (including `[]`) overrides them. A
+  named skill must resolve in the skill catalogue, and a rejection names the skill.
+- `allowed_tools` unset — the child keeps every MCP tool its session exposes. See the narrowing rule
+  below.
+- Bounds: name is a lowercase slug of at most 64 characters, `system_prompt` at most 8000 characters,
+  `description` at most 2000, `skills` at most 32 entries, `allowed_tools` at most 128. These are
+  module constants in `runtime/personas.py`, not environment variables, matching `MAX_PLAYER_SKILLS`
+  and the conversation-context bounds.
+
+A persona holds **no credentials**. It names a provider and a model; API keys stay in the Bifrost
+gateway configuration and no persona field is read as a secret.
+
+#### Starting a subagent from a persona
+
+`spawn_subagent` takes an optional `persona` argument. A session may also record a
+`default_subagent_persona`, which applies when the agent names none; an explicit argument wins over
+the default. Setting a session default to a persona that does not exist is rejected, and deleting a
+persona clears it from any session that defaulted to it. With no persona anywhere, a spawn behaves
+exactly as it did before personas existed: the child copies the parent's model config, skills, and
+MCP servers.
+
+Master prompt jobs see the persona catalogue — names and descriptions only — in their system prompt,
+so the agent can pick one. A persona's own prompt is the *child's* instruction and is never inlined
+into the parent's context.
+
+#### A persona is captured at start time and never re-read
+
+When a subagent is started from a persona, the resolved persona is **materialised onto the child**:
+the child session's model-config row, the child session's enabled-skill rows, and a persona snapshot
+in the child session's metadata holding the resolved prompt, skills, tool allowlist, provider, model,
+persona name, and capture time. Nothing at child run time reads `agent_personas` again.
+
+That is deliberate and load-bearing: **editing or deleting a persona does not change any subagent
+already started from it**, running or still queued. A subagent must not silently change behaviour
+mid-game because someone edited a row. It also means deletion needs no reference counting, and the
+snapshot on every past child stays readable so an old transcript remains interpretable.
+
+A persona's named skills are re-validated at spawn time as well as on write, because the skill
+catalogue mirrors the filesystem and is re-synced at every boot. A skill that has vanished fails the
+spawn with an error naming the persona and the skill, and no child session or job is created —
+silently dropping it is the bug that has to be avoided.
+
+#### A persona narrows tool access and can never widen it
+
+This is a security invariant, not a convenience:
+
+- `allowed_tools` is an **allowlist applied by filtering** the MCP tool definitions the child session
+  already resolved. Filtering is a subset operation, so a name the child's catalogue does not contain
+  simply does not appear. The filter is applied to the dispatch mapping as well as to the list sent
+  to the model, so a tool a persona excluded cannot be invoked by naming it directly — it comes back
+  as `Unknown tool requested`.
+- A persona does not name MCP servers at all. They are always inherited from the spawning session, so
+  there is no field through which a persona could attach a server the session does not have.
+- `load_skill` and `load_skill_reference` sit outside the allowlist and are always present: a
+  persona's own skill list is unusable without them, and they read only from the configured skill
+  roots.
+- `provider_id` is validated against `ENABLED_PROVIDER_IDS` on write, so a persona cannot reach a
+  provider the deployment has not enabled.
+- A persona's prompt cannot grant capability. Tool availability is computed from configuration, never
+  read out of prompt text, so a prompt claiming the child has `spawn_subagent` changes nothing.
+
+The one axis where a persona *adds* rather than narrows is skills, and that is intentional: a persona
+exists to bundle a prompt with the domain knowledge that prompt assumes. A skill is instruction text
+— `load_skill` returns markdown from the skill roots — and reaches nothing the tool catalogue does not
+already expose, so this is not an escalation. Per-seat player configuration already works this way.
+
 ### Waiting On A Child
 
 `wait_for_subagent` always returns. The child job's persisted status is the authority, not its live
@@ -436,6 +539,8 @@ Event types include:
 5. `POST /sessions/{session_id}/skills`
 6. `POST /sessions/{session_id}/mcps`
 7. `GET /sessions/{session_id}/tools`
+8. `PUT /personas/{name}` then `PATCH /sessions/{session_id}` with `default_subagent_persona`, when
+   the session's subagents should run as a persona rather than as copies of the session
 
 ### Run a prompt
 

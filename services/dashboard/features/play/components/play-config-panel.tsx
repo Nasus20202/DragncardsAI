@@ -18,6 +18,7 @@ import {
 } from "@/features/shared/components/form-fields";
 import { isWorking } from "@/features/play/lib/session-draft";
 import { McpSection } from "@/features/play/components/mcp-section";
+import { PersonaPicker } from "@/features/personas/components/persona-picker";
 
 function ReasoningSection({
   draft,
@@ -227,6 +228,13 @@ export function PlayConfigPanel({
               skills={skills}
               selectedSkills={draft.selectedSkills}
               onChange={(next) => set("selectedSkills", next)}
+            />
+
+            <Separator />
+
+            <PersonaPicker
+              value={draft.defaultSubagentPersona}
+              onChange={(v) => set("defaultSubagentPersona", v)}
             />
 
             <Separator />

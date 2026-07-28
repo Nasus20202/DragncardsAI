@@ -58,6 +58,7 @@ describe("PlayWorkspace configuration", () => {
       expect(api.createSession).toHaveBeenCalledWith(expect.any(String), {
         context_recent_message_limit: null,
         context_recent_tool_exchange_limit: null,
+        default_subagent_persona: null,
       })
     );
     await waitFor(() =>
@@ -164,6 +165,53 @@ describe("PlayWorkspace configuration", () => {
           context_recent_message_limit: 5,
           context_recent_tool_exchange_limit: 2,
         })
+      )
+    );
+  });
+
+  it("saves the session's default subagent persona with the session update", async () => {
+    api.getSession.mockResolvedValueOnce({
+      ...sessionDetail,
+      default_subagent_persona: "rules-lawyer",
+    });
+
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /save configuration/i })
+    );
+
+    await waitFor(() =>
+      expect(api.updateSession).toHaveBeenCalledWith(
+        "session-1",
+        expect.objectContaining({ default_subagent_persona: "rules-lawyer" })
+      )
+    );
+  });
+
+  it("clears the default subagent persona when the session has none", async () => {
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /save configuration/i })
+    );
+
+    await waitFor(() =>
+      expect(api.updateSession).toHaveBeenCalledWith(
+        "session-1",
+        expect.objectContaining({ default_subagent_persona: null })
       )
     );
   });

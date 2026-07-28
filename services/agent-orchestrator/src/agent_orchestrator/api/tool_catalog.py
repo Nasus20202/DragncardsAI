@@ -9,6 +9,11 @@ from agent_orchestrator.integrations.mcp.tools import (
 )
 from agent_orchestrator.runtime.builtin_tools import build_builtin_registry
 from agent_orchestrator.runtime.live_events import LiveEventBus
+from agent_orchestrator.runtime.personas import (
+    narrow_tool_definitions,
+    persona_allowed_tools_from_snapshot,
+    session_persona_snapshot,
+)
 from agent_orchestrator.runtime.skills import SkillRegistry, enabled_skill_assignments
 from agent_orchestrator.storage.repository import Repository
 
@@ -62,5 +67,12 @@ async def list_effective_session_tools(
     all_registries = await repository.list_mcp_registries()
     mcp_tools = await mcp_tool_catalog.list_session_tools(
         session.enabled_mcps, all_registries, ignore_failures=True
+    )
+    # Narrowed by the persona this session was started from, if any, so what a
+    # reader is shown is what the job actually had rather than what its MCP
+    # servers could have offered.
+    mcp_tools = narrow_tool_definitions(
+        mcp_tools,
+        persona_allowed_tools_from_snapshot(session_persona_snapshot(session)),
     )
     return builtin_tools, mcp_tools

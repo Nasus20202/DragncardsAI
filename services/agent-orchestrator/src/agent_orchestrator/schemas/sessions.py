@@ -26,6 +26,9 @@ class SessionCreateRequest(BaseModel):
     multi_turn_memory: bool = True
     context_recent_message_limit: int | None = Field(default=None, ge=0)
     context_recent_tool_exchange_limit: int | None = Field(default=None, ge=0)
+    # The persona this session's subagents are started from when the agent names
+    # none. ``None`` keeps the pre-persona behaviour.
+    default_subagent_persona: str | None = Field(default=None, max_length=64)
 
 
 class SessionUpdateRequest(BaseModel):
@@ -33,6 +36,8 @@ class SessionUpdateRequest(BaseModel):
     metadata: dict[str, Any] | None = None
     context_recent_message_limit: int | None = Field(default=None, ge=0)
     context_recent_tool_exchange_limit: int | None = Field(default=None, ge=0)
+    # Sent as ``null`` to clear the default; omitted to leave it unchanged.
+    default_subagent_persona: str | None = Field(default=None, max_length=64)
 
 
 class ModelConfigRequest(BaseModel):
@@ -115,6 +120,9 @@ class SessionSummary(BaseModel):
     skills: list[SkillAssignmentResponse] = Field(default_factory=list)
     mcps: list[McpAssignmentResponse] = Field(default_factory=list)
     players: list[PlayerConfigResponse] = Field(default_factory=list)
+    # The persona subagents spawned from this session are started from when the
+    # agent names none. ``None`` keeps the pre-persona behaviour.
+    default_subagent_persona: str | None = None
     recent_job: JobSummary | None = None
 
 

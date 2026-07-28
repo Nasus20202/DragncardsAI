@@ -18,6 +18,7 @@ const draft: SessionDraft = {
   gatewayOptionsText: '{"temperature":0.3}',
   providerOptionsText: '{"foo":"bar"}',
   selectedSkills: ["skill-a", "skill-b"],
+  defaultSubagentPersona: "rules-lawyer",
 };
 
 function installStorage() {

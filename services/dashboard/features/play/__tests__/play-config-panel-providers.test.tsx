@@ -49,6 +49,7 @@ function draftFor(providerId: string, modelName: string): SessionDraft {
     gatewayOptionsText: "{}",
     providerOptionsText: "{}",
     selectedSkills: [],
+    defaultSubagentPersona: "",
   };
 }
 

@@ -113,7 +113,48 @@ export interface SessionSummary {
   mcps: McpAssignmentResponse[];
   /** Per-seat roster; absent on sessions that are not running an orchestrated game. */
   players?: PlayerConfigResponse[];
+  /**
+   * The persona this session's subagents are started from when the agent names
+   * none. `null` keeps the pre-persona behaviour: a child copies the session.
+   */
+  default_subagent_persona?: string | null;
   recent_job: JobSummary | null;
+}
+
+/**
+ * A reusable agent configuration a subagent can be started from: a detailed
+ * system prompt, a skill selection, and a tool configuration, stored under a
+ * name. Null `provider_id` / `model_name` / `skills` mean the persona inherits
+ * the spawning session's; null `allowed_tools` means it narrows no tools.
+ */
+export interface PersonaResponse {
+  name: string;
+  display_name: string | null;
+  description: string | null;
+  system_prompt: string;
+  provider_id: string | null;
+  model_name: string | null;
+  reasoning: { effort?: string; max_tokens?: number } | null;
+  skills: string[] | null;
+  allowed_tools: string[] | null;
+  gateway_options: Record<string, JsonValue>;
+  provider_options: Record<string, JsonValue>;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Request body for `PUT /personas/{name}`. */
+export interface PersonaRequest {
+  display_name?: string;
+  description?: string;
+  system_prompt?: string;
+  provider_id?: string;
+  model_name?: string;
+  reasoning?: { enabled: boolean; effort?: string; max_tokens?: number };
+  skills?: string[];
+  allowed_tools?: string[];
+  gateway_options?: Record<string, JsonValue>;
+  provider_options?: Record<string, JsonValue>;
 }
 
 /**
@@ -199,6 +240,8 @@ export interface SessionDraft {
   gatewayOptionsText: string;
   providerOptionsText: string;
   selectedSkills: string[];
+  /** Persona name, or `""` for "no persona" — subagents copy the session. */
+  defaultSubagentPersona: string;
 }
 
 export interface ContextMetadata {

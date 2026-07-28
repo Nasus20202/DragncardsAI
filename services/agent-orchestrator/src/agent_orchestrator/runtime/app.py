@@ -14,6 +14,7 @@ from agent_orchestrator.api.routers import (
     context,
     jobs,
     meta,
+    personas,
     players,
     sessions,
 )
@@ -272,6 +273,7 @@ def create_app(
     app.include_router(meta.router)
     app.include_router(catalog.router)
     app.include_router(sessions.router)
+    app.include_router(personas.router)
     app.include_router(players.router)
     app.include_router(jobs.router)
     app.include_router(context.router)
