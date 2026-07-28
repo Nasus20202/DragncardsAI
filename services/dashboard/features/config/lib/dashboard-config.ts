@@ -55,6 +55,9 @@ export function getServerConfig() {
     orchestratorUrl.includes("127.0.0.1");
   const dragncardsFrontendUrl =
     process.env.DRAGNCARDS_FRONTEND_URL ?? "http://localhost:3000";
+  // Browser-reachable Bifrost UI. Deliberately distinct from the services'
+  // BIFROST_URL, which is the Docker-internal gateway address.
+  const bifrostUiUrl = process.env.BIFROST_UI_URL ?? "http://localhost:4003";
 
   return {
     orchestratorUrl,
@@ -62,6 +65,7 @@ export function getServerConfig() {
     historyServiceUrl,
     evalServiceUrl,
     dragncardsFrontendUrl,
+    bifrostUiUrl,
     orchestratorOpenApiPath:
       process.env.AGENT_ORCHESTRATOR_OPENAPI_PATH ?? "/openapi.json",
     gameServiceOpenApiPath:
@@ -88,6 +92,7 @@ export function getServerConfig() {
       defaultSkills: splitCsv(process.env.DEFAULT_SKILLS),
       defaultCustomMcps: parseCustomMcps(process.env.DEFAULT_CUSTOM_MCPS_JSON),
       dragncardsFrontendUrl,
+      bifrostUiUrl,
       defaultReasoningEnabled: parseBoolean(
         process.env.DEFAULT_REASONING_ENABLED,
         true

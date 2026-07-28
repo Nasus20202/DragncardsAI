@@ -27,6 +27,7 @@ const CONFIG: DashboardConfig = {
   defaultSkills: [],
   defaultCustomMcps: [],
   dragncardsFrontendUrl: "http://localhost:3000",
+  bifrostUiUrl: "http://localhost:4003",
   defaultReasoningEnabled: false,
   defaultReasoningEffort: "medium",
 };

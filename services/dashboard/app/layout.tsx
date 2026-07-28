@@ -25,7 +25,9 @@ export default function RootLayout({
     <html className="h-full" suppressHydrationWarning lang="en">
       <body className="h-full overflow-hidden">
         <Providers>
-          <AppShell appName={config.appName}>{children}</AppShell>
+          <AppShell appName={config.appName} bifrostUrl={config.bifrostUiUrl}>
+            {children}
+          </AppShell>
         </Providers>
       </body>
     </html>
