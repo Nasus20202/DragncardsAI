@@ -42,6 +42,7 @@ vi.mock("@/features/history/lib/eval-api", () => ({
   requestEvaluation: (...args: unknown[]) => requestEvaluation(...args),
   cancelEvaluation: (...args: unknown[]) => cancelEvaluation(...args),
   listEvaluations: (...args: unknown[]) => listEvaluations(...args),
+  listGameRounds: () => Promise.resolve([]),
 }));
 
 vi.mock("@/features/play/lib/client-api", () => ({

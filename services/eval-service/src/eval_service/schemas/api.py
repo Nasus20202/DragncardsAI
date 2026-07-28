@@ -61,6 +61,30 @@ class Selection(BaseModel):
         return self
 
 
+class RoundSummary(BaseModel):
+    """One detected round, as offered to a client picking rounds to evaluate."""
+
+    # The 1-based round OF PLAY, which is exactly what ``Selection.rounds``
+    # accepts, so a client echoes it back untranslated. NOT DragnCards' raw
+    # ``roundNumber``, which counts COMPLETED rounds and reads 0 for the first
+    # round of play; ``detect_round_boundaries`` has already converted it.
+    round_number: int
+    # Presentation label built from ``round_number`` ("Round 1").
+    label: str
+    from_seq: int
+    to_seq: int
+    # Agent moves recorded in the span, so a client can show how much a round
+    # holds -- and tell an empty round from a busy one -- before selecting it.
+    move_count: int
+    # Players who made an agent move in the span; empty when none did.
+    players: list[str] = Field(default_factory=list)
+
+
+class RoundListResponse(BaseModel):
+    game_id: str
+    rounds: list[RoundSummary]
+
+
 class JudgeReasoning(BaseModel):
     """Per-evaluation reasoning controls (mirrors the Play config shape)."""
 

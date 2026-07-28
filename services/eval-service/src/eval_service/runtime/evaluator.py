@@ -116,7 +116,17 @@ class Evaluator:
         judge_config: ResolvedJudgeConfig | None = None,
         on_token: TokenSink | None = None,
         on_error: ErrorSink | None = None,
-    ) -> None:
+    ) -> bool:
+        """Evaluate one claimed target. Returns whether it made PROGRESS.
+
+        ``False`` means one thing only: this is a round/game roll-up that was
+        re-deferred to ``pending`` because the children it depends on are still in
+        flight. Every other outcome -- a verdict, a deliberate skip, a failure, a
+        write-back abandoned to a cancellation -- is progress. The worker uses this
+        to tell a productive drain cycle from one that merely re-queued roll-ups,
+        so it can wait instead of hot-looping on the database while the children
+        are graded.
+        """
         # The target arrives already claimed as ``running`` by the worker, so
         # all transitions below are conditional on it still being running: a
         # concurrent force re-claim (which resets the row to ``pending`` under a
@@ -143,7 +153,7 @@ class Evaluator:
             reason = self._non_strategic_reason(events, target_seq)
             if reason is not None:
                 await self._repository.mark_skipped(target_id, reason)
-                return
+                return True
 
         # Dependency gate: a round/game roll-up SHALL NOT be produced until every
         # lower-level child it depends on is graded. While any child is still in
@@ -159,7 +169,7 @@ class Evaluator:
                 events=events,
             )
             if deferred:
-                return
+                return False
             # Re-read the latest history so the roll-up sees child verdicts that
             # earlier-completed targets in this cascade just wrote back.
             events = await self._latest_events(game_id, events)
@@ -181,22 +191,22 @@ class Evaluator:
             )
         except BoundaryUndetectedError as exc:
             await self._fail(target_id, f"boundary undetected: {exc}", on_error)
-            return
+            return True
         except ValueError as exc:
             await self._fail(target_id, f"assembly error: {exc}", on_error)
-            return
+            return True
         except JudgeAttemptsExhaustedError as exc:
             await self._fail(
                 target_id, f"judge failed after retry limit: {exc}", on_error
             )
-            return
+            return True
 
         if verdict is None:
             # Defensive: exhausted retries raise JudgeAttemptsExhaustedError above
             # (with the gateway's reason), so this only guards a verdict-less
             # return that no current path produces.
             await self._fail(target_id, "judge failed after retry limit", on_error)
-            return
+            return True
 
         # Re-check the durable status IMMEDIATELY before writing back: a cancel
         # (or a concurrent force re-claim) that landed after this target was
@@ -214,7 +224,9 @@ class Evaluator:
                 scope,
                 current,
             )
-            return
+            # The cancellation / re-claim already moved the row to a terminal (or
+            # freshly-pending) state of its own, so this cycle is not idle.
+            return True
 
         # Write back BEFORE finalizing the bookkeeping record.
         envelope = build_verdict_envelope(game_id, verdict, config)
@@ -229,9 +241,10 @@ class Evaluator:
                 exc,
             )
             await self._fail(target_id, f"write-back failed: {exc}", on_error)
-            return
+            return True
 
         await self._repository.finalize_completed(target_id, verdict.model_dump())
+        return True
 
     async def _fail(
         self, target_id: int, detail: str, on_error: ErrorSink | None
@@ -277,6 +290,10 @@ class Evaluator:
         skills = self._skill_resolver.load_markdown(config.skills)
 
         if scope == "move":
+            # A move is graded in the context of ITS ROUND: the assembly resolves
+            # the containing round and attaches that round's other moves either
+            # side. The two settings are backstops on a pathological round, not
+            # the window itself.
             move = assemble_move_input(
                 events,
                 target_seq,

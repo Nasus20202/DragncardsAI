@@ -175,14 +175,71 @@ def test_round_number_of_reads_raw_game_shape():
     assert round_number_of(raw_state) == 5
 
 
-def test_move_input_includes_a_bounded_neighbour_window():
+def test_move_context_is_scoped_to_the_moves_round():
+    # seq4 is the last agent move of the first round (span 1-5, closing at the
+    # seq-5 state event that first reported the new round -- the event that CLOSED
+    # this round); seq6 belongs to the next round. A generous backstop must NOT
+    # pull seq6 in: an adjacent round is a different turn on a different board, and
+    # grading a move against it is exactly the inaccuracy DRA-10 fixes.
     events = _recorded_game()
-    move = assemble_move_input(events, target_seq=4, context_before=1, context_after=1)
-    # Only agent moves, only the nearest one either side, in seq order.
+    move = assemble_move_input(
+        events, target_seq=4, context_before=50, context_after=50
+    )
+    # Round of play 2 (raw DragnCards roundNumber 1).
+    assert move.round_number == 2
+    assert move.round_span == (1, 5)
     assert [n.seq for n in move.context_before] == [2]
-    assert [n.seq for n in move.context_after] == [6]
+    assert [n.seq for n in move.context_after] == []
     assert move.context_before[0].intended_action == "play_a"
-    assert move.context_after[0].intended_action == "attack"
+
+
+def test_move_context_includes_the_following_moves_of_the_round():
+    # The reporter's "attach not only previous moves, but also the following
+    # ones": the FIRST move of a round must still see the rest of that round.
+    events = _recorded_game()
+    move = assemble_move_input(
+        events, target_seq=2, context_before=50, context_after=50
+    )
+    assert [n.seq for n in move.context_before] == []
+    assert [n.seq for n in move.context_after] == [4]
+    assert move.context_after[0].intended_action == "play_b"
+
+
+def test_move_context_covers_a_whole_multi_move_round_both_ways():
+    # The reporter's case: one play spread across several calls inside one round.
+    events = [
+        state_event(game_id="g1", seq=1, round_number=0),
+        agent_event(game_id="g1", seq=2, action="move_card"),
+        agent_event(game_id="g1", seq=3, action="exhaust_card"),
+        agent_event(game_id="g1", seq=4, action="modify_tokens"),
+        agent_event(game_id="g1", seq=5, action="next_step"),
+        state_event(game_id="g1", seq=6, round_number=1),
+        agent_event(game_id="g1", seq=7, action="draw_card"),
+    ]
+    move = assemble_move_input(
+        events, target_seq=3, context_before=50, context_after=50
+    )
+    # Round of play 1 -- raw roundNumber 0 IS the first round of play.
+    assert move.round_number == 1
+    assert [n.seq for n in move.context_before] == [2]
+    assert [n.seq for n in move.context_after] == [4, 5]
+
+
+def test_move_context_keeps_non_strategic_actions_as_context():
+    # A card search is skipped as a TARGET (it cannot be a wrong decision) but it
+    # still shows intent, so it stays in the context window.
+    events = [
+        state_event(game_id="g1", seq=1, round_number=0),
+        agent_event(game_id="g1", seq=2, action="search_cards_marvel_champions"),
+        agent_event(game_id="g1", seq=3, action="move_card"),
+        state_event(game_id="g1", seq=4, round_number=1),
+    ]
+    move = assemble_move_input(
+        events, target_seq=3, context_before=50, context_after=50
+    )
+    assert [n.intended_action for n in move.context_before] == [
+        "search_cards_marvel_champions"
+    ]
 
 
 def test_move_input_window_defaults_to_no_neighbours():
@@ -191,11 +248,37 @@ def test_move_input_window_defaults_to_no_neighbours():
     assert move.context_after == []
 
 
-def test_move_input_window_clamps_at_the_timeline_edges():
+def test_move_context_backstop_keeps_the_nearest_moves_of_a_long_round():
+    # The backstop exists only for a pathological round. When it bites it keeps
+    # the moves NEAREST the graded one, which are the ones most likely to be part
+    # of the same play.
+    events = [state_event(game_id="g1", seq=1, round_number=0)]
+    events += [agent_event(game_id="g1", seq=seq) for seq in range(2, 12)]
+    events.append(state_event(game_id="g1", seq=12, round_number=1))
+    move = assemble_move_input(events, target_seq=7, context_before=2, context_after=2)
+    assert [n.seq for n in move.context_before] == [5, 6]
+    assert [n.seq for n in move.context_after] == [8, 9]
+
+
+def test_move_context_after_zero_removes_hindsight_within_the_round():
     events = _recorded_game()
-    first = assemble_move_input(events, target_seq=2, context_before=5, context_after=5)
-    assert [n.seq for n in first.context_before] == []
-    assert [n.seq for n in first.context_after] == [4, 6]
+    move = assemble_move_input(events, target_seq=2, context_before=50, context_after=0)
+    assert [n.seq for n in move.context_after] == []
+
+
+def test_move_context_falls_back_to_neighbours_with_no_detectable_round():
+    # No recorded state carries a round number, so no round span contains the
+    # move. Falling back to the nearest moves beats grading with no context.
+    events = [
+        agent_event(game_id="g9", seq=1, action="a"),
+        agent_event(game_id="g9", seq=2, action="b"),
+        agent_event(game_id="g9", seq=3, action="c"),
+    ]
+    move = assemble_move_input(events, target_seq=2, context_before=5, context_after=5)
+    assert move.round_number is None
+    assert move.round_span is None
+    assert [n.seq for n in move.context_before] == [1]
+    assert [n.seq for n in move.context_after] == [3]
 
 
 def test_round_input_omits_non_strategic_moves_and_counts_them():

@@ -31,6 +31,35 @@ class ClaimResult:
     existing_status: str | None = None
 
 
+def _within_capacity(
+    candidates: list[tuple[int, str]],
+    *,
+    capacity: int,
+    per_game_limit: int | None,
+    running_by_game: dict[str, int],
+) -> list[int]:
+    """The candidate ids that fit the remaining global and per-game capacity.
+
+    Candidates arrive in drain order; this walks them once and takes each one only
+    while its game still has room, stopping at the global capacity. Per-game
+    counting STARTS from the rows already ``running`` for that game, so the cap
+    covers work in flight and not merely work claimed in this batch.
+    """
+    if capacity <= 0:
+        return []
+    taken: list[int] = []
+    per_game = dict(running_by_game)
+    for target_id, game_id in candidates:
+        if per_game_limit is not None:
+            if per_game.get(game_id, 0) >= per_game_limit:
+                continue
+            per_game[game_id] = per_game.get(game_id, 0) + 1
+        taken.append(target_id)
+        if len(taken) >= capacity:
+            break
+    return taken
+
+
 class Repository:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
         self._session_factory = session_factory
@@ -412,7 +441,11 @@ class Repository:
             return [(r, by_request[r.request_id]) for r in requests]
 
     async def claim_pending_targets(
-        self, *, limit: int = 64
+        self,
+        *,
+        limit: int = 64,
+        global_limit: int | None = None,
+        per_game_limit: int | None = None,
     ) -> list[EvaluatedTargetRow]:
         """Atomically claim pending targets and transition them to ``running``.
 
@@ -420,6 +453,14 @@ class Repository:
         replicas draining concurrently never both pick the same row (the
         design's at-most-once-per-replica guarantee). Pending state lives
         durably in Postgres (no in-memory queue), so a restart resumes work.
+
+        ``global_limit`` / ``per_game_limit`` are the CONCURRENCY CAPS, applied
+        here rather than by an in-process semaphore: the rows already recorded
+        ``running`` are counted in this same transaction and only the remaining
+        capacity is claimed. That keeps the caps out of process memory entirely
+        (this repo forbids in-memory state), makes them survive a restart, and
+        stops a second replica from bypassing them with its own semaphores.
+        ``None`` for either means no cap from that side.
 
         On PostgreSQL the candidate rows are locked with ``FOR UPDATE SKIP
         LOCKED`` so concurrent drainers select disjoint sets; on SQLite (tests)
@@ -430,13 +471,39 @@ class Repository:
         async with self._session_factory() as session:
             async with session.begin():
                 dialect = session.bind.dialect.name
+                capacity = limit
+                if global_limit is not None:
+                    running_total = (
+                        await session.scalar(
+                            select(func.count())
+                            .select_from(EvaluatedTargetRow)
+                            .where(EvaluatedTargetRow.status == "running")
+                        )
+                    ) or 0
+                    capacity = min(capacity, max(0, global_limit - running_total))
+                    if capacity == 0:
+                        return []
+                running_by_game: dict[str, int] = {}
+                if per_game_limit is not None:
+                    rows = await session.execute(
+                        select(EvaluatedTargetRow.game_id, func.count())
+                        .where(EvaluatedTargetRow.status == "running")
+                        .group_by(EvaluatedTargetRow.game_id)
+                    )
+                    running_by_game = dict(rows.all())  # type: ignore[arg-type]
+
                 stmt = (
-                    select(EvaluatedTargetRow.id)
+                    select(EvaluatedTargetRow.id, EvaluatedTargetRow.game_id)
                     .where(EvaluatedTargetRow.status == "pending")
                     # All targets of one request share a ``created_at``, so add a
                     # stable ``id`` tiebreak: without it the drain order among a
                     # request's targets is nondeterministic and deferred roll-ups
                     # churn (children graded in an arbitrary order each cycle).
+                    # The order also keeps a cascade's move targets (planned and
+                    # claimed first, so lower ids) ahead of the roll-ups that
+                    # depend on them, which is what stops a capacity-bounded
+                    # drain from filling every slot with roll-ups that can only
+                    # defer while their children wait for a slot.
                     .order_by(
                         EvaluatedTargetRow.created_at.asc(),
                         EvaluatedTargetRow.id.asc(),
@@ -445,7 +512,12 @@ class Repository:
                 )
                 if dialect == "postgresql":
                     stmt = stmt.with_for_update(skip_locked=True)
-                candidate_ids = list((await session.execute(stmt)).scalars().all())
+                candidate_ids = _within_capacity(
+                    list((await session.execute(stmt)).all()),
+                    capacity=capacity,
+                    per_game_limit=per_game_limit,
+                    running_by_game=running_by_game,
+                )
                 if not candidate_ids:
                     return []
                 now = utc_now()

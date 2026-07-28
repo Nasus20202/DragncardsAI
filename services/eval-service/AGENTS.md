@@ -52,10 +52,25 @@ into a prompt: project it through `judge/state_view.py`, which reduces it to the
 same view the playing agent saw and collapses face-down cards and deck contents to
 `HIDDEN` counts. `EVAL_JUDGE_MAX_STATE_CHARS` is a backstop, not the mechanism.
 
-A move prompt carries a configurable WINDOW of neighbouring agent moves, not the
-whole timeline — the states already summarise the past, while the neighbours show
-that a tool call is one step of a multi-call play. See
-[What the judge is sent](README.md#what-the-judge-is-sent).
+### A move is judged in the context of its round
+
+A move prompt carries the agent moves of the graded move's OWN ROUND, on BOTH
+sides of it. The round is the window: never reach into an adjacent round (a
+different turn on a different board), never stop inside the round (that hides the
+rest of the play). A Marvel Champions play is normally 2-4 tool calls and each one
+is its own recorded event, so grading a call in isolation scores a good play down
+once per call — the defect DRA-10 was filed for. The rubric therefore also tells
+the judge to grade an action as its step within the play its round reveals.
+
+`EVAL_JUDGE_MOVE_CONTEXT_BEFORE`/`_AFTER` are BACKSTOPS against a pathological
+round, not the window. Do not shrink them to save payload: this supersedes DRA-7's
+narrow fixed-count window on the explicit ruling that accuracy takes priority over
+prompt size. DRA-7's other two mechanisms — the state projection and the
+non-strategic skip taxonomy — stay exactly as they are.
+
+The skip taxonomy does NOT apply to context. An action skipped as a target still
+appears as context, because it shows intent even when it holds no gradeable
+decision. See [What the judge is sent](README.md#what-the-judge-is-sent).
 
 ### Round boundaries follow post-action state, and rounds are 1-based
 
@@ -108,6 +123,17 @@ repository boundary (`mark_failed` / `mark_skipped` / `record_attempt_error`) �
 gateway messages can embed an `Authorization` header or a provider body echoing
 the whole prompt. Record errors through those methods only; never write the
 `error` column directly.
+
+### Concurrency lives in the claim, not in the process
+
+Multiple targets are evaluated in parallel, and both caps
+(`EVAL_PER_GAME_CONCURRENCY`, `EVAL_GLOBAL_CONCURRENCY`) are enforced inside
+`Repository.claim_pending_targets`: it counts the rows already `running` and takes
+only the remaining capacity. Do NOT reintroduce a semaphore, a per-game dict, or
+any in-process registry of running work — that is banned state, it leaks, and it
+does not hold for a second replica. `EvaluationWorker.drain_once` reports PROGRESS
+rather than rows touched, so a cycle where every roll-up merely re-deferred is
+idle and the worker waits instead of hot-looping on the database.
 
 ## Working Rules
 

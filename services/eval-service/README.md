@@ -36,16 +36,16 @@ evaluate (and reports readiness `degraded`) until it is set. See `.env.example`.
 | `EVAL_JUDGE_MODEL` | _(required, unset)_ | `provider/model` judge id; the prefix picks the provider |
 | `EVAL_JUDGE_PROVIDER` | _(optional)_ | Provider hint for verdict metadata |
 | `EVAL_JUDGE_BIFROST_KEY_NAME` | `eval-judge` | Bifrost key entry judge traffic is pinned to (`x-bf-api-key`); `""` opts out |
-| `EVALUATOR_VERSION` | `eval-2` | Recorded on every verdict; `eval-2` corrected round boundaries (see [Round boundaries](#round-boundaries)) |
+| `EVALUATOR_VERSION` | `eval-2` | Recorded on every verdict; bump when what the judge is shown or asked changes, since scores are comparable only within one version. `eval-2` corrected round boundaries (see [Round boundaries](#round-boundaries)) *and* made a move judged in the context of its round |
 | `EVAL_MAX_ATTEMPTS` | `3` | Retry attempts before skip |
-| `EVAL_PER_GAME_CONCURRENCY` | `2` | Per-game in-flight judge cap |
-| `EVAL_GLOBAL_CONCURRENCY` | `8` | Global in-flight judge cap |
+| `EVAL_PER_GAME_CONCURRENCY` | `4` | Per-game in-flight judge cap, enforced by the durable claim |
+| `EVAL_GLOBAL_CONCURRENCY` | `8` | Global in-flight judge cap (the provider-stampede guard), enforced by the durable claim |
 | `EVAL_JUDGE_MAX_TOKENS` | `1024` | Per-evaluation token budget |
 | `EVAL_JUDGE_MAX_STATE_CHARS` | `20000` | Backstop cap on each rendered state in the judge prompt (truncated + logged) |
 | `EVAL_JUDGE_MAX_ROUND_MOVES` | `100` | Cap on per-move blocks listed in a round prompt |
-| `EVAL_JUDGE_MOVE_CONTEXT_BEFORE` | `8` | Preceding agent moves included with a move prompt |
-| `EVAL_JUDGE_MOVE_CONTEXT_AFTER` | `3` | Following agent moves included (`0` removes hindsight) |
-| `EVAL_JUDGE_MOVE_CONTEXT_REASONING_CHARS` | `400` | Per-neighbour reasoning cap |
+| `EVAL_JUDGE_MOVE_CONTEXT_BEFORE` | `100` | Backstop on the earlier-in-round moves attached to a move prompt (the window is the round, not this number) |
+| `EVAL_JUDGE_MOVE_CONTEXT_AFTER` | `100` | Backstop on the later-in-round moves attached (`0` removes hindsight) |
+| `EVAL_JUDGE_MOVE_CONTEXT_REASONING_CHARS` | `400` | Per-context-move reasoning cap |
 | `EVAL_SKIP_NON_STRATEGIC_MOVES` | `true` | Skip actions that carry no strategic decision |
 | `EVAL_NON_STRATEGIC_ACTIONS` | _(built-in taxonomy)_ | Replaces the skip list; anything unlisted is evaluated |
 | `EVAL_CORS_ALLOW_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001` | Comma-separated CORS allowlist (dashboard reaches the service via a server-side proxy, so a strict list is safe) |
@@ -71,20 +71,40 @@ a `HIDDEN` count, so hidden information stays hidden (and 60+ deck cards stop
 being serialised). `EVAL_JUDGE_MAX_STATE_CHARS` remains as a backstop for a state
 shape the projection does not recognise, which is sent as recorded.
 
-**History is a window, not a replay.** A move prompt carries the agent's
-`EVAL_JUDGE_MOVE_CONTEXT_BEFORE` preceding and `EVAL_JUDGE_MOVE_CONTEXT_AFTER`
-following moves, not the whole timeline. The correlated prior/resulting board
-already summarises everything that happened earlier, so replaying the full move
-list adds cost without signal. What a board *cannot* show is that one tool call is
-a fragment of a larger play — a Marvel Champions play is typically 2-4 calls (play
-the card, assign damage, exhaust the character) and a player turn runs ~6-10 — and
-judging a fragment alone invites a confidently wrong verdict, which is worse than
-a slow one. The defaults cover a typical turn's worth of preceding calls plus
-enough following calls to see whether a play completed; the following half is
-labelled in the prompt as completion context, not an outcome to grade.
+**A move is judged in the context of its round.** A move prompt carries the agent
+moves of the graded move's OWN ROUND, on both sides of it — the moves recorded
+earlier in the round and the moves recorded later. The round is the window: the
+context never reaches into an adjacent round (a different turn on a different
+board) and never stops inside the round (which would hide the rest of the play).
 
-Measured on the recorded games in this stack: **13,750 → 3,067 mean prompt tokens
-per move evaluation (−77.7%)**, while the judge gains a board it never had.
+This is what stops a good play being scored as several bad moves. A Marvel
+Champions play is normally 2-4 tool calls — move the ally into play, exhaust a
+character to pay the cost, assign the damage — and each call is its own recorded
+`agent` event, so each becomes its own verdict. Asked "was this a strong strategic
+choice toward winning?" about `exhaust_card` alone, a judge correctly answers
+"no", and the play is marked down once per call. The round supplies the play; the
+rubric's multi-call-play instruction (see `judge/prompt.py`) tells the judge to
+grade the action as the step it is within that play, not to score down a necessary
+step for achieving nothing alone, and not to charge one play against every action
+that makes it up. The later-in-round half is labelled completion context, not an
+outcome to grade on hindsight.
+
+Actions the non-strategic taxonomy skips as *targets* still appear as *context*:
+"searched for Med Team, then played Med Team" is more legible than "played Med
+Team", and a one-line context entry is cheap.
+
+`EVAL_JUDGE_MOVE_CONTEXT_BEFORE`/`_AFTER` remain only as backstops against a
+pathological round, defaulting to the same ceiling `EVAL_JUDGE_MAX_ROUND_MOVES`
+uses. They are not the mechanism. When no recorded state yet carries a round
+number — during setup — no round contains the move, and the context falls back to
+that many nearest moves across the timeline rather than none at all.
+
+This supersedes the narrow fixed-count window (8 before / 3 after) that trimmed
+the prompt to a measured 3,067 mean tokens per move: accuracy takes priority over
+payload size, so the prompt is now bounded by the round instead. The projection
+above is what did the heavy lifting on size (13,750 → ~3,000 tokens) and it
+remains in place, so a round-scoped prompt still costs a fraction of the
+pre-projection one.
 
 ## Non-strategic actions are skipped, visibly
 
@@ -193,6 +213,13 @@ back to a game-playing key:
   Returns `201` with created/skipped counts and the target list.
 - `GET  /games/{game_id}/evaluations/{request_id}` — per-target status + verdicts.
 - `GET  /games/{game_id}/evaluations` — list a game's requests (UI polling).
+- `GET  /games/{game_id}/rounds` — the rounds this service detects for a game, so
+  a client can select a ROUND without naming a sequence inside it. Each entry
+  carries the raw `round_number` that `selection.rounds` accepts, its display
+  `label` (the round *of play*, `round_number + 1`, because DragnCards counts
+  COMPLETED rounds and so reports 0 throughout the first round), the `from_seq`/
+  `to_seq` span, the `move_count`, and the acting `players`. `404` when the game
+  has no recorded events.
 - `GET  /health`, `GET /ready` — liveness/readiness (db + history + bifrost +
   judge model/key; names only, no secrets).
 
@@ -212,9 +239,14 @@ back to a game-playing key:
 ```
 
 For `scope=move`, `seqs`/`seq_range`/`whole_game` select agent move seqs. For
-`scope=round`, `rounds`/`seqs` (round-closing seqs)/`seq_range`/`whole_game`
-select closed rounds, detected from the round number on `game-service` state
-events with a terminal-status fallback for the final round.
+`scope=round`, `rounds` is the direct way in — the raw round numbers from
+`GET /games/{game_id}/rounds` — and `seqs`/`seq_range`/`whole_game` also resolve
+to the rounds they fall inside. Rounds are detected from the round number on
+`game-service` state events with a terminal-status fallback for the final round.
+
+Selecting a round needs only its number. Resolving a mid-round `seq` to its
+containing round is kept for clients that have a sequence and not a round number,
+but it is no longer how the dashboard picks a round.
 
 `rounds` names rounds of **play**, 1-based — the same numbers the History tab
 shows. See [Round boundaries](#round-boundaries).

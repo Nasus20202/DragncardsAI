@@ -10,6 +10,7 @@ from eval_service.judge.assembly import (
     NeighbourMove,
     RoundInput,
 )
+from eval_service.judge.rounds import round_label
 from eval_service.judge.state_view import canonical_json, render_state
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,14 @@ Score each criterion as an INTEGER from 0 to 10:
 - strategic_quality: was it a strong strategic choice toward winning?
 - tempo_efficiency: did it use the action/economy efficiently (no wasted tempo)?
 - threat_resource: did it manage threat and resources well?
+
+A single game decision is normally executed as SEVERAL recorded actions: playing \
+an ally and using its ability is ONE play made of moving the card into play, \
+exhausting a character to pay the cost, and assigning the damage. When you grade \
+one action, grade it as the STEP IT IS within the play its round reveals. A \
+legal, necessary step of a sound play is a good move even when it accomplishes \
+nothing on its own, so do NOT score it down for being incomplete — and do NOT \
+charge the same play against every action that makes it up.
 
 Then give an overall_score (0-10 integer), a short rationale paragraph, and a \
 list of flags (e.g. "illegal_move", "wasted_resource"); use an empty list when \
@@ -86,7 +95,9 @@ def build_move_messages(
 ) -> list[dict[str, str]]:
     """Build a fresh, self-contained judge prompt for a single move."""
     user = (
-        f"Evaluate this single agent move (seq {move.target_seq}).\n\n"
+        f"Evaluate this single agent move (seq {move.target_seq}){_round_scope(move)}.\n"
+        "The move is one action of that round's play; grade it as its step of "
+        "that play, not as a play in its own right.\n\n"
         f"Prior game state:\n{_state_json(move.prior_state, max_state_chars, label='prior')}\n\n"
         f"{_neighbour_block(move.context_before, max_context_reasoning_chars, direction='before')}"
         f"Intended action: {_json(move.intended_action)}\n"
@@ -101,28 +112,42 @@ def build_move_messages(
     ]
 
 
+def _round_scope(move: MoveInput) -> str:
+    """The round clause for a move prompt, empty when no round contains the move.
+
+    Reads as ``in Round 3 (seqs 41-72)``. The label is the round OF PLAY, never
+    the raw recorded number: DragnCards counts COMPLETED rounds, so showing a
+    judge "round 0" would misstate the game position.
+    """
+    if move.round_number is None or move.round_span is None:
+        return ""
+    label = round_label(move.round_number)
+    return f" in {label} (seqs {move.round_span[0]}-{move.round_span[1]})"
+
+
 def _neighbour_block(
     neighbours: list[NeighbourMove], max_reasoning_chars: int, *, direction: str
 ) -> str:
-    """Render the neighbouring-move window around the move under judgement.
+    """Render the round's other moves around the move under judgement.
 
-    The window exists so a move that is one step of a multi-call play is not
-    graded as if it stood alone. The following-moves half is labelled as
-    completion context rather than an outcome to grade, so the judge does not
-    score the decision on hindsight it did not have.
+    The context is the graded move's own ROUND, so a move that is one step of a
+    multi-call play is never graded as if it stood alone. The later-in-round half
+    is labelled as completion context rather than an outcome to grade, so the
+    judge does not score the decision on hindsight it did not have.
     """
     if not neighbours:
         return ""
     if direction == "before":
         header = (
-            f"The agent's {len(neighbours)} immediately PRECEDING move(s) "
-            "(context for what this move continues; do not grade them):"
+            f"The agent's {len(neighbours)} move(s) EARLIER IN THIS ROUND, "
+            "oldest first (context for the play this move continues; do not "
+            "grade them):"
         )
     else:
         header = (
-            f"The agent's {len(neighbours)} immediately FOLLOWING move(s) "
-            "(context for whether this move completed an intent; do not grade "
-            "them and do not judge the decision on hindsight):"
+            f"The agent's {len(neighbours)} move(s) LATER IN THIS ROUND, oldest "
+            "first (context for whether this move completed the play it belongs "
+            "to; do not grade them and do not judge the decision on hindsight):"
         )
     lines = [header]
     for neighbour in neighbours:
@@ -185,7 +210,7 @@ def build_round_messages(
         f"Moves taken this round{who}" if rnd.player else "Moves taken this round"
     )
     user = (
-        f"Evaluate this whole round{who} (round {rnd.round_number}, "
+        f"Evaluate this whole round{who} ({round_label(rnd.round_number)}, "
         f"seqs {rnd.from_seq}-{rnd.to_seq}) as a unit.\n\n"
         f"{_child_context_block(rnd.child_verdicts, 'move')}"
         f"{moves_label}:\n{moves_text}\n\n"

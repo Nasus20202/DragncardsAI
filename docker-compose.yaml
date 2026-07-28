@@ -149,7 +149,24 @@ services:
       # `eval-judge` entry at weight 0.0, so any provider can judge under its own
       # key. Set to "" to deliberately fall back to the game-playing key pool.
       EVAL_JUDGE_BIFROST_KEY_NAME: ${EVAL_JUDGE_BIFROST_KEY_NAME:-eval-judge}
+      # Bump when what the judge is SHOWN or ASKED changes: scores from two
+      # regimes are not on the same scale and are never averaged together.
+      # eval-2 is the round-scoped move context + the multi-action-play
+      # grading instruction.
       EVALUATOR_VERSION: ${EVALUATOR_VERSION:-eval-2}
+      # Parallel evaluation caps, enforced by the DURABLE claim (the `running`
+      # rows are counted and only the remaining capacity is claimed), never by an
+      # in-process semaphore -- so they survive a restart and hold if this service
+      # is scaled to more than one replica. Per-game 4 lets a round's moves grade
+      # in parallel; global 8 is the guard against a whole-game evaluation
+      # stampeding the provider.
+      EVAL_PER_GAME_CONCURRENCY: ${EVAL_PER_GAME_CONCURRENCY:-4}
+      EVAL_GLOBAL_CONCURRENCY: ${EVAL_GLOBAL_CONCURRENCY:-8}
+      # Backstops on the per-move context window, NOT the window itself: a move is
+      # judged in the context of its ROUND, and these only bound a pathological
+      # round. Set _AFTER=0 to grade with no hindsight.
+      EVAL_JUDGE_MOVE_CONTEXT_BEFORE: ${EVAL_JUDGE_MOVE_CONTEXT_BEFORE:-100}
+      EVAL_JUDGE_MOVE_CONTEXT_AFTER: ${EVAL_JUDGE_MOVE_CONTEXT_AFTER:-100}
       HTTP_HOST: ${EVAL_SERVICE_HTTP_HOST:-0.0.0.0}
       HTTP_PORT: ${EVAL_SERVICE_HTTP_PORT:-4005}
       OTEL_SERVICE_NAME: ${EVAL_SERVICE_OTEL_SERVICE_NAME:-eval-service}
