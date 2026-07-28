@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from eval_service.integrations.bifrost import BifrostError, BifrostJudgeClient
-from eval_service.judge.assembly import MoveInput, RoundInput
+from eval_service.judge.assembly import MoveInput, NeighbourMove, RoundInput
 from eval_service.judge.config import ResolvedJudgeConfig, ResolvedReasoning
 from eval_service.judge.parse import VerdictParseError, parse_verdict
 from eval_service.judge.prompt import build_move_messages, build_round_messages
@@ -467,3 +467,102 @@ async def test_judge_raises_bifrost_error_on_gateway_failure():
         await client.judge(model="m", messages=[], max_tokens=1)
     assert excinfo.value.retryable is True
     await client.aclose()
+
+
+def test_move_prompt_renders_the_neighbour_window_with_hindsight_labelled():
+    move = MoveInput(
+        game_id="g1",
+        target_seq=10,
+        intended_action="modify_tokens",
+        reasoning="assign the damage",
+        arguments={"amount": 3},
+        prior_state=None,
+        resulting_state=None,
+        context_before=[
+            NeighbourMove(
+                seq=8,
+                intended_action="exhaust_card",
+                arguments={"instance_id": "hero"},
+                reasoning="attack with the hero",
+            )
+        ],
+        context_after=[
+            NeighbourMove(
+                seq=12,
+                intended_action="next_step",
+                arguments={},
+                reasoning="x" * 900,
+            )
+        ],
+    )
+    user = build_move_messages(move, max_context_reasoning_chars=100)[1]["content"]
+    assert "immediately PRECEDING move(s)" in user
+    assert 'seq 8: action="exhaust_card"' in user
+    assert "immediately FOLLOWING move(s)" in user
+    assert "do not judge the decision on hindsight" in user
+    # A verbose neighbour cannot bloat the prompt.
+    assert "[+" in user
+    assert len(user) < 3000
+
+
+def test_move_prompt_omits_the_window_blocks_when_empty():
+    move = MoveInput(
+        game_id="g1",
+        target_seq=10,
+        intended_action="move_card",
+        reasoning="r",
+        arguments={},
+        prior_state=None,
+        resulting_state=None,
+    )
+    user = build_move_messages(move)[1]["content"]
+    assert "PRECEDING" not in user
+    assert "FOLLOWING" not in user
+
+
+def test_move_prompt_projects_a_raw_recorded_state():
+    # The recorded state is the raw DragnCards room state; the prompt must carry
+    # the board rather than the internal delta log that dominates it.
+    raw = {
+        "deltas": [{"noise": "n" * 2000}],
+        "game": {
+            "roundNumber": 4,
+            "cardById": {
+                "rhino_1": {
+                    "groupId": "sharedVillain",
+                    "stackId": "rhino_1",
+                    "currentSide": "A",
+                    "tokens": {"damage": 5},
+                    "sides": {"A": {"name": "Rhino", "type": "Villain"}},
+                }
+            },
+        },
+    }
+    move = MoveInput(
+        game_id="g1",
+        target_seq=2,
+        intended_action="modify_tokens",
+        reasoning="r",
+        arguments={},
+        prior_state=raw,
+        resulting_state=raw,
+    )
+    user = build_move_messages(move, max_state_chars=20_000)[1]["content"]
+    assert "Rhino" in user
+    assert "deltas" not in user
+    assert "[truncated" not in user
+
+
+def test_round_prompt_states_how_many_non_strategic_moves_were_omitted():
+    rnd = RoundInput(
+        game_id="g1",
+        target_seq=9,
+        from_seq=1,
+        to_seq=9,
+        round_number=1,
+        moves=[],
+        closing_state=None,
+        omitted_non_strategic=4,
+    )
+    user = build_round_messages(rnd)[1]["content"]
+    assert "4 non-strategic action(s) omitted" in user

@@ -5,6 +5,11 @@ from pathlib import Path
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from eval_service.judge.actions import (
+    DEFAULT_NON_STRATEGIC_ACTIONS,
+    parse_action_set,
+)
+
 # Repo-level shared skills directory, resolved relative to this file
 # (services/eval-service/src/eval_service/config.py -> repo root / skills).
 # This is the SAME directory the agent-orchestrator discovers skills from, so a
@@ -181,6 +186,63 @@ class Settings(BaseSettings):
             "eval_judge_max_round_moves", "EVAL_JUDGE_MAX_ROUND_MOVES"
         ),
     )
+
+    # Size of the NEIGHBOURING-ACTION window included with a per-move judge
+    # prompt, in agent moves either side of the one being graded.
+    #
+    # Why a window and not the whole history: the move prompt already carries the
+    # correlated prior/resulting board, which summarises everything that happened
+    # before, so replaying the full move list would add cost without adding
+    # signal. What a board cannot show is that one tool call is a fragment of a
+    # larger play -- a Marvel Champions play is typically 2-4 calls (play the
+    # card, assign damage, exhaust the character) and a whole player turn runs
+    # ~6-10 -- and judging a fragment alone produces confidently wrong verdicts.
+    #
+    # Defaults therefore cover a typical player turn's worth of preceding calls
+    # and just enough following calls to see whether a play completed. Measured
+    # on real recorded games the whole window costs ~600 prompt tokens.
+    # ``EVAL_JUDGE_MOVE_CONTEXT_AFTER=0`` removes hindsight entirely.
+    eval_judge_move_context_before: int = Field(
+        default=8,
+        validation_alias=AliasChoices(
+            "eval_judge_move_context_before", "EVAL_JUDGE_MOVE_CONTEXT_BEFORE"
+        ),
+    )
+    eval_judge_move_context_after: int = Field(
+        default=3,
+        validation_alias=AliasChoices(
+            "eval_judge_move_context_after", "EVAL_JUDGE_MOVE_CONTEXT_AFTER"
+        ),
+    )
+    # Per-neighbour reasoning cap, so one verbose neighbour cannot bloat a prompt.
+    eval_judge_move_context_reasoning_chars: int = Field(
+        default=400,
+        validation_alias=AliasChoices(
+            "eval_judge_move_context_reasoning_chars",
+            "EVAL_JUDGE_MOVE_CONTEXT_REASONING_CHARS",
+        ),
+    )
+
+    # Skip evaluating recorded actions that carry no strategic decision (card
+    # searches, session plumbing, pre-game setup). Skipped targets are recorded
+    # as ``skipped`` with the reason, never as passed. Set false to grade
+    # everything.
+    eval_skip_non_strategic_moves: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "eval_skip_non_strategic_moves", "EVAL_SKIP_NON_STRATEGIC_MOVES"
+        ),
+    )
+    # The non-strategic action names, ``,``/``;``-separated. The default is the
+    # built-in taxonomy (see eval_service.judge.actions); setting this REPLACES
+    # that list, so an operator states exactly which actions go ungraded. Any
+    # action not listed -- including every unrecognised name -- is evaluated.
+    eval_non_strategic_actions: str = Field(
+        default=DEFAULT_NON_STRATEGIC_ACTIONS,
+        validation_alias=AliasChoices(
+            "eval_non_strategic_actions", "EVAL_NON_STRATEGIC_ACTIONS"
+        ),
+    )
     eval_judge_timeout_seconds: float = Field(
         default=120.0,
         validation_alias=AliasChoices(
@@ -216,6 +278,13 @@ class Settings(BaseSettings):
         return provider_from_model(self.eval_judge_model.strip()) or (
             self.eval_judge_provider.strip()
         )
+
+    @property
+    def non_strategic_actions(self) -> frozenset[str]:
+        """Action names to skip as non-strategic (empty when skipping is off)."""
+        if not self.eval_skip_non_strategic_moves:
+            return frozenset()
+        return parse_action_set(self.eval_non_strategic_actions)
 
     @property
     def skill_root_paths(self) -> tuple[Path, ...]:
@@ -284,6 +353,17 @@ class Settings(BaseSettings):
     def validate_max_round_moves(cls, value: int) -> int:
         if value < 1:
             raise ValueError("eval_judge_max_round_moves must be at least 1")
+        return value
+
+    @field_validator(
+        "eval_judge_move_context_before",
+        "eval_judge_move_context_after",
+        "eval_judge_move_context_reasoning_chars",
+    )
+    @classmethod
+    def validate_move_context(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("move-context window sizes must be non-negative")
         return value
 
     @field_validator("eval_judge_timeout_seconds")

@@ -97,3 +97,57 @@ def test_round_number_of_reads_raw_game_shape():
         payload={"state": {"game": {"roundNumber": 5}}},
     )
     assert round_number_of(raw_state) == 5
+
+
+def test_move_input_includes_a_bounded_neighbour_window():
+    events = _recorded_game()
+    move = assemble_move_input(events, target_seq=4, context_before=1, context_after=1)
+    # Only agent moves, only the nearest one either side, in seq order.
+    assert [n.seq for n in move.context_before] == [2]
+    assert [n.seq for n in move.context_after] == [6]
+    assert move.context_before[0].intended_action == "play_a"
+    assert move.context_after[0].intended_action == "attack"
+
+
+def test_move_input_window_defaults_to_no_neighbours():
+    move = assemble_move_input(_recorded_game(), target_seq=4)
+    assert move.context_before == []
+    assert move.context_after == []
+
+
+def test_move_input_window_clamps_at_the_timeline_edges():
+    events = _recorded_game()
+    first = assemble_move_input(events, target_seq=2, context_before=5, context_after=5)
+    assert [n.seq for n in first.context_before] == []
+    assert [n.seq for n in first.context_after] == [4, 6]
+
+
+def test_round_input_omits_non_strategic_moves_and_counts_them():
+    events = [
+        state_event(game_id="g5", seq=1, round_number=1),
+        agent_event(game_id="g5", seq=2, action="search_cards_marvel_champions"),
+        agent_event(game_id="g5", seq=3, action="move_card"),
+        state_event(game_id="g5", seq=4, round_number=2),
+    ]
+    rnd = assemble_round_input(
+        events,
+        closing_seq=3,
+        skip_actions=frozenset({"search_cards_marvel_champions"}),
+    )
+    assert [m.target_seq for m in rnd.moves] == [3]
+    assert rnd.omitted_non_strategic == 1
+    # Without a skip set the round still lists every move.
+    every = assemble_round_input(events, closing_seq=3)
+    assert [m.target_seq for m in every.moves] == [2, 3]
+    assert every.omitted_non_strategic == 0
+
+
+def test_round_closing_state_falls_back_to_the_nearest_recorded_state():
+    # A round's closing seq is its LAST seq, which is usually an agent move and
+    # therefore carries no state. Grading a round with no board at all is what
+    # this guards against.
+    events = _recorded_game()
+    rnd = assemble_round_input(events, closing_seq=4)
+    assert rnd.to_seq == 4
+    assert rnd.closing_state is not None
+    assert rnd.closing_state["roundNumber"] == 1

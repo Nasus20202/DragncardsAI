@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from eval_service.judge.actions import non_strategic_reason
 from eval_service.schemas.history import StoredEvent
 
 
@@ -12,6 +13,16 @@ class BoundaryUndetectedError(Exception):
     Surfaced (rather than guessing a span) so a wrong-span verdict is never
     emitted, per the design's round-boundary risk mitigation.
     """
+
+
+@dataclass
+class NeighbourMove:
+    """A compact view of an agent move neighbouring the one being judged."""
+
+    seq: int
+    intended_action: Any
+    arguments: Any
+    reasoning: Any
 
 
 @dataclass
@@ -25,6 +36,10 @@ class MoveInput:
     arguments: Any
     prior_state: dict[str, Any] | None
     resulting_state: dict[str, Any] | None
+    # A window of the agent's own neighbouring moves, so the judge can see the
+    # sequence a move belongs to without being handed the whole game history.
+    context_before: list["NeighbourMove"] = field(default_factory=list)
+    context_after: list["NeighbourMove"] = field(default_factory=list)
 
 
 @dataclass
@@ -38,6 +53,9 @@ class RoundInput:
     round_number: int | None
     moves: list[MoveInput] = field(default_factory=list)
     closing_state: dict[str, Any] | None = None
+    # How many of the round's moves were left out as non-strategic, so the omission
+    # is stated in the prompt instead of silently shrinking the round.
+    omitted_non_strategic: int = 0
     # The player this round roll-up scores (None for legacy/aggregate rounds).
     player: str | None = None
     # Already-graded child (move) verdicts for this player, as judge context.
@@ -109,11 +127,26 @@ def is_terminal(event: StoredEvent) -> bool:
     return status in _TERMINAL_STATUSES if status else False
 
 
-def assemble_move_input(events: list[StoredEvent], target_seq: int) -> MoveInput:
+def assemble_move_input(
+    events: list[StoredEvent],
+    target_seq: int,
+    *,
+    context_before: int = 0,
+    context_after: int = 0,
+) -> MoveInput:
     """Assemble a per-move judge input for the ``agent`` event at ``target_seq``.
 
     Correlates the nearest ``game-service`` state at-or-before (prior state) and
     at-or-after (resulting state) the move's seq so the judge sees before/after.
+
+    ``context_before``/``context_after`` bound a WINDOW of the agent's own
+    neighbouring moves included as context. A window rather than the whole
+    history: the two correlated states already summarise everything that happened
+    earlier, so replaying the full move list adds cost without adding signal,
+    while the immediate neighbours carry information the states cannot — a single
+    Marvel Champions play is typically 2-4 tool calls (play the card, assign
+    damage, exhaust the character), and judging one of them alone invites a
+    confidently wrong verdict.
     """
     target = _find_event(events, target_seq)
     if target is None:
@@ -134,7 +167,40 @@ def assemble_move_input(events: list[StoredEvent], target_seq: int) -> MoveInput
         arguments=payload.get("arguments"),
         prior_state=prior.payload.get("state") if prior else None,
         resulting_state=resulting.payload.get("state") if resulting else None,
+        context_before=_neighbour_window(
+            events, target_seq, count=context_before, direction="before"
+        ),
+        context_after=_neighbour_window(
+            events, target_seq, count=context_after, direction="after"
+        ),
     )
+
+
+def _neighbour_window(
+    events: list[StoredEvent], target_seq: int, *, count: int, direction: str
+) -> list[NeighbourMove]:
+    """The ``count`` agent moves nearest to ``target_seq`` on one side, in order."""
+    if count <= 0:
+        return []
+    candidates = [
+        event
+        for event in events
+        if event.actor == "agent"
+        and (
+            event.seq < target_seq if direction == "before" else event.seq > target_seq
+        )
+    ]
+    candidates.sort(key=lambda e: e.seq)
+    window = candidates[-count:] if direction == "before" else candidates[:count]
+    return [
+        NeighbourMove(
+            seq=event.seq,
+            intended_action=event.payload.get("intended_action"),
+            arguments=event.payload.get("arguments"),
+            reasoning=event.payload.get("reasoning"),
+        )
+        for event in window
+    ]
 
 
 def detect_round_boundaries(events: list[StoredEvent]) -> list[tuple[int, int, int]]:
@@ -183,7 +249,11 @@ def detect_round_boundaries(events: list[StoredEvent]) -> list[tuple[int, int, i
 
 
 def assemble_round_input(
-    events: list[StoredEvent], closing_seq: int, *, player: str | None = None
+    events: list[StoredEvent],
+    closing_seq: int,
+    *,
+    player: str | None = None,
+    skip_actions: frozenset[str] = frozenset(),
 ) -> RoundInput:
     """Assemble a per-round judge input for the round closing at ``closing_seq``.
 
@@ -191,6 +261,10 @@ def assemble_round_input(
     player's moves are included and the already-graded move verdicts for that
     player are attached as roll-up context. ``player=None`` preserves the legacy
     whole-round aggregate behavior.
+
+    Moves whose action is in ``skip_actions`` are left out of the listed moves —
+    the same taxonomy that skips them at move scope — and counted so the prompt
+    can say how many were omitted.
 
     Raises :class:`BoundaryUndetectedError` when ``closing_seq`` is not a
     detected round-closing seq.
@@ -204,18 +278,26 @@ def assemble_round_input(
     round_number, from_seq, to_seq = match
 
     moves: list[MoveInput] = []
+    omitted = 0
     for event in events:
         if event.actor == "agent" and from_seq <= event.seq <= to_seq:
             if player is not None and _move_player(events, event.seq) != player:
                 continue
+            if non_strategic_reason(event.payload.get("intended_action"), skip_actions):
+                omitted += 1
+                continue
             moves.append(assemble_move_input(events, event.seq))
 
+    # A round's closing seq is its LAST seq, which is frequently an agent move
+    # rather than a state event -- in which case there is no state on the closing
+    # event itself. Fall back to the nearest recorded state at-or-before it so a
+    # round roll-up is never graded with no board at all.
     closing_event = _find_event(events, closing_seq)
-    closing_state = (
-        closing_event.payload.get("state")
-        if closing_event is not None and closing_event.actor == "game-service"
-        else None
-    )
+    if closing_event is not None and closing_event.actor == "game-service":
+        closing_state = closing_event.payload.get("state")
+    else:
+        nearest = _nearest_state(events, closing_seq, direction="before")
+        closing_state = nearest.payload.get("state") if nearest else None
     child_verdicts = (
         collect_child_verdicts(
             events, from_seq, to_seq, child_scope="move", player=player
@@ -233,6 +315,7 @@ def assemble_round_input(
         closing_state=closing_state,
         player=player,
         child_verdicts=child_verdicts,
+        omitted_non_strategic=omitted,
     )
 
 
@@ -249,11 +332,13 @@ def assemble_game_input(
     verdicts as context. The span ``[from_seq, closing_seq]`` is the whole game.
     """
     closing_event = _find_event(events, closing_seq)
-    closing_state = (
-        closing_event.payload.get("state")
-        if closing_event is not None and closing_event.actor == "game-service"
-        else None
-    )
+    if closing_event is not None and closing_event.actor == "game-service":
+        closing_state = closing_event.payload.get("state")
+    else:
+        # As for a round: the game's last seq is often an agent move, so fall back
+        # to the nearest recorded state rather than grading with no final board.
+        nearest = _nearest_state(events, closing_seq, direction="before")
+        closing_state = nearest.payload.get("state") if nearest else None
     child_verdicts = collect_child_verdicts(
         events, from_seq, closing_seq, child_scope="round", player=player
     )
