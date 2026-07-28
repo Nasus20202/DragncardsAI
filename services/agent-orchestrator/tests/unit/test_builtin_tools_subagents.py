@@ -11,7 +11,12 @@ from agent_orchestrator.runtime.builtin_tools import (
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.storage.repository import Repository
 
-from .builtin_tools_test_support import live_event_bus, make_job, repository
+from .builtin_tools_test_support import (
+    await_job_event,
+    live_event_bus,
+    make_job,
+    repository,
+)
 
 
 @pytest.mark.asyncio
@@ -55,11 +60,7 @@ async def test_spawn_subagent_returns_immediately_with_child_job_id(
     started = next(e for e in events if e.event_type == "subagent_started")
     assert started.payload_json["name"] == "do the thing"
 
-    await asyncio.sleep(0.05)
-
-    events = await repository.list_events(parent_job.id)
-    event_types = [e.event_type for e in events]
-    assert "subagent_completed" in event_types
+    await await_job_event(repository, parent_job.id, "subagent_completed")
     assert scheduled
 
 
@@ -91,12 +92,9 @@ async def test_spawn_subagent_child_failure_emitted_async(
     assert result["is_error"] is False
     assert "child_job_id" in result["content"][0]["text"]
 
-    await asyncio.sleep(0.05)
-
     events = await repository.list_events(parent_job.id)
-    event_types = [e.event_type for e in events]
-    assert "subagent_started" in event_types
-    assert "subagent_failed" in event_types
+    assert "subagent_started" in [e.event_type for e in events]
+    await await_job_event(repository, parent_job.id, "subagent_failed")
 
 
 @pytest.mark.asyncio
@@ -151,9 +149,7 @@ async def test_spawn_subagent_child_session_named_from_prompt(
     result = await handler({"prompt": prompt})
     assert result["is_error"] is False
 
-    await asyncio.sleep(0.05)
-    events = await repository.list_events(parent_job.id)
-    started = next(e for e in events if e.event_type == "subagent_started")
+    started = await await_job_event(repository, parent_job.id, "subagent_started")
     child_session_id = started.payload_json["child_session_id"]
     child_session = await repository.get_session(child_session_id)
     assert child_session is not None
@@ -267,7 +263,9 @@ async def test_wait_for_subagent_returns_error_for_terminal_failure_status(
     result = await handler({"child_job_id": child_job.id})
 
     assert result["is_error"] is True
-    assert result["content"][0]["text"] == "Subagent ended with status: failed."
+    assert result["content"][0]["text"] == (
+        f"Subagent {child_job.id} failed — runtime_error: boom"
+    )
 
 
 @pytest.mark.asyncio
@@ -318,7 +316,11 @@ async def test_wait_for_subagent_returns_event_reason_on_failure(
 
     async def publish_failure():
         await asyncio.sleep(0.01)
-        await live_event_bus.publish(child_job.id, "failure", {"error": "boom"})
+        await live_event_bus.publish(
+            child_job.id,
+            "failure",
+            {"code": "execution_error", "message": "boom", "retryable": False},
+        )
 
     publish_task = asyncio.create_task(publish_failure())
     try:
@@ -327,4 +329,6 @@ async def test_wait_for_subagent_returns_event_reason_on_failure(
         await publish_task
 
     assert result["is_error"] is True
-    assert result["content"][0]["text"] == "Subagent ended with: failure"
+    assert result["content"][0]["text"] == (
+        f"Subagent {child_job.id} failed — execution_error: boom"
+    )

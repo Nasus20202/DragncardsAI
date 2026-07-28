@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Callable
+import time
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable
 
 from agent_orchestrator.runtime.history_emitter import SESSION_GAME_ID_KEY
 from agent_orchestrator.runtime.live_events import LiveEventBus
@@ -152,7 +154,20 @@ def make_load_skill_reference_handler(
     return handle
 
 
-TERMINAL_EVENT_TYPES = frozenset({"completion", "failure", "cancellation"})
+# Statuses a job never leaves. `interrupted` belongs here: the run hit the tool
+# round limit, and the partial work it recorded is final for that job.
+TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "cancelled", "interrupted"})
+
+# Live events map onto outcome kinds, which are otherwise named after job
+# statuses so a caller never has to know which source an outcome came from.
+_EVENT_TYPE_TO_OUTCOME_KIND = {
+    "completion": "completed",
+    "failure": "failed",
+    "cancellation": "cancelled",
+}
+
+DEFAULT_SUBAGENT_WAIT_TIMEOUT_SECONDS = 600.0
+DEFAULT_SUBAGENT_WAIT_POLL_INTERVAL_SECONDS = 5.0
 
 
 def is_master_job(job: Any) -> bool:
@@ -160,11 +175,190 @@ def is_master_job(job: Any) -> bool:
     return job.parent_job_id is None and job.job_type == "prompt"
 
 
+@dataclass(frozen=True)
+class ChildOutcome:
+    """How a child job ended, as far as the parent was able to observe.
+
+    ``kind`` is a terminal job status (``completed``, ``failed``, ``cancelled``,
+    ``interrupted``) when the child reached one, or describes why the parent
+    stopped observing: ``missing`` (the job row is gone), ``timeout`` (the wait
+    budget ran out), ``abandoned`` (the parent itself was cancelled).
+    """
+
+    kind: str
+    text: str = ""
+    error_code: str | None = None
+    error_message: str | None = None
+    last_status: str | None = None
+
+    @property
+    def has_result(self) -> bool:
+        """True when the child produced usable output for the parent."""
+        return self.kind in ("completed", "interrupted")
+
+
+def _outcome_from_job(job: Any) -> ChildOutcome | None:
+    """Read a terminal outcome off a persisted job row, or None if still live."""
+    if job.status not in TERMINAL_JOB_STATUSES:
+        return None
+    return ChildOutcome(
+        kind=job.status,
+        text=job.result_text or "",
+        error_code=job.error_code,
+        error_message=job.error_message,
+        last_status=job.status,
+    )
+
+
+def _outcome_from_event(event: Any) -> ChildOutcome | None:
+    """Read a terminal outcome off a live event, or None if it is not terminal."""
+    kind = _EVENT_TYPE_TO_OUTCOME_KIND.get(event.event_type)
+    if kind is None:
+        return None
+    payload = event.payload_json or {}
+    return ChildOutcome(
+        kind=kind,
+        text=payload.get("text", "") or "",
+        error_code=payload.get("code"),
+        error_message=payload.get("message") or payload.get("reason"),
+        last_status=kind,
+    )
+
+
+async def _next_event(subscriber: Any, seconds: float) -> Any | None:
+    """Wait up to ``seconds`` for the next event on a subscription.
+
+    Consumes the whole interval when nothing arrives. A subscriber that reports
+    "nothing yet" faster than it was asked to wait — a Valkey stream reader
+    whose connection is re-establishing, for instance — would otherwise turn the
+    surrounding wait into a busy loop.
+    """
+    started = time.monotonic()
+    event = await subscriber.get(timeout_seconds=seconds)
+    if event is not None:
+        return event
+    shortfall = seconds - (time.monotonic() - started)
+    if shortfall > 0:
+        await asyncio.sleep(shortfall)
+    return None
+
+
+async def resolve_child_outcome(
+    *,
+    repository: Repository,
+    live_event_bus: LiveEventBus,
+    child_job_id: str,
+    timeout_seconds: float = DEFAULT_SUBAGENT_WAIT_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = DEFAULT_SUBAGENT_WAIT_POLL_INTERVAL_SECONDS,
+    abandon_when: Callable[[], Awaitable[bool]] | None = None,
+) -> ChildOutcome:
+    """Wait for a child job to end, bounded by an absolute deadline.
+
+    The child's persisted status is the authority. Live events are ephemeral —
+    the Valkey stream carrying them has a TTL, and not every terminal
+    transition publishes one: a run that crashes out of its own failure
+    handling is marked ``failed`` in the database by the worker's last-resort
+    guard without announcing anything. Waiting on events alone therefore turns
+    a crashed child into a silent stall, so every poll re-reads the row and any
+    terminal status wins.
+
+    Events are still consumed, so the ordinary case returns the moment the
+    child finishes rather than on the next poll. A terminal event is trusted as
+    it arrives because it is published just before the matching row update.
+
+    ``timeout_seconds`` is an absolute budget, not a per-event one: a child
+    stuck in a loop keeps emitting reasoning and output events, and refreshing
+    the budget on each of them would let it hold the parent forever.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    last_status: str | None = None
+
+    # Subscribing before the first read means an event published while we are
+    # reading is queued rather than missed.
+    subscriber = await live_event_bus.subscribe(child_job_id)
+    try:
+        while True:
+            child_job = await repository.get_job(child_job_id)
+            if child_job is None:
+                return ChildOutcome(kind="missing", last_status=last_status)
+            last_status = child_job.status
+            outcome = _outcome_from_job(child_job)
+            if outcome is not None:
+                return outcome
+
+            if abandon_when is not None and await abandon_when():
+                return ChildOutcome(kind="abandoned", last_status=last_status)
+
+            # Consume events for one poll interval before reading the row again.
+            # A streaming child emits hundreds of events, and re-reading on each
+            # of them would put the database on the hot path for nothing; going
+            # by elapsed time instead means a chattering child can neither
+            # suppress the re-read nor delay noticing the parent's cancellation.
+            next_poll_at = time.monotonic() + poll_interval_seconds
+            while True:
+                now = time.monotonic()
+                if now >= next_poll_at:
+                    break
+                if now >= deadline:
+                    logger.warning(
+                        "Gave up after %.0fs waiting for child job %s (last status %s)",
+                        timeout_seconds,
+                        child_job_id,
+                        last_status,
+                    )
+                    return ChildOutcome(kind="timeout", last_status=last_status)
+                event = await _next_event(subscriber, min(next_poll_at, deadline) - now)
+                if event is None:
+                    continue
+                outcome = _outcome_from_event(event)
+                if outcome is not None:
+                    return outcome
+    finally:
+        await subscriber.aclose()
+
+
+def describe_child_outcome(child_job_id: str, outcome: ChildOutcome) -> str:
+    """Render an outcome as one line the parent agent can act on."""
+    if outcome.kind == "failed":
+        detail = ": ".join(
+            part for part in (outcome.error_code, outcome.error_message) if part
+        )
+        suffix = f" — {detail}" if detail else ""
+        return f"Subagent {child_job_id} failed{suffix}"
+    if outcome.kind == "cancelled":
+        reason = outcome.error_message or "no reason recorded"
+        return f"Subagent {child_job_id} was cancelled — {reason}"
+    if outcome.kind == "missing":
+        return f"No job found with id '{child_job_id}'."
+    if outcome.kind == "abandoned":
+        return (
+            f"Stopped waiting for subagent {child_job_id} because this job was "
+            "cancelled."
+        )
+    if outcome.kind == "timeout":
+        if outcome.last_status == "running":
+            cause = (
+                "it is still recorded as running, so the worker executing it may "
+                "have died"
+            )
+        elif outcome.last_status == "queued":
+            cause = "it was never picked up by a worker"
+        else:
+            cause = f"its last recorded status is '{outcome.last_status}'"
+        return (
+            f"Gave up waiting for subagent {child_job_id} — {cause}. Do not wait "
+            "on it again; continue without its result or report the stall."
+        )
+    return f"Subagent {child_job_id} ended with status '{outcome.kind}'."
+
+
 def _make_child_monitor(
     repository: Repository,
     live_event_bus: LiveEventBus,
     session_id: str,
     job_id: str,
+    timeout_seconds: float = DEFAULT_SUBAGENT_WAIT_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = DEFAULT_SUBAGENT_WAIT_POLL_INTERVAL_SECONDS,
 ) -> Callable[..., Any]:
     """Build the background watcher that reports a child's outcome to its parent."""
 
@@ -174,45 +368,30 @@ def _make_child_monitor(
         name: str,
         extra_payload: dict[str, Any] | None = None,
     ) -> None:
-        """Background task: wait for child terminal event, update parent job."""
+        """Background task: wait for the child to end, update the parent job."""
         try:
-            subscriber = await live_event_bus.subscribe(child_job_id)
-            terminal_event: dict[str, Any] | None = None
-            try:
-                while True:
-                    event = await subscriber.get(timeout_seconds=600)
-                    if event is None:
-                        logger.warning(
-                            "Parent job %s timed out waiting for child job %s",
-                            job_id,
-                            child_job_id,
-                        )
-                        terminal_event = {"type": "timeout"}
-                        break
-                    if event.event_type in TERMINAL_EVENT_TYPES:
-                        terminal_event = {
-                            "type": event.event_type,
-                            **event.payload_json,
-                        }
-                        break
-            finally:
-                await subscriber.aclose()
-
-            success = (
-                terminal_event is not None
-                and terminal_event.get("type") == "completion"
+            outcome = await resolve_child_outcome(
+                repository=repository,
+                live_event_bus=live_event_bus,
+                child_job_id=child_job_id,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
             )
-            outcome_event_type = "subagent_completed" if success else "subagent_failed"
+            outcome_event_type = (
+                "subagent_completed" if outcome.has_result else "subagent_failed"
+            )
             outcome_payload: dict[str, Any] = {
                 "child_job_id": child_job_id,
                 "child_session_id": child_session_id,
                 "name": name,
                 **(extra_payload or {}),
             }
-            if not success:
-                outcome_payload["reason"] = (
-                    terminal_event.get("type") if terminal_event else "unknown"
-                )
+            if not outcome.has_result:
+                outcome_payload["reason"] = outcome.kind
+                if outcome.error_code:
+                    outcome_payload["error_code"] = outcome.error_code
+                if outcome.error_message:
+                    outcome_payload["error_message"] = outcome.error_message
 
             try:
                 await repository.append_event(
@@ -356,6 +535,8 @@ def make_spawn_subagent_handler(
     job_id: str,
     job: Any,
     schedule_child_fn: Callable[[str], Any] | None = None,
+    monitor_timeout_seconds: float = DEFAULT_SUBAGENT_WAIT_TIMEOUT_SECONDS,
+    monitor_poll_interval_seconds: float = DEFAULT_SUBAGENT_WAIT_POLL_INTERVAL_SECONDS,
 ) -> BuiltinHandler:
     """Return a spawn_subagent handler bound to the current parent job context.
 
@@ -366,7 +547,14 @@ def make_spawn_subagent_handler(
     schedule_child_fn: optional async callable(child_job_id) that starts the child
     job concurrently (used to avoid deadlock when only one worker is running).
     """
-    monitor = _make_child_monitor(repository, live_event_bus, session_id, job_id)
+    monitor = _make_child_monitor(
+        repository,
+        live_event_bus,
+        session_id,
+        job_id,
+        timeout_seconds=monitor_timeout_seconds,
+        poll_interval_seconds=monitor_poll_interval_seconds,
+    )
 
     async def handle(arguments: dict[str, Any]) -> dict[str, Any]:
         if not is_master_job(job):
@@ -441,6 +629,8 @@ def make_prompt_player_agent_handler(
     job_id: str,
     job: Any,
     schedule_child_fn: Callable[[str], Any] | None = None,
+    monitor_timeout_seconds: float = DEFAULT_SUBAGENT_WAIT_TIMEOUT_SECONDS,
+    monitor_poll_interval_seconds: float = DEFAULT_SUBAGENT_WAIT_POLL_INTERVAL_SECONDS,
 ) -> BuiltinHandler:
     """Return a prompt_player_agent handler bound to the orchestrating job.
 
@@ -450,7 +640,14 @@ def make_prompt_player_agent_handler(
     attributed to that seat without inference, and with the orchestrator's
     ``game_id`` so its very first move lands on the right timeline.
     """
-    monitor = _make_child_monitor(repository, live_event_bus, session_id, job_id)
+    monitor = _make_child_monitor(
+        repository,
+        live_event_bus,
+        session_id,
+        job_id,
+        timeout_seconds=monitor_timeout_seconds,
+        poll_interval_seconds=monitor_poll_interval_seconds,
+    )
 
     async def handle(arguments: dict[str, Any]) -> dict[str, Any]:
         if not is_master_job(job):
@@ -518,54 +715,92 @@ def make_prompt_player_agent_handler(
 def make_wait_for_subagent_handler(
     live_event_bus: LiveEventBus,
     repository: Repository,
+    session_id: str = "",
+    job_id: str = "",
+    timeout_seconds: float = DEFAULT_SUBAGENT_WAIT_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = DEFAULT_SUBAGENT_WAIT_POLL_INTERVAL_SECONDS,
 ) -> BuiltinHandler:
-    """Return a wait_for_subagent handler that blocks until a child job terminates."""
+    """Return a wait_for_subagent handler that blocks until a child job ends.
+
+    The wait always ends: a child that crashes, is cancelled, is orphaned by a
+    dead worker, or simply never reports back all produce a result the parent
+    agent can reason about. Giving up is recorded on the parent job as well as
+    returned, so a stalled wait is visible in the session's event stream rather
+    than only in the service log.
+    """
 
     async def handle(arguments: dict[str, Any]) -> dict[str, Any]:
         child_job_id: str = arguments.get("child_job_id", "")
         if not child_job_id:
             return _text_result("child_job_id is required.", is_error=True)
 
-        # Check if the child job is already terminal (avoid hanging on a done job).
-        child_job = await repository.get_job(child_job_id)
-        if child_job is None:
-            return _text_result(
-                f"No job found with id '{child_job_id}'.", is_error=True
+        async def parent_was_cancelled() -> bool:
+            if not job_id:
+                return False
+            return await repository.get_job_cancellation_requested(job_id)
+
+        outcome = await resolve_child_outcome(
+            repository=repository,
+            live_event_bus=live_event_bus,
+            child_job_id=child_job_id,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            abandon_when=parent_was_cancelled,
+        )
+
+        if outcome.kind == "timeout":
+            await _announce_wait_timeout(
+                repository=repository,
+                live_event_bus=live_event_bus,
+                session_id=session_id,
+                job_id=job_id,
+                child_job_id=child_job_id,
+                outcome=outcome,
+                timeout_seconds=timeout_seconds,
             )
 
-        if child_job.status in ("completed", "failed", "cancelled"):
-            # Already done — return result directly.
-            if child_job.status == "completed":
-                return _text_result(child_job.result_text or "Subagent completed.")
-            return _text_result(
-                f"Subagent ended with status: {child_job.status}.",
-                is_error=True,
-            )
-
-        # Subscribe and wait for terminal event.
-        subscriber = await live_event_bus.subscribe(child_job_id)
-        terminal_event: dict[str, Any] | None = None
-        try:
-            while True:
-                event = await subscriber.get(timeout_seconds=600)
-                if event is None:
-                    logger.warning(
-                        "wait_for_subagent timed out on child job %s", child_job_id
-                    )
-                    terminal_event = {"type": "timeout"}
-                    break
-                if event.event_type in TERMINAL_EVENT_TYPES:
-                    terminal_event = {"type": event.event_type, **event.payload_json}
-                    break
-        finally:
-            await subscriber.aclose()
-
-        if terminal_event and terminal_event.get("type") == "completion":
-            return _text_result(terminal_event.get("text", "") or "Subagent completed.")
-        reason = terminal_event.get("type", "unknown") if terminal_event else "unknown"
-        return _text_result(f"Subagent ended with: {reason}", is_error=True)
+        if outcome.has_result:
+            return _text_result(outcome.text or "Subagent completed.")
+        return _text_result(
+            describe_child_outcome(child_job_id, outcome), is_error=True
+        )
 
     return handle
+
+
+async def _announce_wait_timeout(
+    *,
+    repository: Repository,
+    live_event_bus: LiveEventBus,
+    session_id: str,
+    job_id: str,
+    child_job_id: str,
+    outcome: ChildOutcome,
+    timeout_seconds: float,
+) -> None:
+    """Record an abandoned wait on the parent job.
+
+    Reported as ``subagent_failed`` rather than a new event type so the existing
+    session timeline shows it without any consumer change: from the parent's
+    point of view a child it can no longer hear from has failed.
+    """
+    if not job_id or not session_id:
+        return
+    payload = {
+        "child_job_id": child_job_id,
+        "reason": "wait_timeout",
+        "waited_seconds": timeout_seconds,
+        "child_status": outcome.last_status,
+    }
+    try:
+        await repository.append_event(job_id, session_id, "subagent_failed", payload)
+        await live_event_bus.publish(job_id, "subagent_failed", payload)
+    except Exception:
+        logger.exception(
+            "Failed to record the abandoned wait for child job %s on parent job %s",
+            child_job_id,
+            job_id,
+        )
 
 
 def build_builtin_registry(
@@ -578,11 +813,19 @@ def build_builtin_registry(
     job: Any,
     schedule_child_fn: Callable[[str], Any] | None = None,
     player_configs: list[Any] | None = None,
+    subagent_wait_timeout_seconds: float = DEFAULT_SUBAGENT_WAIT_TIMEOUT_SECONDS,
+    subagent_wait_poll_interval_seconds: float = (
+        DEFAULT_SUBAGENT_WAIT_POLL_INTERVAL_SECONDS
+    ),
 ) -> BuiltinToolRegistry:
     """Build a per-job BuiltinToolRegistry with all handlers bound to job context.
 
     schedule_child_fn: optional async callable(child_job_id) called concurrently
     after enqueueing a child job, to avoid single-worker deadlock.
+
+    subagent_wait_timeout_seconds / subagent_wait_poll_interval_seconds: bound
+    how long the parent will wait on a child and how often it re-reads the
+    child's persisted status while waiting.
 
     player_configs: the session's player-agent roster. The player tools are
     registered only when a roster exists, so sessions that are not running an
@@ -680,6 +923,8 @@ def build_builtin_registry(
                     job_id=job_id,
                     job=job,
                     schedule_child_fn=schedule_child_fn,
+                    monitor_timeout_seconds=subagent_wait_timeout_seconds,
+                    monitor_poll_interval_seconds=subagent_wait_poll_interval_seconds,
                 ),
             )
         )
@@ -690,7 +935,11 @@ def build_builtin_registry(
                 description=(
                     "Wait for a previously spawned subagent to finish and return its result. "
                     "Use the child_job_id returned by spawn_subagent. "
-                    "Blocks until the child completes or fails."
+                    "Blocks until the child completes, fails, or is cancelled, and "
+                    "always returns: if the child crashed you get the failure and its "
+                    "cause, and if it stopped reporting altogether you get told to stop "
+                    "waiting on it. Never call it twice on a child it told you to give "
+                    "up on."
                 ),
                 parameters={
                     "type": "object",
@@ -705,6 +954,10 @@ def build_builtin_registry(
                 handler=make_wait_for_subagent_handler(
                     live_event_bus=live_event_bus,
                     repository=repository,
+                    session_id=session_id,
+                    job_id=job_id,
+                    timeout_seconds=subagent_wait_timeout_seconds,
+                    poll_interval_seconds=subagent_wait_poll_interval_seconds,
                 ),
             )
         )
@@ -771,6 +1024,10 @@ def build_builtin_registry(
                         job_id=job_id,
                         job=job,
                         schedule_child_fn=schedule_child_fn,
+                        monitor_timeout_seconds=subagent_wait_timeout_seconds,
+                        monitor_poll_interval_seconds=(
+                            subagent_wait_poll_interval_seconds
+                        ),
                     ),
                 )
             )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -52,3 +53,19 @@ def make_skill_assignment(skill_name: str):
 
 def make_job(parent_job_id=None, job_type="prompt"):
     return SimpleNamespace(parent_job_id=parent_job_id, job_type=job_type)
+
+
+async def await_job_event(repository, job_id: str, event_type: str):
+    """Wait for a detached child monitor to record ``event_type``.
+
+    The monitor consults the database before it trusts the event stream, so how
+    long it takes depends on database latency. Polling for the event keeps these
+    tests deterministic instead of racing a fixed sleep.
+    """
+    for _ in range(500):
+        events = await repository.list_events(job_id)
+        match = [event for event in events if event.event_type == event_type]
+        if match:
+            return match[0]
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"job {job_id} never recorded a {event_type} event")

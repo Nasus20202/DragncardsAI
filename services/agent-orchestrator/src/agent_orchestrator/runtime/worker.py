@@ -208,15 +208,46 @@ class WorkerService:
             logger.exception(
                 "Job %s crashed outside prompt-run failure handling", job.id
             )
-            try:
-                await self._repository.mark_job_failed(
-                    job.id,
-                    error_code="worker_crash",
-                    error_message="Job crashed before reaching a terminal status",
-                    retryable=False,
-                )
-            except Exception:
-                logger.exception("Failed to mark crashed job %s as failed", job.id)
+            await self._force_terminal_failure(job)
+
+    async def _force_terminal_failure(self, job: Job) -> None:
+        """Record and announce a failure for a job that crashed out of its own
+        failure handling.
+
+        Announcing matters as much as persisting. A parent blocked in
+        `wait_for_subagent`, the child monitor, and the dashboard's event stream
+        all learn a job's fate from the live bus, so a database-only failure
+        leaves them waiting on an event that never arrives. Each step is
+        independently guarded: this is the last line of defence and a second
+        exception here must not undo the work that already succeeded.
+        """
+        code = "worker_crash"
+        message = "Job crashed before reaching a terminal status"
+        failure: dict[str, Any] = {
+            "code": code,
+            "message": message,
+            "retryable": False,
+        }
+        try:
+            await self._repository.mark_job_failed(
+                job.id,
+                error_code=code,
+                error_message=message,
+                retryable=False,
+            )
+        except Exception:
+            logger.exception("Failed to mark crashed job %s as failed", job.id)
+        try:
+            await self._repository.append_event(
+                job.id, job.session_id, "failure", failure
+            )
+        except Exception:
+            logger.exception("Failed to record the crash of job %s", job.id)
+        try:
+            await self._live_event_bus.publish(job.id, "failure", failure)
+        except Exception:
+            logger.exception("Failed to announce the crash of job %s", job.id)
+        await self._maybe_terminate_child_session(job)
 
     async def _maybe_auto_compact(self, job_id: str, session_id: str) -> None:
         """Auto-compact context if estimated usage ratio exceeds threshold."""

@@ -317,6 +317,23 @@ that seat's row, tagged with the seat id and the session's `game_id`, so every m
 is attributed to it without inference. Pair it with the standard `wait_for_subagent`. The
 `marvel-champions-orchestrator` skill is the playbook for driving this.
 
+### Waiting On A Child
+
+`wait_for_subagent` always returns. The child job's persisted status is the authority, not its live
+event stream: the stream is ephemeral and is not written on every terminal transition, so the wait
+re-reads the child's row whenever the child falls silent. A crashed child therefore ends the wait
+with its `error_code` and message rather than stalling until the budget runs out.
+
+```text
+SUBAGENT_WAIT_TIMEOUT_SECONDS=600        # absolute budget for one wait, not per event
+SUBAGENT_WAIT_POLL_INTERVAL_SECONDS=5    # how long the child may be silent before the row is re-read
+```
+
+When the budget expires, the parent is told the child's last recorded status and that it must stop
+waiting, and a `subagent_failed` event with `reason: "wait_timeout"` is recorded on the parent job so
+the stall is visible in the session timeline. A job orphaned by a hard worker kill (SIGKILL, OOM)
+still stays `running` — nothing reclaims it yet — but it can no longer hold a parent hostage.
+
 ### Session Tools
 
 Use this to inspect the tool list that the worker will expose to the model after MCP assignments are attached.
