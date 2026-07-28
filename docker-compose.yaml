@@ -176,6 +176,8 @@ services:
       GAME_SERVICE_URL: ${GAME_SERVICE_URL:-http://game-service:8000}
       HISTORY_SERVICE_URL: ${HISTORY_SERVICE_URL:-http://history-service:4004}
       EVAL_SERVICE_URL: ${EVAL_SERVICE_URL:-http://eval-service:4005}
+      # Browser-reachable Bifrost UI (host port), not the internal BIFROST_URL.
+      BIFROST_UI_URL: ${BIFROST_UI_URL:-http://localhost:4003}
       APP_NAME: ${APP_NAME:-DragnCardsAI Dashboard}
       DEFAULT_PROVIDER_ID: ${DEFAULT_PROVIDER_ID:-openrouter}
       DEFAULT_MODEL_NAME: ${DEFAULT_MODEL_NAME:-openrouter/openrouter/free}

@@ -73,6 +73,7 @@ function stubSources() {
     defaultReasoningEffort: "medium",
     defaultSkills: [],
     dragncardsFrontendUrl: "http://frontend.test",
+    bifrostUiUrl: "http://localhost:4003",
   });
   listProviders.mockResolvedValue([]);
   listAvailableSkills.mockResolvedValue([]);

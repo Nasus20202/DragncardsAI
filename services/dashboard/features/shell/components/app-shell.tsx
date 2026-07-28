@@ -7,6 +7,11 @@ import { PropsWithChildren } from "react";
 
 import { useTheme } from "@/features/shell/components/providers";
 
+const NAV_LINK_BASE =
+  "rounded px-3 py-1.5 text-sm font-medium transition-colors";
+const NAV_LINK_IDLE =
+  "text-default-500 hover:bg-default-100/60 hover:text-foreground";
+
 function NavLink({
   href,
   children,
@@ -20,10 +25,8 @@ function NavLink({
     <NextLink
       href={href}
       className={[
-        "rounded px-3 py-1.5 text-sm font-medium transition-colors",
-        active
-          ? "bg-default-100 text-foreground"
-          : "text-default-500 hover:bg-default-100/60 hover:text-foreground",
+        NAV_LINK_BASE,
+        active ? "bg-default-100 text-foreground" : NAV_LINK_IDLE,
       ].join(" ")}
     >
       {children}
@@ -31,10 +34,38 @@ function NavLink({
   );
 }
 
+/** Navigation entry for a service outside the dashboard; always opens in a new tab. */
+function ExternalNavLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={[
+        NAV_LINK_BASE,
+        NAV_LINK_IDLE,
+        "inline-flex items-center gap-1",
+      ].join(" ")}
+    >
+      {children}
+      <span aria-hidden="true" className="text-xs">
+        ↗
+      </span>
+    </a>
+  );
+}
+
 export function AppShell({
   appName,
+  bifrostUrl,
   children,
-}: PropsWithChildren<{ appName: string }>) {
+}: PropsWithChildren<{ appName: string; bifrostUrl: string }>) {
   const { resolvedTheme, setTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
 
@@ -56,6 +87,7 @@ export function AppShell({
             <NavLink href="/games">Games</NavLink>
             <NavLink href="/history">History</NavLink>
             <NavLink href="/swagger">Swagger</NavLink>
+            <ExternalNavLink href={bifrostUrl}>Bifrost</ExternalNavLink>
           </nav>
         </div>
 

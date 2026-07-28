@@ -24,6 +24,7 @@ const config: DashboardConfig = {
   defaultSkills: ["demo-skill"],
   defaultCustomMcps: [],
   dragncardsFrontendUrl: "http://localhost:4000",
+  bifrostUiUrl: "http://localhost:4003",
   defaultReasoningEnabled: false,
   defaultReasoningEffort: "medium",
 };
@@ -71,6 +72,7 @@ describe("session draft helpers", () => {
       defaultSkills: ["demo-skill"],
       defaultCustomMcps: [],
       dragncardsFrontendUrl: "http://localhost:4000",
+      bifrostUiUrl: "http://localhost:4003",
       defaultReasoningEnabled: false,
       defaultReasoningEffort: "medium",
     });

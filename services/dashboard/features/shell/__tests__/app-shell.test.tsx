@@ -36,7 +36,7 @@ vi.mock("@/features/shell/components/providers", () => ({
 describe("AppShell", () => {
   it("renders nav links and toggles theme", async () => {
     render(
-      <AppShell appName="DragncardsAI">
+      <AppShell appName="DragncardsAI" bifrostUrl="http://localhost:4003">
         <div>Child content</div>
       </AppShell>
     );
@@ -55,5 +55,20 @@ describe("AppShell", () => {
       screen.getByRole("button", { name: /toggle colour theme/i })
     );
     expect(themeState.setTheme).toHaveBeenCalledWith("light");
+  });
+
+  it("links to the Bifrost UI in a new tab", () => {
+    render(
+      <AppShell appName="DragncardsAI" bifrostUrl="http://bifrost.test:4003">
+        <div>Child content</div>
+      </AppShell>
+    );
+
+    const link = screen.getByRole("link", { name: /bifrost/i });
+    expect(link).toHaveAttribute("href", "http://bifrost.test:4003");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    // Visually consistent with the internal nav entries.
+    expect(link.className).toContain("text-default-500");
   });
 });

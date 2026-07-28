@@ -171,6 +171,7 @@ export interface DashboardConfig {
   defaultSkills: string[];
   defaultCustomMcps: CustomMcpDraft[];
   dragncardsFrontendUrl: string;
+  bifrostUiUrl: string;
   defaultReasoningEnabled: boolean;
   defaultReasoningEffort: "low" | "medium" | "high";
 }
