@@ -49,6 +49,7 @@ export function PlayWorkspace() {
     submitSessionPrompt,
     cancelExecution,
     recordSubagentOutcome,
+    toggleSkill,
     toggleMcp,
     addMcpToRegistry,
     deleteMcpFromRegistry,
@@ -189,10 +190,17 @@ export function PlayWorkspace() {
           isBusy={isBusy}
           prompt={prompt}
           selectedSession={selectedSession}
+          skills={skills}
+          // The settings panel's toggle list reads the same value, so a skill
+          // attached from the composer and one enabled in the panel are one
+          // assignment rather than two views of it.
+          attachedSkills={draft.selectedSkills}
           onCancelExecution={cancelExecution}
           onCompact={compactPlaySession}
           onPromptChange={setPrompt}
           onSubmit={submitSessionPrompt}
+          onAttachSkill={(skillName) => void toggleSkill(skillName, true)}
+          onDetachSkill={(skillName) => void toggleSkill(skillName, false)}
         />
       </div>
 

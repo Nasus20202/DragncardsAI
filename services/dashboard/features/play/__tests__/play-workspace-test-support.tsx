@@ -178,24 +178,41 @@ vi.mock("@/features/play/components/play-prompt-box", () => ({
     selectedSession,
     activeJobId,
     cancelPending,
+    attachedSkills,
     onPromptChange,
     onSubmit,
     onCancelExecution,
     onCompact,
+    onAttachSkill,
+    onDetachSkill,
   }: {
     prompt: string;
     selectedSession: SessionDetail | null;
     activeJobId: string | null;
     cancelPending: boolean;
+    attachedSkills: string[];
     onPromptChange: (value: string) => void;
     onSubmit: () => void;
     onCancelExecution: () => void;
     onCompact: () => void;
+    onAttachSkill: (skillName: string) => void;
+    onDetachSkill: (skillName: string) => void;
   }) => (
     <div>
       <div data-testid="prompt-session">{selectedSession?.id ?? "none"}</div>
       <div data-testid="active-job-id">{activeJobId ?? "none"}</div>
       <div data-testid="cancel-pending">{String(cancelPending)}</div>
+      <div data-testid="prompt-attached-skills">{attachedSkills.join(",")}</div>
+      {["skill-a", "skill-b"].map((skillName) => (
+        <div key={skillName}>
+          <button type="button" onClick={() => onAttachSkill(skillName)}>
+            {`Attach ${skillName}`}
+          </button>
+          <button type="button" onClick={() => onDetachSkill(skillName)}>
+            {`Detach ${skillName}`}
+          </button>
+        </div>
+      ))}
       <input
         aria-label="Prompt input"
         value={prompt}
@@ -264,6 +281,17 @@ vi.mock("@/features/play/components/play-config-panel", () => ({
         }
       >
         Change provider
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          onDraftChange({
+            ...draft,
+            selectedSkills: [...draft.selectedSkills, "skill-b"],
+          })
+        }
+      >
+        Enable skill-b in settings
       </button>
       <button type="button" onClick={onSave}>
         Save configuration
