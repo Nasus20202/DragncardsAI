@@ -121,7 +121,11 @@ async def test_round_request_produces_one_verdict_per_closed_round(
         for _, e in history.written
         if e["payload"]["scope"] == "round"
     )
-    assert round_written == [(4, (1, 4)), (7, (5, 7))]
+    # The written verdicts must carry the same spans the targets were created
+    # with, above: a round closes at the event whose post-action state reported
+    # the round change, so the roll-up is written against seq 5 (span 1-5), not
+    # the seq-4 move that preceded it.
+    assert round_written == [(5, (1, 5)), (7, (6, 7))]
 
 
 @pytest.mark.asyncio
