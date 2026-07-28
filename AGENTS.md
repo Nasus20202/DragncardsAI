@@ -6,6 +6,12 @@ Read this file before making changes in this repository.
 
 These instructions apply to the whole repository unless a deeper `AGENTS.md` overrides them.
 
+This file is the single source of truth for agent instructions, and is read by every
+assistant setup used on this project (Claude Code, OpenCode, and any other). Tool-specific
+entry files such as `CLAUDE.md` are thin pointers to this file and must stay that way — an
+instruction written only in a tool-specific file silently does not apply to everyone else.
+Write rules in terms of *what* to do, naming a specific tool or command only as an example.
+
 ## Project Overview
 
 - This repository contains an LLM-powered Marvel Champions bot for DragnCards.
@@ -33,6 +39,103 @@ Service-specific AGENTS.md files override these instructions:
 - Check nearby code before introducing new abstractions, helpers, or patterns.
 - Do not revert or overwrite user changes that are unrelated to your task.
 - Keep secrets out of commits and examples.
+
+## Working Preferences
+
+- Do substantive work in an isolated git worktree rather than directly on the checked-out branch.
+- Remove a worktree as soon as its work is merged or abandoned, in the same session that finishes it — do not leave worktrees behind for a later cleanup. Each dashboard worktree costs roughly 250k inodes once its `node_modules` is installed, and a scratch filesystem that runs out of inodes stops *every* write, including the writes needed to clean it up. Delete `node_modules` when a worktree's checks are done, remove the worktree when its branch merges, and `git worktree prune` after. Removing a worktree does not delete its branch, so it is always the reversible half of the cleanup; deleting the branch is not, and needs the owner's say.
+- Delegate as much as reasonably possible to delegated agents; fan out independent pieces in parallel.
+- Run implementation agents on the most capable model available, never a fast or cheap tier (in Claude Code, pass `model: opus`).
+- Multi-feature sessions branch off a single integration branch: each feature/agent gets its own worktree branch off the integration branch, works independently, then merges back as **one squash commit per feature**. The PR is opened from the integration branch.
+- Skip the worktree/delegation overhead for trivial one-off edits.
+- Commits use a single-line message and must NOT include any AI attribution (no `Co-Authored-By` trailer naming an assistant).
+- Every change goes through the OpenSpec workflow (a change in `openspec/changes/`), even small fixes.
+- After implementing a change, ensure the main specs in `openspec/specs/` are brought up to date (sync/archive) so specs reflect reality when the work is done.
+- After each bigger implementation, run the code-review, security-review, and simplification passes (the `/code-review`, `/security-review`, and `/simplify` commands where the setup provides them) and address their findings before considering the work done.
+- Use `pnpm` / `pnpx` for all Node tooling — never `npm`, `npx`, or `yarn`.
+- Always verify new features end-to-end by driving the running app through the Playwright MCP server and clicking through the feature — don't rely on unit/integration tests alone.
+- Track work in Linear, per **Task Management (Linear)** below.
+
+## Task Management (Linear)
+
+Linear holds *what* work exists and what state it is in. `openspec/` holds *how* a change is
+specified. A chat log holds nothing durable — anything recorded only there is lost.
+
+Workspace: team **DragncardsAI**, issue prefix `DRA`. Statuses `Backlog → Todo → In Progress →
+Done`, plus `Canceled` and `Duplicate`. Labels `Bug`, `Feature`, `Improvement`.
+
+The step-by-step procedure and the comment templates live in the `linear-workflow` skill
+([`skills/linear-workflow/SKILL.md`](skills/linear-workflow/SKILL.md)); the rules below are the
+policy it implements. Reaching Linear needs a Linear MCP server configured in the assistant setup.
+
+### One issue per unit of work
+
+- If it warrants an OpenSpec change, it warrants a Linear issue; the two are one-to-one. Edits to
+  agent instruction files, editor config, and other pure process changes need neither.
+- Work reported in chat gets an issue **before** work starts, not after.
+- Record the request in the reporter's own words. Quote verbatim where the wording is ambiguous or
+  contains an obvious typo, and note the interpretation as a separate remark rather than silently
+  correcting it — the raw report is evidence, the reading is opinion.
+- One issue = one independently verifiable defect or capability. An issue that turns out to contain
+  two gets split into sub-issues, so its status can mean something.
+- Every issue carries exactly one of `Bug` / `Feature` / `Improvement` and is assigned to the person
+  who owns the outcome. Agents do not own issues.
+- Nothing is dropped silently: use `Canceled` or `Duplicate`, with a comment saying why.
+
+### Status changes follow real events, not intentions
+
+- **Todo → In Progress** when the branch and worktree exist and work has begun — not when the work
+  is discussed or planned.
+- **In Progress → Done** only once the change is merged into the integration branch, the full check
+  set passes on the merged tip, and the OpenSpec change is archived. A delegated agent reporting
+  success is not Done; Done requires the orchestrating agent's own verification.
+- Blocked work moves back to `Todo` with a comment naming the blocker. It does not sit in
+  `In Progress` where it reads as active.
+
+### Names tie Linear, git, and OpenSpec together
+
+- Branch names contain `dra-<n>` so Linear links them automatically. Linear's suggested branch name
+  is fine, shortened if unwieldy.
+- Worktree directory: `wt-dra<n>`.
+- Squash commit subject ends with ` (DRA-<n>)` — still a single line, still no AI attribution.
+- OpenSpec change directory: `dra-<n>-<slug>`.
+- The PR body lists one `Fixes DRA-<n>` line per issue in the batch.
+
+### Comments are the record
+
+Post to the issue at three moments, and not per commit:
+
+1. **Starting** — branch, worktree, OpenSpec change path, and how the request was read, including
+   assumptions and anything found ambiguous.
+2. **Finishing** — the squash commit SHA, what changed per service and file, test counts before and
+   after, how it was verified end-to-end (what was actually driven in the running app), the archived
+   spec path, and explicitly what was left out of scope.
+3. **Deviating** — scope changes, blockers, findings that belong to a different issue (link it), and
+   earlier conclusions that turned out to be wrong.
+
+- Record failures and dead ends too. An issue history containing only successes is not a source of
+  truth, and the next person repeats the dead end.
+- Evidence, not adjectives: SHAs, paths, counts, commands. "Fixed and tested" records nothing.
+- Attach screenshots and recordings to the issue; they do not belong in the repo working tree.
+
+### Delegation
+
+- Only the orchestrating agent writes to Linear. Delegated agents report back to it and never
+  comment on issues themselves: a worktree agent cannot see the merged result or the sibling issues,
+  and parallel writers interleave half-truths on the same issue.
+- Hand a delegated agent the issue text verbatim, not a summary of it.
+
+### Batches
+
+- A batch of issues shares one integration branch; each issue gets its own worktree branch off it
+  and is squash-merged back as a single commit. The PR is opened from the integration branch.
+- Issues reach `Done` on merge into the integration branch. The PR landing on `main` is tracked on
+  the PR itself, not as a second status hop.
+
+### When Linear is unreachable
+
+Do the work, say plainly in the final report that it was not recorded, and write the missing
+comments once Linear is reachable again. Never let the chat log become the record by default.
 
 ## Repo Conventions
 
