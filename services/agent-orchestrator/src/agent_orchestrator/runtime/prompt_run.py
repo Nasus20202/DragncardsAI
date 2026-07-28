@@ -162,6 +162,12 @@ class PromptRunService:
                     job=full_job,
                     schedule_child_fn=self._schedule_child_job,
                     player_configs=list(session.player_configs),
+                    subagent_wait_timeout_seconds=(
+                        self._settings.subagent_wait_timeout_seconds
+                    ),
+                    subagent_wait_poll_interval_seconds=(
+                        self._settings.subagent_wait_poll_interval_seconds
+                    ),
                 )
                 tools = builtin_registry.as_openai_tools() + mcp_tools
 

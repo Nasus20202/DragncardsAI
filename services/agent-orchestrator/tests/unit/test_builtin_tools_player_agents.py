@@ -15,6 +15,7 @@ from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.repository import Repository
 
 from .builtin_tools_test_support import (
+    await_job_event,
     live_event_bus,
     make_job,
     make_skill_assignment,
@@ -182,9 +183,7 @@ async def test_prompt_player_agent_configures_the_child_from_the_seat(
     assert started.payload_json["player_id"] == "player2"
     assert started.payload_json["name"] == "Captain Marvel"
 
-    await asyncio.sleep(0.05)
-    events = await repository.list_events(parent_job.id)
-    completed = next(e for e in events if e.event_type == "subagent_completed")
+    completed = await await_job_event(repository, parent_job.id, "subagent_completed")
     assert completed.payload_json["player_id"] == "player2"
     assert scheduled
 

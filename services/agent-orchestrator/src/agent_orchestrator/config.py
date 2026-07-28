@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     worker_poll_interval_seconds: float = 0.2
     worker_max_tool_rounds: int = 64
     default_job_max_attempts: int = 2
+    subagent_wait_timeout_seconds: float = 600.0
+    subagent_wait_poll_interval_seconds: float = 5.0
     game_service_mcp_url: str = Field(
         default="http://localhost:4001/mcp/",
         validation_alias=AliasChoices("game_service_mcp_url", "GAME_SERVICE_MCP_URL"),
@@ -151,6 +153,20 @@ class Settings(BaseSettings):
     def validate_attempts(cls, value: int) -> int:
         if value < 1:
             raise ValueError("default_job_max_attempts must be at least 1")
+        return value
+
+    @field_validator("subagent_wait_timeout_seconds")
+    @classmethod
+    def validate_subagent_wait_timeout(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("subagent_wait_timeout_seconds must be positive")
+        return value
+
+    @field_validator("subagent_wait_poll_interval_seconds")
+    @classmethod
+    def validate_subagent_wait_poll_interval(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("subagent_wait_poll_interval_seconds must be positive")
         return value
 
     @field_validator("provider_models_cache_ttl_seconds")
