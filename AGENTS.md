@@ -47,6 +47,7 @@ Service-specific AGENTS.md files override these instructions:
 - Delegate as much as reasonably possible to delegated agents; fan out independent pieces in parallel.
 - Run implementation agents on the most capable model available, never a fast or cheap tier (in Claude Code, pass `model: opus`).
 - Multi-feature sessions branch off a single integration branch: each feature/agent gets its own worktree branch off the integration branch, works independently, then merges back as **one squash commit per feature**. The PR is opened from the integration branch.
+- **One** integration branch per session, chosen once and kept. Work that arrives later in the session joins the existing integration branch — a new source of work (issues instead of chat reports, a new batch of bugs) is not a new session and does not justify a second integration branch. Two live integration branches mean two PRs that stack on each other for no reason.
 - Skip the worktree/delegation overhead for trivial one-off edits.
 - Commits use a single-line message and must NOT include any AI attribution (no `Co-Authored-By` trailer naming an assistant).
 - Every change goes through the OpenSpec workflow (a change in `openspec/changes/`), even small fixes.
