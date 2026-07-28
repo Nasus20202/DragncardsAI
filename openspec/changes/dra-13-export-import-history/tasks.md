@@ -107,7 +107,36 @@
 - [x] 5.7 Unit tests for the wiring: both controls appear in the header, and the
       notice row renders success as a status and rejection as an alert.
 
-## 6. Verification
+## 6. Keep the surrounding files current
+
+- [x] 6.1 Add both endpoints to the history-service README's HTTP API list, and
+      document the whole bundle format there: every record, every field, the
+      ordering, the sorted keys, why no round numbers, and what a bundle
+      discloses.
+- [x] 6.2 Add `HISTORY_IMPORT_MAX_BYTES` to all three places it belongs — the
+      history-service README config table,
+      `services/history-service/.env.example`, and the history-service
+      `environment:` block in `docker-compose.yaml`.
+- [x] 6.3 Update the root `README.md` architecture prose so the history-service
+      paragraph mentions export/import and links to the format documentation.
+- [x] 6.4 Grep for an existing history-service config key and for port 4004 to
+      find every list the new setting must join: `scripts/service-helpers.sh`
+      carries only the port and the `Makefile` only the image name, so neither
+      needs a change, and there is no root `.env.example`.
+- [x] 6.5 Confirm no Dockerfile change is needed — the endpoints add no
+      dependency, no port, and no entrypoint change.
+- [x] 6.6 Record, without fixing, that the dashboard Swagger index merges only
+      `orchestrator` and `game` (`features/swagger/lib/openapi.ts` loops over
+      those two and `fetchOpenApiDocument` knows only their OpenAPI paths), so
+      these endpoints cannot appear there until history-service joins that index.
+      That is DRA-20's scope, not this change's.
+- [x] 6.7 Record, without fixing, that history-service has no OpenTelemetry
+      instrumentation in code despite `docker-compose.yaml` setting `OTEL_*` for
+      it. The new routes inherit exactly the same (absent) instrumentation as
+      every existing route, so this change makes nothing stale there. Overlaps
+      DRA-23 (`stanislaw/dra-23-otel-history-eval`).
+
+## 7. Verification
 
 - [x] 6.1 `./scripts/lint.sh --fix` clean.
 - [x] 6.2 `./scripts/test.sh unit` — report counts before and after.
