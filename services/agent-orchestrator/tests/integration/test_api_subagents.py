@@ -14,7 +14,12 @@ from agent_orchestrator.storage.db import create_engine, create_session_factory
 from agent_orchestrator.storage.migrations import ensure_schema
 from agent_orchestrator.storage.repository import Repository
 
-from .api_test_support import FakeMcp, SpawnSubagentBifrost
+from .api_test_support import (
+    INTEGRATION_ENABLED_PROVIDER_IDS,
+    INTEGRATION_MODEL_CONFIG,
+    FakeMcp,
+    SpawnSubagentBifrost,
+)
 
 
 @pytest.mark.asyncio
@@ -32,6 +37,7 @@ async def test_spawn_subagent_creates_child_and_emits_events(tmp_path: Path):
         settings=Settings(
             database_url=f"sqlite+aiosqlite:///{database_path}",
             SKILL_ROOTS=str(skill_root),
+            ENABLED_PROVIDER_IDS=INTEGRATION_ENABLED_PROVIDER_IDS,
         ),
         repository=repository,
         bifrost_client=bifrost,
@@ -50,7 +56,7 @@ async def test_spawn_subagent_creates_child_and_emits_events(tmp_path: Path):
                 session_id = create_response.json()["session"]["id"]
                 await client.put(
                     f"/sessions/{session_id}/model-config",
-                    json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+                    json=INTEGRATION_MODEL_CONFIG,
                 )
 
                 prompt_response = await client.post(
@@ -141,6 +147,7 @@ async def test_spawn_subagent_inherits_enabled_mcps(tmp_path: Path):
         settings=Settings(
             database_url=f"sqlite+aiosqlite:///{database_path}",
             SKILL_ROOTS=str(skill_root),
+            ENABLED_PROVIDER_IDS=INTEGRATION_ENABLED_PROVIDER_IDS,
         ),
         repository=repository,
         bifrost_client=bifrost,
@@ -160,7 +167,7 @@ async def test_spawn_subagent_inherits_enabled_mcps(tmp_path: Path):
                 parent_session_id = parent_response.json()["session"]["id"]
                 await client.put(
                     f"/sessions/{parent_session_id}/model-config",
-                    json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+                    json=INTEGRATION_MODEL_CONFIG,
                 )
 
                 # Add a custom MCP to registry

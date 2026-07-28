@@ -5,6 +5,8 @@ import asyncio
 import httpx
 import pytest
 
+from .api_test_support import INTEGRATION_MODEL_CONFIG
+
 
 @pytest.mark.asyncio
 async def test_context_endpoint_returns_metadata_for_active_session(app):
@@ -15,7 +17,7 @@ async def test_context_endpoint_returns_metadata_for_active_session(app):
         session_id = create_response.json()["session"]["id"]
         await client.put(
             f"/sessions/{session_id}/model-config",
-            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+            json=INTEGRATION_MODEL_CONFIG,
         )
         prompt_response = await client.post(
             f"/sessions/{session_id}/prompts",
@@ -69,7 +71,7 @@ async def test_manual_compaction_rejects_session_without_completed_history(app):
         session_id = create_response.json()["session"]["id"]
         await client.put(
             f"/sessions/{session_id}/model-config",
-            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+            json=INTEGRATION_MODEL_CONFIG,
         )
 
         response = await client.post(f"/sessions/{session_id}/compact")

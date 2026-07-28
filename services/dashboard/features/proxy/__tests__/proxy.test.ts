@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   filterProxyRequestHeaders,
@@ -9,19 +9,34 @@ import {
 } from "@/features/proxy/lib/proxy";
 import { withServerSpan } from "@/features/observability/lib/server-tracing";
 
+// Deliberately not the localhost defaults: pinning distinctive base urls proves
+// the proxy resolves them from configuration, and keeps the expectations correct
+// for a developer who has the stack's service urls exported in their shell.
+const ORCHESTRATOR_URL = "http://orchestrator.test:4002";
+const GAME_SERVICE_URL = "http://game.test:4001";
+const HISTORY_SERVICE_URL = "http://history.test:4004";
+const EVAL_SERVICE_URL = "http://eval.test:4005";
+
 describe("resolveProxyUrl", () => {
+  beforeEach(() => {
+    process.env.AGENT_ORCHESTRATOR_URL = ORCHESTRATOR_URL;
+    process.env.GAME_SERVICE_URL = GAME_SERVICE_URL;
+    process.env.HISTORY_SERVICE_URL = HISTORY_SERVICE_URL;
+    process.env.EVAL_SERVICE_URL = EVAL_SERVICE_URL;
+  });
+
   it("maps orchestrator paths under the configured base url", () => {
     const url = resolveProxyUrl(
       "orchestrator",
       ["sessions", "abc"],
       "?limit=10"
     );
-    expect(String(url)).toBe("http://localhost:4002/sessions/abc?limit=10");
+    expect(String(url)).toBe(`${ORCHESTRATOR_URL}/sessions/abc?limit=10`);
   });
 
   it("maps game service paths under the configured base url", () => {
     const url = resolveProxyUrl("game", ["games", "state"], "");
-    expect(String(url)).toBe("http://localhost:4001/games/state");
+    expect(String(url)).toBe(`${GAME_SERVICE_URL}/games/state`);
   });
 
   it("maps history service paths under the configured base url", () => {
@@ -31,13 +46,13 @@ describe("resolveProxyUrl", () => {
       "?after_seq=3"
     );
     expect(String(url)).toBe(
-      "http://localhost:4004/games/game-1/events?after_seq=3"
+      `${HISTORY_SERVICE_URL}/games/game-1/events?after_seq=3`
     );
   });
 
   it("maps eval service paths under the configured base url", () => {
     const url = resolveProxyUrl("eval", ["games", "game-1", "evaluations"], "");
-    expect(String(url)).toBe("http://localhost:4005/games/game-1/evaluations");
+    expect(String(url)).toBe(`${EVAL_SERVICE_URL}/games/game-1/evaluations`);
   });
 
   it("rejects a literal '..' path segment", () => {

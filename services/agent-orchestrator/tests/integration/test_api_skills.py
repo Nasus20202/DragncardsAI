@@ -14,7 +14,12 @@ from agent_orchestrator.storage.db import create_engine, create_session_factory
 from agent_orchestrator.storage.migrations import ensure_schema
 from agent_orchestrator.storage.repository import Repository
 
-from .api_test_support import FakeMcp, LoadSkillBifrost
+from .api_test_support import (
+    INTEGRATION_ENABLED_PROVIDER_IDS,
+    INTEGRATION_MODEL_CONFIG,
+    FakeMcp,
+    LoadSkillBifrost,
+)
 
 
 @pytest.mark.asyncio
@@ -40,6 +45,7 @@ async def test_load_skill_emits_skill_loaded_event(tmp_path: Path):
         settings=Settings(
             database_url=f"sqlite+aiosqlite:///{database_path}",
             SKILL_ROOTS=str(skill_root),
+            ENABLED_PROVIDER_IDS=INTEGRATION_ENABLED_PROVIDER_IDS,
         ),
         repository=repository,
         bifrost_client=bifrost,
@@ -58,7 +64,7 @@ async def test_load_skill_emits_skill_loaded_event(tmp_path: Path):
                 session_id = create_response.json()["session"]["id"]
                 await client.put(
                     f"/sessions/{session_id}/model-config",
-                    json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+                    json=INTEGRATION_MODEL_CONFIG,
                 )
                 await client.post(
                     f"/sessions/{session_id}/skills",

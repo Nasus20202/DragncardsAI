@@ -21,6 +21,12 @@ from agent_orchestrator.storage.db import create_engine, create_session_factory
 from agent_orchestrator.storage.migrations import ensure_schema
 from agent_orchestrator.storage.repository import Repository
 
+# Provider set the unit app is pinned to. Deliberately a fixed subset of the
+# supported providers (never the ambient ENABLED_PROVIDER_IDS) so that:
+#   * the suite behaves identically whichever providers a developer enables, and
+#   * there is always at least one supported-but-disabled provider to reject.
+UNIT_ENABLED_PROVIDER_IDS = "openai,gemini"
+
 
 class FakeBifrostClient(BifrostClient):
     def __init__(self, *, unavailable_provider_ids: set[str] | None = None):
@@ -102,7 +108,7 @@ async def build_test_app(
     unavailable_provider_ids: set[str] | None = None,
     bifrost_client: BifrostClient | None = None,
     mcp_client: StreamableHttpMcpClient | None = None,
-    enabled_provider_ids: str = "openai,gemini",
+    enabled_provider_ids: str = UNIT_ENABLED_PROVIDER_IDS,
     list_models_timeout_seconds: float | None = None,
 ):
     database_path = tmp_path / "unit.sqlite3"

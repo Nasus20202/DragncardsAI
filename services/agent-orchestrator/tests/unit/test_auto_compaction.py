@@ -19,6 +19,8 @@ from agent_orchestrator.storage.db import create_engine, create_session_factory
 from agent_orchestrator.storage.migrations import ensure_schema
 from agent_orchestrator.storage.repository import Repository
 
+from .app_test_support import UNIT_ENABLED_PROVIDER_IDS
+
 
 class FakeBifrost:
     def __init__(self, responses=None):
@@ -155,7 +157,7 @@ def _make_worker(
         settings=settings
         or Settings(
             SKILL_ROOTS="/tmp",
-            ENABLED_PROVIDER_IDS="openai,gemini",
+            ENABLED_PROVIDER_IDS=UNIT_ENABLED_PROVIDER_IDS,
         ),
         repository=repo,
         bifrost_client=bifrost,  # type: ignore[arg-type]
@@ -199,7 +201,7 @@ async def test_auto_compact_fires_above_threshold(
         skill_registry,
         settings=Settings(
             SKILL_ROOTS="/tmp",
-            ENABLED_PROVIDER_IDS="openai,gemini",
+            ENABLED_PROVIDER_IDS=UNIT_ENABLED_PROVIDER_IDS,
             CONTEXT_COMPACTION_THRESHOLD=0.0,
         ),
     )
@@ -249,7 +251,7 @@ async def test_auto_compact_publishes_live_compaction_event(
         live_event_bus=live_event_bus,
         settings=Settings(
             SKILL_ROOTS="/tmp",
-            ENABLED_PROVIDER_IDS="openai,gemini",
+            ENABLED_PROVIDER_IDS=UNIT_ENABLED_PROVIDER_IDS,
             CONTEXT_COMPACTION_THRESHOLD=0.0,
         ),
     )

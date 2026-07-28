@@ -1,12 +1,22 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildMergedOpenApi } from "@/features/swagger/lib/openapi";
 
+// Pinned so the fake fetch below can tell the two upstreams apart regardless of
+// what a developer has these variables set to in their shell.
+const ORCHESTRATOR_URL = "http://orchestrator.test:4002";
+const GAME_SERVICE_URL = "http://game.test:4001";
+
 describe("buildMergedOpenApi", () => {
+  beforeEach(() => {
+    process.env.AGENT_ORCHESTRATOR_URL = ORCHESTRATOR_URL;
+    process.env.GAME_SERVICE_URL = GAME_SERVICE_URL;
+  });
+
   it("prefixes paths, component refs, tags, and operation ids per service", async () => {
     const fetchImpl = vi.fn(async (input: string | URL) => {
       const url = String(input);
-      if (url.includes("4002")) {
+      if (url.startsWith(ORCHESTRATOR_URL)) {
         return new Response(
           JSON.stringify({
             openapi: "3.1.0",
@@ -105,7 +115,7 @@ describe("buildMergedOpenApi", () => {
   it("collects errors and keeps available specs", async () => {
     const fetchImpl = vi.fn(async (input: string | URL) => {
       const url = String(input);
-      if (url.includes("4002")) {
+      if (url.startsWith(ORCHESTRATOR_URL)) {
         return new Response(
           JSON.stringify({ openapi: "3.1.0", paths: {}, components: {} })
         );

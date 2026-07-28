@@ -11,5 +11,8 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     include: ["features/**/__tests__/**/*.test.{ts,tsx}"],
+    // Clears the dashboard's configuration env vars before each test so the
+    // suite does not inherit a developer's exported stack configuration.
+    setupFiles: ["./vitest.setup.ts"],
   },
 });

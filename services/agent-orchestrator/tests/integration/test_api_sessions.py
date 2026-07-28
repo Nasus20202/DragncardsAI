@@ -3,6 +3,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from .api_test_support import INTEGRATION_MODEL_CONFIG
+
 
 @pytest.mark.asyncio
 async def test_mcp_registry_and_session_enablement_lifecycle(app):
@@ -115,7 +117,7 @@ async def test_session_endpoints_return_404_for_missing_resources(app):
         terminate_response = await client.post("/sessions/missing/terminate")
         model_config_response = await client.put(
             "/sessions/missing/model-config",
-            json={"provider_id": "openai", "model_name": "gpt-4o-mini"},
+            json=INTEGRATION_MODEL_CONFIG,
         )
         skill_response = await client.post(
             "/sessions/missing/skills",

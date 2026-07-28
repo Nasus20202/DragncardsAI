@@ -175,22 +175,34 @@ Integration tests SHALL read their connection parameters from environment variab
 - **WHEN** `MC_PLUGIN_ID` and `MC_PLUGIN_VERSION` environment variables are not set
 - **THEN** the integration test plugin registry SHALL default to plugin ID `1` and version `3` for `marvel-champions`
 
-### Requirement: Provider tests are robust to the configured enabled providers
-The agent-orchestrator test suite SHALL validate provider listing, session model-config assignment, and provider rejection without assuming any specific provider is enabled. Tests SHALL derive their expectations from the application's configured set of enabled providers rather than from hardcoded provider identifiers.
+### Requirement: Test suites are independent of the environment's provider configuration
+Every test suite SHALL produce the same result regardless of which LLM providers the developer running it has enabled or holds API keys for. No test SHALL fail, and no test SHALL silently stop asserting, because a provider is disabled, keyless or absent.
 
-#### Scenario: Provider listing matches configured providers
-- **WHEN** the provider-listing endpoint is exercised in tests
-- **THEN** the asserted set of provider identifiers SHALL be derived from the application's configured enabled providers and SHALL match regardless of which providers are enabled
+Test harnesses SHALL NOT inherit service configuration from the ambient environment. Each suite SHALL neutralise the environment variables its settings model can read and SHALL set the values its assertions depend on explicitly, keeping only a documented allowlist of variables the suite genuinely needs to reach an external dependency such as PostgreSQL or Valkey.
 
-#### Scenario: Session model-config uses an enabled provider
-- **WHEN** a test assigns a model configuration to a session
-- **THEN** the test SHALL select a provider from the application's configured enabled providers and the assignment SHALL succeed
+A test that genuinely requires a live, keyed provider SHALL skip with a reason naming that requirement rather than passing vacuously or failing.
 
-#### Scenario: Disabled provider is rejected
-- **WHEN** a test assigns a model configuration using a provider that is supported but not currently enabled
-- **THEN** the request SHALL be rejected with a client error, and if every supported provider is enabled the test SHALL skip rather than fail
+#### Scenario: Narrowed provider list keeps the suite green
+- **WHEN** the unit and integration suites are run with the service's provider list narrowed to a single provider, or with a provider such as OpenAI removed, whether exported in the shell or supplied through the service `.env` that the test runner passes to the suite
+- **THEN** every test SHALL pass or skip with a stated reason, and the result SHALL match the result at the repository default configuration
 
-#### Scenario: Suite honors environment-configured providers
-- **WHEN** the unit test suite is run with `ENABLED_PROVIDER_IDS` set to disable one or more providers
-- **THEN** the affected provider tests SHALL pass against the reduced provider set
+#### Scenario: Provider identity is not asserted as a vendor literal
+- **WHEN** a test assigns a model configuration to a session, or asserts on the set of listed providers
+- **THEN** it SHALL use the provider set its own harness pins, or the application's configured providers, rather than a hardcoded vendor identifier that a deployment may have disabled
+
+#### Scenario: Harness independence is itself covered
+- **WHEN** a provider list is present in the environment while the suite builds its application under test
+- **THEN** the application SHALL be configured with the provider set the harness pins, and a test SHALL assert this so the independence cannot regress unnoticed
+
+#### Scenario: Settings defaults are asserted against a clean environment
+- **WHEN** a test asserts on a configuration default
+- **THEN** the corresponding environment variable SHALL have been neutralised by the suite, so the assertion describes the declared default rather than the machine the suite runs on
+
+#### Scenario: Disabled-provider rejection stays exercised
+- **WHEN** the suite asserts that assigning a supported-but-disabled provider is rejected
+- **THEN** the harness SHALL guarantee that at least one supported provider is disabled, and the test SHALL assert that precondition rather than skipping when it does not hold
+
+#### Scenario: Frontend configuration defaults do not leak in
+- **WHEN** the dashboard test suite runs in a shell that exports the stack's service URLs or session defaults such as the default provider and model
+- **THEN** the suite SHALL clear those variables before each test, and a guard SHALL fail if the configuration module starts reading a variable the suite does not clear
 
