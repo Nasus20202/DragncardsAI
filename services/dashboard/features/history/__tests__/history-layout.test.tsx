@@ -251,6 +251,26 @@ describe("HistoryWorkspace responsive layout", () => {
     );
   });
 
+  it("keeps the sidebar's content inside the sidebar box", async () => {
+    stubSources();
+    render(<HistoryWorkspace initialGameId="demo-001" />);
+
+    const sidebar = await screen.findByTestId("history-sidebar");
+    const gamesList = within(sidebar).getByTestId("history-games-list");
+    const navTree = within(sidebar).getByTestId("history-nav-tree");
+
+    // The games list and the navigation tree are siblings in the sidebar column,
+    // so the list must FLEX into the space the tree leaves. Claiming the full
+    // sidebar height (`h-full`) instead pushes the sidebar's content past the
+    // sidebar box, which makes the overflow-hidden workspace row scrollable —
+    // and any scroll-into-view then displaces the main panel (and the
+    // reconstructed board, header and Close control included) off the viewport.
+    expect(gamesList.parentElement).toBe(navTree.parentElement);
+    expect(gamesList.className).toContain("flex-1");
+    expect(gamesList.className).toContain("min-h-0");
+    expect(gamesList.className).not.toContain("h-full");
+  });
+
   it("guards against horizontal overflow at the layout root and transcript", async () => {
     stubSources();
     const { container } = render(<HistoryWorkspace initialGameId="demo-001" />);

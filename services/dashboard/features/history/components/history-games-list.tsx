@@ -30,8 +30,16 @@ export function HistoryGamesList({
   onSelect: (gameId: string) => void;
   onRemove: (gameId: string) => void;
 }) {
+  // The root flexes within the sidebar column (`min-h-0 flex-1`) instead of
+  // claiming its full height: the navigation tree is a sibling below it, so
+  // `h-full` here would push the sidebar's content past the sidebar box and make
+  // the (overflow-hidden) workspace row scrollable — any scroll-into-view would
+  // then displace the main panel, and the reconstructed board, off the viewport.
   return (
-    <div className="flex h-full flex-col" data-testid="history-games-list">
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      data-testid="history-games-list"
+    >
       {/* ── Toolbar ───────────────────────────────────────────── */}
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-default-200/60 px-2">
         {!isCollapsed && (

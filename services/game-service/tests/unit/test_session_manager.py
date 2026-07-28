@@ -768,6 +768,7 @@ async def test_reaper_deletes_expired_ephemeral_session_and_room():
         room_slug="aged-room-1",
         created_at=created,
     )
+    session.channel.push = AsyncMock(return_value={})
     session.client.leave = AsyncMock()
     session.client.disconnect = AsyncMock()
     await _register(manager, session)
@@ -775,7 +776,9 @@ async def test_reaper_deletes_expired_ephemeral_session_and_room():
     reaped = await manager.reap_expired_ephemeral_sessions()
 
     assert reaped == 1
-    # Both the session and its room (channel left + disconnected) are reclaimed.
+    # The session AND its DragnCards room are reclaimed: leaving the channel only
+    # detaches this client, so the room itself must be closed as well.
+    assert session.channel.push.await_args.args[0] == "close_room"
     session.client.leave.assert_awaited_once()
     session.client.disconnect.assert_awaited_once()
     assert session.session_id not in manager._sessions
@@ -907,3 +910,77 @@ async def test_reaper_removes_stale_store_record_not_in_pool():
 
     assert reaped == 1
     assert await store.get_session("66666666-6666-6666-6666-666666666666") is None
+
+
+# ---------------------------------------------------------------------------
+# Ephemeral reconstruction teardown (client fast path)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_ephemeral_session_closes_its_dragncards_room():
+    # An ephemeral reconstruction owns its room, so the explicit teardown must
+    # close the room too — otherwise every "board at this event" view leaves a
+    # DragnCards room behind forever.
+    store = InMemorySessionStore()
+    manager = _make_manager_with_store(store)
+    session = _make_ephemeral_session(
+        session_id="77777777-7777-7777-7777-777777777777",
+        room_slug="recon-room-1",
+        created_at=datetime.now(timezone.utc),
+    )
+    session.channel.push = AsyncMock(return_value={})
+    session.client.leave = AsyncMock()
+    session.client.disconnect = AsyncMock()
+    await _register(manager, session)
+
+    await manager.delete_session(session.session_id)
+
+    assert session.channel.push.await_args.args[0] == "close_room"
+    assert session.session_id not in manager._sessions
+    assert await store.get_session(session.session_id) is None
+    assert await store.get_session_id_by_slug("recon-room-1") is None
+
+
+@pytest.mark.asyncio
+async def test_delete_non_ephemeral_session_leaves_the_room_open():
+    # A kept session's room belongs to the user; deleting the session must only
+    # detach this client from it.
+    store = InMemorySessionStore()
+    manager = _make_manager_with_store(store)
+    session = _make_uuid_session()
+    session.channel.push = AsyncMock(return_value={})
+    session.client.leave = AsyncMock()
+    session.client.disconnect = AsyncMock()
+    await _register(manager, session)
+
+    await manager.delete_session(session.session_id)
+
+    session.channel.push.assert_not_awaited()
+    session.client.leave.assert_awaited_once()
+    assert await store.get_session(session.session_id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_ephemeral_session_survives_a_failing_room_close():
+    # Room closing is best-effort: a failure must not abort the teardown, or a
+    # transient DragnCards error would strand the session record too.
+    store = InMemorySessionStore()
+    manager = _make_manager_with_store(store)
+    session = _make_ephemeral_session(
+        session_id="88888888-8888-8888-8888-888888888888",
+        room_slug="recon-room-2",
+        created_at=datetime.now(timezone.utc),
+    )
+    session.close_room = AsyncMock(side_effect=SessionError("close_room rejected"))
+    session.client.leave = AsyncMock()
+    session.client.disconnect = AsyncMock()
+    await _register(manager, session)
+
+    await manager.delete_session(session.session_id)
+
+    session.close_room.assert_awaited_once()
+    session.client.leave.assert_awaited_once()
+    session.client.disconnect.assert_awaited_once()
+    assert session.session_id not in manager._sessions
+    assert await store.get_session(session.session_id) is None

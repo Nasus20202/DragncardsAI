@@ -193,6 +193,42 @@ describe("useBoardReconstruction", () => {
     expect(keepaliveDelete).toBeDefined();
   });
 
+  it("keeps the reconstruction alive while the tab is merely hidden", async () => {
+    render(<Harness gameId="game-1" selectedSeq={5} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("open"));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("recon")).toBeInTheDocument()
+    );
+
+    // Switching browser tabs / minimizing hides the document. That is not the
+    // end of the view: disposing here would delete the session out from under a
+    // board the user is still looking at (leaving its room orphaned and the UI
+    // claiming a reconstruction that no longer exists).
+    const visibility = vi
+      .spyOn(document, "visibilityState", "get")
+      .mockReturnValue("hidden");
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    visibility.mockRestore();
+
+    expect(screen.getByTestId("recon")).toBeInTheDocument();
+    expect(deleteCalls()).toHaveLength(0);
+
+    // The board is still live, so an explicit close still tears it down.
+    await act(async () => {
+      fireEvent.click(screen.getByText("close"));
+    });
+    await waitFor(() =>
+      expect(
+        deleteCalls().some((u) => u.includes("/api/proxy/game/games/sess-new"))
+      ).toBe(true)
+    );
+  });
+
   it("surfaces an error when restore returns no session id", async () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       if (String(input).includes("/restore")) {
