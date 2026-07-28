@@ -146,7 +146,7 @@ export function PlaySessionList({
               {!isCollapsed && (
                 <button
                   data-testid={`remove-session-${s.id}`}
-                  aria-label={`Remove ${s.name ?? "session"}`}
+                  aria-label={`Delete ${s.name ?? "session"}`}
                   type="button"
                   disabled={isBusy}
                   className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-default-400 opacity-0 transition-opacity hover:bg-default-200/70 hover:text-danger focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-0 group-hover:opacity-100"

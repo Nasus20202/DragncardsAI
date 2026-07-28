@@ -12,8 +12,13 @@ import {
 /**
  * Confirmation dialog for the destructive session-removal control in the Play
  * session list. Naming the session in the body keeps a mis-aimed click on the
- * hover-revealed ✕ from silently terminating the wrong session. Removal happens
+ * hover-revealed ✕ from silently deleting the wrong session. Deletion happens
  * only when the danger action is pressed; dismissing the dialog cancels.
+ *
+ * The wording tracks what the orchestrator's `DELETE /sessions/{id}` actually
+ * does — cancel in-flight work, then remove the session with its configuration
+ * and transcript — rather than the terminate-only behaviour this control had
+ * before.
  */
 export function RemoveSessionModal({
   sessionName,
@@ -38,19 +43,20 @@ export function RemoveSessionModal({
           <Modal.Dialog aria-label="Confirm session removal">
             <ModalHeader className="pb-2">
               <ModalHeading className="text-base font-semibold">
-                Remove session?
+                Delete session?
               </ModalHeading>
             </ModalHeader>
             <ModalBody>
               <p className="text-sm text-default-500">
-                This terminates{" "}
+                This permanently deletes{" "}
                 <span
                   className="font-medium text-foreground"
                   data-testid="remove-session-name"
                 >
                   {sessionName}
                 </span>{" "}
-                and removes it from the list. This cannot be undone.
+                with its settings and full transcript. Any running work is
+                cancelled first. This cannot be undone.
               </p>
             </ModalBody>
             <ModalFooter className="pt-4">
@@ -68,7 +74,7 @@ export function RemoveSessionModal({
                 isDisabled={isBusy}
                 onPress={onConfirm}
               >
-                Remove
+                Delete
               </Button>
             </ModalFooter>
           </Modal.Dialog>

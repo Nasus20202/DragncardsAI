@@ -2,16 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 
 from agent_orchestrator.repositories.base import utc_now
 from agent_orchestrator.storage.models import (
     AgentSession,
+    CompactionRecord,
     Job,
+    JobEvent,
+    JobOutput,
     McpRegistry,
     SessionEnabledMcp,
     SessionModelConfig,
     SessionEnabledSkill,
+    SessionPlayerConfig,
     SkillRegistry,
 )
 
@@ -214,6 +218,80 @@ class SessionRepositoryMixin:
             item.terminated_at = utc_now()
             item.updated_at = utc_now()
         return await self.get_session(session_id)
+
+    async def delete_session(self, session_id: str) -> bool:
+        """Hard-delete a session together with every row that hangs off it.
+
+        Returns ``False`` when the session does not exist so the caller can
+        answer 404, mirroring ``delete_player_config``.
+
+        Every dependent row is deleted explicitly instead of leaning on the
+        declared ``ON DELETE CASCADE`` foreign keys: SQLite (which backs the test
+        suites) does not enforce foreign keys unless the per-connection pragma is
+        set, and ``compaction_records`` has no ORM cascade from ``AgentSession``
+        at all. Deleting explicitly keeps Postgres and SQLite behaviour identical
+        and leaves no orphaned transcript rows on either.
+        """
+        async with self._session_factory() as session, session.begin():
+            if await session.get(AgentSession, session_id) is None:
+                return False
+
+            job_ids = list(
+                (
+                    await session.execute(
+                        select(Job.id).where(Job.session_id == session_id)
+                    )
+                ).scalars()
+            )
+            if job_ids:
+                # Subagent jobs in other sessions can point at these jobs; drop
+                # the reference the way the FK's ON DELETE SET NULL would.
+                await session.execute(
+                    update(Job)
+                    .where(Job.parent_job_id.in_(job_ids))
+                    .values(parent_job_id=None)
+                )
+                await session.execute(
+                    delete(JobEvent).where(JobEvent.job_id.in_(job_ids))
+                )
+                await session.execute(
+                    delete(JobOutput).where(JobOutput.job_id.in_(job_ids))
+                )
+            # Events also carry a session_id, so sweep any that outlived their job.
+            await session.execute(
+                delete(JobEvent).where(JobEvent.session_id == session_id)
+            )
+            # Compaction records reference jobs, so they go before the jobs do.
+            await session.execute(
+                delete(CompactionRecord).where(
+                    CompactionRecord.session_id == session_id
+                )
+            )
+            await session.execute(delete(Job).where(Job.session_id == session_id))
+            await session.execute(
+                delete(SessionEnabledSkill).where(
+                    SessionEnabledSkill.session_id == session_id
+                )
+            )
+            await session.execute(
+                delete(SessionEnabledMcp).where(
+                    SessionEnabledMcp.session_id == session_id
+                )
+            )
+            await session.execute(
+                delete(SessionPlayerConfig).where(
+                    SessionPlayerConfig.session_id == session_id
+                )
+            )
+            await session.execute(
+                delete(SessionModelConfig).where(
+                    SessionModelConfig.session_id == session_id
+                )
+            )
+            await session.execute(
+                delete(AgentSession).where(AgentSession.id == session_id)
+            )
+            return True
 
     async def set_model_config(
         self,

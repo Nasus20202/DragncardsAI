@@ -142,3 +142,53 @@ async def test_postgres_cancellation_state(postgres_repository: Repository):
     assert cancelled.cancellation_requested_at is not None
     events = await postgres_repository.list_events(job.id)
     assert [event.event_type for event in events] == ["progress", "cancellation"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_postgres_delete_session_satisfies_foreign_keys(
+    postgres_repository: Repository,
+):
+    """Deleting a session must not trip a foreign key on a backend that enforces them.
+
+    SQLite silently tolerates a wrong delete order, so this is the only test that
+    can prove the repository removes the dependent rows in a legal sequence.
+    """
+    session = await postgres_repository.create_session(
+        f"session-{uuid4()}", {"purpose": "delete"}
+    )
+    await postgres_repository.set_model_config(
+        session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
+    )
+    await postgres_repository.upsert_player_config(
+        session.id,
+        "player1",
+        display_name="Player One",
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
+        skills=None,
+    )
+    job = await postgres_repository.enqueue_prompt_job(
+        session.id, prompt="play a turn", metadata_json={}, max_attempts=1
+    )
+    assert job is not None
+    await postgres_repository.store_output(job.id, "output text")
+    await postgres_repository.create_compaction_record(
+        session.id,
+        summary_text="summary",
+        covers_up_to_job_id=job.id,
+        tokens_used=5,
+    )
+
+    assert await postgres_repository.delete_session(session.id) is True
+
+    assert await postgres_repository.get_session(session.id) is None
+    assert await postgres_repository.get_job(job.id) is None
+    assert await postgres_repository.list_compaction_records(session.id) == []
+    assert await postgres_repository.list_player_configs(session.id) == []

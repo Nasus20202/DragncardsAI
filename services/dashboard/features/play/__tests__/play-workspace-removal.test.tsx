@@ -22,7 +22,7 @@ async function removeAndConfirm(sessionId: string) {
   fireEvent.click(await screen.findByTestId("remove-session-confirm"));
 }
 
-describe("PlayWorkspace session removal", () => {
+describe("PlayWorkspace session deletion", () => {
   beforeEach(() => {
     resetPlayWorkspaceEnvironment();
   });
@@ -51,7 +51,7 @@ describe("PlayWorkspace session removal", () => {
     expect(screen.getByTestId("remove-session-name")).toHaveTextContent(
       "First session"
     );
-    expect(api.terminateSession).not.toHaveBeenCalled();
+    expect(api.deleteSession).not.toHaveBeenCalled();
   });
 
   it("cancelling the confirmation leaves the session in place", async () => {
@@ -72,7 +72,7 @@ describe("PlayWorkspace session removal", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     );
-    expect(api.terminateSession).not.toHaveBeenCalled();
+    expect(api.deleteSession).not.toHaveBeenCalled();
     expect(screen.getByTestId("visible-session-ids")).toHaveTextContent(
       "session-1"
     );
@@ -81,10 +81,11 @@ describe("PlayWorkspace session removal", () => {
   it("drops the removed session from the sidebar and reselects the next visible one", async () => {
     const sessionOne = summary({ id: "session-1", name: "First session" });
     const sessionTwo = summary({ id: "session-2", name: "Second session" });
-    // Initial load lists both; after removal session-1 comes back terminated.
+    // Initial load lists both; after the delete session-1 is gone entirely
+    // rather than lingering in a terminated state.
     api.listSessions
       .mockResolvedValueOnce([sessionOne, sessionTwo])
-      .mockResolvedValue([{ ...sessionOne, status: "terminated" }, sessionTwo]);
+      .mockResolvedValue([sessionTwo]);
 
     renderPlayWorkspace();
 
@@ -100,9 +101,9 @@ describe("PlayWorkspace session removal", () => {
     await removeAndConfirm("session-1");
 
     await waitFor(() =>
-      expect(api.terminateSession).toHaveBeenCalledWith("session-1")
+      expect(api.deleteSession).toHaveBeenCalledWith("session-1")
     );
-    // The terminated session disappears from the sidebar state.
+    // The deleted session disappears from the sidebar state.
     await waitFor(() =>
       expect(screen.getByTestId("visible-session-ids")).toHaveTextContent(
         "session-2"
@@ -129,10 +130,7 @@ describe("PlayWorkspace session removal", () => {
     });
     api.listSessions
       .mockResolvedValueOnce([sessionOne, childSession])
-      .mockResolvedValue([
-        { ...sessionOne, status: "terminated" },
-        childSession,
-      ]);
+      .mockResolvedValue([childSession]);
 
     // Give session-1 a job whose event spawns child-session as a subagent.
     const jobWithSubagent: JobDetail = {
@@ -173,9 +171,9 @@ describe("PlayWorkspace session removal", () => {
     await removeAndConfirm("session-1");
 
     await waitFor(() =>
-      expect(api.terminateSession).toHaveBeenCalledWith("session-1")
+      expect(api.deleteSession).toHaveBeenCalledWith("session-1")
     );
-    // child-session is a subagent child and terminated session-1 is gone, so no
+    // child-session is a subagent child and deleted session-1 is gone, so no
     // selectable session remains and selection clears to null.
     await waitFor(() =>
       expect(screen.getByTestId("selected-session-id")).toHaveTextContent(

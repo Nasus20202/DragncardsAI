@@ -167,6 +167,29 @@ async def update_session(
     return {"session": serialize_session_detail(item)}
 
 
+@router.delete("/sessions/{session_id}", status_code=204)
+async def delete_session(
+    session_id: str,
+    repo: Repository = Depends(get_repository),
+) -> None:
+    """Permanently remove a session and everything recorded under it.
+
+    Terminate-then-delete: cancellation is requested for any queued or running
+    job first, so a worker mid-run observes the cancellation flag rather than
+    discovering that its rows vanished, and only then are the session, its model
+    config, enabled skills, MCP assignments, player configs, jobs, transcript
+    events and compaction records deleted.
+    """
+    for status in ("queued", "running"):
+        jobs, _ = await repo.list_session_jobs(session_id, status=status, limit=200)
+        for job in jobs:
+            await repo.request_cancel(job.id)
+
+    deleted = await repo.delete_session(session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
 @router.post("/sessions/{session_id}/terminate")
 async def terminate_session(
     session_id: str,

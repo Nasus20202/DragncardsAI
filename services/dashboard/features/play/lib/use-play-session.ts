@@ -10,6 +10,7 @@ import {
   removeMcpRegistry,
   setModelConfig,
 } from "@/features/play/lib/client-api";
+import { writeLastUsedDraft } from "@/features/play/lib/last-used-draft";
 import {
   deriveSubagentEntries,
   SubagentEntry,
@@ -290,6 +291,9 @@ export function usePlaySession(): UsePlaySessionResult {
       providerId: draft.providerId,
       modelName: draft.modelName,
     };
+    // Picking a provider/model in the panel commits it to the session straight
+    // away, so it is also the configuration a later new session should inherit.
+    writeLastUsedDraft(draft);
     void setModelConfig(selectedSession.id, {
       provider_id: draft.providerId,
       model_name: draft.modelName,

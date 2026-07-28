@@ -36,6 +36,7 @@ const apiMocks = vi.hoisted(() => ({
   removeMcp: vi.fn(),
   removeMcpRegistry: vi.fn(),
   terminateSession: vi.fn(),
+  deleteSession: vi.fn(),
 }));
 
 vi.mock("@/features/play/lib/client-api", () => apiMocks);
@@ -243,6 +244,12 @@ vi.mock("@/features/play/components/play-config-panel", () => ({
       <div data-testid="config-open">{String(isOpen)}</div>
       <div data-testid="draft-provider">{draft.providerId}</div>
       <div data-testid="draft-model">{draft.modelName}</div>
+      <div data-testid="draft-skills">{draft.selectedSkills.join(",")}</div>
+      <div data-testid="draft-reasoning">
+        {`${draft.reasoning.enabled}:${draft.reasoning.effort}`}
+      </div>
+      <div data-testid="draft-gateway-options">{draft.gatewayOptionsText}</div>
+      <div data-testid="draft-message-limit">{draft.recentMessageLimit}</div>
       <div data-testid="provider-count">{providers.length}</div>
       <div data-testid="skill-count">{skills.length}</div>
       <div data-testid="model-options">{modelOptions.join(",")}</div>
@@ -488,6 +495,7 @@ export function resetPlayWorkspaceEnvironment() {
     ...sessionDetail,
     status: "terminated",
   });
+  apiMocks.deleteSession.mockResolvedValue(undefined);
   window.history.replaceState({}, "", "/play");
 }
 
