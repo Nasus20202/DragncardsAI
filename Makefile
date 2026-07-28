@@ -1,6 +1,5 @@
-
 .PHONY: help lint lint-fix test test-unit test-integration build up up-registry down down-clean \
-	infra-up infra-down infra-restart smoke-up smoke-check smoke-model \
+	infra-up infra-down infra-restart smoke-up smoke-check smoke-model smoke-test \
 	run run-game-service run-agent-orchestrator run-history-service run-eval-service run-dashboard
 
 help:
@@ -13,11 +12,11 @@ help:
 		"make build                      # build docker images" \
 		"make up                         # start docker stack" \
 		"make up-registry                # pull GHCR images and start stack" \
-		"make down                       # stop docker stack" \
-		"make down-clean                 # stop stack and remove volumes" \
-		"make infra-up                   # start infrastructure services only" \
-		"make infra-down                 # stop infrastructure services only" \
-		"make infra-restart              # restart infrastructure services only" \
+		"make down                       # stop and remove the docker stack containers" \
+		"make down-clean                 # remove the docker stack containers and volumes" \
+		"make infra-up                   # start infrastructure only (everything but the app services)" \
+		"make infra-down                 # stop infrastructure only (containers kept, use 'down' to remove)" \
+		"make infra-restart              # restart infrastructure only" \
 		"make smoke-up                   # start stack with compose-managed smoke model" \
 		"make smoke-check                # validate smoke dependencies" \
 		"make smoke-model                # start compose-managed llama.cpp smoke model" \

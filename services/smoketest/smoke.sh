@@ -92,6 +92,12 @@ case "$ACTION" in
             docker compose --profile smoke up -d --wait --wait-timeout "$SMOKE_WAIT_TIMEOUT" "${UP_FLAGS[@]}"
         fi
         ;;
+    model)
+        echo "Starting compose-managed llama.cpp smoke model..."
+        # llama-cpp-smoke depends on llama-cpp-smoke-model-cache completing, so the
+        # model download runs as part of bringing this one service up.
+        docker compose --profile smoke up -d --wait --wait-timeout "$SMOKE_WAIT_TIMEOUT" "$@" llama-cpp-smoke
+        ;;
     check)
         echo "Checking smoke dependencies..."
         check_url "$LLAMA_CPP_SMOKE_URL/models" "llama.cpp smoke model"
@@ -106,7 +112,7 @@ case "$ACTION" in
         exec pnpm test -- "$@"
         ;;
     *)
-        echo "Usage: $0 {up [service ...]|check|test [playwright args ...]}" >&2
+        echo "Usage: $0 {up [service ...]|model|check|test [playwright args ...]}" >&2
         exit 1
         ;;
 esac
