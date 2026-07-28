@@ -200,22 +200,32 @@ async def set_model_config(
 
 
 # Global Skill Registry endpoints
-@router.get("/skills")
-async def list_skill_registry(
-    repo: Repository = Depends(get_repository),
-) -> dict[str, list[dict[str, Any]]]:
-    registries = await repo.list_skill_registries()
-    return {
-        "skills": [
-            {
-                "name": r.name,
-                "skill_path": r.skill_path,
-                "description": r.description,
-                "metadata": r.metadata_json,
-            }
-            for r in registries
-        ]
-    }
+async def _register_on_disk_skill(
+    repo: Repository,
+    registry: SkillRegistry,
+    skill_name: str,
+    *,
+    metadata_json: dict[str, Any] | None = None,
+) -> Any:
+    """
+    Upsert the registry row for an on-disk skill and return the stored row.
+
+    Enabling a skill for a session requires a `skill_registries` row, so every
+    route that enables one registers it first. Skills are discovered from the
+    skill roots, which can gain a skill after boot, so the sync at startup is
+    not on its own enough to guarantee the row exists.
+    """
+    definition = registry.resolve(skill_name)
+    if definition is None:
+        raise HTTPException(status_code=400, detail="Unknown skill")
+    return await repo.add_skill_registry(
+        name=skill_name,
+        skill_path=str(definition.path),
+        description=definition.description,
+        metadata_json=(
+            dict(definition.metadata) if metadata_json is None else metadata_json
+        ),
+    )
 
 
 @router.post("/skills", status_code=201)
@@ -227,14 +237,8 @@ async def add_skill_registry(
     skill_name = body.get("name")
     if not skill_name:
         raise HTTPException(status_code=400, detail="name is required")
-    definition = registry.resolve(skill_name)
-    if definition is None:
-        raise HTTPException(status_code=400, detail="Unknown skill")
-    item = await repo.add_skill_registry(
-        name=skill_name,
-        skill_path=str(definition.path),
-        description=definition.description,
-        metadata_json=body.get("metadata"),
+    item = await _register_on_disk_skill(
+        repo, registry, skill_name, metadata_json=body.get("metadata")
     )
     return {
         "skill": {
@@ -269,15 +273,7 @@ async def enable_session_skill(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    definition = registry.resolve(body.skill_name)
-    if definition is None:
-        raise HTTPException(status_code=400, detail="Unknown skill")
-    await repo.add_skill_registry(
-        name=body.skill_name,
-        skill_path=str(definition.path),
-        description=definition.description,
-        metadata_json={},
-    )
+    item = await _register_on_disk_skill(repo, registry, body.skill_name)
     enabled = await repo.enable_skill_for_session(session_id, body.skill_name, True)
     if enabled is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -285,7 +281,7 @@ async def enable_session_skill(
         "skill": {
             "id": f"{session_id}:{body.skill_name}",
             "skill_name": body.skill_name,
-            "skill_path": str(definition.path),
+            "skill_path": item.skill_path,
             "created_at": enabled.created_at,
         }
     }
@@ -317,10 +313,20 @@ async def enable_skill_for_session(
     skill_name: str,
     body: SessionMcpEnableRequest,
     repo: Repository = Depends(get_repository),
+    registry: SkillRegistry = Depends(get_skill_registry),
 ) -> dict[str, Any]:
-    item = await repo.enable_skill_for_session(session_id, skill_name, body.enabled)
+    if await repo.get_session(session_id) is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not body.enabled:
+        # Turning a skill off is idempotent: a session that never had this skill
+        # is already in the requested state, so report it rather than failing.
+        await _disable_session_skill(repo, session_id, skill_name)
+        return {"skill": {"name": skill_name, "enabled": False}}
+
+    await _register_on_disk_skill(repo, registry, skill_name)
+    item = await repo.enable_skill_for_session(session_id, skill_name, True)
     if item is None:
-        raise HTTPException(status_code=404, detail="Session or skill not found")
+        raise HTTPException(status_code=404, detail="Session not found")
     return {"skill": {"name": skill_name, "enabled": item.enabled}}
 
 
@@ -330,9 +336,25 @@ async def disable_skill_for_session(
     skill_name: str,
     repo: Repository = Depends(get_repository),
 ) -> None:
-    item = await repo.get_session_enabled_skill_state(session_id, skill_name)
-    if item is None or not item.enabled:
-        raise HTTPException(status_code=404, detail="Skill not enabled for session")
+    if await repo.get_session(session_id) is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await _disable_session_skill(repo, session_id, skill_name)
+
+
+async def _disable_session_skill(
+    repo: Repository, session_id: str, skill_name: str
+) -> None:
+    """
+    Ensure a skill is off for a session, whatever state it is in.
+
+    Disabling is a no-op when the skill is already off or was never enabled.
+    Rejecting those cases used to strand the dashboard: saving a session config
+    replays the desired skill set, so one already-disabled skill aborted the
+    whole save and no other setting was applied.
+    """
+    state = await repo.get_session_enabled_skill_state(session_id, skill_name)
+    if state is None or not state.enabled:
+        return
     await repo.enable_skill_for_session(session_id, skill_name, enabled=False)
 
 

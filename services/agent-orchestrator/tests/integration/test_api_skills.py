@@ -108,7 +108,7 @@ async def test_skill_assignment_list_and_remove_lifecycle(app):
             f"/sessions/{session_id}/skills/test-skill"
         )
         list_after_remove_response = await client.get(f"/sessions/{session_id}/skills")
-        remove_missing_response = await client.delete(
+        remove_again_response = await client.delete(
             f"/sessions/{session_id}/skills/test-skill"
         )
 
@@ -120,4 +120,5 @@ async def test_skill_assignment_list_and_remove_lifecycle(app):
     assert remove_response.status_code == 204
     assert list_after_remove_response.status_code == 200
     assert list_after_remove_response.json() == {"skills": []}
-    assert remove_missing_response.status_code == 404
+    # Disabling an already-disabled skill is a no-op, not an error.
+    assert remove_again_response.status_code == 204

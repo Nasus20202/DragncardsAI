@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
-from agent_orchestrator.runtime.skills import SkillRegistry
+from agent_orchestrator.runtime.skills import SkillRegistry, enabled_skill_assignments
 from agent_orchestrator.runtime.system_prompts import build_system_prompt
 from agent_orchestrator.runtime.tokens import (
     estimate_tokens_for_messages,
@@ -162,7 +162,7 @@ class SessionTranscriptService:
         tools_tokens = 0
         if session_obj is not None:
             system_prompt = build_system_prompt(
-                skill_registry, session_obj.enabled_skills
+                skill_registry, enabled_skill_assignments(session_obj.enabled_skills)
             )
             system_prompt_tokens = estimate_tokens_for_messages(
                 [{"role": "system", "content": system_prompt}]

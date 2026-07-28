@@ -263,7 +263,20 @@ Use these to manage skills discovered from the configured `SKILL_ROOTS` entries.
 
 - `GET /sessions/{session_id}/skills`
 - `POST /sessions/{session_id}/skills`
+- `PATCH /sessions/{session_id}/skills/{skill_name}`
 - `DELETE /sessions/{session_id}/skills/{skill_name}`
+
+Any skill found in the skill roots can be enabled; enabling registers it first if
+needed, so a skill never enabled before — or added to disk after startup — still
+works. A skill that is not on disk is rejected with `400 Unknown skill`.
+
+Enabling is a soft toggle: disabling flips a flag rather than deleting the row.
+Disabling is therefore idempotent — disabling a skill that is already off, or was
+never enabled, succeeds and changes nothing, so a client can safely replay the
+skill set it wants. Only a session that does not exist is a `404`. Endpoints that
+report a session's skills list only the enabled ones, and a disabled skill is
+withdrawn from the agent: it leaves the system prompt and can no longer be loaded
+with `load_skill`.
 
 ### Session Player Agents
 

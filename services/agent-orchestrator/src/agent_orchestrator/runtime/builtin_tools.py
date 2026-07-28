@@ -15,7 +15,7 @@ from agent_orchestrator.runtime.player_agents import (
     resolve_player_agent_config,
     resolve_roster,
 )
-from agent_orchestrator.runtime.skills import SkillRegistry
+from agent_orchestrator.runtime.skills import SkillRegistry, enabled_skill_assignments
 from agent_orchestrator.storage.repository import Repository
 
 logger = logging.getLogger(__name__)
@@ -291,7 +291,8 @@ async def _launch_child_agent(
 
     if skills is None:
         skill_names = [
-            es.skill_name for es in parent_session.enabled_skills if es.enabled
+            es.skill_name
+            for es in enabled_skill_assignments(parent_session.enabled_skills)
         ]
     else:
         skill_names = skills

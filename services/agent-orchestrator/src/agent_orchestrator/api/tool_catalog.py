@@ -9,7 +9,7 @@ from agent_orchestrator.integrations.mcp.tools import (
 )
 from agent_orchestrator.runtime.builtin_tools import build_builtin_registry
 from agent_orchestrator.runtime.live_events import LiveEventBus
-from agent_orchestrator.runtime.skills import SkillRegistry
+from agent_orchestrator.runtime.skills import SkillRegistry, enabled_skill_assignments
 from agent_orchestrator.storage.repository import Repository
 
 
@@ -55,7 +55,7 @@ async def list_effective_session_tools(
         repository=repository,
         live_event_bus=live_event_bus,
         session_id=session.id,
-        skill_assignments=session.enabled_skills,
+        skill_assignments=enabled_skill_assignments(session.enabled_skills),
         is_master_job=is_master_job,
         player_configs=list(getattr(session, "player_configs", []) or []),
     )

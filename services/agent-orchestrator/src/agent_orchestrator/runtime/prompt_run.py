@@ -25,7 +25,7 @@ from agent_orchestrator.runtime.history_emitter import (
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.player_agents import session_player_id
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
-from agent_orchestrator.runtime.skills import SkillRegistry
+from agent_orchestrator.runtime.skills import SkillRegistry, enabled_skill_assignments
 from agent_orchestrator.runtime.system_prompts import (
     build_subagent_system_prompt,
     build_system_prompt,
@@ -136,13 +136,14 @@ class PromptRunService:
                     model_config.model_name,
                 )
                 is_subagent = job.parent_job_id is not None
+                active_skills = enabled_skill_assignments(session.enabled_skills)
                 if is_subagent:
                     system_prompt = build_subagent_system_prompt(
-                        self._skill_registry, session.enabled_skills
+                        self._skill_registry, active_skills
                     )
                 else:
                     system_prompt = build_system_prompt(
-                        self._skill_registry, session.enabled_skills
+                        self._skill_registry, active_skills
                     )
                 all_registries = await self._repository.list_mcp_registries()
                 tool_definitions = await self._mcp_tool_catalog.list_session_tools(
@@ -157,7 +158,7 @@ class PromptRunService:
                     live_event_bus=self._live_event_bus,
                     session_id=session.id,
                     job_id=job.id,
-                    skill_assignments=session.enabled_skills,
+                    skill_assignments=active_skills,
                     job=full_job,
                     schedule_child_fn=self._schedule_child_job,
                     player_configs=list(session.player_configs),
