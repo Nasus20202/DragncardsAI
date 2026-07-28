@@ -19,20 +19,69 @@ class BifrostJudgeClient(BaseAsyncClient):
     """Bifrost gateway client for the isolated judge LLM.
 
     Every call is a FRESH, stateless chat completion under the dedicated judge
-    identity (the ``api_key`` here is the ``eval-judge`` virtual key, distinct
-    from the game-playing keys). No session is reused: each invocation sends
-    only the supplied messages.
+    identity. No session is reused: each invocation sends only the supplied
+    messages.
+
+    The judge identity is pinned by ``key_name``, sent as ``x-bf-api-key``:
+    Bifrost resolves that header to the same-named key entry of whichever
+    provider the model id routes to, which is what keeps judge traffic on a
+    dedicated key for ANY provider. ``api_key`` is gateway auth only -- it does
+    NOT select a provider key, so without ``key_name`` judge calls would draw
+    the provider's normal (game-playing) weighted key pool.
     """
 
-    def __init__(self, base_url: str, api_key: str, *, timeout_seconds: float = 120.0):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        *,
+        timeout_seconds: float = 120.0,
+        key_name: str = "",
+    ):
         super().__init__(base_url, timeout_seconds=timeout_seconds)
         self._api_key = api_key
+        self._key_name = key_name.strip()
 
     def _headers(self) -> dict[str, str]:
         headers: dict[str, str] = {}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
+        if self._key_name:
+            headers["x-bf-api-key"] = self._key_name
         return headers
+
+    async def named_key_providers(self, key_name: str) -> frozenset[str] | None:
+        """Providers that declare a key entry called ``key_name``.
+
+        Reads Bifrost's key listing, which reports key NAMES, providers and
+        masked/env-referenced values -- never a usable secret, and nothing from
+        it is returned or logged here beyond provider names.
+
+        Returns ``None`` when the listing cannot be read (admin auth enabled, an
+        older gateway, Bifrost down): that is "unknown", not "missing". A listed
+        entry whose ``env.`` reference is unset still appears here but is
+        rejected at request time, so this is a check on the CONFIG entry, not on
+        the secret being populated.
+        """
+        try:
+            response = await self._http().get(f"{self._base_url}/api/keys")
+        except httpx.HTTPError:
+            return None
+        if response.status_code >= 400:
+            return None
+        try:
+            entries = response.json()
+        except ValueError:
+            return None
+        if not isinstance(entries, list):
+            return None
+        return frozenset(
+            str(entry.get("provider", ""))
+            for entry in entries
+            if isinstance(entry, dict)
+            and entry.get("name") == key_name
+            and entry.get("provider")
+        )
 
     @staticmethod
     def _build_payload(
@@ -62,9 +111,11 @@ class BifrostJudgeClient(BaseAsyncClient):
     ) -> str:
         """Run a fresh stateless judge completion and return the message content.
 
-        ``model`` is the Bifrost ``provider/model`` id. The dedicated judge
-        virtual key is sent as the bearer token so the gateway attributes the
-        traffic to the judge identity and budget, never a game-playing one.
+        ``model`` is the Bifrost ``provider/model`` id; its provider prefix picks
+        the provider, and the ``x-bf-api-key`` header picks that provider's judge
+        key, so the gateway attributes the traffic to the judge identity and
+        budget, never a game-playing one. When the provider has no such key
+        Bifrost fails the call with an explicit 400 rather than falling back.
         """
         payload = self._build_payload(model, messages, max_tokens, gateway_options)
         try:

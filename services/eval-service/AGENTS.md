@@ -31,9 +31,18 @@ across concurrent workers; `force` resets the row to re-evaluate.
 ### Isolated judge
 
 Each evaluation is a fresh, stateless Bifrost chat completion under the dedicated
-`eval-judge` virtual key — never the game-playing agent's session/identity.
+`eval-judge` key — never the game-playing agent's session/identity.
 `EVAL_JUDGE_MODEL` is required; with none configured the service refuses to
 evaluate with a clear error (and readiness reports `degraded`).
+
+The identity is pinned by the `x-bf-api-key: eval-judge` header, NOT by the
+`Authorization` bearer (which Bifrost ignores for key selection). Every provider
+in `services/bifrost/config.json` defines an `eval-judge` key entry at
+`weight: 0.0` from its own `EVAL_JUDGE_<PROVIDER>_API_KEY`, so any provider can
+judge under its own budget. Never make the judge fall back to a game-playing key
+implicitly: a missing judge key must surface as a `degraded` readiness
+`judge_key.status` and as the gateway's explicit error on the target. See
+[Judge identity](README.md#judge-identity).
 
 ### Write-back and failure isolation
 

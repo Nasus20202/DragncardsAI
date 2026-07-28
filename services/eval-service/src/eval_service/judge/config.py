@@ -4,8 +4,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from eval_service.config import Settings
+from eval_service.config import Settings, provider_from_model
 from eval_service.schemas.api import JudgeConfig
+
+# Re-exported: it lives next to ``Settings`` (which needs it for the readiness
+# provider check) but is part of this module's judge-config surface.
+__all__ = [
+    "ResolvedJudgeConfig",
+    "ResolvedReasoning",
+    "SkillDefinition",
+    "SkillResolver",
+    "UnknownSkillError",
+    "provider_from_model",
+    "resolve_judge_config",
+]
 
 
 class UnknownSkillError(Exception):
@@ -178,8 +190,3 @@ def resolve_judge_config(
         prompt_override=prompt_override,
         skills=skills,
     )
-
-
-def provider_from_model(model: str) -> str:
-    """Best-effort provider id derived from a ``provider/model`` Bifrost id."""
-    return model.split("/", 1)[0] if "/" in model else ""

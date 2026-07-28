@@ -40,6 +40,16 @@ class JudgeNotConfiguredError(Exception):
     """Raised when no judge model is configured; evaluation must be refused."""
 
 
+class JudgeAttemptsExhaustedError(Exception):
+    """Raised when every judge attempt failed, carrying the LAST gateway error.
+
+    The message is recorded as the target's skip reason so a definitive
+    misconfiguration -- notably Bifrost's ``no supported key found with name
+    "eval-judge" for provider: <p>`` when that provider has no dedicated judge
+    key -- is visible on the target instead of a generic "judge failed".
+    """
+
+
 class Evaluator:
     """Evaluates a single claimed target: assemble -> judge -> write back.
 
@@ -147,9 +157,16 @@ class Evaluator:
         except ValueError as exc:
             await self._repository.mark_skipped(target_id, f"assembly error: {exc}")
             return
+        except JudgeAttemptsExhaustedError as exc:
+            await self._repository.mark_skipped(
+                target_id, f"judge failed after retry limit: {exc}"
+            )
+            return
 
         if verdict is None:
-            # Retries exhausted -> skip-and-continue (already recorded).
+            # Defensive: exhausted retries raise JudgeAttemptsExhaustedError above
+            # (with the gateway's reason), so this only guards a verdict-less
+            # return that no current path produces.
             await self._repository.mark_skipped(
                 target_id, "judge failed after retry limit"
             )
@@ -282,9 +299,9 @@ class Evaluator:
                 # BifrostError (e.g. a 4xx that won't change on a retry) fails
                 # fast without burning further attempts or backoff.
                 if isinstance(exc, BifrostError) and not exc.retryable:
-                    return None
+                    raise JudgeAttemptsExhaustedError(str(exc)) from exc
                 if attempt >= self._settings.eval_max_attempts:
-                    return None
+                    raise JudgeAttemptsExhaustedError(str(exc)) from exc
                 await asyncio.sleep(self._settings.eval_retry_backoff_seconds * attempt)
         return None
 

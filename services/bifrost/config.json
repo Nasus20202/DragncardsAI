@@ -28,6 +28,12 @@
           "value": "env.OPENAI_API_KEY",
           "models": ["*"],
           "weight": 1.0
+        },
+        {
+          "name": "eval-judge",
+          "value": "env.EVAL_JUDGE_OPENAI_API_KEY",
+          "models": ["*"],
+          "weight": 0.0
         }
       ]
     },
@@ -41,7 +47,7 @@
         },
         {
           "name": "eval-judge",
-          "value": "env.EVAL_JUDGE_API_KEY",
+          "value": "env.EVAL_JUDGE_ANTHROPIC_API_KEY",
           "models": ["*"],
           "weight": 0.0
         }
@@ -54,6 +60,12 @@
           "value": "env.GEMINI_API_KEY",
           "models": ["*"],
           "weight": 1.0
+        },
+        {
+          "name": "eval-judge",
+          "value": "env.EVAL_JUDGE_GEMINI_API_KEY",
+          "models": ["*"],
+          "weight": 0.0
         }
       ]
     },
@@ -64,6 +76,12 @@
           "value": "env.MISTRAL_API_KEY",
           "models": ["*"],
           "weight": 1.0
+        },
+        {
+          "name": "eval-judge",
+          "value": "env.EVAL_JUDGE_MISTRAL_API_KEY",
+          "models": ["*"],
+          "weight": 0.0
         }
       ]
     },
@@ -74,6 +92,12 @@
           "value": "env.OPENROUTER_API_KEY",
           "models": ["*"],
           "weight": 1.0
+        },
+        {
+          "name": "eval-judge",
+          "value": "env.EVAL_JUDGE_OPENROUTER_API_KEY",
+          "models": ["*"],
+          "weight": 0.0
         }
       ]
     },
@@ -84,6 +108,12 @@
           "value": "env.NVIDIA_API_KEY",
           "models": ["*"],
           "weight": 1.0
+        },
+        {
+          "name": "eval-judge",
+          "value": "env.EVAL_JUDGE_NVIDIA_API_KEY",
+          "models": ["*"],
+          "weight": 0.0
         }
       ],
       "network_config": {
@@ -138,6 +168,12 @@
           "value": "dummy",
           "models": ["*"],
           "weight": 1.0
+        },
+        {
+          "name": "eval-judge",
+          "value": "dummy",
+          "models": ["*"],
+          "weight": 0.0
         }
       ],
       "network_config": {
