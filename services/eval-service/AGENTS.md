@@ -57,6 +57,25 @@ whole timeline — the states already summarise the past, while the neighbours s
 that a tool call is one step of a multi-call play. See
 [What the judge is sent](README.md#what-the-judge-is-sent).
 
+### Round boundaries follow post-action state, and rounds are 1-based
+
+`judge/assembly.py` derives round spans from the raw `roundNumber` on
+`game-service` state events. Two DragnCards facts govern it and are easy to get
+backwards:
+
+- A `game-service` event embeds the state AFTER its action was applied, so the
+  event whose state first reports a NEW `roundNumber` is the event that CLOSED the
+  previous round — it is that round's last seq, and the next round starts after it.
+- `roundNumber` counts COMPLETED rounds (it is 0 for the whole first round of
+  play), so every round number this service reports or accepts is
+  `round_of_play()`, i.e. `roundNumber + 1`. Never surface the raw counter to a
+  judge or a user; the History UI uses the same convention.
+
+Changing boundary detection changes what a round roll-up is graded on, so it
+changes evaluation results: bump `EVALUATOR_VERSION` and state in the spec why
+older verdicts are no longer comparable, rather than silently re-scoping them.
+See [Round boundaries](README.md#round-boundaries).
+
 ### Non-strategic actions are skipped, never silently
 
 `judge/actions.py` classifies recorded actions. The line is whether the action

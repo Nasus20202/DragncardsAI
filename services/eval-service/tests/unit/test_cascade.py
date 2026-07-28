@@ -34,7 +34,9 @@ def _mp_state(*, seq, round_number, num_players, first_player, status="in progre
 
 
 def _two_player_game():
-    # Round 1: seqs 2,3 (player1, player2). Round 2: seqs 6,7 (player1, player2).
+    # Round 2 of play (raw roundNumber 1): seqs 1-5, moves 2,3 (player1, player2),
+    # closing at the seq-5 state whose post-action roundNumber reports the change.
+    # Round 3 of play: seqs 6-8, moves 6,7 (player1, player2).
     return [
         _mp_state(seq=1, round_number=1, num_players=2, first_player="player1"),
         agent_event(game_id="g1", seq=2),
@@ -73,8 +75,8 @@ async def test_game_request_fans_out_to_moves_rounds_and_game(repository):
     assert len(by_scope["round"]) == 4
     round_players = sorted((t.target_seq, t.player) for t in by_scope["round"])
     assert round_players == [
-        (4, "player1"),
-        (4, "player2"),
+        (5, "player1"),
+        (5, "player2"),
         (8, "player1"),
         (8, "player2"),
     ]
@@ -87,14 +89,15 @@ async def test_game_request_fans_out_to_moves_rounds_and_game(repository):
 @pytest.mark.asyncio
 async def test_per_player_round_targets_for_multiplayer_span(repository):
     service = _service(repository, _two_player_game())
-    body = EvaluationRequestBody(scope="round", selection=Selection(rounds=[1]))
+    # `rounds` names rounds of PLAY: the raw roundNumber 1 span is round 2.
+    body = EvaluationRequestBody(scope="round", selection=Selection(rounds=[2]))
     resp = await service.create("g1", body)
 
     round_targets = sorted(
         (t.player, t.target_seq) for t in resp.targets if t.scope == "round"
     )
-    assert round_targets == [("player1", 4), ("player2", 4)]
-    # Moves of round 1 (seqs 2,3) are also claimed, attributed per player.
+    assert round_targets == [("player1", 5), ("player2", 5)]
+    # That round's moves (seqs 2,3) are also claimed, attributed per player.
     move_players = sorted(
         (t.target_seq, t.player) for t in resp.targets if t.scope == "move"
     )

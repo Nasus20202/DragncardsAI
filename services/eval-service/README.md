@@ -36,7 +36,7 @@ evaluate (and reports readiness `degraded`) until it is set. See `.env.example`.
 | `EVAL_JUDGE_MODEL` | _(required, unset)_ | `provider/model` judge id; the prefix picks the provider |
 | `EVAL_JUDGE_PROVIDER` | _(optional)_ | Provider hint for verdict metadata |
 | `EVAL_JUDGE_BIFROST_KEY_NAME` | `eval-judge` | Bifrost key entry judge traffic is pinned to (`x-bf-api-key`); `""` opts out |
-| `EVALUATOR_VERSION` | `eval-1` | Recorded on every verdict |
+| `EVALUATOR_VERSION` | `eval-2` | Recorded on every verdict; `eval-2` corrected round boundaries (see [Round boundaries](#round-boundaries)) |
 | `EVAL_MAX_ATTEMPTS` | `3` | Retry attempts before skip |
 | `EVAL_PER_GAME_CONCURRENCY` | `2` | Per-game in-flight judge cap |
 | `EVAL_GLOBAL_CONCURRENCY` | `8` | Global in-flight judge cap |
@@ -187,6 +187,31 @@ For `scope=move`, `seqs`/`seq_range`/`whole_game` select agent move seqs. For
 select closed rounds, detected from the round number on `game-service` state
 events with a terminal-status fallback for the final round.
 
+`rounds` names rounds of **play**, 1-based — the same numbers the History tab
+shows. See [Round boundaries](#round-boundaries).
+
+### Round boundaries
+
+A round span comes from the raw `roundNumber` on `game-service` state events, and
+two DragnCards facts decide where it starts and ends:
+
+- A `game-service` event embeds the state **after** its action was applied, so the
+  event whose state first reports a new `roundNumber` is the event that **closed**
+  the previous round. That event is the round's last seq (`to_seq`), and the next
+  round starts at the seq after it. A round roll-up therefore sees the board as
+  its own round ended, and the closing move is graded inside the round it closed.
+- `roundNumber` counts **completed** rounds — it reads 0 for the whole first round
+  of play — so every round number the service reports or accepts (`selection.rounds`,
+  the round named in the judge prompt) is `roundNumber + 1`. This matches the
+  History tab, so a verdict and the transcript name the same round.
+
+Both were wrong before `EVALUATOR_VERSION=eval-2`: spans were shifted by one event
+at each boundary and rounds were named by the raw counter. Round and game verdicts
+recorded under `eval-1` graded a different span from the one their round span now
+denotes and are **not** comparable to `eval-2` verdicts; `evaluator_version` on
+each verdict is what tells them apart. Move verdicts are unaffected by boundaries
+(only their `evaluator_version` tag changes).
+
 ## Verdict (evaluator event payload)
 
 ```json
@@ -199,7 +224,7 @@ events with a terminal-status fallback for the final round.
   "overall_score": 7,
   "rationale": "short paragraph",
   "flags": ["illegal_move"],
-  "evaluator": { "model": "...", "provider": "...", "evaluator_version": "eval-1" }
+  "evaluator": { "model": "...", "provider": "...", "evaluator_version": "eval-2" }
 }
 ```
 

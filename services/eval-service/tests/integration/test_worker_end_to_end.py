@@ -105,8 +105,9 @@ async def test_round_request_produces_one_verdict_per_closed_round(
     round_targets = sorted(
         (t.target_seq, tuple(t.round_span)) for t in resp.targets if t.scope == "round"
     )
-    # round 1 closes at seq4 (span 1-4); round 2 (terminal) at seq7 (span 5-7).
-    assert round_targets == [(4, (1, 4)), (7, (5, 7))]
+    # The first round closes AT the seq-5 state that reported the round change
+    # (span 1-5); the next round (terminal) closes at seq7 (span 6-7).
+    assert round_targets == [(5, (1, 5)), (7, (6, 7))]
 
     # A round roll-up defers itself while its child moves are still in flight,
     # so the cascade completes over successive drains (as run_forever loops).

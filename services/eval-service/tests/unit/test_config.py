@@ -10,7 +10,9 @@ def test_defaults_are_secret_free():
     assert settings.http_port == 4005
     assert settings.history_service_base_url == "http://localhost:4004"
     assert settings.bifrost_url == "http://localhost:4003"
-    assert settings.evaluator_version == "eval-1"
+    # eval-2: round boundaries now close at the event that closed the round, so
+    # round/game verdicts recorded under eval-1 are not comparable to newer ones.
+    assert settings.evaluator_version == "eval-2"
     # No judge model by default -> not configured.
     assert settings.eval_judge_model == ""
     assert settings.judge_configured is False
