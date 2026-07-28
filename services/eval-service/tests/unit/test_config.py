@@ -120,3 +120,42 @@ def test_cors_origins_default_and_parse(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("EVAL_CORS_ALLOW_ORIGINS", "http://a.test , http://b.test ,")
     parsed = Settings().cors_allow_origins
     assert parsed == ["http://a.test", "http://b.test"]
+
+
+def test_move_context_window_defaults_and_override(monkeypatch: pytest.MonkeyPatch):
+    # A neighbouring-action window, not the whole history: enough to see the play
+    # a single tool call belongs to.
+    assert Settings().eval_judge_move_context_before == 8
+    assert Settings().eval_judge_move_context_after == 3
+    assert Settings().eval_judge_move_context_reasoning_chars == 400
+    monkeypatch.setenv("EVAL_JUDGE_MOVE_CONTEXT_BEFORE", "2")
+    monkeypatch.setenv("EVAL_JUDGE_MOVE_CONTEXT_AFTER", "0")
+    settings = Settings()
+    assert settings.eval_judge_move_context_before == 2
+    assert settings.eval_judge_move_context_after == 0
+
+
+def test_negative_move_context_window_rejected():
+    with pytest.raises(ValueError):
+        Settings(eval_judge_move_context_before=-1)
+    with pytest.raises(ValueError):
+        Settings(eval_judge_move_context_after=-1)
+
+
+def test_non_strategic_skipping_defaults_on_with_the_builtin_taxonomy():
+    settings = Settings()
+    assert settings.eval_skip_non_strategic_moves is True
+    skip = settings.non_strategic_actions
+    assert "search_cards_marvel_champions" in skip
+    assert "load_prebuilt_deck" in skip
+    assert "move_card" not in skip
+    assert "next_step" not in skip
+
+
+def test_non_strategic_actions_configurable(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("EVAL_NON_STRATEGIC_ACTIONS", "get_game_state;list_games")
+    assert Settings().non_strategic_actions == frozenset(
+        {"get_game_state", "list_games"}
+    )
+    monkeypatch.setenv("EVAL_SKIP_NON_STRATEGIC_MOVES", "false")
+    assert Settings().non_strategic_actions == frozenset()

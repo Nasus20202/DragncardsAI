@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -8,14 +7,17 @@ from eval_service.judge.assembly import (
     ChildVerdict,
     GameInput,
     MoveInput,
+    NeighbourMove,
     RoundInput,
 )
+from eval_service.judge.state_view import canonical_json, render_state
 
 logger = logging.getLogger(__name__)
 
 # Generous defaults; the evaluator passes the configured caps from Settings.
 DEFAULT_MAX_STATE_CHARS = 20_000
 DEFAULT_MAX_ROUND_MOVES = 100
+DEFAULT_MAX_CONTEXT_REASONING_CHARS = 400
 
 RUBRIC = """\
 You are an expert Marvel Champions judge. You grade how well an AI agent played \
@@ -41,33 +43,18 @@ Respond with ONLY a single JSON object, no prose around it, of the form:
 
 
 def _json(value: Any) -> str:
-    try:
-        return json.dumps(value, sort_keys=True, default=str)
-    except TypeError, ValueError:
-        return repr(value)
+    return canonical_json(value)
 
 
 def _state_json(value: Any, max_chars: int, *, label: str) -> str:
-    """Serialize a per-event state JSON, truncating to ``max_chars``.
+    """Render a per-event state for the prompt: project first, then bound.
 
-    State JSON is by far the largest content in a judge prompt, so it is the
-    first thing capped to keep a big game inside a small-context window. When a
-    state is truncated a clear marker is appended (so the judge knows the input
-    was clipped) and the truncation is logged so it stays observable.
+    State is by far the largest content in a judge prompt. It is projected down to
+    the board the playing agent saw (see :mod:`eval_service.judge.state_view`) and
+    ``max_chars`` remains as a backstop for a state shape the projection does not
+    recognise, or a projection that is somehow still oversized.
     """
-    rendered = _json(value)
-    if max_chars > 0 and len(rendered) > max_chars:
-        logger.info(
-            "Truncated %s state JSON from %d to %d chars for judge input",
-            label,
-            len(rendered),
-            max_chars,
-        )
-        return (
-            rendered[:max_chars]
-            + f"\n...[truncated {len(rendered) - max_chars} chars of {label} state]"
-        )
-    return rendered
+    return render_state(value, max_chars, label=label)
 
 
 def _system_content(
@@ -95,20 +82,64 @@ def build_move_messages(
     prompt_override: str | None = None,
     skills: list[tuple[str, str]] | None = None,
     max_state_chars: int = DEFAULT_MAX_STATE_CHARS,
+    max_context_reasoning_chars: int = DEFAULT_MAX_CONTEXT_REASONING_CHARS,
 ) -> list[dict[str, str]]:
     """Build a fresh, self-contained judge prompt for a single move."""
     user = (
         f"Evaluate this single agent move (seq {move.target_seq}).\n\n"
         f"Prior game state:\n{_state_json(move.prior_state, max_state_chars, label='prior')}\n\n"
+        f"{_neighbour_block(move.context_before, max_context_reasoning_chars, direction='before')}"
         f"Intended action: {_json(move.intended_action)}\n"
         f"Action arguments: {_json(move.arguments)}\n"
         f"Agent's stated reasoning: {_json(move.reasoning)}\n\n"
         f"Resulting game state:\n{_state_json(move.resulting_state, max_state_chars, label='resulting')}\n"
+        f"{_neighbour_block(move.context_after, max_context_reasoning_chars, direction='after')}"
     )
     return [
         {"role": "system", "content": _system_content(prompt_override, skills)},
         {"role": "user", "content": user},
     ]
+
+
+def _neighbour_block(
+    neighbours: list[NeighbourMove], max_reasoning_chars: int, *, direction: str
+) -> str:
+    """Render the neighbouring-move window around the move under judgement.
+
+    The window exists so a move that is one step of a multi-call play is not
+    graded as if it stood alone. The following-moves half is labelled as
+    completion context rather than an outcome to grade, so the judge does not
+    score the decision on hindsight it did not have.
+    """
+    if not neighbours:
+        return ""
+    if direction == "before":
+        header = (
+            f"The agent's {len(neighbours)} immediately PRECEDING move(s) "
+            "(context for what this move continues; do not grade them):"
+        )
+    else:
+        header = (
+            f"The agent's {len(neighbours)} immediately FOLLOWING move(s) "
+            "(context for whether this move completed an intent; do not grade "
+            "them and do not judge the decision on hindsight):"
+        )
+    lines = [header]
+    for neighbour in neighbours:
+        lines.append(
+            f"- seq {neighbour.seq}: action={_json(neighbour.intended_action)} "
+            f"args={_json(neighbour.arguments)} "
+            f"reasoning={_clip(neighbour.reasoning, max_reasoning_chars)}"
+        )
+    return "\n".join(lines) + "\n\n"
+
+
+def _clip(value: Any, max_chars: int) -> str:
+    """Serialize a context field, clipped so one verbose neighbour cannot bloat."""
+    rendered = _json(value)
+    if max_chars > 0 and len(rendered) > max_chars:
+        return rendered[:max_chars] + f"...[+{len(rendered) - max_chars} chars]"
+    return rendered
 
 
 def build_round_messages(
@@ -143,6 +174,11 @@ def build_round_messages(
         )
     if dropped:
         move_blocks.append(f"- ...[{dropped} further moves omitted]")
+    if rnd.omitted_non_strategic:
+        move_blocks.append(
+            f"- ...[{rnd.omitted_non_strategic} non-strategic action(s) omitted: "
+            "searches, session plumbing and pre-game setup carry no play to grade]"
+        )
     moves_text = "\n".join(move_blocks) if move_blocks else "(no agent moves)"
     who = f" for {rnd.player}" if rnd.player else ""
     moves_label = (

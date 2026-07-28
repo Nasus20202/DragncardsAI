@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from eval_service.config import Settings
 from eval_service.integrations.bifrost import BifrostError, BifrostJudgeClient
 from eval_service.integrations.history import HistoryClient
+from eval_service.judge.actions import non_strategic_reason
 from eval_service.judge.assembly import (
     BoundaryUndetectedError,
     assemble_game_input,
@@ -120,6 +121,17 @@ class Evaluator:
                 "EVAL_JUDGE_MODEL is not configured; refusing to evaluate"
             )
 
+        # Non-strategic actions carry no decision a judge can grade (a card search
+        # cannot be a wrong play; taking a card into hand can be). Record them as
+        # SKIPPED with the reason -- the same per-target skip channel a judge
+        # failure uses -- so a skipped action is never mistaken for a passed one,
+        # and no judge call is spent on it.
+        if scope == "move":
+            reason = self._non_strategic_reason(events, target_seq)
+            if reason is not None:
+                await self._repository.mark_skipped(target_id, reason)
+                return
+
         # Dependency gate: a round/game roll-up SHALL NOT be produced until every
         # lower-level child it depends on is graded. While any child is still in
         # flight, re-defer this target to ``pending`` so a later drain retries it
@@ -227,12 +239,20 @@ class Evaluator:
         skills = self._skill_resolver.load_markdown(config.skills)
 
         if scope == "move":
-            move = assemble_move_input(events, target_seq)
+            move = assemble_move_input(
+                events,
+                target_seq,
+                context_before=self._settings.eval_judge_move_context_before,
+                context_after=self._settings.eval_judge_move_context_after,
+            )
             messages = build_move_messages(
                 move,
                 prompt_override=config.prompt_override,
                 skills=skills,
                 max_state_chars=self._settings.eval_judge_max_state_chars,
+                max_context_reasoning_chars=(
+                    self._settings.eval_judge_move_context_reasoning_chars
+                ),
             )
             round_span = None
         elif scope == "game":
@@ -250,7 +270,12 @@ class Evaluator:
             )
             round_span = [game.from_seq, game.to_seq]
         else:
-            rnd = assemble_round_input(events, target_seq, player=player)
+            rnd = assemble_round_input(
+                events,
+                target_seq,
+                player=player,
+                skip_actions=self._settings.non_strategic_actions,
+            )
             messages = build_round_messages(
                 rnd,
                 prompt_override=config.prompt_override,
@@ -337,6 +362,27 @@ class Evaluator:
             max_tokens=self._settings.eval_judge_max_tokens,
             gateway_options=gateway_options or None,
         )
+
+    def _non_strategic_reason(
+        self, events: list[StoredEvent], target_seq: int
+    ) -> str | None:
+        """The skip reason for a non-strategic move, or None to evaluate it.
+
+        Conservative in both directions: a target whose event is missing (or is
+        not an agent move) is left to the normal assembly path, which reports the
+        real problem, rather than being written off as non-strategic.
+        """
+        event = next((e for e in events if e.seq == target_seq), None)
+        if event is None or event.actor != "agent":
+            return None
+        reason = non_strategic_reason(
+            event.payload.get("intended_action"),
+            self._settings.non_strategic_actions,
+        )
+        if reason is None:
+            return None
+        action = event.payload.get("intended_action")
+        return f"non-strategic action {action!r}: {reason}"
 
     async def _defer_if_children_pending(
         self,

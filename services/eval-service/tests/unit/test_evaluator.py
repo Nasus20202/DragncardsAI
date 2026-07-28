@@ -264,3 +264,163 @@ async def test_refuses_when_no_judge_model(repository):
     row = await repository.get_target_by_id(target_id)
     assert row.status == "skipped"
     assert judge.calls == []  # never invoked a default model
+
+
+def _non_strategic_events(action="search_cards_marvel_champions", game_id="g1"):
+    return [
+        state_event(game_id=game_id, seq=1, round_number=1),
+        agent_event(game_id=game_id, seq=2, action=action),
+        state_event(game_id=game_id, seq=3, round_number=1),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_non_strategic_move_is_skipped_with_a_reason_and_no_judge_call(
+    repository,
+):
+    # Searching for cards cannot be a wrong decision, so no judge call is spent
+    # on it -- and the outcome is recorded as SKIPPED with the reason, so it can
+    # never be mistaken for a passing verdict.
+    events = _non_strategic_events()
+    history = FakeHistoryClient({"g1": events})
+    judge = StubJudgeClient()
+    evaluator = Evaluator(
+        settings=_settings(), repository=repository, history=history, judge=judge
+    )
+    target_id = await _claim_move(repository)
+
+    await evaluator.evaluate_target(
+        target_id=target_id, game_id="g1", target_seq=2, scope="move", events=events
+    )
+
+    row = await repository.get_target_by_id(target_id)
+    assert row.status == "skipped"
+    assert "non-strategic action" in row.error
+    assert "search_cards_marvel_champions" in row.error
+    assert "cannot be a wrong play" in row.error
+    assert row.verdict_json is None
+    assert judge.calls == []
+    assert history.written == []
+
+
+@pytest.mark.asyncio
+async def test_taking_a_card_into_hand_is_still_judged(repository):
+    # A guard against the dangerous direction: over-skipping degrades evaluation
+    # quality silently. Drawing commits game state a player can get wrong, so it
+    # must reach the judge no matter how the skip list grows.
+    events = _non_strategic_events(action="draw_card")
+    history = FakeHistoryClient({"g1": events})
+    judge = StubJudgeClient()
+    evaluator = Evaluator(
+        settings=_settings(), repository=repository, history=history, judge=judge
+    )
+    target_id = await _claim_move(repository)
+
+    await evaluator.evaluate_target(
+        target_id=target_id, game_id="g1", target_seq=2, scope="move", events=events
+    )
+
+    row = await repository.get_target_by_id(target_id)
+    assert row.status == "completed"
+    assert len(judge.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "skip_enabled,expected_status,expected_calls",
+    [(True, "skipped", 0), (False, "completed", 1)],
+)
+async def test_non_strategic_skipping_is_switchable(
+    repository, skip_enabled, expected_status, expected_calls
+):
+    # The SAME non-strategic move under both settings, so the setting is shown to
+    # be what decides the outcome.
+    events = _non_strategic_events()
+    history = FakeHistoryClient({"g1": events})
+    judge = StubJudgeClient()
+    evaluator = Evaluator(
+        settings=_settings(eval_skip_non_strategic_moves=skip_enabled),
+        repository=repository,
+        history=history,
+        judge=judge,
+    )
+    target_id = await _claim_move(repository)
+
+    await evaluator.evaluate_target(
+        target_id=target_id, game_id="g1", target_seq=2, scope="move", events=events
+    )
+
+    row = await repository.get_target_by_id(target_id)
+    assert row.status == expected_status
+    assert len(judge.calls) == expected_calls
+
+
+@pytest.mark.asyncio
+async def test_round_rollup_of_only_non_strategic_moves_is_not_skipped(repository):
+    # The skip is a MOVE-scope judgement. A round roll-up still runs; it just
+    # lists no gradeable moves, and says so, rather than vanishing.
+    events = _non_strategic_events()
+    history = FakeHistoryClient({"g1": events})
+    judge = StubJudgeClient()
+    evaluator = Evaluator(
+        settings=_settings(), repository=repository, history=history, judge=judge
+    )
+    await repository.create_request(
+        request_id="r-round",
+        game_id="g1",
+        scope="round",
+        selection={"seqs": [3]},
+        force=False,
+    )
+    await repository.claim_target(
+        request_id="r-round",
+        game_id="g1",
+        target_seq=3,
+        scope="round",
+        round_span=(1, 3),
+        force=False,
+    )
+    claimed = await repository.claim_pending_targets()
+
+    await evaluator.evaluate_target(
+        target_id=claimed[0].id,
+        game_id="g1",
+        target_seq=3,
+        scope="round",
+        events=events,
+    )
+
+    row = await repository.get_target_by_id(claimed[0].id)
+    assert row.status == "completed"
+    prompt = judge.calls[0]["messages"][1]["content"]
+    assert "1 non-strategic action(s) omitted" in prompt
+
+
+@pytest.mark.asyncio
+async def test_move_prompt_carries_the_configured_neighbour_window(repository):
+    events = [
+        state_event(game_id="g1", seq=1, round_number=1),
+        agent_event(game_id="g1", seq=2, action="move_card"),
+        agent_event(game_id="g1", seq=3, action="modify_tokens"),
+        agent_event(game_id="g1", seq=4, action="exhaust_card"),
+        state_event(game_id="g1", seq=5, round_number=1),
+    ]
+    history = FakeHistoryClient({"g1": events})
+    judge = StubJudgeClient()
+    evaluator = Evaluator(
+        settings=_settings(
+            eval_judge_move_context_before=1, eval_judge_move_context_after=1
+        ),
+        repository=repository,
+        history=history,
+        judge=judge,
+    )
+    target_id = await _claim_move(repository, seq=3)
+
+    await evaluator.evaluate_target(
+        target_id=target_id, game_id="g1", target_seq=3, scope="move", events=events
+    )
+
+    prompt = judge.calls[0]["messages"][1]["content"]
+    assert 'seq 2: action="move_card"' in prompt
+    assert 'seq 4: action="exhaust_card"' in prompt

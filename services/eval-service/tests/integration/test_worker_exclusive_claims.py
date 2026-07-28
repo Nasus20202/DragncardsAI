@@ -62,10 +62,12 @@ class CountingJudgeClient(StubJudgeClient):
         text = " ".join(
             str(m.get("content", "")) for m in messages if isinstance(m, dict)
         )
-        # The assembled prompt embeds the move arguments (card_id "c{seq}").
+        # Attribute the call by the prompt's own statement of which move it grades.
+        # NOT by the move's arguments: a move prompt also carries a window of the
+        # neighbouring moves, so their arguments appear in it too.
         async with self._lock:
             for seq in (2, 4, 6):
-                if f"c{seq}" in text:
+                if f"single agent move (seq {seq})" in text:
                     self.seq_calls[seq] += 1
         return await super().judge(
             model=model, messages=messages, max_tokens=max_tokens
