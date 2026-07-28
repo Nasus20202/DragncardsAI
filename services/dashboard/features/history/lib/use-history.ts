@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { HistoryEvent, HistorySnapshot } from "@/features/shared/lib/types";
 import {
-  listHistoryEvents,
+  listAllHistoryEvents,
   listHistorySnapshots,
 } from "@/features/history/lib/history-api";
 
@@ -13,6 +13,11 @@ export interface UseHistoryResult {
   snapshots: HistorySnapshot[];
   isLoading: boolean;
   error: string | null;
+  /**
+   * True when the client's safety bound stopped the walk before the game's log
+   * ended, so `events` is a prefix of the timeline rather than all of it.
+   */
+  isTruncated: boolean;
   reload: () => void;
 }
 
@@ -20,6 +25,7 @@ export function useHistory(gameId: string | null): UseHistoryResult {
   const [events, setEvents] = useState<HistoryEvent[]>([]);
   const [snapshots, setSnapshots] = useState<HistorySnapshot[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isTruncated, setIsTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
@@ -32,6 +38,7 @@ export function useHistory(gameId: string | null): UseHistoryResult {
       if (!gameId) {
         setEvents([]);
         setSnapshots([]);
+        setIsTruncated(false);
         setError(null);
         setIsLoading(false);
         return;
@@ -40,12 +47,13 @@ export function useHistory(gameId: string | null): UseHistoryResult {
       setIsLoading(true);
       setError(null);
       try {
-        const [loadedEvents, loadedSnapshots] = await Promise.all([
-          listHistoryEvents(gameId),
+        const [timeline, loadedSnapshots] = await Promise.all([
+          listAllHistoryEvents(gameId),
           listHistorySnapshots(gameId),
         ]);
         if (cancelled) return;
-        setEvents([...loadedEvents].sort((a, b) => a.seq - b.seq));
+        setEvents([...timeline.events].sort((a, b) => a.seq - b.seq));
+        setIsTruncated(timeline.truncated);
         setSnapshots(loadedSnapshots);
       } catch (e) {
         if (cancelled) return;
@@ -61,5 +69,5 @@ export function useHistory(gameId: string | null): UseHistoryResult {
     };
   }, [gameId, reloadToken]);
 
-  return { events, snapshots, isLoading, error, reload };
+  return { events, snapshots, isLoading, error, isTruncated, reload };
 }

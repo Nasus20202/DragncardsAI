@@ -48,17 +48,63 @@ export function actionLabel(event: HistoryEvent): string {
 
 /** Round + step ("phase") for an event, inherited from the nearest game-state. */
 export interface RoundMeta {
+  /**
+   * The 1-based round of play this event belongs to, or null while the game is
+   * still being set up (see `metaFromGameState`).
+   */
   round: number | null;
   step: string | null;
 }
 
+/**
+ * The Marvel Champions step ids and the phase each one belongs to, mirroring
+ * the plugin's `json/steps.json`. Step ids are dotted strings, and the major
+ * digit is NOT the phase: `0.0` opens a round ("Beginning") while `0.1` closes
+ * it ("End"), so the phase has to be looked up rather than derived.
+ */
+const STEP_PHASES: Record<string, string> = {
+  "0.0": "Beginning",
+  "1.1": "Player",
+  "1.2": "Player",
+  "2.1": "Villain",
+  "2.2": "Villain",
+  "2.3": "Villain",
+  "2.4": "Villain",
+  "2.5": "Villain",
+  "0.1": "End",
+};
+
+/** The step's Marvel Champions phase; "Setup" before any step is known. */
 export function phaseName(step: string | null): string {
   if (!step) return "Setup";
-  const band = Number.parseInt(step, 10);
-  if (band === 1) return "Player";
-  if (band === 2) return "Villain";
-  if (band >= 3) return "End";
-  return "Beginning";
+  return STEP_PHASES[step] ?? "Unknown";
+}
+
+/** The DragnCards step at which a game is set up, before the first round. */
+const SETUP_STEP = "0.0";
+
+/**
+ * The round/step an observed game state represents.
+ *
+ * DragnCards' `roundNumber` counts *completed* rounds — it is 0 for the whole
+ * first round of play and only increments as a round closes — so the round in
+ * play is `roundNumber + 1`. Setup is the exception: it happens during the
+ * Beginning step of round 0, before the first player phase, and is not part of
+ * round 1. Step `0.0` recurs at the top of every later round, so the
+ * `roundNumber === 0` conjunct is what keeps "setup" to the start of the game.
+ */
+function metaFromGameState(
+  event: HistoryEvent,
+  fallback: RoundMeta
+): RoundMeta {
+  const game = asRecord(asRecord(event.payload.state)?.game ?? undefined);
+  if (!game) return fallback;
+  const rawRound = game.roundNumber;
+  const rawStep = game.stepId;
+  const step = rawStep != null ? String(rawStep) : fallback.step;
+  if (typeof rawRound !== "number") return { round: fallback.round, step };
+  const isSetup = rawRound === 0 && step === SETUP_STEP;
+  return { round: isSetup ? null : rawRound + 1, step };
 }
 
 export function roundKey(meta: RoundMeta): string {
@@ -222,23 +268,30 @@ export function primaryEvents(events: HistoryEvent[]): HistoryEvent[] {
 /**
  * Round/phase per event: game-state events carry roundNumber/stepId; every
  * other event inherits the most recent one.
+ *
+ * A `game-service` event embeds the state *after* its action was applied, so it
+ * is attributed to the round/step it acted **from** — the running state before
+ * the update. That keeps the move that closes a round inside that round instead
+ * of letting it open the next one. Every other actor (agent/user/evaluator) is
+ * attributed the latest observed state, which is the state it was looking at.
  */
 export function buildMetaBySeq(events: HistoryEvent[]): Map<number, RoundMeta> {
   const map = new Map<number, RoundMeta>();
   let current: RoundMeta = { round: null, step: null };
+  let observed = false;
   for (const event of events) {
     if (event.actor === "game-service") {
-      const game = asRecord(asRecord(event.payload.state)?.game ?? undefined);
-      if (game) {
-        const r = game.roundNumber;
-        const s = game.stepId;
-        current = {
-          round: typeof r === "number" ? r : current.round,
-          step: s != null ? String(s) : current.step,
-        };
-      }
+      const next = metaFromGameState(event, current);
+      // Before any state has been observed there is no "acted from" round. The
+      // event's own state is then the best attribution available — a timeline
+      // that begins mid-game (after a restore, or once early events age out)
+      // must report the round it actually starts in, not "Setup".
+      map.set(event.seq, observed ? current : next);
+      current = next;
+      observed = true;
+    } else {
+      map.set(event.seq, current);
     }
-    map.set(event.seq, current);
   }
   return map;
 }
@@ -272,9 +325,11 @@ export function buildHeadingBySeq(
 
 /**
  * The end-of-round marker (if any) to render AFTER each primary event — emitted
- * on the last event of a numbered round (the next primary event opens a
- * different round, or there is none). The leading Setup band never produces an
- * end marker, since it is not a numbered round.
+ * on the last event of a numbered round, meaning the NEXT primary event belongs
+ * to a different round. A round is only marked as ended when the timeline shows
+ * it ending: the final round of an in-progress (or truncated) timeline gets no
+ * marker, because nothing proves it finished. The leading Setup band never
+ * produces an end marker, since it is not a numbered round.
  */
 export function buildRoundEndBySeq(
   primary: HistoryEvent[],
@@ -284,13 +339,13 @@ export function buildRoundEndBySeq(
   for (let i = 0; i < primary.length; i += 1) {
     const meta = metaBySeq.get(primary[i].seq) ?? { round: null, step: null };
     if (!meta.round) continue;
+    if (i + 1 >= primary.length) continue;
     const key = roundKey(meta);
-    const nextMeta =
-      i + 1 < primary.length
-        ? (metaBySeq.get(primary[i + 1].seq) ?? { round: null, step: null })
-        : null;
-    const nextKey = nextMeta ? roundKey(nextMeta) : null;
-    if (nextKey !== key) {
+    const nextMeta = metaBySeq.get(primary[i + 1].seq) ?? {
+      round: null,
+      step: null,
+    };
+    if (roundKey(nextMeta) !== key) {
       map.set(primary[i].seq, { key, label: `${roundHeading(meta)} — end` });
     }
   }

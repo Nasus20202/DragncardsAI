@@ -178,7 +178,11 @@ export function HistoryWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { events, isLoading, error, reload } = useHistory(gameId);
+  const { events, isLoading, error, isTruncated, reload } = useHistory(gameId);
+
+  // The selected game's summary carries the authoritative recorded event count,
+  // which is what the truncation notice compares the loaded events against.
+  const selectedGame = games.find((game) => game.game_id === gameId) ?? null;
 
   // Persistent evaluations queue: polls the cross-game listing while the panel
   // is open or anything is in flight, and refreshes the transcript whenever a
@@ -406,6 +410,19 @@ export function HistoryWorkspace({
                   </Button>
                 </div>
               </div>
+              {isTruncated && (
+                <div
+                  data-testid="history-truncated-notice"
+                  role="status"
+                  className="shrink-0 border-b border-default-200/60 px-4 py-1.5 text-xs text-warning"
+                >
+                  Showing the first {events.length.toLocaleString()} of{" "}
+                  {(
+                    selectedGame?.event_count ?? events.length
+                  ).toLocaleString()}{" "}
+                  recorded events for this game.
+                </div>
+              )}
               <HistoryTranscript
                 events={events}
                 selectedSeq={selectedSeq}

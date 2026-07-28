@@ -74,7 +74,7 @@ const GAME_EVENT: HistoryEvent = {
   payload: {
     status: "in progress",
     action_args: { type: "move_card" },
-    state: { game: { roundNumber: 1, stepId: "1.1" } },
+    state: { game: { roundNumber: 0, stepId: "1.1" } },
   },
   occurred_at: "2026-06-24T10:01:00Z",
   recorded_at: "2026-06-24T10:01:01Z",
@@ -487,13 +487,16 @@ describe("HistoryTranscript", () => {
   });
 
   it("renders start and end markers for each round", () => {
+    // `roundNumber` counts COMPLETED rounds, so round 1 of play reports 0. The
+    // event that reports the next round is the move that CLOSED the previous
+    // one, so it ends its round rather than opening the new one.
     const round1State: HistoryEvent = {
       ...GAME_EVENT,
       seq: 10,
       event_id: "g10",
       payload: {
         status: "in progress",
-        state: { game: { roundNumber: 1, stepId: "1.1" } },
+        state: { game: { roundNumber: 0, stepId: "1.1" } },
       },
     };
     const round1Agent: HistoryEvent = {
@@ -501,18 +504,43 @@ describe("HistoryTranscript", () => {
       seq: 11,
       event_id: "a11",
     };
-    const round2State: HistoryEvent = {
+    const round1Close: HistoryEvent = {
       ...GAME_EVENT,
       seq: 12,
       event_id: "g12",
       payload: {
         status: "in progress",
-        state: { game: { roundNumber: 2, stepId: "2.1" } },
+        state: { game: { roundNumber: 1, stepId: "0.0" } },
       },
     };
-    renderTranscript([round1State, round1Agent, round2State]);
+    const round2Agent: HistoryEvent = {
+      ...AGENT_EVENT,
+      seq: 13,
+      event_id: "a13",
+    };
+    const round2Close: HistoryEvent = {
+      ...GAME_EVENT,
+      seq: 14,
+      event_id: "g14",
+      payload: {
+        status: "in progress",
+        state: { game: { roundNumber: 2, stepId: "0.0" } },
+      },
+    };
+    const round3Agent: HistoryEvent = {
+      ...AGENT_EVENT,
+      seq: 15,
+      event_id: "a15",
+    };
+    renderTranscript([
+      round1State,
+      round1Agent,
+      round1Close,
+      round2Agent,
+      round2Close,
+      round3Agent,
+    ]);
 
-    // Round 1 start header + end marker, Round 2 start header.
     expect(screen.getByTestId("history-round-round-1")).toHaveTextContent(
       "Round 1 — start"
     );
@@ -522,9 +550,36 @@ describe("HistoryTranscript", () => {
     expect(screen.getByTestId("history-round-round-2")).toHaveTextContent(
       "Round 2 — start"
     );
-    // The last round's end marker renders after its final event.
     expect(screen.getByTestId("history-round-end-round-2")).toHaveTextContent(
       "Round 2 — end"
     );
+    expect(screen.getByTestId("history-round-round-3")).toHaveTextContent(
+      "Round 3 — start"
+    );
+  });
+
+  it("does not mark the last round in view as ended", () => {
+    const round1State: HistoryEvent = {
+      ...GAME_EVENT,
+      seq: 20,
+      event_id: "g20",
+      payload: {
+        status: "in progress",
+        state: { game: { roundNumber: 0, stepId: "1.1" } },
+      },
+    };
+    const round1Agent: HistoryEvent = {
+      ...AGENT_EVENT,
+      seq: 21,
+      event_id: "a21",
+    };
+    renderTranscript([round1State, round1Agent]);
+
+    // The round is still in progress (or the timeline was cut short): nothing
+    // proves it ended, so no end marker may be fabricated.
+    expect(screen.getByTestId("history-round-round-1")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("history-round-end-round-1")
+    ).not.toBeInTheDocument();
   });
 });

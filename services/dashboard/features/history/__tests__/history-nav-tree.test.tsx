@@ -13,7 +13,7 @@ const ROUND1_STATE: HistoryEvent = {
   event_type: "state_changed",
   payload: {
     status: "in progress",
-    state: { game: { roundNumber: 1, stepId: "1.1" } },
+    state: { game: { roundNumber: 0, stepId: "1.1" } },
   },
   occurred_at: "2026-06-24T10:00:00Z",
   recorded_at: "2026-06-24T10:00:01Z",
@@ -38,17 +38,28 @@ const ROUND2_STATE: HistoryEvent = {
   event_type: "state_changed",
   payload: {
     status: "in progress",
-    state: { game: { roundNumber: 2, stepId: "2.1" } },
+    state: { game: { roundNumber: 1, stepId: "2.1" } },
   },
   occurred_at: "2026-06-24T10:02:00Z",
   recorded_at: "2026-06-24T10:02:01Z",
+};
+
+const ROUND2_AGENT: HistoryEvent = {
+  seq: 4,
+  event_id: "a4",
+  game_id: "g1",
+  actor: "agent",
+  event_type: "move",
+  payload: { intended_action: "next_step" },
+  occurred_at: "2026-06-24T10:03:00Z",
+  recorded_at: "2026-06-24T10:03:01Z",
 };
 
 describe("HistoryNavTree", () => {
   it("lists rounds and their moves", () => {
     render(
       <HistoryNavTree
-        events={[ROUND1_STATE, ROUND1_AGENT, ROUND2_STATE]}
+        events={[ROUND1_STATE, ROUND1_AGENT, ROUND2_STATE, ROUND2_AGENT]}
         selectedSeq={null}
         onSelect={vi.fn()}
       />
@@ -71,7 +82,7 @@ describe("HistoryNavTree", () => {
     const onSelect = vi.fn();
     render(
       <HistoryNavTree
-        events={[ROUND1_STATE, ROUND1_AGENT, ROUND2_STATE]}
+        events={[ROUND1_STATE, ROUND1_AGENT, ROUND2_STATE, ROUND2_AGENT]}
         selectedSeq={null}
         onSelect={onSelect}
       />
