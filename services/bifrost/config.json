@@ -141,6 +141,12 @@
           "value": "env.OPENCODE_GO_API_KEY",
           "models": ["*"],
           "weight": 1.0
+        },
+        {
+          "name": "eval-judge",
+          "value": "env.EVAL_JUDGE_OPENCODE_GO_API_KEY",
+          "models": ["*"],
+          "weight": 0.0
         }
       ],
       "network_config": {
