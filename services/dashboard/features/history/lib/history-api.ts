@@ -36,10 +36,31 @@ export async function deleteHistoryGame(
   return readJson<HistoryDeleteResponse>(response);
 }
 
-export async function listHistoryEvents(
+/** One page of a game's timeline, plus the cursor to fetch the next one. */
+export interface HistoryEventPage {
+  events: HistoryEvent[];
+  /** Pass as `afterSeq` to fetch the next page; null when the log is exhausted. */
+  nextAfterSeq: number | null;
+}
+
+/**
+ * The largest page the history-service will serve (`limit` is capped at 1000
+ * server-side, which bounds per-request database work and response size).
+ */
+export const HISTORY_PAGE_LIMIT = 1000;
+
+/**
+ * A safety bound on how much of one game's timeline the browser will hold. It
+ * is far above any realistic game, but it must exist so a pathological log
+ * cannot hang the tab — and when it is hit the UI has to say so rather than
+ * look complete (see `useHistory`'s `truncated`).
+ */
+export const HISTORY_MAX_EVENTS = 20_000;
+
+export async function listHistoryEventPage(
   gameId: string,
   options?: { afterSeq?: number; limit?: number }
-): Promise<HistoryEvent[]> {
+): Promise<HistoryEventPage> {
   const params = new URLSearchParams();
   if (options?.afterSeq !== undefined) {
     params.set("after_seq", String(options.afterSeq));
@@ -54,10 +75,54 @@ export async function listHistoryEvents(
     }`,
     { cache: "no-store" }
   );
-  const payload = await readJson<{ events?: HistoryEvent[] } | HistoryEvent[]>(
-    response
-  );
-  return Array.isArray(payload) ? payload : (payload.events ?? []);
+  const payload = await readJson<
+    { events?: HistoryEvent[]; next_after_seq?: number | null } | HistoryEvent[]
+  >(response);
+  if (Array.isArray(payload)) {
+    return { events: payload, nextAfterSeq: null };
+  }
+  return {
+    events: payload.events ?? [],
+    nextAfterSeq: payload.next_after_seq ?? null,
+  };
+}
+
+/** A game's complete timeline, and whether the safety bound cut it short. */
+export interface HistoryTimeline {
+  events: HistoryEvent[];
+  /** True when `HISTORY_MAX_EVENTS` stopped the walk before the log ended. */
+  truncated: boolean;
+}
+
+/**
+ * Every event for a game, following the `after_seq` cursor page by page until
+ * the history-service reports the log is exhausted. The endpoint defaults to
+ * only 100 events per request, so a single call shows a fraction of a real
+ * game; the cursor is the API's own answer to that. Mirrors the server-side
+ * precedent in `eval-service`'s `HistoryClient.list_all_events`.
+ */
+export async function listAllHistoryEvents(
+  gameId: string,
+  options?: { pageLimit?: number; maxEvents?: number }
+): Promise<HistoryTimeline> {
+  const pageLimit = options?.pageLimit ?? HISTORY_PAGE_LIMIT;
+  const maxEvents = options?.maxEvents ?? HISTORY_MAX_EVENTS;
+  const events: HistoryEvent[] = [];
+  let afterSeq = 0;
+  for (;;) {
+    const page = await listHistoryEventPage(gameId, {
+      afterSeq,
+      limit: pageLimit,
+    });
+    events.push(...page.events);
+    if (page.nextAfterSeq === null || page.events.length === 0) {
+      return { events, truncated: false };
+    }
+    if (events.length >= maxEvents) {
+      return { events, truncated: true };
+    }
+    afterSeq = page.nextAfterSeq;
+  }
 }
 
 export async function listHistorySnapshots(

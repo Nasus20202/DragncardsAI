@@ -8,6 +8,8 @@ import { HistoryWorkspace } from "@/features/history/components/history-workspac
 HTMLElement.prototype.scrollIntoView = vi.fn();
 
 const listHistoryEvents = vi.fn();
+// Flipped by the truncation test; the loader reports it through `isTruncated`.
+let eventsTruncated = false;
 const listHistorySnapshots = vi.fn();
 const listHistoryGames = vi.fn();
 const fetchDashboardConfig = vi.fn();
@@ -18,6 +20,10 @@ const listEvaluations = vi.fn();
 
 vi.mock("@/features/history/lib/history-api", () => ({
   listHistoryEvents: (...args: unknown[]) => listHistoryEvents(...args),
+  listAllHistoryEvents: async (...args: unknown[]) => ({
+    events: await listHistoryEvents(...args),
+    truncated: eventsTruncated,
+  }),
   listHistorySnapshots: (...args: unknown[]) => listHistorySnapshots(...args),
   listHistoryGames: (...args: unknown[]) => listHistoryGames(...args),
   restoreGame: vi.fn(),
@@ -86,6 +92,7 @@ function stubSources() {
 
 afterEach(() => {
   vi.clearAllMocks();
+  eventsTruncated = false;
 });
 
 describe("HistoryWorkspace responsive layout", () => {
@@ -285,5 +292,29 @@ describe("HistoryWorkspace responsive layout", () => {
     const main = container.querySelector("main") as HTMLElement;
     expect(main.className).toContain("min-w-0");
     expect(main.className).toContain("overflow-hidden");
+  });
+
+  it("says how many events it is showing when the timeline is truncated", async () => {
+    stubSources();
+    listHistoryGames.mockResolvedValue([{ ...GAMES[0], event_count: 4321 }]);
+    eventsTruncated = true;
+    render(<HistoryWorkspace initialGameId="demo-001" />);
+
+    const notice = await screen.findByTestId("history-truncated-notice");
+    // A bound that cuts the timeline must be disclosed against the true total,
+    // never left looking complete.
+    expect(notice).toHaveTextContent(
+      `Showing the first ${EVENTS.length} of 4,321`
+    );
+  });
+
+  it("shows no truncation notice when the whole timeline loaded", async () => {
+    stubSources();
+    render(<HistoryWorkspace initialGameId="demo-001" />);
+    await screen.findByTestId("history-transcript");
+
+    expect(
+      screen.queryByTestId("history-truncated-notice")
+    ).not.toBeInTheDocument();
   });
 });
