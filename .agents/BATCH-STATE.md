@@ -24,10 +24,25 @@ copy.
 | `stanislaw/dra-14-eval-round-boundaries` | DRA-14 | merged as `e7dac43` |
 | `stanislaw/dra-18-eval-errors-surfaced` | DRA-18 | merged as `0cae61e` |
 | `stanislaw/dra-15-skill-into-message` | DRA-15 | merged as `97b7761` |
-| `stanislaw/dra-10-round-scoped-evaluation` | DRA-10 | in progress |
-| `stanislaw/dra-13-export-import-history` | DRA-13 | in progress |
-| `stanislaw/dra-16-agent-personas` | DRA-16 | in progress |
+| `stanislaw/dra-13-export-import-history` | DRA-13 | merged as `f14297e` |
+| `stanislaw/dra-10-round-scoped-evaluation` | DRA-10 | in progress (Urgent) |
+| `stanislaw/dra-16-agent-personas` | DRA-16 | in progress (Urgent) |
 | `stanislaw/dra-17-history-perf-scroll` | DRA-17 | in progress |
+| `stanislaw/dra-5-openui-interactive-answers` | DRA-5 | in progress |
+| `stanislaw/dra-22-readable-tool-calls` | DRA-22 | in progress |
+| `stanislaw/dra-23-otel-history-eval` | DRA-23 | in progress |
+
+Merged branches are deleted, so a `stanislaw/dra-*` branch that still exists is unfinished work.
+Every new worktree needs `git submodule update --init --recursive` before an agent is given it.
+
+Filed from this batch's work and not yet started: **DRA-25** (History UI renders a round verdict's
+`round_span` seq pair as round numbers) and **DRA-27** (the shared dashboard proxy buffers whole
+request bodies via `await request.arrayBuffer()`, defeating history-service's streaming import).
+
+Owner rulings that override an issue's own text: **DRA-10 supersedes DRA-7's payload trimming**
+(below), and **DRA-22 must not add the OpenUI dependency** — DRA-5 owns that evaluation, and if the
+library needs an API key or ships session data to a third party the dependency decision escalates to
+the owner rather than being taken by an agent.
 
 Merged worktrees are removed as soon as their branch lands; the branch is kept.
 
