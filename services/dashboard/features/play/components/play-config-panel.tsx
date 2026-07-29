@@ -19,6 +19,11 @@ import {
 import { isWorking } from "@/features/play/lib/session-draft";
 import { McpSection } from "@/features/play/components/mcp-section";
 import { PersonaPicker } from "@/features/personas/components/persona-picker";
+import { SessionModePicker } from "@/features/play/components/session-mode-picker";
+
+/** Shown in place of the mode picker's own description once the mode is fixed. */
+const MODE_LOCKED_REASON =
+  "A session's mode is fixed once it has run a prompt.";
 
 function ReasoningSection({
   draft,
@@ -114,6 +119,11 @@ interface Props {
   isBusy: boolean;
   canSave: boolean;
   isOpen: boolean;
+  /**
+   * The selected session has already run a job, so the orchestrator will refuse
+   * a mode change. Computed by the workspace, which holds the session.
+   */
+  isModeLocked?: boolean;
   onDraftChange: (next: SessionDraft) => void;
   onClose: () => void;
   onSave: () => void;
@@ -132,6 +142,7 @@ export function PlayConfigPanel({
   isBusy,
   canSave,
   isOpen,
+  isModeLocked = false,
   onDraftChange,
   onClose,
   onSave,
@@ -228,6 +239,15 @@ export function PlayConfigPanel({
               skills={skills}
               selectedSkills={draft.selectedSkills}
               onChange={(next) => set("selectedSkills", next)}
+            />
+
+            <Separator />
+
+            <SessionModePicker
+              value={draft.sessionMode}
+              onChange={(v) => set("sessionMode", v)}
+              disabled={isModeLocked}
+              disabledReason={MODE_LOCKED_REASON}
             />
 
             <Separator />

@@ -96,6 +96,7 @@ async def create_session(
         body.name,
         body.metadata,
         multi_turn_memory=body.multi_turn_memory,
+        session_mode=body.session_mode,
         context_recent_message_limit=body.context_recent_message_limit,
         context_recent_tool_exchange_limit=body.context_recent_tool_exchange_limit,
         default_subagent_persona=body.default_subagent_persona,
@@ -178,7 +179,23 @@ async def update_session(
         changes["metadata_json"] = changes.pop("metadata")
     if "default_subagent_persona" in changes:
         await _require_known_persona(repo, changes["default_subagent_persona"])
-    item = await repo.update_session(session_id, **changes)
+    # The mode is applied through its own repository call because it is the one
+    # session field with a precondition: it is frozen once the session has run a
+    # job. Applying it first means a refused mode change leaves nothing else
+    # half-written.
+    requested_mode = changes.pop("session_mode", None)
+    if requested_mode is not None:
+        moved, refusal = await repo.update_session_mode(
+            session_id, session_mode=requested_mode
+        )
+        if refusal is not None:
+            raise HTTPException(status_code=409, detail=refusal)
+        if moved is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+    if not changes:
+        item = await repo.get_session(session_id)
+    else:
+        item = await repo.update_session(session_id, **changes)
     if item is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"session": serialize_session_detail(item)}
@@ -202,9 +219,20 @@ async def delete_session(
         for job in jobs:
             await repo.request_cancel(job.id)
 
+    # A seat's session is a separate session row, so deleting the orchestrating
+    # session does not cascade into it. Collect the seats before the delete removes
+    # their configuration rows, then delete each seat's own session too — otherwise
+    # deleting a game would leave its players behind with nothing pointing at them.
+    seat_session_ids = [
+        config.agent_session_id
+        for config in await repo.list_player_configs(session_id)
+        if config.agent_session_id
+    ]
     deleted = await repo.delete_session(session_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Session not found")
+    for seat_session_id in seat_session_ids:
+        await repo.delete_session(seat_session_id)
 
 
 @router.post("/sessions/{session_id}/terminate")
@@ -215,6 +243,11 @@ async def terminate_session(
     item = await repo.terminate_session(session_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    # A seat's session outlives its individual jobs, so terminating the
+    # orchestrating session is what ends the table. Nothing is left running.
+    for config in await repo.list_player_configs(session_id):
+        if config.agent_session_id:
+            await repo.terminate_session(config.agent_session_id)
     return {"session": serialize_session_detail(item)}
 
 

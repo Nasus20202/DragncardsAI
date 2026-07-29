@@ -15,6 +15,7 @@ import {
   ProviderResponse,
   SessionDetail,
   SessionJobsResponse,
+  SessionMode,
   SessionSummary,
   SkillDefinitionResponse,
   JsonValue,
@@ -137,6 +138,7 @@ export async function createSession(
     context_recent_message_limit?: number | null;
     context_recent_tool_exchange_limit?: number | null;
     default_subagent_persona?: string | null;
+    session_mode?: SessionMode;
   }
 ): Promise<SessionDetail> {
   return (
@@ -156,6 +158,7 @@ export async function updateSession(
     context_recent_message_limit?: number | null;
     context_recent_tool_exchange_limit?: number | null;
     default_subagent_persona?: string | null;
+    session_mode?: SessionMode;
   }
 ): Promise<SessionDetail> {
   return (

@@ -243,6 +243,7 @@ vi.mock("@/features/play/components/play-config-panel", () => ({
     providers,
     skills,
     isOpen,
+    isModeLocked,
     onDraftChange,
     onSave,
     onTerminate,
@@ -253,6 +254,7 @@ vi.mock("@/features/play/components/play-config-panel", () => ({
     providers: ProviderResponse[];
     skills: SkillDefinitionResponse[];
     isOpen: boolean;
+    isModeLocked?: boolean;
     onDraftChange: (draft: SessionDraft) => void;
     onSave: () => void;
     onTerminate: () => void;
@@ -268,6 +270,8 @@ vi.mock("@/features/play/components/play-config-panel", () => ({
       </div>
       <div data-testid="draft-gateway-options">{draft.gatewayOptionsText}</div>
       <div data-testid="draft-message-limit">{draft.recentMessageLimit}</div>
+      <div data-testid="draft-session-mode">{draft.sessionMode}</div>
+      <div data-testid="mode-locked">{String(Boolean(isModeLocked))}</div>
       <div data-testid="provider-count">{providers.length}</div>
       <div data-testid="skill-count">{skills.length}</div>
       <div data-testid="model-options">{modelOptions.join(",")}</div>
@@ -293,6 +297,12 @@ vi.mock("@/features/play/components/play-config-panel", () => ({
         }
       >
         Enable skill-b in settings
+      </button>
+      <button
+        type="button"
+        onClick={() => onDraftChange({ ...draft, sessionMode: "orchestrated" })}
+      >
+        Choose orchestrated mode
       </button>
       <button type="button" onClick={onSave}>
         Save configuration

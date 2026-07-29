@@ -75,6 +75,15 @@ class AgentSession(Base):
         Integer, nullable=True
     )
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # ``chat`` (the default) is the single-agent flow. ``orchestrated`` runs one
+    # persistent agent per player seat under this session's agent. A column rather
+    # than a metadata key because it gates behaviour, and metadata is writable by
+    # any client through ``PATCH /sessions``. The literal is repeated here rather
+    # than imported from ``runtime.session_modes`` to keep storage independent of
+    # runtime; ``runtime.session_modes.SESSION_MODE_CHAT`` is the same value.
+    session_mode: Mapped[str] = mapped_column(
+        String(16), default="chat", server_default="chat"
+    )
     # The persona a spawn falls back to when the agent names none. ``None`` keeps
     # the pre-persona behaviour: a child copies this session's own configuration.
     default_subagent_persona: Mapped[str | None] = mapped_column(
@@ -176,6 +185,13 @@ class SessionPlayerConfig(Base):
     # ``None`` inherits the orchestrator's enabled skills; a list (including the
     # empty list) overrides them.
     skills_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # The seat's persona, resolved and snapshotted when the seat's session is
+    # created. ``None`` means the seat plays with no persona of its own.
+    persona: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The seat's own persistent agent session in an orchestrated game, ``None``
+    # until the seat is first prompted. Deliberately not a foreign key:
+    # terminating a seat's session must not cascade into the seat's configuration.
+    agent_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime(), default=utc_now, onupdate=utc_now

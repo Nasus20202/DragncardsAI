@@ -52,6 +52,7 @@ const lastUsedAnthropic: SessionDraft = {
   providerOptionsText: '{"foo":"bar"}',
   selectedSkills: ["skill-a", "skill-b"],
   defaultSubagentPersona: "",
+  sessionMode: "chat",
 };
 
 describe("session draft helpers", () => {

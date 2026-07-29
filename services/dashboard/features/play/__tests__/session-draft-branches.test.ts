@@ -86,6 +86,16 @@ describe("session draft helper branches", () => {
     expect(draft.selectedSkills).toEqual(["custom-skill"]);
   });
 
+  it("reads the session's mode, defaulting to chat when it reports none", () => {
+    expect(buildDraftFromSession(config, session).sessionMode).toBe("chat");
+    expect(
+      buildDraftFromSession(config, {
+        ...session,
+        session_mode: "orchestrated",
+      }).sessionMode
+    ).toBe("orchestrated");
+  });
+
   it("treats normalized default MCP urls as the same assignment", () => {
     const draft = buildDraftFromSession(
       {

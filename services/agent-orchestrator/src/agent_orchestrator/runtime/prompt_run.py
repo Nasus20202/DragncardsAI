@@ -935,15 +935,25 @@ class PromptRunService:
             raise InvalidToolInvocationError(tool_name, message) from exc
 
     async def _maybe_terminate_child_session(self, job: Job) -> None:
-        if job.parent_job_id is not None:
-            try:
-                await self._repository.terminate_session(job.session.id)
-            except Exception:
-                logger.exception(
-                    "Failed to terminate child session %s for job %s",
-                    job.session.id,
-                    job.id,
-                )
+        """Terminate a disposable child's session when its job ends.
+
+        A player seat's session is *not* disposable: it is the seat's memory for the
+        length of the game, so a seat prompted again in a later round continues the
+        same session. Seat sessions are terminated with the orchestrating session,
+        or when the seat's configuration is deleted.
+        """
+        if job.parent_job_id is None:
+            return
+        if session_player_id(job.session) is not None:
+            return
+        try:
+            await self._repository.terminate_session(job.session.id)
+        except Exception:
+            logger.exception(
+                "Failed to terminate child session %s for job %s",
+                job.session.id,
+                job.id,
+            )
 
     def format_execution_error(self, exc: Exception) -> str:
         if isinstance(exc, BaseExceptionGroup):

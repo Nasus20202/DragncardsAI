@@ -122,6 +122,7 @@ export function usePlaySessionActions({
           "Recent tool exchange limit"
         ),
         default_subagent_persona: nextDraft.defaultSubagentPersona || null,
+        session_mode: nextDraft.sessionMode,
       });
       const gatewayOptions = applyReasoningToGatewayOptions(
         parseJsonObject(nextDraft.gatewayOptionsText, "Gateway options"),
@@ -202,6 +203,12 @@ export function usePlaySessionActions({
           "Recent tool exchange limit"
         ),
         default_subagent_persona: draft.defaultSubagentPersona || null,
+        // The orchestrator rejects a mode change once the session has run a
+        // job, so the field is sent only when the user actually moved it.
+        // Saving an unrelated setting on a started session must not 409.
+        ...(draft.sessionMode !== (selectedSession.session_mode ?? "chat")
+          ? { session_mode: draft.sessionMode }
+          : {}),
       });
       await setModelConfig(selectedSession.id, {
         provider_id: draft.providerId,

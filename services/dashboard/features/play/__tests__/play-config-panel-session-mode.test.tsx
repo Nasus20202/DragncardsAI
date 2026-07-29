@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,13 +29,20 @@ const draft: SessionDraft = {
   sessionMode: "chat",
 };
 
-function renderPanel(overrides: Partial<SessionDraft> = {}) {
+function renderPanel({
+  overrides = {},
+  isModeLocked = false,
+}: {
+  overrides?: Partial<SessionDraft>;
+  isModeLocked?: boolean;
+} = {}) {
   const onDraftChange = vi.fn();
   render(
     <PlayConfigPanel
       canSave
       draft={{ ...draft, ...overrides }}
       isBusy={false}
+      isModeLocked={isModeLocked}
       isOpen
       mcps={[]}
       modelOptions={["gpt-4o-mini"]}
@@ -58,54 +65,53 @@ beforeEach(() => {
   apiMocks.listPersonas.mockResolvedValue([]);
 });
 
-describe("PlayConfigPanel subagent persona picker", () => {
-  it("is absent when no personas are defined", async () => {
+describe("PlayConfigPanel session mode picker", () => {
+  it("shows chat selected for a default draft", () => {
     renderPanel();
 
-    await waitFor(() => expect(apiMocks.listPersonas).toHaveBeenCalled());
-    expect(
-      screen.queryByTestId("subagent-persona-trigger")
-    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-mode-trigger")).toHaveTextContent(
+      "Chat (single agent)"
+    );
   });
 
-  it("offers the defined personas and reports the choice on the draft", async () => {
-    apiMocks.listPersonas.mockResolvedValue([
-      {
-        name: "rules-lawyer",
-        display_name: null,
-        description: null,
-        system_prompt: "Answer from the rules.",
-        provider_id: null,
-        model_name: null,
-        reasoning: null,
-        skills: null,
-        allowed_tools: null,
-        gateway_options: {},
-        provider_options: {},
-        created_at: "2026-07-28T00:00:00Z",
-        updated_at: "2026-07-28T00:00:00Z",
-      },
-    ]);
-
+  it("reports an orchestrated choice on the draft", async () => {
     const { onDraftChange } = renderPanel();
 
+    await userEvent.click(screen.getByTestId("session-mode-trigger"));
     await userEvent.click(
-      await screen.findByTestId("subagent-persona-trigger")
-    );
-    await userEvent.click(
-      await screen.findByRole("option", { name: "rules-lawyer" })
+      await screen.findByRole("option", {
+        name: "Orchestrated (agent per player)",
+      })
     );
 
     expect(onDraftChange).toHaveBeenCalledWith(
-      expect.objectContaining({ defaultSubagentPersona: "rules-lawyer" })
+      expect.objectContaining({ sessionMode: "orchestrated" })
     );
   });
 
-  it("shows the persona a session is already pinned to", async () => {
-    renderPanel({ defaultSubagentPersona: "rules-lawyer" });
+  it("shows the mode a session is already running in", () => {
+    renderPanel({ overrides: { sessionMode: "orchestrated" } });
 
+    expect(screen.getByTestId("session-mode-trigger")).toHaveTextContent(
+      "Orchestrated (agent per player)"
+    );
+  });
+
+  it("is disabled with the reason once the session has run a prompt", () => {
+    renderPanel({ isModeLocked: true });
+
+    expect(screen.getByTestId("session-mode-trigger")).toBeDisabled();
     expect(
-      await screen.findByTestId("subagent-persona-trigger")
-    ).toHaveTextContent("rules-lawyer");
+      screen.getByText("A session's mode is fixed once it has run a prompt.")
+    ).toBeInTheDocument();
+  });
+
+  it("explains nothing about locking while the mode can still be changed", () => {
+    renderPanel();
+
+    expect(screen.getByTestId("session-mode-trigger")).not.toBeDisabled();
+    expect(
+      screen.queryByText("A session's mode is fixed once it has run a prompt.")
+    ).not.toBeInTheDocument();
   });
 });

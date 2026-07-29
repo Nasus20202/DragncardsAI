@@ -65,6 +65,13 @@ async def set_player_config(
         settings.enabled_provider_ids
     ):
         raise HTTPException(status_code=400, detail="Unsupported provider")
+    if body.persona is not None:
+        # Validated here so an unknown persona is reported to whoever is setting up
+        # the table, not to the orchestrator agent in the middle of a game.
+        if await repo.get_persona(body.persona) is None:
+            raise HTTPException(
+                status_code=400, detail=f"Unknown persona: {body.persona}"
+            )
     if body.skills is not None:
         if len(body.skills) > MAX_PLAYER_SKILLS:
             raise HTTPException(
@@ -91,6 +98,7 @@ async def set_player_config(
         gateway_options=gateway_options,
         provider_options=body.provider_options,
         skills=body.skills,
+        persona=body.persona,
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -103,6 +111,11 @@ async def delete_player_config(
     player_id: str,
     repo: Repository = Depends(get_repository),
 ) -> None:
+    existing = await repo.get_player_config(session_id, player_id)
+    if existing is not None and existing.agent_session_id:
+        # The seat's own session is terminated with the seat, so removing a player
+        # from the table does not leave its agent session running.
+        await repo.terminate_session(existing.agent_session_id)
     removed = await repo.delete_player_config(session_id, player_id)
     if not removed:
         raise HTTPException(

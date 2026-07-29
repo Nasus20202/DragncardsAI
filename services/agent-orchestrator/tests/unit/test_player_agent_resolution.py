@@ -173,7 +173,9 @@ def test_resolved_summary_reports_reasoning_and_skills():
         "provider_id": "openai",
         "model_name": "gpt-4o-mini",
         "reasoning": {"effort": "medium"},
+        "persona": None,
         "skills": ["rules"],
+        "agent_session_id": None,
     }
 
 

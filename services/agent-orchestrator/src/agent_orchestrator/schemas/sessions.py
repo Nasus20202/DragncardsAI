@@ -6,6 +6,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from agent_orchestrator.runtime.session_modes import (
+    SESSION_MODE_CHAT,
+    SESSION_MODE_ORCHESTRATED,
+)
 from agent_orchestrator.schemas.common import PageInfo
 from agent_orchestrator.schemas.jobs import JobSummary, SessionToolResponse
 from agent_orchestrator.schemas.players import PlayerConfigResponse
@@ -19,11 +23,17 @@ MAX_CONVERSATION_CONTEXT_MESSAGES = 2000
 MAX_CONVERSATION_CONTEXT_BYTES = 4_000_000
 CONVERSATION_CONTEXT_ROLES = frozenset({"system", "user", "assistant", "tool"})
 
+# The mode is constrained at the schema boundary so an unknown value is a 422
+# rather than a row that no code path knows how to interpret.
+SessionMode = Literal[SESSION_MODE_CHAT, SESSION_MODE_ORCHESTRATED]
+
 
 class SessionCreateRequest(BaseModel):
     name: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     multi_turn_memory: bool = True
+    # ``chat`` keeps the pre-orchestration single-agent flow, unchanged.
+    session_mode: SessionMode = SESSION_MODE_CHAT
     context_recent_message_limit: int | None = Field(default=None, ge=0)
     context_recent_tool_exchange_limit: int | None = Field(default=None, ge=0)
     # The persona this session's subagents are started from when the agent names
@@ -34,6 +44,9 @@ class SessionCreateRequest(BaseModel):
 class SessionUpdateRequest(BaseModel):
     name: str | None = None
     metadata: dict[str, Any] | None = None
+    # Omitted leaves the mode unchanged. A change is refused once the session has
+    # run a job, because its seats' persistent sessions are recorded against it.
+    session_mode: SessionMode | None = None
     context_recent_message_limit: int | None = Field(default=None, ge=0)
     context_recent_tool_exchange_limit: int | None = Field(default=None, ge=0)
     # Sent as ``null`` to clear the default; omitted to leave it unchanged.
@@ -106,6 +119,7 @@ class SessionSummary(BaseModel):
     id: str
     name: str | None
     status: str
+    session_mode: str
     multi_turn_memory: bool
     context_recent_message_limit: int | None
     context_recent_tool_exchange_limit: int | None

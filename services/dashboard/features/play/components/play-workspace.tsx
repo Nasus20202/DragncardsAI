@@ -90,6 +90,18 @@ export function PlayWorkspace() {
     );
   }
 
+  // The orchestrator fixes a session's mode once it has run a job, so the
+  // picker is locked from the same fact. The sidebar summary's `recent_job` is
+  // refreshed on every prompt submission and is therefore the live answer; the
+  // selected session's own `recent_jobs` covers a session whose summary has not
+  // been refreshed since it last ran.
+  const selectedSummary = sessions.find(
+    (session) => session.id === selectedSessionId
+  );
+  const isModeLocked =
+    (selectedSummary?.recent_job ?? null) !== null ||
+    (selectedSession?.recent_jobs.length ?? 0) > 0;
+
   return (
     <div
       data-testid="play-workspace"
@@ -217,6 +229,7 @@ export function PlayWorkspace() {
         canSave={Boolean(selectedSession)}
         draft={draft}
         isBusy={isBusy}
+        isModeLocked={isModeLocked}
         isOpen={isSettingsOpen}
         mcps={selectedSession?.mcps ?? []}
         modelOptions={modelOptions}

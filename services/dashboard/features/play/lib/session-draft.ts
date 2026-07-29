@@ -142,6 +142,7 @@ export function createDefaultDraft(config: DashboardConfig): SessionDraft {
     providerOptionsText: safeJsonStringify({}),
     selectedSkills: config.defaultSkills,
     defaultSubagentPersona: "",
+    sessionMode: "chat",
   };
 }
 
@@ -292,6 +293,7 @@ export function buildDraftFromSession(
     ),
     selectedSkills: session.skills.map((skill) => skill.skill_name),
     defaultSubagentPersona: session.default_subagent_persona ?? "",
+    sessionMode: session.session_mode ?? "chat",
   };
 }
 
