@@ -575,6 +575,13 @@ interface TranscriptEventProps {
   // Inline per-event actions, only rendered on the focused event.
   onRestore: (targetSeq: number, mode: RestoreMode) => Promise<RestoreOutcome>;
   board: BoardActions;
+  /**
+   * DragnCards frontend base URL — environment config, not board state, which is
+   * why it is its own prop rather than a field on `board`: the board bundle's
+   * consumer never reads it (`BoardView` gets it directly from the workspace),
+   * and only the restore control's "open the new game" link needs it.
+   */
+  frontendUrl?: string;
   // Global expand/collapse pulse — each event syncs its body to this on change.
   expandSignal: ExpandSignal;
   // Reveal pulse — open this event's body or evals when it is the target.
@@ -597,6 +604,7 @@ const TranscriptEvent = memo(function TranscriptEvent({
   onSelect,
   onRestore,
   board,
+  frontendUrl,
   expandSignal,
   reveal,
 }: TranscriptEventProps) {
@@ -759,9 +767,14 @@ const TranscriptEvent = memo(function TranscriptEvent({
                 role="menu"
                 data-testid={`history-event-actions-${event.seq}`}
                 onClick={(e) => e.stopPropagation()}
-                className="absolute right-0 top-full z-30 mt-1 flex w-72 flex-col gap-2 rounded-xl border border-default-200/60 bg-background p-2 shadow-xl"
+                className="absolute right-0 top-full z-30 mt-1 flex w-80 flex-col gap-2 rounded-xl border border-default-200/60 bg-background p-2 shadow-xl"
               >
-                <RestoreControl targetSeq={event.seq} onRestore={onRestore} />
+                {/*
+                  Read-only first, destructive last. All three actions used to sit
+                  in one undifferentiated list, so the cheapest and safest thing a
+                  user usually wants -- just looking at the board -- was below two
+                  controls that change a game.
+                */}
                 <BoardOpenControl
                   gameId={board.gameId}
                   selectedSeq={event.seq}
@@ -769,6 +782,11 @@ const TranscriptEvent = memo(function TranscriptEvent({
                   error={board.error}
                   isOpen={board.isOpen}
                   onOpen={board.onOpen}
+                />
+                <RestoreControl
+                  targetSeq={event.seq}
+                  onRestore={onRestore}
+                  frontendUrl={frontendUrl}
                 />
               </div>
             )}
@@ -855,6 +873,8 @@ export interface HistoryTranscriptProps {
   onSelect: (seq: number) => void;
   onRestore: (targetSeq: number, mode: RestoreMode) => Promise<RestoreOutcome>;
   board: BoardActions;
+  /** DragnCards frontend base URL, for the restore control's new-game link. */
+  frontendUrl?: string;
   // Global expand/collapse pulse from the workspace toolbar (default: collapsed).
   expandSignal?: ExpandSignal;
   // Case-insensitive transcript search query (empty string = no filter).
@@ -869,6 +889,7 @@ export function HistoryTranscript({
   onSelect,
   onRestore,
   board,
+  frontendUrl,
   expandSignal = NO_EXPAND_SIGNAL,
   searchQuery = "",
   reveal = NO_REVEAL,
@@ -1116,6 +1137,7 @@ export function HistoryTranscript({
                     onSelect={onSelect}
                     onRestore={onRestore}
                     board={board}
+                    frontendUrl={frontendUrl}
                     expandSignal={expandSignal}
                     reveal={reveal}
                   />

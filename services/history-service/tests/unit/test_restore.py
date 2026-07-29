@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 
 from history_service.runtime.restore import RestoreError, RestoreService
+from history_service.integrations.game_service import BranchSession
 from history_service.schemas.envelope import EventEnvelope
 
 
@@ -30,17 +32,23 @@ class FakeGameService:
         self.state = {"state": {"mode": "in progress"}}
         self._created_count = 0
         self.replay_error: Exception | None = None
+        self.load_error: Exception | None = None
 
     async def create_session(self, plugin_name, *, ephemeral=False):
         self.created.append(plugin_name)
         self.created_ephemeral.append(ephemeral)
         self._created_count += 1
-        return f"branch-session-{self._created_count}"
+        return BranchSession(
+            session_id=f"branch-session-{self._created_count}",
+            room_slug=f"branch-room-{self._created_count}",
+        )
 
     async def delete_session(self, game_id):
         self.deleted.append(game_id)
 
     async def load_snapshot(self, game_id, snapshot):
+        if self.load_error is not None:
+            raise self.load_error
         self.loaded.append((game_id, snapshot))
         return {"session_id": game_id}
 
@@ -60,11 +68,14 @@ class FakeGameService:
 class FakeOrchestrator:
     def __init__(self):
         self.calls: list[dict] = []
+        self.error: Exception | None = None
 
     async def restore_session(self, *, game_id, conversation_context, mode):
         self.calls.append(
             {"game_id": game_id, "context": conversation_context, "mode": mode}
         )
+        if self.error is not None:
+            raise self.error
         return {"session_id": "orch-session-1"}
 
 
@@ -330,8 +341,14 @@ async def test_restore_in_place_targets_live_session(repository):
 
 
 @pytest.mark.asyncio
-async def test_restore_in_place_without_base_snapshot_rejected(repository):
-    """No snapshot at/<= target: in-place rewind is rejected (no double-apply)."""
+async def test_restore_in_place_without_any_base_rejected(repository):
+    """No full-state base at/<= target: in-place rewind is rejected.
+
+    Neither a snapshot nor a usable game-state event exists here (these events
+    record no ``plugin_name`` and no ``state``), so there is no clean base to
+    reset to and forward replay would double-apply onto the un-rewound live
+    state. Reject rather than corrupt the live session.
+    """
     await _seed_recorded_game(repository)
     game = FakeGameService()
     orch = FakeOrchestrator()
@@ -536,3 +553,229 @@ async def test_restore_defaults_to_non_ephemeral_branch(repository):
     await service.restore("g1", target_seq=4, mode="new")
 
     assert game.created_ephemeral == [False]
+
+
+def _http_error(status_code: int) -> httpx.HTTPStatusError:
+    """An httpx error shaped like a real upstream failure response."""
+    request = httpx.Request("POST", "http://upstream/whatever")
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError(f"{status_code}", request=request, response=response)
+
+
+async def _seed_state_event_game(repository, *, plugin_name="marvel-champions"):
+    """A short game whose game-state event carries a full board and the slug."""
+    await repository.commit_event(
+        _env(
+            "g1",
+            "game-service",
+            0,
+            event_type="state",
+            payload={
+                "status": "in progress",
+                "plugin_name": plugin_name,
+                "state": {"game": {"mode": "in progress", "cardById": {"c1": {}}}},
+            },
+        )
+    )
+    await repository.commit_event(
+        _env(
+            "g1",
+            "agent",
+            1,
+            event_type="move",
+            payload={
+                "intended_action": "play",
+                "conversation_context": [{"role": "user", "content": "hi"}],
+            },
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_in_place_restore_survives_no_active_agent_session(repository):
+    """DRA-26: an in-place rewind must NOT fail because the agent session that
+    played the game is gone.
+
+    The orchestrator answers 404 when no ACTIVE session is bound to the game,
+    which is the normal state for any game being browsed in history. That 404
+    used to propagate: the live game was rewound and the caller was then told the
+    restore had failed, with a bare "404" naming neither service nor cause.
+    """
+    await _seed_state_event_game(repository)
+    game = FakeGameService()
+    orch = FakeOrchestrator()
+    orch.error = _http_error(404)
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=orch
+    )
+
+    result = await service.restore("g1", target_seq=2, mode="in_place")
+
+    # The game-state layer completed against the live session.
+    assert result.game_session_id == "g1"
+    assert result.mode == "in_place"
+    assert game.loaded and game.loaded[0][0] == "g1"
+    # ...and the missing agent session is reported, not raised.
+    assert result.orchestrator_session_id is None
+    assert result.agent_context_restored is False
+    assert result.agent_context_note is not None
+    assert "no active agent session" in result.agent_context_note.lower()
+
+
+@pytest.mark.asyncio
+async def test_in_place_restore_still_fails_on_a_real_orchestrator_error(repository):
+    """Only a 404 is tolerated. A 500 is a genuine fault and must surface."""
+    await _seed_state_event_game(repository)
+    game = FakeGameService()
+    orch = FakeOrchestrator()
+    orch.error = _http_error(500)
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=orch
+    )
+
+    with pytest.raises(RestoreError):
+        await service.restore("g1", target_seq=2, mode="in_place")
+
+
+@pytest.mark.asyncio
+async def test_in_place_restore_uses_a_state_event_base_without_any_snapshot(
+    repository,
+):
+    """DRA-26: in-place no longer requires a periodic snapshot.
+
+    A game-state event embeds a complete board, so it is an equally valid clean
+    base. Requiring a snapshot rejected every game shorter than one snapshot
+    cadence — which is most games a user browses.
+    """
+    await _seed_state_event_game(repository)
+    game = FakeGameService()
+    orch = FakeOrchestrator()
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=orch
+    )
+
+    result = await service.restore("g1", target_seq=1, mode="in_place")
+
+    assert result.game_session_id == "g1"
+    assert result.snapshot_at_seq == 1
+    # The full recorded board was loaded into the live session as the base.
+    assert game.loaded[0][0] == "g1"
+    assert game.loaded[0][1]["game"] == {
+        "mode": "in progress",
+        "cardById": {"c1": {}},
+    }
+
+
+@pytest.mark.asyncio
+async def test_in_place_restore_reports_a_deleted_live_session_clearly(repository):
+    """A 404 loading the base means the live room is gone; say so actionably."""
+    await _seed_state_event_game(repository)
+    game = FakeGameService()
+    game.load_error = _http_error(404)
+    orch = FakeOrchestrator()
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=orch
+    )
+
+    with pytest.raises(RestoreError) as excinfo:
+        await service.restore("g1", target_seq=1, mode="in_place")
+
+    message = str(excinfo.value)
+    assert "no longer exists" in message
+    assert "branchable" in message
+    # Nothing was replayed onto a session that does not exist.
+    assert game.replayed == []
+
+
+@pytest.mark.asyncio
+async def test_branch_restore_returns_the_new_room_slug(repository):
+    """DRA-26/DRA-28: a branch restore's product is a room, so name it.
+
+    Without the slug on the response the caller has to list every live session
+    and search it by id -- an extra round trip and a race with the reaper.
+    """
+    await _seed_state_event_game(repository)
+    game = FakeGameService()
+    orch = FakeOrchestrator()
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=orch
+    )
+
+    result = await service.restore("g1", target_seq=1, mode="new")
+
+    assert result.game_session_id == "branch-session-1"
+    assert result.room_slug == "branch-room-1"
+
+
+@pytest.mark.asyncio
+async def test_in_place_restore_does_not_carry_a_room_slug(repository):
+    """An in-place rewind creates no room, so it reports none."""
+    await _seed_state_event_game(repository)
+    game = FakeGameService()
+    orch = FakeOrchestrator()
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=orch
+    )
+
+    result = await service.restore("g1", target_seq=1, mode="in_place")
+
+    assert result.room_slug is None
+
+
+@pytest.mark.asyncio
+async def test_replay_range_read_is_filtered_to_game_service_events(repository):
+    """DRA-28: the replay range must be narrowed in the database.
+
+    Every game-state payload embeds a whole board, so fetching a range whole and
+    skipping non-game-service rows in Python transferred and parsed megabytes to
+    discard them. Assert the query itself is filtered.
+    """
+    await _seed_state_event_game(repository)
+    seen: list[str | None] = []
+    original = repository.get_events_in_range
+
+    async def spy(game_id, *, low_exclusive, high_inclusive, actor=None):
+        seen.append(actor)
+        return await original(
+            game_id,
+            low_exclusive=low_exclusive,
+            high_inclusive=high_inclusive,
+            actor=actor,
+        )
+
+    repository.get_events_in_range = spy  # type: ignore[method-assign]
+    service = RestoreService(
+        repository=repository,
+        game_service=FakeGameService(),
+        orchestrator=FakeOrchestrator(),
+    )
+
+    await service.restore("g1", target_seq=2, mode="new")
+
+    assert seen == ["game-service"]
+
+
+@pytest.mark.asyncio
+async def test_branch_restore_does_not_swallow_an_orchestrator_404(repository):
+    """The 404 tolerance is gated on mode="in_place", and must stay that way.
+
+    Only the orchestrator's in-place branch looks a session up and can legitimately
+    answer 404; its "new" branch unconditionally creates one and has no 404 path.
+    So a 404 during a branch restore means the endpoint was never reached — a wrong
+    base URL, or a route moved by a version skew. Because this is the only call
+    history-service makes to agent-orchestrator, swallowing it would turn a broken
+    deployment into a reassuring note with no other signal to catch it.
+    """
+    await _seed_state_event_game(repository)
+    game = FakeGameService()
+    orch = FakeOrchestrator()
+    orch.error = _http_error(404)
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=orch
+    )
+
+    with pytest.raises(RestoreError):
+        await service.restore("g1", target_seq=2, mode="new")
+
+    # The half-built branch room was rolled back rather than left orphaned.
+    assert game.deleted == ["branch-session-1"]

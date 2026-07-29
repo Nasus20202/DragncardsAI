@@ -248,3 +248,75 @@ describe("useBoardReconstruction", () => {
     expect(screen.queryByTestId("recon")).not.toBeInTheDocument();
   });
 });
+
+describe("useBoardReconstruction room resolution (DRA-28)", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("uses the room_slug the restore returned instead of listing every session", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/restore")) {
+        return jsonResponse({
+          status: "restored",
+          session_id: "sess-new",
+          room_slug: "room-from-restore",
+        });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Harness gameId="game-1" selectedSeq={5} />);
+    fireEvent.click(screen.getByText("open"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("recon")).toHaveTextContent(
+        "sess-new:room-from-restore"
+      );
+    });
+    // The session list is a fallback for an older service, not the normal path:
+    // it costs a round trip after the restore already finished and races the
+    // ephemeral reaper.
+    const listed = fetchMock.mock.calls.filter(([input]) =>
+      String(input).endsWith("/api/proxy/game/games")
+    );
+    expect(listed).toHaveLength(0);
+  });
+
+  it("falls back to the session list when the restore names no room", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/restore")) {
+        return jsonResponse({ status: "restored", session_id: "sess-new" });
+      }
+      if (url.endsWith("/api/proxy/game/games")) {
+        return jsonResponse({
+          sessions: [
+            {
+              session_id: "sess-new",
+              plugin_name: "marvel",
+              plugin_id: 1,
+              room_slug: "room-xyz",
+              created_at: "2026-06-24T00:00:00Z",
+            },
+          ],
+        });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Harness gameId="game-1" selectedSeq={5} />);
+    fireEvent.click(screen.getByText("open"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("recon")).toHaveTextContent(
+        "sess-new:room-xyz"
+      );
+    });
+  });
+});

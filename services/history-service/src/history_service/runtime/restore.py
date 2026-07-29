@@ -4,7 +4,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from history_service.integrations.game_service import GameServiceClient
+import httpx
+
+from history_service.integrations.game_service import BranchSession, GameServiceClient
 from history_service.integrations.orchestrator import OrchestratorClient
 from history_service.schemas.envelope import StoredEvent, StoredSnapshot
 from history_service.storage.repository import Repository
@@ -20,6 +22,25 @@ class RestoreError(Exception):
     """Raised for client-correctable restore failures (e.g. out-of-range seq)."""
 
 
+@dataclass(frozen=True)
+class _RestoreBase:
+    """The full-state document a restore starts from, and the seq it holds.
+
+    Two kinds of stored record embed a complete board: a periodic snapshot, and
+    any ``game-service`` game-state event (whose payload carries the whole
+    state). State events are dense — one per game action — while snapshots are
+    sparse, so the nearest state event is usually at or just below the target
+    and needs little or no forward replay. Whichever is more recent wins.
+    """
+
+    document: dict[str, Any]
+    # Never None: a snapshot always has a ``snapshot_at_seq`` and an event always
+    # has a ``seq``. Keeping it non-optional matters because the replay range's
+    # lower bound is derived from it, and a nullable seq invites an ``or 0``
+    # fallback that silently means "replay the entire log from the start".
+    seq: int
+
+
 @dataclass
 class RestoreResult:
     game_id: str
@@ -31,6 +52,14 @@ class RestoreResult:
     replayed_event_seqs: list[int] = field(default_factory=list)
     status_verified: bool | None = None
     divergence: str | None = None
+    # The DragnCards room the restored state lives in. Populated for a branch
+    # ("new") restore, whose whole point is a room the caller then has to find.
+    room_slug: str | None = None
+    # Whether the agent-context layer was rebuilt, and why not when it was not.
+    # A game with no agent session to resume is a normal state, not a failure of
+    # the game-state restore, so it is reported rather than raised.
+    agent_context_restored: bool = False
+    agent_context_note: str | None = None
 
 
 class RestoreService:
@@ -95,14 +124,29 @@ class RestoreService:
                 f"(valid range: 1..{latest_seq if latest_seq else 0})"
             )
 
-        # 2. Resolve the nearest snapshot at/<= target up front: it is both the
-        #    game-state base and the source of the ``plugin_name`` needed to
-        #    materialize a fresh branch session.
+        # 2. Resolve the nearest snapshot at/<= target up front: it is one of the
+        #    two possible game-state bases and a source of the ``plugin_name``
+        #    needed to materialize a fresh branch session.
         snapshot = await self._repository.get_latest_snapshot_at_or_before(
             game_id, target_seq
         )
 
-        # 3. Determine the target game-service session.
+        # 3. Resolve the full-state base, for BOTH modes.
+        #
+        # The slug is only *needed* to synthesize a load document from a state
+        # event; a game recording none anywhere simply falls back to its
+        # snapshot. A branch restore additionally cannot materialize a room
+        # without it, and that requirement is enforced where the room is created
+        # rather than here — so the value stays narrowable instead of being cast.
+        plugin_name = await self._resolve_plugin_name(game_id, snapshot)
+        state_event = None
+        if plugin_name:
+            state_event = await self._repository.get_latest_state_event_at_or_before(
+                game_id, target_seq
+            )
+        base = _choose_base(snapshot, state_event, plugin_name)
+
+        # 4. Determine the target game-service session.
         #    - "in_place": rewind the existing live session (same game_id).
         #    - "new": create a fresh real DragnCards session, leaving the
         #      original timeline intact, then load + replay into it.
@@ -111,38 +155,41 @@ class RestoreService:
         # game-service room for this restore so we can roll it back if a later
         # step fails (a half-built branch must not be left behind).
         created_new_session = False
+        room_slug: str | None = None
         if mode == "in_place":
-            # An in-place rewind MUST start from a clean base before forward
-            # replay, otherwise replaying (low_exclusive, target] on top of the
-            # un-rewound live state double-applies every event. The only clean
-            # base we can establish in place is loading a snapshot at/<= target.
-            # Without such a snapshot there is no safe way to rewind in place, so
-            # reject rather than corrupt the live session.
-            if snapshot is None:
+            # An in-place rewind MUST start from a clean full-state base before
+            # forward replay, otherwise replaying (low_exclusive, target] on top
+            # of the un-rewound live state double-applies every event. Either
+            # kind of base establishes that clean base; without one there is no
+            # safe way to rewind in place, so reject rather than corrupt the live
+            # session.
+            if base is None:
                 raise RestoreError(
                     f"cannot rewind game {game_id!r} in place to seq {target_seq}: "
-                    "no snapshot at or before the target exists to establish a "
-                    "clean base (use mode='new', or take a snapshot first)"
+                    "no snapshot and no recorded game state at or before the "
+                    "target exists to establish a clean base (restore into a new "
+                    "branchable session instead)"
                 )
             game_session_id = game_id
         else:
-            # Resolve the plugin slug needed to materialize the branch room.
-            # Prefer the nearest snapshot, then any snapshot, then the earliest
-            # game-state event (which also records plugin_name) — the last
-            # fallback lets short games with no snapshot still be reconstructed.
-            plugin_name = await self._resolve_plugin_name(game_id, snapshot)
+            if plugin_name is None:
+                raise RestoreError(
+                    "cannot create a new branch session: no plugin_name is "
+                    "recorded for this game (no snapshot and no game-state event "
+                    "carries one)"
+                )
             # An ephemeral branch is a non-emitting, server-reaped reconstruction
             # for viewing only; pass the flag through so the game-service tags the
             # session and never emits history for it.
-            game_session_id = await self._create_branch_session(
-                plugin_name, ephemeral=ephemeral
-            )
+            branch = await self._create_branch_session(plugin_name, ephemeral=ephemeral)
+            game_session_id = branch.session_id
+            room_slug = branch.room_slug
             created_new_session = True
 
-        # 4. Apply the restore: load the base snapshot, replay forward, restore
-        #    agent context, then verify. Any failure mid-apply leaves a partial
-        #    state; surface it as a RestoreError (the router maps it to a clean
-        #    4xx instead of an unhandled 500) and, for a freshly created branch,
+        # 5. Apply the restore: load the base, replay forward, restore agent
+        #    context, then verify. Any failure mid-apply leaves a partial state;
+        #    surface it as a RestoreError (the router maps it to a clean 4xx
+        #    instead of an unhandled 500) and, for a freshly created branch,
         #    best-effort delete the room we created so it is not orphaned.
         try:
             return await self._apply_restore(
@@ -150,9 +197,9 @@ class RestoreService:
                 game_session_id=game_session_id,
                 target_seq=target_seq,
                 mode=mode,
-                snapshot=snapshot,
+                base=base,
                 ephemeral=ephemeral,
-                plugin_name=plugin_name if mode != "in_place" else None,
+                room_slug=room_slug,
             )
         except RestoreError:
             if created_new_session:
@@ -173,70 +220,43 @@ class RestoreService:
         game_session_id: str,
         target_seq: int,
         mode: RestoreMode,
-        snapshot: StoredSnapshot | None,
+        base: _RestoreBase | None,
         ephemeral: bool = False,
-        plugin_name: str | None = None,
+        room_slug: str | None = None,
     ) -> RestoreResult:
         # Game-state layer: load the densest available base at/<= target, then
         # forward-replay any mutating actions after it.
         #
-        # Two base sources carry full game state: a periodic snapshot, and any
-        # game-state EVENT (its payload embeds the complete state). Snapshots are
-        # sparse (every N events), while game-state events are dense (one per
-        # game action), so the nearest game-state event is usually at or just
-        # below the target and needs little-to-no replay. Crucially, replay only
-        # covers actions recorded as replayable generic actions — setup actions
+        # Loading a full-state base rather than replaying from the start of the
+        # log is not an optimisation, it is a correctness requirement: replay only
+        # covers actions recorded as replayable generic actions, and setup actions
         # like deck loading are NOT, so replaying from seq 0 yields an empty
-        # board. Loading a full-state base avoids that entirely. We pick whichever
-        # base is more recent. ``plugin_name`` is required to synthesize a load
-        # document from a state event; it is only passed for branch ("new")
-        # restores (in_place keeps the prior snapshot-required semantics).
-        state_event = None
-        if plugin_name:
-            state_event = await self._repository.get_latest_state_event_at_or_before(
-                game_id, target_seq
-            )
-        snapshot_seq = snapshot.snapshot_at_seq if snapshot is not None else None
-        state_event_seq = state_event.seq if state_event is not None else None
-
-        if state_event_seq is not None and (
-            snapshot_seq is None or state_event_seq >= snapshot_seq
-        ):
-            # Load the full state embedded in the nearest game-state event.
-            game = _game_from_state_event(state_event)
-            if game is not None:
-                await self._game_service.load_snapshot(
-                    game_session_id,
-                    {"schema_version": 1, "plugin_name": plugin_name, "game": game},
-                )
-                low_exclusive = state_event_seq
-                snapshot_at_seq: int | None = state_event_seq
-            else:
-                low_exclusive = snapshot_seq or 0
-                snapshot_at_seq = snapshot_seq
-                if snapshot is not None:
-                    await self._game_service.load_snapshot(
-                        game_session_id, snapshot.snapshot
-                    )
-        elif snapshot is not None:
-            await self._game_service.load_snapshot(game_session_id, snapshot.snapshot)
-            low_exclusive = snapshot_seq or 0
-            snapshot_at_seq = snapshot_seq
+        # board.
+        if base is not None:
+            await self._load_base(game_session_id, base.document, mode=mode)
+            low_exclusive = snapshot_at_seq = base.seq
         else:
             # No full-state base available: replay from the start of the log.
-            # (in_place restore without a snapshot is rejected before reaching
-            # here, so this path only applies to mode="new".)
+            # (in_place restore without a base is rejected before reaching here,
+            # so this path only applies to mode="new".)
             low_exclusive = 0
             snapshot_at_seq = None
 
+        # Only ``game-service`` events are ever replayed as mutations, and only
+        # they carry the recorded status the verification step compares against,
+        # so the range is filtered in the database rather than fetched whole and
+        # skipped in Python. On the common path the base IS the last game-service
+        # event at or before the target, so this range is empty and the read costs
+        # nothing — where unfiltered it fetched and parsed every intervening agent
+        # payload (219,476 bytes measured on a 124-event game) only to skip them.
         replay_events = await self._repository.get_events_in_range(
-            game_id, low_exclusive=low_exclusive, high_inclusive=target_seq
+            game_id,
+            low_exclusive=low_exclusive,
+            high_inclusive=target_seq,
+            actor="game-service",
         )
         replayed_seqs: list[int] = []
         for event in replay_events:
-            # Agent decision events are NEVER replayed as game mutations.
-            if event.actor != "game-service":
-                continue
             if not _is_mutating_event(event):
                 continue
             await self._game_service.replay_action(game_session_id, event.payload)
@@ -247,8 +267,11 @@ class RestoreService:
         # (and must not create) an orchestrator agent session: skip this layer.
         if ephemeral:
             orchestrator_session_id = None
+            agent_note: str | None = (
+                "View-only reconstruction: no agent session was created for it."
+            )
         else:
-            orchestrator_session_id = await self._restore_agent_context(
+            orchestrator_session_id, agent_note = await self._restore_agent_context(
                 game_id, game_session_id, target_seq, mode
             )
 
@@ -267,7 +290,35 @@ class RestoreService:
             replayed_event_seqs=replayed_seqs,
             status_verified=status_verified,
             divergence=divergence,
+            room_slug=room_slug,
+            agent_context_restored=orchestrator_session_id is not None,
+            agent_context_note=agent_note,
         )
+
+    async def _load_base(
+        self, game_session_id: str, document: dict[str, Any], *, mode: RestoreMode
+    ) -> None:
+        """Load the full-state base document into the target session.
+
+        This is the first mutating call of a restore, so a failure here has
+        changed nothing yet. For an in-place rewind a ``404`` means the live
+        DragnCards session named by the ``game_id`` no longer exists — the room
+        was deleted, or reaped — and there is therefore nothing to overwrite.
+        That is a normal consequence of browsing an old game's history, so it is
+        reported as an actionable message naming the alternative rather than
+        surfaced as a raw upstream ``404`` that reads like a missing route.
+        """
+        try:
+            await self._game_service.load_snapshot(game_session_id, document)
+        except httpx.HTTPStatusError as exc:
+            if mode == "in_place" and exc.response.status_code == 404:
+                raise RestoreError(
+                    f"cannot rewind game {game_session_id!r} in place: its live "
+                    "game-service session no longer exists, so there is no game "
+                    "state to overwrite. Restore into a new branchable session "
+                    "instead."
+                ) from exc
+            raise
 
     async def _cleanup_branch_session(self, game_session_id: str) -> None:
         """Best-effort deletion of a branch room created for a failed restore."""
@@ -285,17 +336,28 @@ class RestoreService:
 
     async def _resolve_plugin_name(
         self, game_id: str, snapshot: StoredSnapshot | None
-    ) -> str:
-        """Resolve the plugin slug used to materialize a branch session.
+    ) -> str | None:
+        """Resolve the plugin slug for this game, or None when none is recorded.
 
         The slug is recorded both in snapshot documents and on every game-state
-        event payload. Prefer the nearest snapshot, then any snapshot, then the
-        earliest game-state event — so a branchable restore works even when no
+        event payload. Prefer the nearest snapshot, then the earliest snapshot,
+        then the earliest game-state event — so a restore works even when no
         snapshot has been taken yet (short games).
+
+        Returning None is a valid outcome, not an error: an in-place rewind owns
+        its room already and uses the slug solely to synthesize a load document
+        from a state event, so it falls back to its snapshot. Only a branch
+        restore truly requires the slug, and it raises at the point it creates the
+        room.
+
+        The snapshot fallback is read with ``limit=1``. It only ever consumed the
+        first row, and every snapshot row carries a full board document (~245 KB
+        measured), so an unbounded read transferred and JSON-parsed every
+        snapshot of the game to extract one short string.
         """
         plugin_name = _plugin_name_from_snapshot(snapshot)
         if not plugin_name:
-            all_snapshots = await self._repository.list_snapshots(game_id)
+            all_snapshots = await self._repository.list_snapshots(game_id, limit=1)
             plugin_name = _plugin_name_from_snapshot(
                 all_snapshots[0] if all_snapshots else None
             )
@@ -305,23 +367,18 @@ class RestoreService:
                 candidate = earliest.payload.get("plugin_name")
                 if isinstance(candidate, str) and candidate:
                     plugin_name = candidate
-        if not plugin_name:
-            raise RestoreError(
-                "cannot create a new branch session: no plugin_name is recorded "
-                "for this game (no snapshot and no game-state event carries one)"
-            )
-        return plugin_name
+        return plugin_name or None
 
     async def _create_branch_session(
         self, plugin_name: str, *, ephemeral: bool = False
-    ) -> str:
+    ) -> BranchSession:
         """Create a fresh real game-service session for a branchable restore.
 
         A ``mode="new"`` restore must own a real DragnCards room so it can import
-        the snapshot (or replay from the start) without touching the original
+        the base state (or replay from the start) without touching the original
         timeline. We create one via game-service ``POST /games`` using the
-        resolved ``plugin_name`` slug, and return the new session id (the branch
-        ``game_id``).
+        resolved ``plugin_name`` slug, and return the new session together with
+        its room slug (the branch ``game_id`` and the room to open).
 
         When ``ephemeral`` is true the session is created as a non-emitting,
         server-reaped reconstruction (for viewing only).
@@ -334,7 +391,24 @@ class RestoreService:
         game_session_id: str,
         target_seq: int,
         mode: RestoreMode,
-    ) -> str | None:
+    ) -> tuple[str | None, str | None]:
+        """Rebuild the agent's conversation context; report, never raise, a miss.
+
+        Returns the orchestrator session id (or None) and a human-readable note
+        explaining a None.
+
+        This layer is secondary to the game-state restore, and it must not be
+        able to fail one. An in-place rewind asks the orchestrator to *resume* the
+        agent session bound to this game, and the orchestrator answers ``404``
+        when no ACTIVE session is bound to it — which is the normal state for any
+        game being browsed in history, because the session that played it has
+        since been terminated. Treating that as fatal reported a completed rewind
+        as a failed one, and reported it as a bare "404" that named neither the
+        service nor the cause. The game state has already been overwritten by the
+        time this runs and an in-place rewind has nothing to roll back to, so
+        raising here also left the live game rewound while telling the user the
+        restore had failed.
+        """
         agent_event = await self._repository.get_latest_agent_event_at_or_before(
             game_id, target_seq
         )
@@ -344,14 +418,41 @@ class RestoreService:
                 target_seq,
                 game_id,
             )
-            return None
+            return None, (
+                "No agent decision was recorded at or before this moment, so "
+                "there was no agent conversation to rebuild."
+            )
         conversation_context = _extract_conversation_context(agent_event)
-        response = await self._orchestrator.restore_session(
-            game_id=game_session_id,
-            conversation_context=conversation_context,
-            mode=mode,
-        )
-        return response.get("session_id")
+        try:
+            response = await self._orchestrator.restore_session(
+                game_id=game_session_id,
+                conversation_context=conversation_context,
+                mode=mode,
+            )
+        except httpx.HTTPStatusError as exc:
+            # Gated on the mode deliberately. Only the orchestrator's "in place"
+            # branch looks a session up and can legitimately answer 404; its "new"
+            # branch unconditionally creates one and has no 404 path at all, so a
+            # 404 there means the endpoint itself was not reached — a wrong
+            # AGENT_ORCHESTRATOR_BASE_URL, or a version skew that moved the route.
+            # This is the ONLY call history-service makes to agent-orchestrator, so
+            # a misconfigured URL has exactly one observable symptom; swallowing it
+            # would turn a broken deployment into a reassuring note and leave no
+            # other signal to catch it.
+            if mode == "in_place" and exc.response.status_code == 404:
+                logger.info(
+                    "No active agent session bound to game=%s; game state was "
+                    "restored without the agent conversation",
+                    game_session_id,
+                )
+                return None, (
+                    "The game state was restored, but no active agent session is "
+                    "bound to this game, so the agent conversation was not "
+                    "rebuilt. Start an agent on the restored game to continue "
+                    "play."
+                )
+            raise
+        return response.get("session_id"), None
 
     async def _verify_status(
         self,
@@ -377,6 +478,37 @@ class RestoreService:
         )
         logger.warning(divergence)
         return False, divergence
+
+
+def _choose_base(
+    snapshot: StoredSnapshot | None,
+    state_event: StoredEvent | None,
+    plugin_name: str | None,
+) -> _RestoreBase | None:
+    """Pick the densest full-state base at/<= the target, or None if there is none.
+
+    A game-state event wins a tie with a snapshot at the same seq: both describe
+    the same moment, and the event's document is synthesized here rather than
+    read from a second table.
+    """
+    if state_event is not None and (
+        snapshot is None or state_event.seq >= snapshot.snapshot_at_seq
+    ):
+        game = _game_from_state_event(state_event)
+        # ``plugin_name`` is required to synthesize the load document; without it
+        # the state event is unusable and the snapshot (if any) is the only base.
+        if game is not None and plugin_name:
+            return _RestoreBase(
+                document={
+                    "schema_version": 1,
+                    "plugin_name": plugin_name,
+                    "game": game,
+                },
+                seq=state_event.seq,
+            )
+    if snapshot is not None:
+        return _RestoreBase(document=snapshot.snapshot, seq=snapshot.snapshot_at_seq)
+    return None
 
 
 def _game_from_state_event(event: StoredEvent | None) -> dict[str, Any] | None:
@@ -427,8 +559,15 @@ def _extract_conversation_context(event: StoredEvent) -> list[dict[str, Any]]:
 
 
 def _expected_status(events: list[StoredEvent], target_seq: int) -> str | None:
+    """The last recorded status at or before the target, from the replay range.
+
+    The range is already filtered to ``game-service`` in SQL, so this only has to
+    bound by ``seq``. A pure function over a caller-supplied list, so it does not
+    assume that filter — an unfiltered list still yields the same answer, because
+    only ``game-service`` payloads carry ``status``/``mode``.
+    """
     for event in reversed(events):
-        if event.actor != "game-service" or event.seq > target_seq:
+        if event.seq > target_seq:
             continue
         status = event.payload.get("status") or event.payload.get("mode")
         if status:

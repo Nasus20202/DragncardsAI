@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from history_service.config import Settings
+from history_service.integrations.game_service import BranchSession
 from history_service.runtime.app import create_app
 from history_service.runtime.restore import RestoreService
 from history_service.runtime.snapshots import SnapshotService
@@ -39,7 +40,10 @@ class FakeGameService:
 
     async def create_session(self, plugin_name, *, ephemeral=False):
         self.created.append(plugin_name)
-        return f"branch-{len(self.created)}"
+        return BranchSession(
+            session_id=f"branch-{len(self.created)}",
+            room_slug=f"room-{len(self.created)}",
+        )
 
     async def get_snapshot(self, game_id):
         return {

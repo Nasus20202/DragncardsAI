@@ -117,3 +117,14 @@ class RestoreResponse(BaseModel):
     replayed_event_seqs: list[int] = Field(default_factory=list)
     status_verified: bool | None = None
     divergence: str | None = None
+    # The DragnCards room holding the restored state. Populated for a branch
+    # ("new") restore, whose product is a room the caller then has to open — so
+    # the slug travels with the response rather than forcing the caller to list
+    # every live session and search it by id.
+    room_slug: str | None = None
+    # Whether the agent conversation was rebuilt alongside the game state, and a
+    # human-readable reason when it was not. A game with no active agent session
+    # bound to it has none to resume; that is a normal state for a game being
+    # browsed in history, so it is reported here instead of failing the restore.
+    agent_context_restored: bool = False
+    agent_context_note: str | None = None

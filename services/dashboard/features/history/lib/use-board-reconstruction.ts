@@ -155,12 +155,24 @@ export function useBoardReconstruction(
       }
       activeSessionRef.current = sessionId;
 
-      let roomSlug: string | null = null;
-      try {
-        const games = await listGames();
-        roomSlug = games.find((g) => g.id === sessionId)?.room_slug ?? null;
-      } catch {
-        /* room resolution is best-effort; the iframe shows a fallback */
+      // The restore response names the room it just created, so the common path
+      // needs no second call. Falling back to the session list keeps an older
+      // history-service (whose response carries no `room_slug`) working, but it
+      // is the slow path in every sense: an extra browser→proxy→service round
+      // trip after the restore already finished, O(all sessions) work to answer a
+      // by-id question, and a race — if the session is reaped in between, `find`
+      // returns undefined and the board silently renders its fallback.
+      let roomSlug: string | null =
+        typeof outcome.room_slug === "string" && outcome.room_slug
+          ? outcome.room_slug
+          : null;
+      if (roomSlug === null) {
+        try {
+          const games = await listGames();
+          roomSlug = games.find((g) => g.id === sessionId)?.room_slug ?? null;
+        } catch {
+          /* room resolution is best-effort; the iframe shows a fallback */
+        }
       }
 
       setReconstruction({ sessionId, roomSlug, seq: selectedSeq });
