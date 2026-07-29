@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request
 
 from agent_orchestrator.api.deps import get_repository, get_settings
 from agent_orchestrator.config import Settings
+from agent_orchestrator.runtime.live_event_resilience import unwrap_live_event_bus
 from agent_orchestrator.runtime.live_events import (
     InMemoryLiveEventBus,
     ValkeyLiveEventBus,
@@ -42,8 +43,11 @@ async def ready(
     except Exception:
         ready_state["bifrost"] = False
     try:
+        # Unwrapped first: the app hands every consumer a best-effort wrapper
+        # around the real bus, and readiness is asking which concrete bus is
+        # configured, not whether it is wrapped.
         ready_state["valkey"] = isinstance(
-            request.app.state.live_event_bus,
+            unwrap_live_event_bus(request.app.state.live_event_bus),
             (ValkeyLiveEventBus, InMemoryLiveEventBus),
         )
     except Exception:

@@ -8,6 +8,9 @@ from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.runtime.history_emitter import HistoryEventEmitter
+from agent_orchestrator.runtime.live_event_resilience import (
+    best_effort_live_event_bus,
+)
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.prompt_run import (
     PromptRunDependencies,
@@ -38,7 +41,11 @@ class WorkerService:
         self._settings = settings
         self._repository = repository
         self._bifrost_client = bifrost_client
-        self._live_event_bus = live_event_bus
+        # Wrapped here as well as in `create_app`, and the wrap is idempotent.
+        # The guarantee that a Valkey blip cannot fail a job has to hold for the
+        # job runtime however it was assembled, not only for the one path that
+        # goes through the app factory (DRA-42).
+        self._live_event_bus = best_effort_live_event_bus(live_event_bus)
         self._mcp_tool_catalog = mcp_tool_catalog
         self._skill_registry = skill_registry
         self._history_emitter = history_emitter
@@ -51,7 +58,7 @@ class WorkerService:
                 settings=settings,
                 repository=repository,
                 bifrost_client=bifrost_client,
-                live_event_bus=live_event_bus,
+                live_event_bus=self._live_event_bus,
                 mcp_tool_catalog=mcp_tool_catalog,
                 skill_registry=skill_registry,
                 history_emitter=history_emitter,

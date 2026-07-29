@@ -177,7 +177,31 @@ async def require_live_game_service() -> None:
         pytest.skip(f"DragnCards backend not healthy at {DRAGNCARDS_HTTP_URL}")
 
 
-async def build_integration_app(tmp_path: Path):
+class UnreachableLiveEventBus(InMemoryLiveEventBus):
+    """A live bus that fails every publish and every subscriber read.
+
+    Stands in for the reporter's Valkey, which reset connections mid-command.
+    Used to prove the SSE endpoint answers 200 from durable rows instead of the
+    500 DRA-42 reported, and that a job still completes.
+    """
+
+    _RESET = ConnectionResetError(104, "Connection reset by peer")
+
+    async def publish(self, *args, **kwargs):
+        raise self._RESET
+
+    async def subscribe(self, job_id: str):
+        class Subscriber:
+            async def get(self, timeout_seconds: float):
+                raise UnreachableLiveEventBus._RESET
+
+            async def aclose(self) -> None:
+                return None
+
+        return Subscriber()
+
+
+async def build_integration_app(tmp_path: Path, *, live_event_bus=None):
     database_path = tmp_path / "integration.sqlite3"
     engine = create_engine(f"sqlite+aiosqlite:///{database_path}")
     await ensure_schema(engine)
@@ -197,7 +221,7 @@ async def build_integration_app(tmp_path: Path):
         ),
         repository=repository,
         bifrost_client=FakeBifrost(),
-        live_event_bus=InMemoryLiveEventBus(),
+        live_event_bus=live_event_bus or InMemoryLiveEventBus(),
         mcp_client=FakeMcp(),
         skill_registry=SkillRegistry((skill_root,)),
     )
