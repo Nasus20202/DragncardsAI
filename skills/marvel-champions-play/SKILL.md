@@ -55,10 +55,12 @@ Run this every time you are told it is your turn.
 
 - Which player you are (`player1`..`player4`). If you were not told, ask — do **not** guess.
 - Your form: the card in `playerNPlay1` whose `instanceId` starts with your hero's slug.
-  `currentSide: "A"` = hero, `currentSide: "B"` = alter-ego.
-- Your remaining HP = `players.<you>.hitPoints` − that card's `tokens.damage`.
-- Threat on the main scheme = `sharedMainScheme[0].tokens.threat`.
-- Villain remaining HP = `villainHitPoints` − `sharedVillain[0].tokens.damage`.
+  `currentSide: "B"` = alter-ego, `"C"` for a few triple-side cards; **no `currentSide` field
+  means hero** (the default `"A"` is omitted from the wire format).
+- Your remaining HP = `players.<you>.hitPoints` − that card's `tokens.damage` (or 0 if
+  `tokens` is absent — quiet cards do not carry a `tokens` key at all).
+- Threat on the main scheme = `sharedMainScheme[0].tokens.threat` (or 0 if absent).
+- Villain remaining HP = `villainHitPoints` − `sharedVillain[0].tokens.damage` (or 0).
 - What is in `playerNEngaged` (minions and side schemes on you) and `playerNPlay2` (your board).
 - Your hand: the cards in `playerNHand`.
 
@@ -97,14 +99,20 @@ end-of-phase step does that for everyone at once.
 1. **`success` is always `true`.** Every action returns `{"session_id": ..., "success": true, "error": ...}`.
    The *only* failure signal is a non-null `error` string. Read it every time.
 2. **`players.<you>.hitPoints` is your MAXIMUM HP**, not your remaining HP. Damage is
-   `tokens.damage` on your identity card.
+   `tokens.damage` (or 0) on your identity card.
 3. **`players.<you>.handSize` is your target hand size for your current form**, not how
    many cards you hold. It changes when you flip. Count `playerNHand` for the real number.
 4. **`villainHitPoints` is the current stage's total HP**, already scaled for player count.
-   Remaining = that minus `tokens.damage` on the `sharedVillain` card.
-5. **`tokens` is sparse.** A missing key means zero. Never assume the key exists.
-6. **`HIDDEN` entries are merged placeholders.** Their `instanceId` is inherited from the
-   first stack in the group and does **not** identify the hidden card. Never target one.
+   Remaining = that minus `tokens.damage` (or 0) on the `sharedVillain` card.
+5. **`tokens` and the rest of the card are sparse.** A missing token key means zero, and the
+   whole `tokens` field is absent when every counter is zero. `currentSide` and `exhausted`
+   are also absent when they carry their default (`"A"` and `false`). Always read with
+   `card.get("tokens", {}).get("damage", 0)`; a strict `card.tokens["damage"]` will throw on
+   a quiet card.
+6. **`HIDDEN` entries are merged placeholders.** They are exactly `{"name": "HIDDEN",
+   "stackSize": N}` — no `instanceId`, no `id`, nothing else. `stackSize` is the merged count
+   for that zone. There is no card handle to pass to an action; if you need to look at the
+   top of a deck, that is a state read, not a card target.
 7. **Nothing validates costs.** You move resource cards to your discard yourself. If you
    forget, the game happily lets you play a 4-cost card for free — and you have cheated.
 8. **`prev_step` is not undo.** It moves the step marker only. Card moves, tokens, and

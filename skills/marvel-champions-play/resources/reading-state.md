@@ -37,26 +37,45 @@ A player only appears in `players` once they have an alias (a seated user). An a
 
 ## Card shape inside a zone
 
+The card is **compact by default**: a face-up unexhausted card with no tokens looks like:
+
 ```json
 {
   "id": "560cbe53-74a5-5338-bab9-5dbdb8cbfe02",
   "instanceId": "surveillanceteam_-h9iqbfj",
   "name": "Surveillance Team",
-  "currentSide": "A",
-  "exhausted": false,
-  "tokens": { "damage": 2 },
   "stackSize": 1
 }
 ```
 
+`currentSide`, `exhausted`, and `tokens` are **omitted** when they carry the default value
+(`"A"`, `false`, and "all counters at zero" respectively). The same card with one damage
+token and an exhaust looks like:
+
+```json
+{
+  "id": "560cbe53-74a5-5338-bab9-5dbdb8cbfe02",
+  "instanceId": "surveillanceteam_-h9iqbfj",
+  "name": "Surveillance Team",
+  "exhausted": true,
+  "tokens": { "damage": 1 },
+  "stackSize": 1
+}
+```
+
+**Treat absent fields as their default.** `card.get("currentSide", "A")`,
+`card.get("exhausted", False)`, `card.get("tokens", {}).get("damage", 0)`. Do **not** read
+`card["currentSide"]` / `card.tokens["damage"]` directly — a quiet card with no `tokens`
+key will throw.
+
 | Field | Use |
 | --- | --- |
-| `id` | The catalog `database_id`. Feed this to card lookup to get cost/stats/text. `"Unknown"` on hidden entries. |
+| `id` | The catalog `database_id`. Feed this to card lookup to get cost/stats/text. |
 | `instanceId` | **The handle for every action.** Format is `<slugified-name>_<suffix>`; readable, but never construct one — always copy it from state. |
 | `name` | Name of the *currently visible side*. `"HIDDEN"` means a merged placeholder. |
-| `currentSide` | `"A"` or `"B"` (a few cards have `"C"`). For identities: `A` = hero, `B` = alter-ego. |
-| `exhausted` | `true` when the card is turned sideways and cannot act again this round. |
-| `tokens` | **Sparse.** A missing key means zero. Keys: `damage`, `threat`, `generic`, `acceleration`, `confused`, `stunned`, `tough`. |
+| `currentSide` | `"A"` or `"B"` (a few cards have `"C"`). For identities: `A` = hero, `B` = alter-ego. **Absent on side A**; treat absence as `"A"`. |
+| `exhausted` | `true` when the card is turned sideways and cannot act again this round. **Absent when ready**; treat absence as `false`. |
+| `tokens` | **Sparse on two axes**: missing keys mean zero, and the whole field is absent when every counter is zero. Keys: `damage`, `threat`, `generic`, `acceleration`, `confused`, `stunned`, `tough`. |
 | `stackSize` | Number of cards in this stack, including cards under the top one. For a deck this is the deck size. |
 
 Only the **top card of each stack** appears. Attachments and upgrades tucked under a card
@@ -68,14 +87,13 @@ hero you will not see it listed separately.
 Facedown cards and encounter/player card backs are collapsed into a single entry per zone:
 
 ```json
-{ "id": "Unknown", "instanceId": "crowdcontrol_bczh-m0s", "name": "HIDDEN",
-  "currentSide": "B", "exhausted": false, "tokens": {}, "stackSize": 38 }
+{ "name": "HIDDEN", "stackSize": 38 }
 ```
 
 - `stackSize` is the **total** hidden count in that zone — useful (deck size, boost count).
-- `instanceId` is inherited from the first stack in the group and is **not** the id of any
-  particular hidden card. **Never pass a `HIDDEN` entry's `instanceId` to an action.**
-- `id` is always `"Unknown"`.
+- A `HIDDEN` entry has **only** `name` and `stackSize`. There is no `instanceId` and no
+  `id` to pass to an action; doing so would address an arbitrary card in the merged group
+  and is always wrong.
 
 A zone can contain both real entries and one merged `HIDDEN` entry at once — for example
 `playerNEngaged` holding a face-up side scheme plus a facedown boost card.
