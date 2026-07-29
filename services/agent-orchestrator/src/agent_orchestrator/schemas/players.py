@@ -28,6 +28,10 @@ class PlayerConfigRequest(BaseModel):
     provider_id: str | None = None
     model_name: str | None = Field(default=None, max_length=255)
     reasoning: PlayerReasoningConfig | None = None
+    # The seat's persona, validated when the seat is configured so an unknown name
+    # is reported to whoever is setting up the table, not to the orchestrator
+    # mid-game. Captured onto the seat's session when that session is created.
+    persona: str | None = Field(default=None, max_length=64)
     # ``None`` inherits the session's enabled skills; a list overrides them.
     skills: list[str] | None = Field(default=None, max_length=MAX_PLAYER_SKILLS)
     gateway_options: dict[str, Any] = Field(default_factory=dict)
@@ -40,7 +44,11 @@ class PlayerConfigResponse(BaseModel):
     provider_id: str | None
     model_name: str | None
     reasoning: dict[str, Any] | None
+    persona: str | None
     skills: list[str] | None
+    # The seat's own persistent agent session, ``None`` until the seat is first
+    # prompted. Reading this session is how a user reads the seat's context.
+    agent_session_id: str | None
     gateway_options: dict[str, Any]
     provider_options: dict[str, Any]
     created_at: datetime

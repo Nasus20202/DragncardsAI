@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import delete, func, select, update
 
 from agent_orchestrator.repositories.base import utc_now
+from agent_orchestrator.runtime.session_modes import SESSION_MODE_CHAT
 from agent_orchestrator.storage.models import (
     AgentSession,
     CompactionRecord,
@@ -62,6 +63,7 @@ class SessionRepositoryMixin:
         metadata_json: dict[str, Any] | None,
         *,
         multi_turn_memory: bool = True,
+        session_mode: str = SESSION_MODE_CHAT,
         context_recent_message_limit: int | None = None,
         context_recent_tool_exchange_limit: int | None = None,
         default_subagent_persona: str | None = None,
@@ -71,6 +73,7 @@ class SessionRepositoryMixin:
                 name=name,
                 metadata_json=metadata_json or {},
                 multi_turn_memory=multi_turn_memory,
+                session_mode=session_mode,
                 context_recent_message_limit=context_recent_message_limit,
                 context_recent_tool_exchange_limit=context_recent_tool_exchange_limit,
                 default_subagent_persona=default_subagent_persona,
@@ -213,6 +216,41 @@ class SessionRepositoryMixin:
             item.multi_turn_memory = multi_turn_memory
             item.updated_at = utc_now()
         return await self.get_session(session_id)
+
+    async def update_session_mode(
+        self, session_id: str, *, session_mode: str
+    ) -> tuple[AgentSession | None, str | None]:
+        """Change a session's mode, refusing once the session has run a job.
+
+        Returns ``(session, None)`` on success and ``(None, reason)`` when the
+        change is refused, so the router can answer 409 with the reason rather
+        than re-deriving it. Setting the mode to the value it already holds is a
+        no-op and is always allowed, so a client that echoes the current mode back
+        on an unrelated save is never refused.
+
+        The refusal is not a policy choice: an orchestrated session's seats own
+        persistent sessions recorded in ``session_player_configs``. Leaving
+        orchestrated mode abandons them, and entering it would begin seat-scoping
+        a conversation whose agent holds no seat.
+        """
+        async with self._session_factory() as session, session.begin():
+            item = await session.get(AgentSession, session_id)
+            if item is None:
+                return None, None
+            if item.session_mode == session_mode:
+                return await self.get_session(session_id), None
+            job_count = await session.scalar(
+                select(func.count())
+                .select_from(Job)
+                .where(Job.session_id == session_id)
+            )
+            if job_count:
+                return None, (
+                    "A session's mode cannot change once it has run a prompt."
+                )
+            item.session_mode = session_mode
+            item.updated_at = utc_now()
+        return await self.get_session(session_id), None
 
     async def terminate_session(self, session_id: str) -> AgentSession | None:
         async with self._session_factory() as session, session.begin():

@@ -4,6 +4,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import {
   baseConfig,
   getApi,
+  job,
   renderPlayWorkspace,
   resetPlayWorkspaceEnvironment,
   sessionDetail,
@@ -59,6 +60,7 @@ describe("PlayWorkspace configuration", () => {
         context_recent_message_limit: null,
         context_recent_tool_exchange_limit: null,
         default_subagent_persona: null,
+        session_mode: "chat",
       })
     );
     await waitFor(() =>
@@ -213,6 +215,98 @@ describe("PlayWorkspace configuration", () => {
         "session-1",
         expect.objectContaining({ default_subagent_persona: null })
       )
+    );
+  });
+
+  it("creates a session in the mode the draft selects", async () => {
+    api.listSessions
+      .mockResolvedValueOnce([sessionSummary])
+      .mockResolvedValueOnce([
+        { ...sessionSummary, id: "session-2", name: "Created" },
+      ]);
+
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("draft-session-mode")).toHaveTextContent("chat")
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /choose orchestrated mode/i })
+    );
+    fireEvent.click(screen.getByRole("button", { name: /create session/i }));
+
+    await waitFor(() =>
+      expect(api.createSession).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ session_mode: "orchestrated" })
+      )
+    );
+  });
+
+  it("omits the session mode from a save that did not change it", async () => {
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /save configuration/i })
+    );
+
+    await waitFor(() => expect(api.updateSession).toHaveBeenCalled());
+    expect(api.updateSession.mock.calls[0][1]).not.toHaveProperty(
+      "session_mode"
+    );
+  });
+
+  it("sends the session mode on a save that changes it", async () => {
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /choose orchestrated mode/i })
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /save configuration/i })
+    );
+
+    await waitFor(() =>
+      expect(api.updateSession).toHaveBeenCalledWith(
+        "session-1",
+        expect.objectContaining({ session_mode: "orchestrated" })
+      )
+    );
+  });
+
+  it("leaves the mode changeable on a session that has never run a job", async () => {
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
+    );
+
+    expect(screen.getByTestId("mode-locked")).toHaveTextContent("false");
+  });
+
+  it("locks the mode once the session reports a job", async () => {
+    api.listSessions.mockResolvedValue([
+      { ...sessionSummary, recent_job: job },
+    ]);
+
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("mode-locked")).toHaveTextContent("true")
     );
   });
 

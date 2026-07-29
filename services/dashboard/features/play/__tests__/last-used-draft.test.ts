@@ -19,6 +19,7 @@ const draft: SessionDraft = {
   providerOptionsText: '{"foo":"bar"}',
   selectedSkills: ["skill-a", "skill-b"],
   defaultSubagentPersona: "rules-lawyer",
+  sessionMode: "chat",
 };
 
 function installStorage() {
@@ -89,6 +90,20 @@ describe("last-used draft storage", () => {
     store.set(STORAGE_KEY, JSON.stringify(payload));
 
     expect(readLastUsedDraft()).toBeNull();
+  });
+
+  it("accepts a draft stored before session modes existed", () => {
+    const withoutMode: Record<string, unknown> = { ...draft };
+    delete withoutMode.sessionMode;
+    store.set(STORAGE_KEY, JSON.stringify(withoutMode));
+
+    expect(readLastUsedDraft()?.sessionMode).toBe("chat");
+  });
+
+  it("falls back to chat for a stored mode it does not know", () => {
+    store.set(STORAGE_KEY, JSON.stringify({ ...draft, sessionMode: "swarm" }));
+
+    expect(readLastUsedDraft()?.sessionMode).toBe("chat");
   });
 
   it("survives storage that refuses to be written", () => {

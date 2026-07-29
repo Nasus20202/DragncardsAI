@@ -187,6 +187,32 @@ Use these to populate selection UIs before a session is configured.
 
 Use these to create, inspect, update, and terminate agent sessions.
 
+A session runs in one of two **modes**, recorded on the session as `session_mode`:
+
+- `chat` (the default) — one agent talks to the user and spawns memoryless
+  subagents on demand. This is the original flow and is unchanged.
+- `orchestrated` — the session's agent coordinates a full multi-player game and
+  prompts one **persistent** agent per player seat. Each seat's session keeps its
+  context for the length of the game, so a seat prompted in a later round still
+  knows what it drew, played, and agreed with other seats.
+
+`POST /sessions` accepts `session_mode`; `PATCH /sessions/{session_id}` accepts it
+too, but a change is refused with **409** once the session has run a job, because an
+orchestrated session's seats own persistent sessions recorded against them.
+
+In orchestrated mode a seat's session is created the first time the seat is
+prompted (its id is reported as `agent_session_id` on the seat, which is how a user
+reads that player's own context), is *not* terminated when one of its jobs ends, and
+is terminated when the seat is deleted or the orchestrating session is terminated.
+A seat may also name a `persona`; it is validated when the seat is configured and
+snapshotted onto the seat's session when that session is created, so editing the
+persona mid-game never changes a seat already playing.
+
+A player agent's output reaches the orchestrator only inside a server-built
+`player_report` envelope: the seat id and job status are fields the server sets from
+the seat's own session, and the seat's text sits in one delimited block labelled as
+untrusted data. Player text never enters the orchestrator's system prompt.
+
 - `GET /sessions`
 - `POST /sessions`
 - `GET /sessions/{session_id}`

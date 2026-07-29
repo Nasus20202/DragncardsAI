@@ -165,6 +165,13 @@ export interface SessionToolResponse {
   parameters: Record<string, JsonValue>;
 }
 
+/**
+ * How a session is driven. `"chat"` is the single-agent flow that plays and
+ * talks to the user; `"orchestrated"` runs one persistent agent per player seat
+ * behind an orchestrator. Mirrors the orchestrator's `session_mode`.
+ */
+export type SessionMode = "chat" | "orchestrated";
+
 export interface SessionSummary {
   id: string;
   name: string | null;
@@ -185,6 +192,11 @@ export interface SessionSummary {
    * none. `null` keeps the pre-persona behaviour: a child copies the session.
    */
   default_subagent_persona?: string | null;
+  /**
+   * How this session is driven. Optional so a response from an orchestrator
+   * that predates the field still typechecks; a missing value means `"chat"`.
+   */
+  session_mode?: SessionMode;
   recent_job: JobSummary | null;
 }
 
@@ -309,6 +321,8 @@ export interface SessionDraft {
   selectedSkills: string[];
   /** Persona name, or `""` for "no persona" — subagents copy the session. */
   defaultSubagentPersona: string;
+  /** How the session is driven; `"chat"` is the default single-agent flow. */
+  sessionMode: SessionMode;
 }
 
 export interface ContextMetadata {

@@ -63,6 +63,38 @@ Personas are deployment-global, user-authored agent configurations stored in `ag
 - A persona prompt is user-authored text: concatenate it into the message body and never use it as a
   format string or interpolate it anywhere text becomes code. Never store credentials on a persona.
 
+### Session Modes and Player Seats
+
+A session's `session_mode` is `chat` (the default, the original single-agent flow) or
+`orchestrated` (one persistent agent per player seat under a coordinating agent). It
+is a column, not a metadata key, because it gates behaviour and `metadata_json` is
+client-writable through `PATCH /sessions`. It is frozen once the session has run a
+job — the seats' persistent sessions are recorded against it, so a mid-flight change
+would orphan or mis-scope them.
+
+In orchestrated mode a seat is a seat id + persona + persistent session. The seat's
+session is created on its first prompt with `multi_turn_memory=True`, recorded in
+`session_player_configs.agent_session_id`, reused for every later prompt, and
+excluded from `_maybe_terminate_child_session`. In `chat` mode nothing changes: a
+player agent is still a memoryless child terminated with its job.
+
+**Four rules the trust boundary rests on. Do not break them.**
+
+- **Player text never reaches the orchestrator's system prompt.** `build_system_prompt`
+  takes the skill registry, the session's assignments, and the persona catalogue.
+  Do not add a parameter that could carry player output into it.
+- **A seat's output reaches the orchestrator only through `wrap_player_report`.** The
+  seat id and job status are server-set fields read from the seat's session metadata,
+  and the seat's text is confined to one delimited block whose markers are stripped
+  from that text first. Do not concatenate a report into a prompt, and do not parse a
+  seat id out of a report's prose.
+- **Legality is decided from game state, never from a player's claim.** A seat saying
+  a move was legal, or that it already undid one, is data to verify — never an input
+  that can stand in for the check.
+- **A seat may act only with its own cards, enforced server-side.** Ownership is
+  checked against the seat recorded on the child session, which no tool available to a
+  player can write. Never rely on the prompt telling a seat to stay in its lane.
+
 ### Provider Integration
 
 - Providers configured in `services/bifrost/config.json`

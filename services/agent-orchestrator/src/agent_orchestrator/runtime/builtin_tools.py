@@ -25,7 +25,10 @@ from agent_orchestrator.runtime.player_agents import (
     ResolvedPlayerAgentConfig,
     resolve_player_agent_config,
     resolve_roster,
+    session_player_id,
+    wrap_player_report,
 )
+from agent_orchestrator.runtime.session_modes import is_orchestrated
 from agent_orchestrator.runtime.skills import SkillRegistry, enabled_skill_assignments
 from agent_orchestrator.storage.repository import Repository
 
@@ -438,6 +441,9 @@ async def _launch_child_agent(
     schedule_child_fn: Callable[[str], Any] | None,
     monitor: Callable[..., Any],
     event_payload_extra: dict[str, Any] | None = None,
+    multi_turn_memory: bool = False,
+    existing_child_session: Any | None = None,
+    on_child_session_created: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
     """Create, announce, monitor, and schedule a child agent session.
 
@@ -447,12 +453,39 @@ async def _launch_child_agent(
 
     MCP servers are always inherited: seats differ in how they think, not in
     which table they are sitting at.
+
+    ``multi_turn_memory`` defaults to ``False``, which is the memoryless subagent
+    every caller wanted before orchestrated mode existed. A player seat in an
+    orchestrated game passes ``True`` and its session is then an ordinary
+    multi-turn session: prior turns replay, auto-compaction applies, and nothing
+    special is built for it.
+
+    ``existing_child_session`` short-circuits creation and configuration entirely:
+    a seat that already owns a session is prompted again on that same session, so
+    its configuration is the one captured when the seat was created and is not
+    re-derived (which is what makes a persona snapshot hold for a whole game).
     """
+    if existing_child_session is not None:
+        return await _enqueue_child_job(
+            repository=repository,
+            live_event_bus=live_event_bus,
+            session_id=session_id,
+            job_id=job_id,
+            child_session_id=existing_child_session.id,
+            prompt=prompt,
+            name=name,
+            schedule_child_fn=schedule_child_fn,
+            monitor=monitor,
+            event_payload_extra=event_payload_extra,
+        )
+
     child_session = await repository.create_session(
         name,
         child_metadata,
-        multi_turn_memory=False,
+        multi_turn_memory=multi_turn_memory,
     )
+    if on_child_session_created is not None:
+        await on_child_session_created(child_session.id)
 
     if model_config is not None:
         # A resolved config with neither provider nor model means the parent had
@@ -493,8 +526,41 @@ async def _launch_child_agent(
                 child_session.id, em.mcp_name, em.enabled
             )
 
+    return await _enqueue_child_job(
+        repository=repository,
+        live_event_bus=live_event_bus,
+        session_id=session_id,
+        job_id=job_id,
+        child_session_id=child_session.id,
+        prompt=prompt,
+        name=name,
+        schedule_child_fn=schedule_child_fn,
+        monitor=monitor,
+        event_payload_extra=event_payload_extra,
+    )
+
+
+async def _enqueue_child_job(
+    *,
+    repository: Repository,
+    live_event_bus: LiveEventBus,
+    session_id: str,
+    job_id: str,
+    child_session_id: str,
+    prompt: str,
+    name: str,
+    schedule_child_fn: Callable[[str], Any] | None,
+    monitor: Callable[..., Any],
+    event_payload_extra: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Enqueue, announce, monitor, and schedule one job on a child session.
+
+    Split out of :func:`_launch_child_agent` so a seat that already owns a session
+    takes exactly this path and nothing else: no second session, no re-applied
+    model config, no re-read persona.
+    """
     child_job = await repository.enqueue_prompt_job(
-        child_session.id,
+        child_session_id,
         prompt=prompt,
         metadata_json={"parent_job_id": job_id, **(event_payload_extra or {})},
         max_attempts=1,
@@ -507,7 +573,7 @@ async def _launch_child_agent(
 
     started_payload: dict[str, Any] = {
         "child_job_id": child_job_id,
-        "child_session_id": child_session.id,
+        "child_session_id": child_session_id,
         "name": name,
         **(event_payload_extra or {}),
     }
@@ -518,7 +584,7 @@ async def _launch_child_agent(
 
     # Launch background monitor BEFORE scheduling so we don't miss events.
     asyncio.create_task(
-        monitor(child_job_id, child_session.id, name, event_payload_extra or {}),
+        monitor(child_job_id, child_session_id, name, event_payload_extra or {}),
         name=f"monitor-child-{child_job_id}",
     )
 
@@ -768,6 +834,26 @@ def make_prompt_player_agent_handler(
 
         resolved = resolve_player_agent_config(parent_session, player_config)
         name = resolved.display_name or player_id
+        orchestrated = is_orchestrated(parent_session)
+
+        # A seat in an orchestrated game is a durable agent: the session created
+        # for it the first time it plays is the session it plays every later round
+        # on, so its own prior turns replay into each invocation. In chat mode the
+        # pre-orchestration behaviour is kept exactly — a memoryless child that is
+        # terminated when its job ends.
+        existing_child_session = None
+        if orchestrated and resolved.agent_session_id:
+            existing_child_session = await repository.get_session(
+                resolved.agent_session_id
+            )
+            if existing_child_session is None:
+                logger.warning(
+                    "Seat %s of session %s pointed at missing session %s; "
+                    "creating a fresh one",
+                    player_id,
+                    session_id,
+                    resolved.agent_session_id,
+                )
 
         child_metadata: dict[str, Any] = {
             SESSION_PLAYER_ID_KEY: player_id,
@@ -780,6 +866,41 @@ def make_prompt_player_agent_handler(
         if isinstance(game_id, str) and game_id:
             child_metadata[SESSION_GAME_ID_KEY] = game_id
 
+        skills: list[str] | None = resolved.skills
+        model_config: Any = resolved
+        if orchestrated and resolved.persona and existing_child_session is None:
+            # The seat's persona is resolved and snapshotted once, when the seat's
+            # session is created. Nothing re-reads the persona table afterwards, so
+            # editing it mid-game cannot change a seat that is already playing.
+            persona_row = await repository.get_persona(resolved.persona)
+            if persona_row is None:
+                return _text_result(
+                    f"Seat '{player_id}' names persona '{resolved.persona}', which "
+                    "no longer exists. Ask the user to reconfigure the seat.",
+                    is_error=True,
+                )
+            persona = resolve_persona(parent_session, persona_row)
+            child_metadata[SESSION_PERSONA_KEY] = persona.as_snapshot()
+            # The seat's own provider/model still wins: a persona describes how a
+            # seat thinks, and the seat's configuration says what it thinks with.
+            if not (resolved.provider_id and resolved.model_name):
+                model_config = persona
+            if player_config.skills_json is None and persona.skills is not None:
+                skills = persona.skills
+
+        async def record_seat_session(child_session_id: str) -> None:
+            recorded = await repository.set_player_agent_session(
+                session_id, player_id, child_session_id
+            )
+            if not recorded:
+                logger.warning(
+                    "Seat %s of session %s already had a session recorded; "
+                    "session %s will not be reused",
+                    player_id,
+                    session_id,
+                    child_session_id,
+                )
+
         return await _launch_child_agent(
             repository=repository,
             live_event_bus=live_event_bus,
@@ -789,11 +910,14 @@ def make_prompt_player_agent_handler(
             prompt=prompt,
             name=name,
             child_metadata=child_metadata,
-            model_config=resolved,
-            skills=resolved.skills,
+            model_config=model_config,
+            skills=skills,
             schedule_child_fn=schedule_child_fn,
             monitor=monitor,
             event_payload_extra={"player_id": player_id},
+            multi_turn_memory=orchestrated,
+            existing_child_session=existing_child_session,
+            on_child_session_created=(record_seat_session if orchestrated else None),
         )
 
     return handle
@@ -847,12 +971,45 @@ def make_wait_for_subagent_handler(
             )
 
         if outcome.has_result:
+            seat = await _child_seat_id(repository, child_job_id)
+            if seat is not None:
+                # A player seat's words reach the orchestrator only inside this
+                # envelope: seat id and status as fields the server sets, the
+                # seat's own text in one delimited block labelled untrusted. See
+                # ``wrap_player_report``.
+                return _text_result(
+                    wrap_player_report(
+                        player_id=seat,
+                        job_status="completed",
+                        text=outcome.text,
+                    )
+                )
             return _text_result(outcome.text or "Subagent completed.")
         return _text_result(
             describe_child_outcome(child_job_id, outcome), is_error=True
         )
 
     return handle
+
+
+async def _child_seat_id(repository: Repository, child_job_id: str) -> str | None:
+    """The seat a finished child was playing, or ``None`` if it held no seat.
+
+    Read from the child *session's* metadata, which the orchestrator wrote when the
+    seat was created and which no tool available to a player agent can change. That
+    is what makes the seat id in a report envelope unforgeable by the seat.
+    """
+    try:
+        child_job = await repository.get_job(child_job_id)
+        if child_job is None:
+            return None
+        child_session = await repository.get_session(child_job.session_id)
+        if child_session is None:
+            return None
+        return session_player_id(child_session)
+    except Exception:
+        logger.exception("Failed to resolve the seat for child job %s", child_job_id)
+        return None
 
 
 async def _announce_wait_timeout(

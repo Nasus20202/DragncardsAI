@@ -74,6 +74,13 @@ function parseDraft(raw: unknown): SessionDraft | null {
       typeof candidate.defaultSubagentPersona === "string"
         ? candidate.defaultSubagentPersona
         : "",
+    // Likewise tolerated: a draft written before session modes existed — or one
+    // carrying a mode this build does not know — falls back to the default.
+    sessionMode:
+      candidate.sessionMode === "chat" ||
+      candidate.sessionMode === "orchestrated"
+        ? candidate.sessionMode
+        : "chat",
   };
 }
 
