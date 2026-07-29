@@ -1,9 +1,19 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useState } from "react";
-import { Tooltip } from "@heroui/react";
+import { ToggleButton, ToggleButtonGroup, Tooltip } from "@heroui/react";
 import { SubagentEntry } from "@/features/play/lib/play-session-events";
+import { redactSecrets } from "@/features/play/lib/tool-call-presentation";
+import {
+  DEFAULT_SUBAGENT_STATUS_FILTER,
+  SUBAGENT_STATUS_FILTERS,
+  SubagentStatusFilter,
+  attentionSubagents,
+  countSubagentsByStatus,
+  filterSubagentsByStatus,
+  isSubagentStatusFilter,
+} from "@/features/play/lib/subagent-filter";
 
 interface Props {
   entries: SubagentEntry[];
@@ -118,6 +128,13 @@ function EntryRow({
   entry: SubagentEntry;
   onSelect: (e: SubagentEntry) => void;
 }) {
+  // A generated name is longer than the row, so the full one is available as a
+  // title. The short job id remains the fallback for an entry that has no name.
+  //
+  // Redacted for the same reason the tool cards redact: a name recorded before
+  // the orchestrator generated them is a raw slice of a model-written prompt, and
+  // those are replayed from storage indefinitely.
+  const label = redactSecrets(entry.name ?? entry.childJobId.slice(0, 8));
   const button = (
     <button
       type="button"
@@ -130,8 +147,8 @@ function EntryRow({
       ].join(" ")}
     >
       <StatusIcon status={entry.status} />
-      <span className="max-w-[140px] truncate text-default-600">
-        {entry.name ?? entry.childJobId.slice(0, 8)}
+      <span className="max-w-[180px] truncate text-default-600" title={label}>
+        {label}
       </span>
     </button>
   );
@@ -141,7 +158,7 @@ function EntryRow({
       <Tooltip delay={200}>
         <Tooltip.Trigger>{button}</Tooltip.Trigger>
         <Tooltip.Content placement="left">
-          <p className="text-xs">Failed: {entry.reason}</p>
+          <p className="text-xs">Failed: {redactSecrets(entry.reason)}</p>
         </Tooltip.Content>
       </Tooltip>
     );
@@ -150,12 +167,67 @@ function EntryRow({
   return button;
 }
 
+/**
+ * Status filter for the expanded list. A new sub-control, so it is built from
+ * Hero UI's `ToggleButtonGroup` rather than hand-rolled — and sized down to the
+ * 10px chrome of the list it sits in, so it reads as part of that list and not
+ * as a form dropped on top of the transcript.
+ */
+function StatusFilterBar({
+  counts,
+  value,
+  onChange,
+}: {
+  counts: Record<SubagentStatusFilter, number>;
+  value: SubagentStatusFilter;
+  onChange: (next: SubagentStatusFilter) => void;
+}) {
+  return (
+    <ToggleButtonGroup
+      aria-label="Filter subagents by status"
+      data-testid="subagent-status-filter"
+      selectionMode="single"
+      disallowEmptySelection
+      selectedKeys={[value]}
+      onSelectionChange={(keys) => {
+        const [next] = Array.from(keys);
+        if (isSubagentStatusFilter(next)) {
+          onChange(next);
+        }
+      }}
+      size="sm"
+      className="bg-content1/95 shadow-sm backdrop-blur-sm"
+    >
+      {SUBAGENT_STATUS_FILTERS.map((option) => (
+        <ToggleButton
+          key={option.key}
+          id={option.key}
+          variant="ghost"
+          className="h-6 min-w-0 px-2 text-[10px] font-medium"
+        >
+          {`${option.label} ${counts[option.key]}`}
+        </ToggleButton>
+      ))}
+    </ToggleButtonGroup>
+  );
+}
+
 export function SubagentList({ entries, onSelect, onSubagentFinished }: Props) {
   const [expanded, setExpanded] = useState(false);
+  // View state only: which statuses the reader is currently looking at is not
+  // worth persisting anywhere, and deliberately resets with the component.
+  const [statusFilter, setStatusFilter] = useState<SubagentStatusFilter>(
+    DEFAULT_SUBAGENT_STATUS_FILTER
+  );
 
-  const running = entries.filter((entry) => entry.status === "running");
-  const failed = entries.filter((entry) => entry.status === "failed");
-  const visible = expanded ? entries : [...running, ...failed];
+  const running = useMemo(
+    () => entries.filter((entry) => entry.status === "running"),
+    [entries]
+  );
+  const counts = useMemo(() => countSubagentsByStatus(entries), [entries]);
+  const visible = expanded
+    ? filterSubagentsByStatus(entries, statusFilter)
+    : attentionSubagents(entries);
 
   if (entries.length === 0) {
     return null;
@@ -174,9 +246,9 @@ export function SubagentList({ entries, onSelect, onSubagentFinished }: Props) {
         ))}
 
       <div className="flex items-center gap-1.5 px-1">
-        {failed.length > 0 && !expanded && (
+        {counts.failed > 0 && !expanded && (
           <span className="text-[10px] font-medium text-danger-500">
-            {failed.length} failed
+            {counts.failed} failed
           </span>
         )}
         <span className="text-[10px] font-semibold uppercase tracking-wider text-default-400">
@@ -192,8 +264,25 @@ export function SubagentList({ entries, onSelect, onSubagentFinished }: Props) {
         </button>
       </div>
 
-      {visible.length > 0 && (
-        <div className="flex flex-col items-end gap-0.5">
+      {expanded && (
+        <StatusFilterBar
+          counts={counts}
+          value={statusFilter}
+          onChange={setStatusFilter}
+        />
+      )}
+
+      {/*
+        The list scrolls inside its own box. It floats over the transcript with
+        nothing below it to push, so an unbounded list simply ran off the bottom
+        of the viewport and took its last entries with it — the height cap is
+        what makes the entries beyond it reachable at all.
+      */}
+      {visible.length > 0 ? (
+        <div
+          data-testid="subagent-list-scroll"
+          className="flex max-h-[min(45vh,16rem)] flex-col items-end gap-0.5 overflow-y-auto overscroll-contain pr-0.5"
+        >
           {visible.map((entry) => (
             <EntryRow
               key={entry.childJobId}
@@ -202,6 +291,15 @@ export function SubagentList({ entries, onSelect, onSubagentFinished }: Props) {
             />
           ))}
         </div>
+      ) : (
+        expanded && (
+          <span
+            data-testid="subagent-list-empty"
+            className="px-1 py-0.5 text-[10px] text-default-400"
+          >
+            No subagents with this status
+          </span>
+        )
       )}
     </div>
   );

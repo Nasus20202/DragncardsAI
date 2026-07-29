@@ -93,4 +93,33 @@ describe("PlayWorkspace execution", () => {
     );
     expect(api.listSessionJobs).toHaveBeenCalledWith("session-1");
   });
+
+  it("does not name the session from the prompt it submits", async () => {
+    // Naming an unnamed session from its first prompt belongs to the
+    // orchestrator, which does it inside the same request. The dashboard used to
+    // derive `prompt.slice(0, 60)` here; deriving it per client is exactly what
+    // stops two browsers agreeing on a session's name.
+    api.submitPrompt.mockResolvedValueOnce(createQueuedJob());
+    api.getJob
+      .mockResolvedValueOnce(job)
+      .mockResolvedValueOnce(createQueuedJob());
+    api.listSessionJobs.mockResolvedValueOnce({ jobs: [], total: 0 });
+
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("prompt-session")).toHaveTextContent(
+        "session-1"
+      )
+    );
+    fireEvent.change(screen.getByLabelText("Prompt input"), {
+      target: { value: "Deal the encounter card to Rhino" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /submit prompt/i }));
+
+    await waitFor(() => expect(api.submitPrompt).toHaveBeenCalled());
+    // The list is refreshed so the name the orchestrator generated shows up.
+    await waitFor(() => expect(api.listSessions).toHaveBeenCalled());
+    expect(api.updateSession).not.toHaveBeenCalled();
+  });
 });

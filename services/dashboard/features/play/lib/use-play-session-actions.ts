@@ -19,7 +19,6 @@ import { mergeJob } from "@/features/play/lib/play-session-events";
 import { findMentionedSkillNames } from "@/features/play/lib/skill-mentions";
 import {
   applyReasoningToGatewayOptions,
-  buildDefaultSessionName,
   buildDraftFromSession,
   createNewSessionDraft,
   isSelectableSession,
@@ -45,7 +44,6 @@ interface UsePlaySessionActionsOptions {
   subagentChildSessionIds: Set<string>;
   selectedSession: SessionDetail | null;
   selectedSessionId: string | null;
-  jobsCount: number;
   prompt: string;
   streamingJobId: string | null;
   cancelPending: boolean;
@@ -76,7 +74,6 @@ export function usePlaySessionActions({
   subagentChildSessionIds,
   selectedSession,
   selectedSessionId,
-  jobsCount,
   prompt,
   streamingJobId,
   cancelPending,
@@ -189,10 +186,10 @@ export function usePlaySessionActions({
       );
 
       await updateSession(selectedSession.id, {
-        name:
-          draft.name.trim() ||
-          selectedSession.name ||
-          buildDefaultSessionName(),
+        // Saving settings must not invent a name. An empty field on a session
+        // that has none leaves it unnamed, so its first prompt still gets to
+        // name it; a session that already has one keeps it.
+        name: draft.name.trim() || selectedSession.name || null,
         metadata: selectedSession.metadata,
         context_recent_message_limit: parseOptionalPositiveInteger(
           draft.recentMessageLimit,
@@ -395,7 +392,6 @@ export function usePlaySessionActions({
     setStatusText("Submitting prompt...");
 
     const trimmedPrompt = prompt.trim();
-    const isFirstPrompt = jobsCount === 0;
     // An `@` mention loads that skill's instructions into this turn. Matching
     // against the session's assigned skills is what separates a mention from
     // prose that merely contains an `@`, and the mention picker has already
@@ -416,12 +412,10 @@ export function usePlaySessionActions({
       startStreaming(nextJob.id, nextJob.latest_event_id ?? "0");
       setPrompt("");
 
-      if (isFirstPrompt) {
-        await updateSession(selectedSession.id, {
-          name: trimmedPrompt.slice(0, 60),
-        });
-      }
-
+      // Naming an unnamed session from its first prompt is the orchestrator's
+      // job, done inside this same request — refreshing the list is all it takes
+      // to show the name it generated. The dashboard deliberately no longer
+      // derives one of its own, so two browsers cannot disagree about it.
       await refreshSessions();
       setStatusText("Prompt submitted");
     } catch (error) {
@@ -433,7 +427,6 @@ export function usePlaySessionActions({
       setIsBusy(false);
     }
   }, [
-    jobsCount,
     prompt,
     refreshSessions,
     selectedSession,

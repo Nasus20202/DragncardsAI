@@ -8,6 +8,7 @@ import pytest
 
 from agent_orchestrator.config import Settings
 from agent_orchestrator.runtime.app import create_app
+from agent_orchestrator.runtime.display_names import generate_agent_name
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.db import create_engine, create_session_factory
@@ -83,7 +84,12 @@ async def test_spawn_subagent_creates_child_and_emits_events(tmp_path: Path):
                     e for e in events if e["event_type"] == "subagent_started"
                 )
                 assert "name" in started_event["payload"]
-                assert started_event["payload"]["name"] == "subagent-task"
+                # A generated display name, seeded on the child session's own id —
+                # not a slice of the spawn's prompt.
+                assert started_event["payload"]["name"] == generate_agent_name(
+                    started_event["payload"]["child_session_id"], "subagent-task"
+                )
+                assert started_event["payload"]["name"] != "subagent-task"
 
                 for _ in range(20):
                     job_response = await client.get(f"/jobs/{job_id}")

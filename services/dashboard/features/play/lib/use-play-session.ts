@@ -336,7 +336,6 @@ export function usePlaySession(): UsePlaySessionResult {
     subagentChildSessionIds,
     selectedSession,
     selectedSessionId,
-    jobsCount: jobs.length,
     prompt,
     streamingJobId,
     cancelPending,
