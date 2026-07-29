@@ -19,6 +19,12 @@ tracer = get_tracer(__name__)
 
 ENVELOPE_FIELD = "envelope_json"
 
+# Retry pacing for the poll loop when a whole batch fails. The floor matches the
+# original fixed delay; the ceiling stops a sustained Valkey outage from spinning
+# the loop (and the log) several times a second indefinitely (DRA-35).
+INGEST_RETRY_MIN_SECONDS = 0.5
+INGEST_RETRY_MAX_SECONDS = 30.0
+
 
 def _is_unknown_command(exc: RespError) -> bool:
     """True when a RESP error indicates the server does not know the command.
@@ -151,7 +157,23 @@ class StreamIngester:
                 "history.consumer_group": self._group,
             },
         ) as span:
-            await self.reclaim_pending()
+            # Reclaiming is a best-effort recovery pass, so a failure here must not
+            # cost us the batch. It used to: one failed XAUTOCLAIM aborted
+            # process_batch, so nothing was ever read and the loop retried in a hot
+            # cycle (DRA-35). Stale entries stay pending and the next poll retries
+            # them, which is exactly what XAUTOCLAIM's idle window is for.
+            try:
+                await self.reclaim_pending()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Reclaiming pending entries failed (%s: %s); "
+                    "continuing with this batch",
+                    type(exc).__name__,
+                    exc,
+                )
+                span.set_attribute("history.reclaim_failed", True)
             response = await self._client.execute(
                 "XREADGROUP",
                 "GROUP",
@@ -328,6 +350,8 @@ class StreamIngester:
             self._group,
             self._consumer,
         )
+        backoff = INGEST_RETRY_MIN_SECONDS
+        failures = 0
         try:
             while self._running:
                 try:
@@ -335,8 +359,33 @@ class StreamIngester:
                 except asyncio.CancelledError:
                     raise
                 except Exception:  # noqa: BLE001
-                    logger.exception("Ingest batch failed; retrying")
-                    await asyncio.sleep(0.5)
+                    failures += 1
+                    # One traceback per outage, not one per retry. This used to log a
+                    # full stack every 500ms for as long as Valkey was unhappy, which
+                    # buried every other line in the log (DRA-35). The first failure
+                    # carries the diagnosis; the rest are counted, and the delay grows
+                    # so a sustained outage costs a handful of lines, not thousands.
+                    if failures == 1:
+                        logger.exception(
+                            "Ingest batch failed; retrying in %.1fs", backoff
+                        )
+                    else:
+                        logger.warning(
+                            "Ingest batch still failing (%d consecutive); "
+                            "retrying in %.1fs",
+                            failures,
+                            backoff,
+                        )
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, INGEST_RETRY_MAX_SECONDS)
+                else:
+                    if failures:
+                        logger.info(
+                            "Ingest batch recovered after %d consecutive failure(s)",
+                            failures,
+                        )
+                    failures = 0
+                    backoff = INGEST_RETRY_MIN_SECONDS
         finally:
             self._running = False
             self._stopped.set()

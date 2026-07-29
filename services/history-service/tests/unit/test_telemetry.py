@@ -159,6 +159,7 @@ _PERMITTED_SPAN_ATTRIBUTES = {
     "history.stream",
     "history.consumer_group",
     "history.events_processed",
+    "history.reclaim_failed",
     "history.target_seq",
     "history.restore_mode",
     "history.ephemeral",
