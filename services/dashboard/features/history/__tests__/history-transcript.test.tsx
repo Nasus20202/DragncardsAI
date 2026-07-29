@@ -278,7 +278,10 @@ describe("HistoryTranscript", () => {
       payload: {
         scope: "round",
         target_seq: 2,
-        round_span: [1, 1],
+        // The SEQ span the round covered, and separately the round of play it is.
+        // The label comes from the latter (DRA-25), so the two deliberately differ.
+        round_span: [1, 2],
+        round_number: 1,
         overall_score: 6,
       },
       occurred_at: "2026-06-24T10:03:00Z",

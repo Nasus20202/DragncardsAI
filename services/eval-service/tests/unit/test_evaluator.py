@@ -87,6 +87,9 @@ async def test_successful_move_evaluation_writes_back_then_finalizes(repository)
     assert envelope["idempotency_key"] == verdict_idempotency_key(
         "g1", 2, "move", "eval-1", evaluator._default_config()
     )
+    # A move verdict is named by its own seq: no span, and no round of play.
+    assert envelope["payload"]["round_span"] is None
+    assert envelope["payload"]["round_number"] is None
 
 
 @pytest.mark.asyncio

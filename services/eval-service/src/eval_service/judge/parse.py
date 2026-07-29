@@ -61,11 +61,16 @@ def parse_verdict(
     provider: str,
     evaluator_version: str,
     player: str | None = None,
+    round_number: int | None = None,
 ) -> VerdictPayload:
     """Parse a judge response into a structured :class:`VerdictPayload`.
 
     Scores are clamped to the 0-10 range. Missing scores raise rather than
     silently default, so a malformed verdict is treated as a judge failure.
+
+    ``round_span`` is the graded SEQ span and ``round_number`` the round of PLAY
+    it is (round scope only). Both come from the caller, not from the judge
+    response: what was graded is the service's own record, never the model's.
     """
     data = _extract_json(response_text)
     raw_scores = data.get("scores")
@@ -101,6 +106,7 @@ def parse_verdict(
         scope=scope,
         target_seq=target_seq,
         round_span=round_span,
+        round_number=round_number,
         player=player,
         scores=scores,
         overall_score=overall,

@@ -8,6 +8,7 @@ import {
   buildRoundEndBySeq,
   phaseName,
   primaryEvents,
+  verdictScopeLabel,
 } from "@/features/history/lib/history-rounds";
 
 /**
@@ -187,5 +188,119 @@ describe("buildNavTree", () => {
       [9, 10, 11],
       [12],
     ]);
+  });
+});
+
+/**
+ * An evaluator verdict event. `round_span` is the `[from_seq, to_seq]` SEQ span
+ * the eval-service graded; `round_number` is the round of PLAY it is, and is the
+ * only thing the label may be built from.
+ */
+function verdictEvent(
+  seq: number,
+  payload: Record<string, unknown>
+): HistoryEvent {
+  return {
+    seq,
+    event_id: `verdict-${seq}`,
+    game_id: "game-1",
+    actor: "evaluator",
+    event_type: "evaluation",
+    payload,
+    occurred_at: "2026-07-28T10:00:00Z",
+    recorded_at: "2026-07-28T10:00:00Z",
+  } as unknown as HistoryEvent;
+}
+
+describe("verdictScopeLabel", () => {
+  /**
+   * The real rounds of history game 35128894-0cad-4b53-b195-d74b7428fe2c, as the
+   * eval-service reports them from `GET /games/{id}/rounds`: round 1 = seqs 1-63,
+   * round 2 = 64-103, round 3 = 104-124. A round verdict's `round_span` holds the
+   * SEQS, so rendering its two elements as round numbers labelled round 1
+   * "Rounds 1–63" (DRA-25).
+   */
+  it("labels a round verdict with its round of play, not its seq span", () => {
+    const label = verdictScopeLabel(
+      verdictEvent(64, {
+        scope: "round",
+        target_seq: 63,
+        round_span: [1, 63],
+        round_number: 1,
+      })
+    );
+    expect(label).toBe("Round 1");
+    expect(label).not.toBe("Rounds 1–63");
+  });
+
+  it("follows the round number rather than the span's first element", () => {
+    // Round 2 spans seqs 64-103: neither element of the span is the round number,
+    // so a label that happens to read "Round 1" for round 1 is not enough.
+    expect(
+      verdictScopeLabel(
+        verdictEvent(104, {
+          scope: "round",
+          target_seq: 103,
+          round_span: [64, 103],
+          round_number: 2,
+        })
+      )
+    ).toBe("Round 2");
+  });
+
+  it("names no round for a verdict that records none (eval-1)", () => {
+    // Verdicts recorded before the round of play was written back — every `eval-1`
+    // verdict among them, whose spans were shifted by one event at each boundary
+    // (DRA-14) — carry only a seq span. The label states the scope and stops there
+    // rather than resolving a superseded span to a round it did not grade.
+    const label = verdictScopeLabel(
+      verdictEvent(64, {
+        scope: "round",
+        target_seq: 62,
+        round_span: [1, 62],
+        evaluator: { evaluator_version: "eval-1" },
+      })
+    );
+    expect(label).toBe("Round");
+    expect(label).not.toContain("62");
+  });
+
+  it("ignores a round number that is not a positive whole round", () => {
+    for (const round of [0, -1, 1.5, "2", null]) {
+      expect(
+        verdictScopeLabel(
+          verdictEvent(64, {
+            scope: "round",
+            target_seq: 63,
+            round_span: [1, 63],
+            round_number: round,
+          })
+        )
+      ).toBe("Round");
+    }
+  });
+
+  it("labels move, range and game verdicts as before", () => {
+    expect(
+      verdictScopeLabel(verdictEvent(13, { scope: "move", target_seq: 12 }))
+    ).toBe("Move");
+    expect(
+      verdictScopeLabel(
+        verdictEvent(20, {
+          scope: "range",
+          target_seq: 18,
+          round_span: [10, 18],
+        })
+      )
+    ).toBe("Range #10–#18");
+    expect(
+      verdictScopeLabel(
+        verdictEvent(125, {
+          scope: "game",
+          target_seq: 124,
+          round_span: [1, 124],
+        })
+      )
+    ).toBe("Whole game");
   });
 });

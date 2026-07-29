@@ -368,7 +368,21 @@ export interface HistoryEvaluatorInfo {
 export interface HistoryEvaluatorPayload {
   scope?: string | null;
   target_seq?: number | null;
+  /**
+   * The `[from_seq, to_seq]` SEQUENCE span the verdict graded — event seqs on the
+   * game timeline, NOT round numbers. It is what correlates a round/game verdict
+   * to the events it covers. Never label a round from it: the first round of a
+   * real game spans seqs 1–63, which would read "Rounds 1–63". Use `round_number`.
+   */
   round_span?: JsonValue;
+  /**
+   * The 1-based round of PLAY a round-scoped verdict grades — the same number the
+   * transcript's round bands use. Absent on move/game verdicts (neither names a
+   * single round) and on any verdict recorded before the eval-service began
+   * writing it, which includes every `eval-1` verdict. Such a verdict is labelled
+   * without a round number rather than having one derived from `round_span`.
+   */
+  round_number?: number | null;
   /**
    * The player this verdict pertains to (e.g. "player1"). `null`/absent only
    * for legacy/unattributed verdicts; per-player roll-ups and per-move targets

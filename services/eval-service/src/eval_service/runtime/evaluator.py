@@ -309,7 +309,11 @@ class Evaluator:
                     self._settings.eval_judge_move_context_reasoning_chars
                 ),
             )
+            # A move verdict is identified by its own seq, so it carries neither a
+            # span nor a round of play; the round it was graded in the context of
+            # is a property of the prompt, not of what the verdict grades.
             round_span = None
+            round_number = None
         elif scope == "game":
             game = assemble_game_input(
                 events,
@@ -323,7 +327,10 @@ class Evaluator:
                 skills=skills,
                 max_state_chars=self._settings.eval_judge_max_state_chars,
             )
+            # The span is the whole game in SEQS. A game verdict covers every
+            # round, so there is no single round of play to name it by.
             round_span = [game.from_seq, game.to_seq]
+            round_number = None
         else:
             rnd = assemble_round_input(
                 events,
@@ -338,7 +345,15 @@ class Evaluator:
                 max_state_chars=self._settings.eval_judge_max_state_chars,
                 max_round_moves=self._settings.eval_judge_max_round_moves,
             )
+            # Two different things, both recorded: the SEQ span the verdict covers,
+            # and the round of PLAY it is. The span is what correlates the verdict
+            # to the timeline; the round number is what names it. A consumer that
+            # has to derive one from the other ends up labelling the first round of
+            # a real game "Rounds 1-63" (DRA-25), so both are written down. The
+            # number is already ``round_of_play``-converted by boundary detection —
+            # the only place that conversion happens.
             round_span = [rnd.from_seq, rnd.to_seq]
+            round_number = rnd.round_number
 
         gateway_options = config.reasoning.to_gateway_options()
 
@@ -360,6 +375,7 @@ class Evaluator:
                     scope=scope,  # type: ignore[arg-type]
                     target_seq=target_seq,
                     round_span=round_span,
+                    round_number=round_number,
                     player=player,
                     # Record the ACTUAL model/provider used for this evaluation.
                     model=config.model,

@@ -137,27 +137,45 @@ export function evaluatorVersion(event: HistoryEvent): string | null {
 }
 
 /**
+ * The round of play a round verdict grades, taken from the `round_number` the
+ * eval-service records on the payload, or null when it carries none.
+ *
+ * The verdict's `round_span` is deliberately NOT consulted. That field is a
+ * `[from_seq, to_seq]` pair of event sequences, not a round range: the first
+ * round of a real game spans seqs 1–63, and reading its two elements as round
+ * numbers labelled that verdict "Rounds 1–63" (DRA-25). Nor is the span resolved
+ * against the boundaries this module detects — a verdict recorded under `eval-1`
+ * has a span shifted by one event at each boundary (DRA-14), so resolving it
+ * succeeds and names a round the verdict did not grade, which is indistinguishable
+ * from a correct label. A verdict with no recorded round number gets no number.
+ */
+function verdictRoundNumber(verdict: HistoryEvent): number | null {
+  const round = verdict.payload.round_number;
+  return typeof round === "number" && Number.isInteger(round) && round > 0
+    ? round
+    : null;
+}
+
+/**
  * A human scope label for an evaluator verdict, so a round/range/game-level
- * verdict does not read as if it graded one move. Uses the verdict's `scope`
- * and `round_span` ([from, to]) from its payload.
+ * verdict does not read as if it graded one move.
+ *
+ * A round verdict is named by its recorded round of play, through the same
+ * `roundHeading` the transcript's round bands and navigation tree use — one
+ * conversion from round number to label, so a verdict and the band it sits inside
+ * cannot disagree. A round verdict with no recorded round number reads "Round":
+ * accurate about the scope, silent about which round, rather than wrong about it.
  */
 export function verdictScopeLabel(verdict: HistoryEvent): string {
   const scope =
     typeof verdict.payload.scope === "string" ? verdict.payload.scope : "move";
-  const span = verdict.payload.round_span;
   if (scope === "round") {
-    if (Array.isArray(span) && span.length > 0) {
-      const from = span[0];
-      const to = span[span.length - 1];
-      if (typeof from === "number") {
-        return from === to || typeof to !== "number"
-          ? `Round ${from}`
-          : `Rounds ${from}–${to}`;
-      }
-    }
-    return "Round";
+    const round = verdictRoundNumber(verdict);
+    return round === null ? "Round" : roundHeading({ round, step: null });
   }
   if (scope === "range") {
+    // The only branch that reads the span, and it labels it as the seqs it is.
+    const span = verdict.payload.round_span;
     if (Array.isArray(span) && span.length >= 2) {
       const [from, to] = span;
       if (typeof from === "number" && typeof to === "number") {
