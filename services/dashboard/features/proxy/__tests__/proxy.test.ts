@@ -77,6 +77,26 @@ describe("resolveProxyUrl", () => {
     ).toThrow(/invalid proxy path segment/i);
   });
 
+  it("rejects a segment that percent-decodes to a path containing a separator", () => {
+    // Neither "." nor "..", so the exact-match check alone passes it, yet it
+    // decodes to "../admin". Refusing it here means the traversal guarantee does
+    // not depend on `encodeURIComponent` re-encoding the slash downstream.
+    expect(() =>
+      resolveProxyUrl("history", ["games", "..%2fadmin"], "")
+    ).toThrow(/invalid proxy path segment/i);
+    expect(() =>
+      resolveProxyUrl("history", ["%2e%2e%2f%2e%2e", "etc", "passwd"], "")
+    ).toThrow(/invalid proxy path segment/i);
+    expect(() => resolveProxyUrl("history", ["games", "a%5Cb"], "")).toThrow(
+      /invalid proxy path segment/i
+    );
+  });
+
+  it("keeps accepting ordinary segments that merely contain a dot", () => {
+    const url = resolveProxyUrl("history", ["games", "g1", "openapi.json"], "");
+    expect(String(url)).toBe(`${HISTORY_SERVICE_URL}/games/g1/openapi.json`);
+  });
+
   it("rejects a path segment that fails to percent-decode", () => {
     expect(() => resolveProxyUrl("history", ["games", "%E0%A4%A"], "")).toThrow(
       /invalid proxy path segment/i
@@ -135,6 +155,41 @@ describe("proxy header filtering", () => {
     expect(filtered.has("host")).toBe(false);
     expect(filtered.has("connection")).toBe(false);
     expect(filtered.has("content-length")).toBe(false);
+  });
+
+  it("removes the whole hop-by-hop set, so the outbound hop frames its own body", () => {
+    // `transfer-encoding` is the load-bearing one: Node's fetch refuses a request
+    // that carries it ("invalid transfer-encoding header"), so forwarding it
+    // failed every chunked upload — and a proxy that lets two hops disagree about
+    // where a body ends is the shape a request-smuggling attempt needs.
+    const headers = new Headers({
+      "content-type": "application/x-ndjson",
+      "transfer-encoding": "chunked",
+      "keep-alive": "timeout=5",
+      "proxy-connection": "keep-alive",
+      "proxy-authorization": "Basic Zm9v",
+      "proxy-authenticate": "Basic",
+      te: "trailers",
+      trailer: "x-checksum",
+      upgrade: "websocket",
+      expect: "100-continue",
+    });
+
+    const filtered = filterProxyRequestHeaders(headers);
+    expect(filtered.get("content-type")).toBe("application/x-ndjson");
+    for (const name of [
+      "transfer-encoding",
+      "keep-alive",
+      "proxy-connection",
+      "proxy-authorization",
+      "proxy-authenticate",
+      "te",
+      "trailer",
+      "upgrade",
+      "expect",
+    ]) {
+      expect(filtered.has(name), `${name} should be stripped`).toBe(false);
+    }
   });
 
   it("strips browser credentials and forwarding metadata, keeping content-type", () => {

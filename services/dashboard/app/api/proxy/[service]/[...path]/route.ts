@@ -1,5 +1,5 @@
 import {
-  filterProxyRequestHeaders,
+  buildProxyRequestInit,
   filterProxyResponseHeaders,
   isCrossSiteRequest,
   isServiceKey,
@@ -9,6 +9,12 @@ import {
 } from "@/features/proxy/lib/proxy";
 import { createServerLogger } from "@/features/observability/lib/server-logging";
 import { withServerSpan } from "@/features/observability/lib/server-tracing";
+
+// A proxied response is forwarded as an unread stream, and caching one would
+// require Next.js to buffer it to store it. Nothing here is cacheable anyway —
+// every response belongs to one caller's request — so the route is pinned
+// dynamic rather than left to depend on which dynamic APIs it happens to touch.
+export const dynamic = "force-dynamic";
 
 const logger = createServerLogger("dashboard.api.proxy");
 
@@ -89,19 +95,13 @@ async function proxyRequest(request: Request, context: RouteContext) {
   }
 
   async function proxyUpstream() {
-    const body =
-      request.method === "GET" || request.method === "HEAD"
-        ? undefined
-        : await request.arrayBuffer();
-
     try {
-      const upstreamResponse = await fetch(targetUrl, {
-        method: request.method,
-        headers: filterProxyRequestHeaders(request.headers),
-        body,
-        cache: "no-store",
-        redirect: "manual",
-      });
+      // Streams the incoming body straight upstream; see `buildProxyRequestInit`
+      // for why nothing is buffered here and where the size caps live.
+      const upstreamResponse = await fetch(
+        targetUrl,
+        buildProxyRequestInit(request)
+      );
 
       logger.info(
         `dashboard proxy ${request.method} ${serviceKey}/${proxyPath} -> ${upstreamResponse.status}`,
@@ -114,6 +114,11 @@ async function proxyRequest(request: Request, context: RouteContext) {
         }
       );
 
+      // The upstream body is handed on unread. `upstreamResponse.body` is a
+      // stream the caller drains, so a 31 MB history export or a long-lived SSE
+      // job feed reaches the browser as it arrives and never becomes resident
+      // here. Reading it first (`.text()`, `.arrayBuffer()`, `.json()`) is the
+      // one change that would silently reintroduce full buffering.
       return new Response(upstreamResponse.body, {
         status: upstreamResponse.status,
         statusText: upstreamResponse.statusText,
