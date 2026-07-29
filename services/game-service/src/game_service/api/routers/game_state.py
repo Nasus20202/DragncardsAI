@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends
 
@@ -10,7 +11,7 @@ from game_service.api.deps import SessionIdentifier, get_manager
 from game_service.api.models import (
     GameStateSnapshot,
     GameStateResponse,
-    SimplifiedGameState,
+    SimplifiedCard,
 )
 from game_service.logic.session_manager import SessionManager
 
@@ -39,11 +40,36 @@ def _get_step_description(step_id: str | int | None) -> str | None:
     return STEP_DESCRIPTIONS.get(step_key)
 
 
-def _simplify_marvel_state(raw_state: dict) -> SimplifiedGameState:
-    """Transform raw DragnCards Marvel Champions state into a simplified representation."""
+def _compact_tokens(tokens: dict | None) -> dict:
+    """Return a tokens dict containing only the non-zero counters.
+
+    The simplified card shape keeps `tokens` only when at least one counter
+    is non-zero; an empty result here means the caller should drop the
+    `tokens` field entirely from the emitted card.
+    """
+    if not tokens:
+        return {}
+    return {key: value for key, value in tokens.items() if value}
+
+
+def _simplify_marvel_state(raw_state: dict) -> dict[str, Any]:
+    """Transform raw DragnCards Marvel Champions state into a simplified representation.
+
+    The output is compact: visible cards only carry the fields that carry
+    information (`id`, `instanceId`, `name`, `stackSize` plus the
+    non-default `currentSide`, `exhausted`, and `tokens` fields), and HIDDEN
+    entries collapse to `{name: "HIDDEN", stackSize: N}`. See
+    `openspec/specs/simplified-game-state/spec.md` for the full shape.
+
+    Returns a plain dict rather than a `SimplifiedGameState` Pydantic model
+    so the per-card fields with default values stay omitted (Pydantic would
+    re-fill them on validation, undoing the compaction). Callers wrap the
+    dict in `GameStateResponse` (or the equivalent response model) which
+    accepts `Union[SimplifiedGameState, dict]`.
+    """
     game = raw_state.get("game", {})
     if not game:
-        return SimplifiedGameState(mode="unknown")
+        return {"mode": "unknown"}
 
     player_data = game.get("playerData", {})
     players: dict[str, dict[str, int]] = {}
@@ -56,8 +82,7 @@ def _simplify_marvel_state(raw_state: dict) -> SimplifiedGameState:
         }
 
     card_data = game.get("cardById", {})
-    group_by_id = game.get("groupById", {})
-    zones: dict[str, list[dict]] = {}
+    zones: dict[str, list[dict[str, Any]]] = {}
 
     # Group cards by stackId to compute stack sizes
     stack_card_counts: dict[str, int] = {}
@@ -67,15 +92,7 @@ def _simplify_marvel_state(raw_state: dict) -> SimplifiedGameState:
             stack_card_counts[stack_id] = stack_card_counts.get(stack_id, 0) + 1
 
     # Track hidden cards per zone for merging (facedown + player/encounter cards)
-    hidden_cards_per_zone: dict[str, dict] = {}
-
-    # Build a lookup for card_id by stackId
-    card_id_by_stack_id: dict[str, str] = {}
-    for card_id, c_info in card_data.items():
-        stack_id = c_info.get("stackId")
-        # Only topmost card has stackId ending with "_" + card_id or stackId == card_id
-        if stack_id and (stack_id == card_id or stack_id.endswith("_" + card_id)):
-            card_id_by_stack_id[stack_id] = card_id
+    hidden_cards_per_zone: dict[str, int] = {}
 
     for card_id, c_info in card_data.items():
         zone_id = c_info.get("groupId")
@@ -106,64 +123,54 @@ def _simplify_marvel_state(raw_state: dict) -> SimplifiedGameState:
         is_facedown = rotation != 0 and current_side == "A" and not exhausted
 
         if is_player_encounter or is_facedown:
-            if zone_id not in hidden_cards_per_zone:
-                hidden_cards_per_zone[zone_id] = {
-                    "count": 0,
-                    "first_instance_id": card_id,
-                }
-            hidden_cards_per_zone[zone_id]["count"] += stack_size
+            hidden_cards_per_zone[zone_id] = (
+                hidden_cards_per_zone.get(zone_id, 0) + stack_size
+            )
             continue
 
-        card_details = {
+        # Build a card payload with only the fields that carry information.
+        # Pydantic's `exclude_defaults=True` then drops any field that matches
+        # the SimplifiedCard schema default, so a face-up unexhausted card
+        # with no tokens is just `{id, instanceId, name, stackSize}`.
+        card_details: dict[str, Any] = {
             "id": c_info.get("databaseId", "Unknown"),
             "instanceId": card_id,
             "name": card_name,
-            "currentSide": current_side,
-            "exhausted": c_info.get("exhausted", False),
-            "tokens": c_info.get("tokens", {}),
-            "stackSize": stack_size,
         }
+        if current_side != "A":
+            card_details["currentSide"] = current_side
+        if exhausted:
+            card_details["exhausted"] = True
+        non_zero_tokens = _compact_tokens(c_info.get("tokens"))
+        if non_zero_tokens:
+            card_details["tokens"] = non_zero_tokens
+        card_details["stackSize"] = stack_size
 
+        compact = SimplifiedCard(**card_details).model_dump(exclude_defaults=True)
+        # `stackSize` is always meaningful for a top-of-stack card; re-attach
+        # it in case it matched the schema default (1) and was dropped.
+        compact.setdefault("stackSize", stack_size)
         if zone_id not in zones:
             zones[zone_id] = []
-        zones[zone_id].append(card_details)
+        zones[zone_id].append(compact)
 
-    # Add merged hidden cards to zones using stackIds ordering
-    for zone_id, hidden_info in hidden_cards_per_zone.items():
+    # Add merged hidden cards to zones. A HIDDEN entry is just
+    # {name: "HIDDEN", stackSize: N} — the agent never needs to target
+    # face-down cards, and the count is the only thing it acts on.
+    for zone_id, hidden_count in hidden_cards_per_zone.items():
         if zone_id not in zones:
             zones[zone_id] = []
-        # Get the first stackId from groupById ordering to determine instanceId and currentSide
-        group_data = group_by_id.get(zone_id, {})
-        stack_ids = group_data.get("stackIds", [])
-        first_stack_id = stack_ids[0] if stack_ids else hidden_info["first_instance_id"]
-        # Get the card_id for this stack_id
-        first_instance_id = card_id_by_stack_id.get(
-            first_stack_id, hidden_info["first_instance_id"]
-        )
-        # Get the card data for the first card to inherit currentSide
-        first_card_data = card_data.get(first_instance_id, {})
-        inherited_current_side = first_card_data.get("currentSide", "A")
-        zones[zone_id].append(
-            {
-                "id": "Unknown",
-                "instanceId": first_instance_id,
-                "name": "HIDDEN",
-                "currentSide": inherited_current_side,
-                "exhausted": False,
-                "tokens": {},
-                "stackSize": hidden_info["count"],
-            }
-        )
+        zones[zone_id].append({"name": "HIDDEN", "stackSize": hidden_count})
 
-    return SimplifiedGameState(
-        roundNumber=game.get("roundNumber", 0),
-        mode=game.get("mode", "unknown"),
-        villainHitPoints=game.get("villainHitPoints", 0),
-        stepId=game.get("stepId"),
-        stepDescription=_get_step_description(game.get("stepId")),
-        players=players,
-        zones=zones,
-    )
+    return {
+        "roundNumber": game.get("roundNumber", 0),
+        "mode": game.get("mode", "unknown"),
+        "villainHitPoints": game.get("villainHitPoints", 0),
+        "stepId": game.get("stepId"),
+        "stepDescription": _get_step_description(game.get("stepId")),
+        "players": players,
+        "zones": zones,
+    }
 
 
 @router.get(

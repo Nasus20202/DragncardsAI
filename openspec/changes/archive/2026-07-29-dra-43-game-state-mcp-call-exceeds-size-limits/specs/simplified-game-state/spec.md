@@ -1,9 +1,5 @@
-# Simplified Game State Spec
+## MODIFIED Requirements
 
-## Purpose
-
-The simplified game state provides a streamlined representation of game state for LLM consumption, filtering out unnecessary details while preserving essential gameplay information.
-## Requirements
 ### Requirement: Simplified Marvel Champions state output
 The Game Service SHALL provide a simplified representation of Marvel Champions game state that includes only essential information for LLM decision-making, and the per-card payload SHALL be compact enough that the full state response stays under 256 KB for a 4-player table with a loaded encounter set so the response fits the MCP WebSocket transport limit (1,048,576 bytes).
 
@@ -65,4 +61,3 @@ The Game Service SHALL provide a simplified representation of Marvel Champions g
 #### Scenario: Simplified state merges hidden cards
 - **WHEN** multiple hidden cards (facedown or player/encounter) exist in the same zone
 - **THEN** they SHALL be merged into a single "HIDDEN" entry with combined `stackSize`
-
