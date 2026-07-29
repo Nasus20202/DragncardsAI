@@ -99,14 +99,37 @@ was closed earlier; it reopens with `gh pr reopen 305` only on an explicit reque
 
 ## Environment notes
 
-The owner's Docker stack is running: ports 3000, 4001–4005, 5440–5443, 6380–6381. **It is stale
-relative to this branch** — live agent-orchestrator has no `/personas` or `/players`, live
-eval-service has no `/games/{id}/rounds`, and none of the three new `/mcp` surfaces will serve until
-it is rebuilt. `dragncardsai-dashboard-1` exited 4 weeks ago, so **3001 is down and was already
-down** — not caused by this batch. `dragncardsai-llama-cpp-smoke-1` is in a crash loop, untouched.
+The owner's Docker stack was **rebuilt from this branch on 2026-07-29** and is current with it.
+Verified live afterwards: all four services healthy, `/personas` 200 (was 404),
+`/games/{game_id}/rounds` and `/games/{game_id}/timeline` present, all four `/mcp/` surfaces
+returning 406 (mounted), dashboard back up on 3001, and `/api/openapi` merging **99 paths** across
+all four services (game 47, orchestrator 32, eval 10, history 10) with 146 schemas.
 
-All verification servers from this batch are stopped and the throwaway databases `orch_verify` and
-`eval_verify` are dropped. Nothing of this batch is left running.
+**Rebuild it with the project name pinned** — see the compose trap below. Postgres and Valkey were
+not recreated (volumes preserved, containers stayed up), only the service containers.
+`dragncardsai-llama-cpp-smoke-1` remains in a crash loop; pre-existing and untouched.
+
+All verification servers from the first batch are stopped and the throwaway databases `orch_verify`
+and `eval_verify` are dropped.
+
+**Compose trap.** `docker-compose.yaml` declares no `name:`, so Compose derives the project name from
+the directory. Running `./scripts/docker.sh` from `wt-integration` creates a **second project**
+(`wt-integration`) and dies with `Bind for :::5442 failed: port is already allocated`. Always use
+`docker compose -p dragncardsai build` / `up -d` from the worktree. Matching the project name is also
+what reuses the `dragncardsai_*` volumes. Do not rebuild from the main checkout instead — it sits on
+an older branch and would build the wrong code.
+
+## Second batch, in flight as of 2026-07-29
+
+Owner decisions that scope it: **DRA-12 gets (A) + (C), not (B)** — (B) changes *when* history is
+summarised and sign-off was withheld; A4 (the guard) ships first. **DRA-31 is fixed now, DRA-32 is
+filed** for later because it needs an auth model decision.
+
+| Branch | Issue | Scope |
+| --- | --- | --- |
+| `stanislaw/dra-26-history-restore-and-board-view` | DRA-26 + DRA-28 | Together on purpose: DRA-26's third bullet ("open board at this event" must not overwrite the live game) *is* DRA-28's subject. Two agents on one surface would collide. |
+| `stanislaw/dra-12-bounded-compaction` | DRA-12 | (A) checkpointed + capped + fitted compaction input, A4 guard first; (C) helper text. (B) explicitly untouched. |
+| `stanislaw/dra-31-history-cors` | DRA-31 | CORS only, aligned to eval-service, plus a four-service audit. No auth. |
 
 ## Known follow-ups worth filing as issues
 
