@@ -6,6 +6,37 @@
       "url": "http://localhost:4001/mcp/",
       "enabled": true,
     },
+    "agent-orchestrator": {
+      "type": "remote",
+      "url": "http://localhost:4002/mcp/",
+      "enabled": true,
+    },
+    "history-service": {
+      "type": "remote",
+      "url": "http://localhost:4004/mcp/",
+      "enabled": true,
+    },
+    "eval-service": {
+      "type": "remote",
+      "url": "http://localhost:4005/mcp/",
+      "enabled": true,
+    },
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "enabled": true,
+    },
+    "playwright": {
+      "type": "command",
+      "command": "pnpx",
+      "args": ["@playwright/mcp@latest", "--browser", "chromium", "--headless"],
+      "enabled": true,
+    },
+    "grep": {
+      "type": "remote",
+      "url": "https://mcp.grep.app",
+      "enabled": true,
+    },
     // Task tracking. AGENTS.md treats Linear as the source of truth for what work
     // exists, so this server is what makes those rules followable. Requires an
     // interactive OAuth login on first use; set "enabled": false if a setup cannot
