@@ -1,5 +1,7 @@
 "use client";
 
+import { dragncardsRoomUrl } from "@/features/shared/lib/dragncards";
+
 interface DragnCardsIframeProps {
   roomSlug: string | null;
   frontendUrl: string;
@@ -25,7 +27,7 @@ export function DragnCardsIframe({
     );
   }
 
-  const src = `${frontendUrl}/room/${encodeURIComponent(roomSlug)}`;
+  const src = dragncardsRoomUrl(frontendUrl, roomSlug);
 
   return (
     <iframe

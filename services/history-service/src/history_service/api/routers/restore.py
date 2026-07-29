@@ -41,4 +41,7 @@ async def restore_game(
         replayed_event_seqs=result.replayed_event_seqs,
         status_verified=result.status_verified,
         divergence=result.divergence,
+        room_slug=result.room_slug,
+        agent_context_restored=result.agent_context_restored,
+        agent_context_note=result.agent_context_note,
     )

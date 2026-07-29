@@ -60,12 +60,54 @@ payload, a snapshot document, or a restored game state.
   ascending `seq`, with the two unbounded payload fields removed (`limit` max
   5000). See below.
 - `GET  /games/{game_id}/snapshots` — stored snapshots with their `seq`.
-- `POST /games/{game_id}/restore` — body `{ "target_seq": int, "mode": "new"|"in_place" }`.
+- `POST /games/{game_id}/restore` — body
+  `{ "target_seq": int, "mode": "new"|"in_place", "ephemeral": bool }`. See
+  [Restoring a game](#restoring-a-game).
 - `GET  /games/{game_id}/export` — the game's whole history as an NDJSON bundle.
 - `POST /import?game_id=` — import an NDJSON bundle as a new game's history.
 - `GET  /health`, `GET /ready` — liveness/readiness (no secrets).
 
 Unknown games return empty results, not errors.
+
+### Restoring a game
+
+A restore rebuilds two layers, and they are not equally essential. The **game state**
+is the restore: the densest full-state base at or before the target — a periodic
+snapshot or a `game_state` event, whichever is more recent — is loaded into a
+game-service session, then the `game-service` events after it are replayed forward.
+The **agent conversation** is an enhancement to it, handed to agent-orchestrator so a
+resumed agent faces the same decision.
+
+`mode` chooses what receives the restored state:
+
+- `"new"` creates a fresh DragnCards game with its own history and leaves the original
+  untouched. The response's `room_slug` names the room that was created, so a caller
+  never has to list every live session to find it. Add `"ephemeral": true` for a
+  view-only reconstruction: a non-emitting session, reaped server-side by TTL, which
+  records no history and gets no agent session.
+- `"in_place"` rewinds the existing live session, discarding state after the target.
+
+Beyond `status`, `game_session_id`/`session_id` and `room_slug`, the response reports
+the agent layer separately from the game-state layer:
+
+- `agent_context_restored` — whether the agent conversation was rebuilt.
+- `agent_context_note` — a human-readable reason when it was not.
+
+**A missing agent session does not fail a restore, by design.** agent-orchestrator
+answers `404` to an `in_place` context restore when no *active* agent session is bound
+to the `game_id`, and that is a correct answer: the session that played a game is
+terminated long before anyone browses its history. history-service treats that `404` as
+"there is no agent session to resume", completes the game-state restore, and explains
+itself on `agent_context_note`. Any other upstream status still fails the restore, so a
+genuine fault is never swallowed. Do not "fix" this by making the `404` fatal again: the
+agent layer runs *after* the game state has been written, and an `in_place` restore has
+no rollback, so failing there reported a rewind that had already happened as a failure
+(DRA-26).
+
+An `in_place` restore is rejected — before anything is mutated — when the live
+game-service session no longer exists, or when no full-state base of either kind exists
+at or before the target (replaying forward onto an un-rewound live session would
+double-apply every event). Both cases name the branchable restore as the alternative.
 
 ### Which read to use
 

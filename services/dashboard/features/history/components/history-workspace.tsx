@@ -507,6 +507,7 @@ export function HistoryWorkspace({
                 expandSignal={expandSignal}
                 searchQuery={searchQuery}
                 board={transcriptBoard}
+                frontendUrl={frontendUrl}
                 reveal={reveal}
               />
             </div>

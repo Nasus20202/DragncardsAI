@@ -645,5 +645,19 @@ export interface RestoreOutcome {
   detail?: string | null;
   status_verified?: boolean | null;
   divergence?: string | null;
+  /**
+   * The DragnCards room the restored state lives in. Present for a branch
+   * ("new") restore, whose product is a room the user then has to open — so the
+   * UI can link straight to it instead of showing a bare session UUID.
+   */
+  room_slug?: string | null;
+  /**
+   * Whether the agent's conversation was rebuilt alongside the game state, and
+   * why not when it was not. A game with no active agent session bound to it has
+   * none to resume; that is a normal state for a game being browsed in history,
+   * so it is reported rather than treated as a failed restore.
+   */
+  agent_context_restored?: boolean | null;
+  agent_context_note?: string | null;
   [key: string]: JsonValue | undefined;
 }
