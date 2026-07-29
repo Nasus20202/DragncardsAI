@@ -10,6 +10,8 @@ These instructions apply to the dashboard service and override the repository-le
 
 - **Framework**: Next.js 16 with React 19
 - **UI Library**: Hero UI (`@heroui/react`, `@heroui/styles` v3.2.2 — the **v3** API)
+- **Generative UI**: OpenUI Lang (`@openuidev/react-lang`) — the `ask_user` question
+  surface only. See [Generative UI (OpenUI)](#generative-ui-openui).
 - **Styling**: Tailwind CSS 4 with Hero UI preset
 - **TypeScript**: Strict mode enabled
 - **Testing**: Vitest with React Testing Library
@@ -105,6 +107,63 @@ of those let a service be half-added. That is exactly how history-service and ev
 ended up proxyable but missing from `/swagger` (DRA-20). A service's base URL and OpenAPI path
 come from `features/config/lib/dashboard-config.ts`, and every variable that file reads must
 also be listed in `vitest.setup.ts`.
+
+### Generative UI (OpenUI)
+
+The question surface the `ask_user` tool produces renders through **OpenUI Lang**,
+a DSL in which a model can author UI. Only that surface uses it; every other part
+of the dashboard is Hero UI plus Tailwind as described above.
+
+**Why this dependency was acceptable** — check these still hold before upgrading it:
+
+- **Licence: MIT**, for every package used.
+- **No API key and no endpoint.** OpenUI is a client library, not a hosted
+  service. Nothing in the render path talks to Thesys or anywhere else: the
+  parser and renderer are local, and the one networked feature (`toolProvider`,
+  for the DSL's `Query()`/`Mutation()`) is not passed. If a change appears to
+  need a key or an endpoint, stop — that is not the basis on which this
+  dependency was accepted.
+- **Only the two `lang` packages are installed**, pinned exactly (no `^`: it is a
+  0.x library): `@openuidev/react-lang` and `@openuidev/lang-core`, plus `zod`
+  as their peer. `@openuidev/react-ui` is deliberately **not** installed — it
+  ships Radix, recharts, `react-markdown` and its own theme, which would re-skin
+  the app and add a markdown sink for model-authored text.
+- **Do not confuse the projects.** `openui.com` / `github.com/thesysdev/openui`
+  (Thesys Inc.) is this one. The unrelated `wandb/openui` is not.
+
+**Where it lives:**
+
+- `features/play/lib/user-question-library.tsx` — the component library. This is
+  a **closed registry**: a program naming a component absent from this file
+  renders nothing.
+- `features/play/lib/user-question-lang.ts` — builds the program for a question.
+- `features/play/components/user-question-card.tsx` — the card frame, and the
+  only place an answer is submitted from.
+
+**Four rules a change here must not break.** They are what keeps a DSL from being
+a wider hole than the list of buttons it replaced, and each has a test in
+`features/play/__tests__/user-question-openui.test.tsx`:
+
+1. **Never interpolate model-authored text into DSL source.** OpenUI Lang has
+   double-quoted string literals, so a label containing `"` breaks out of one and
+   the remainder parses as code — the same class of sink as
+   `dangerouslySetInnerHTML`. `buildUserQuestionLang` emits component names and
+   integers only; every string is looked up at render time.
+2. **A prop schema is not a runtime guard.** The zod schemas generate the model's
+   prompt and produce validation errors, but the parser renders permissively —
+   `Choice("not-a-number")` reaches the renderer with the string intact. Every
+   renderer re-checks its own props.
+3. **Address stored data by index, never by value.** A `Choice` carries its
+   position in the stored choice list and nothing else, so no program can invent,
+   relabel, or rename a choice. The value submitted is read from the row.
+4. **Model-authored strings are rendered as plain React text children.** No
+   `dangerouslySetInnerHTML`, no markdown renderer, no browser-resolved attribute
+   (`href`, `src`, `style`, `on*`).
+
+None of this replaces server-side validation, which is the real boundary: the
+orchestrator checks a submitted `choice_value` against `choices_json` read back
+from the question's row and derives `answer_label` from stored state, so a forged
+value is refused whatever was rendered.
 
 ## The Service Proxy
 

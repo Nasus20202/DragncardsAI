@@ -223,3 +223,44 @@ async def test_a_question_cannot_be_answered_through_another_job(app):
         )
 
         assert response.status_code == 404
+
+
+async def test_a_forged_value_is_refused_however_the_ui_was_rendered(app):
+    """The question surface is rendered from a model-authored DSL (OpenUI Lang).
+
+    That is a larger rendering surface than a list of buttons, so this asserts
+    the property the surface is not allowed to weaken: the endpoint validates
+    ``choice_value`` against ``choices_json`` read back from the row, so nothing
+    a rendered program can express becomes an acceptable answer. Each value
+    below is one a forged or model-authored control could plausibly submit.
+    """
+    forgeries = [
+        # A label instead of the value it belongs to.
+        "She-Hulk",
+        # The description.
+        "Hits hard.",
+        # A hero that was never offered.
+        "thor",
+        # Case and whitespace variants of a real value: matching is exact.
+        "SHE-HULK",
+        " she-hulk",
+        "she-hulk ",
+        # Structural guesses at how the stored row is shaped.
+        "0",
+        "1",
+        "*",
+        "",
+    ]
+    with TestClient(app) as client:
+        for forged in forgeries:
+            job_id, question_id = await _pending_question(app, client)
+
+            response = _answer(client, job_id, question_id, {"choice_value": forged})
+
+            assert response.status_code == 400, forged
+            assert "not offered" in response.json()["detail"], forged
+            # Refused, not recorded: the run is still waiting for a real answer.
+            stored = await app.state.repository.get_job_question(question_id)
+            assert stored.status == "pending", forged
+            assert stored.answer_value is None, forged
+            assert stored.answer_label is None, forged
