@@ -85,7 +85,9 @@ The agent SHALL have access to a `wait_for_subagent` built-in tool that blocks u
 - **THEN** if the child failed or timed out, the tool returns an error result
 
 ### Requirement: spawn_subagent system tool supports non-blocking parallel dispatch
-The agent SHALL have access to a system built-in tool named `spawn_subagent` that creates an isolated child agent session and immediately returns its `child_job_id` and a derived `name`. The child agent runs concurrently; the calling agent does not block and MAY spawn additional subagents in the same turn or continue with other work. This tool SHALL be available only on master prompt jobs.
+The agent SHALL have access to a system built-in tool named `spawn_subagent` that creates an isolated child agent session and immediately returns its `child_job_id` and a generated `name`. The child agent runs concurrently; the calling agent does not block and MAY spawn additional subagents in the same turn or continue with other work. This tool SHALL be available only on master prompt jobs.
+
+The returned `name` SHALL be a generated display name rather than a slice of the prompt, so that several subagents started from prompts that share their opening are still distinguishable to whoever reads the transcript. The same string SHALL appear in the tool result, on the child session, and in the `subagent_started` event.
 
 `spawn_subagent` SHALL accept an optional `persona` argument naming a persona to start the child from. The tool description SHALL state that the argument is optional, that omitting it starts a child that inherits the caller's own configuration, and that a persona changes the child's prompt, skills, and tool access. Naming a persona that does not exist SHALL return an error result naming the requested persona and the available ones, without creating a child.
 
@@ -99,10 +101,15 @@ The agent SHALL have access to a system built-in tool named `spawn_subagent` tha
 - **THEN** each child job runs concurrently with no ordering guarantee
 - **THEN** each child's outcome is recorded on the parent job transcript asynchronously when it completes or fails
 
-#### Scenario: Subagent name derived from prompt
+#### Scenario: Subagent name is generated, not sliced from the prompt
 - **WHEN** `spawn_subagent` is called with a prompt
-- **THEN** the tool result includes a `name` field containing the first 50 characters of the prompt
-- **THEN** the `subagent_started` event on the parent job also carries this `name`
+- **THEN** the tool result SHALL include a `name` field holding a generated display name
+- **THEN** that name SHALL NOT be a truncation of the prompt
+- **THEN** the `subagent_started` event on the parent job SHALL carry the same `name`
+
+#### Scenario: Subagents started from similar prompts get different names
+- **WHEN** a master job agent spawns several subagents whose prompts share the same opening text
+- **THEN** each child SHALL have a distinguishable `name`
 
 #### Scenario: Agent names a persona for the child
 - **WHEN** a master job agent invokes `spawn_subagent` with a prompt and the name of an existing persona
@@ -141,7 +148,7 @@ The parent job transcript SHALL record the lifecycle of every subagent spawned d
 - **THEN** a `subagent_failed` event is appended to the parent job asynchronously with `child_session_id`, `child_job_id`, and `reason`
 
 ### Requirement: Dashboard renders agent capability events
-The dashboard transcript SHALL render skill loads and MCP tool calls as distinct collapsible rows. Subagent lifecycle events in the parent transcript SHALL be minimal single-line entries; the full subagent transcript is shown in the inline subagent card, not duplicated in the parent thread.
+The dashboard transcript SHALL render skill loads and MCP tool calls as distinct collapsible rows. Subagent lifecycle events in the parent transcript SHALL be minimal single-line entries; the full subagent transcript is shown in the subagent output view opened from the subagent list or from the tool card that started it, not duplicated in the parent thread.
 
 #### Scenario: skill_loaded rendered
 - **WHEN** the transcript receives a `skill_loaded` event
@@ -154,7 +161,7 @@ The dashboard transcript SHALL render skill loads and MCP tool calls as distinct
 #### Scenario: subagent transcript entry is a single line
 - **WHEN** the transcript receives `subagent_started`, `subagent_completed`, or `subagent_failed`
 - **THEN** it displays a single non-expandable line indicating the subagent name and status in the parent job thread
-- **THEN** the full child transcript is shown in the separate inline subagent card
+- **THEN** the full child transcript is shown in the separate subagent output view
 
 ### Requirement: Player agent built-in tools
 A master prompt job on a session that has a player roster SHALL receive two additional built-in tools: `list_player_agents`, which returns the configured seats and their resolved configuration, and `prompt_player_agent`, which sends a prompt to a named seat's player agent. A session with no player roster SHALL NOT receive these tools, and a job that is not a master job SHALL NOT receive them.
