@@ -87,10 +87,10 @@ was closed earlier; it reopens with `gh pr reopen 305` only on an explicit reque
 - `EVAL_JUDGE_OPENROUTER_API_KEY` is unset in `services/bifrost/.env`, so any judge-latency figure is
   a projection, not a measurement.
 
-## Check baselines on the integration tip (`8295107`, DRA-35 and DRA-34 merged and archived)
+## Check baselines on the integration tip (DRA-35, DRA-34 and DRA-42 merged and archived)
 
 - `./scripts/lint.sh` — clean.
-- Unit: game-service **384**, agent-orchestrator **490**, history-service **177**,
+- Unit: game-service **384**, agent-orchestrator **503**, history-service **177**,
   eval-service **258**, shared **38**, dashboard **614** (74 files).
   (Against `98192f3`: DRA-35 added 2 to history-service and 2 to shared; DRA-34 added 3 to
   agent-orchestrator and 5 to the dashboard.)
@@ -99,7 +99,7 @@ was closed earlier; it reopens with `gh pr reopen 305` only on an explicit reque
 **`except A, B:` without parentheses is valid here — do not "fix" it.** `job_event_stream.py` uses it
 twice. It is PEP 758, new in Python 3.14, and this repo runs 3.14. It reads like a Python 2 relic and
 `ast.parse` accepts it; verify before touching it.
-- Integration: agent-orchestrator **28**, history-service **8**, eval-service **13**,
+- Integration: agent-orchestrator **29**, history-service **8**, eval-service **13**,
   game-service **63**.
 - `openspec validate --all` — 16 passed, 1 failed (the pre-existing one above).
 - `pnpm typecheck` in `services/dashboard` — clean.
@@ -215,8 +215,38 @@ wait for the others.**
 - Two dashboard items also in flight: suppressing the redundant `ask_user` tool card, and question
   card visuals.
 
+- **DRA-42** (Urgent) — **MERGED, archived, closed.** "Errors in orchestrator mode". Four unguarded
+  Valkey call sites in the orchestrator, each with its own user-visible failure. New
+  `runtime/live_event_resilience.py` holds `BestEffortLiveEventBus` (a decorator, applied idempotently
+  in `create_app` and `WorkerService.__init__`; readiness unwraps it), `LiveBusDegradation` and
+  `FailureStreak`. `LiveEventBus.publish` is now `LiveJobEvent | None`.
+  The four sites: (1) `job_event_stream.py`'s `live_subscriber.get` escaped the async generator and
+  killed the SSE *response* → `GET .../events/stream 500 in 41s`; (2) **all ~20 publishes** sit inside
+  the job's `try`, so any could end the job — worst was `complete_job`, where a publish failure turned
+  a *successfully completed* job into a failed one; (3) `record_failure` — **liveness was fine**, jobs
+  did reach terminal status because `_force_terminal_failure` guards each step independently, but
+  `error_code` became `worker_crash` instead of the real cause and `failure` was recorded twice;
+  (4) **the one nobody predicted** — `resolve_child_outcome` (the body of `wait_for_subagent`)
+  consumed the *child's* live events unguarded, so a blip on a child's stream failed the
+  **orchestrating parent**. That is the multi-agent path the issue is named after.
+  Tolerated now: a live `publish` failing, a subscriber read failing, a TTL refresh after a successful
+  `XADD`. Still surfaces: every Postgres write including `append_event`, `XADD` itself, all
+  `mark_job_*`, and `CancelledError` (which derives from `BaseException` and is deliberately uncaught).
+  Degraded cadence is 0.5s → ×2 → 5s ceiling, reset on first success — deliberately *below* DRA-37's
+  15s idle block so degrading never increases latency.
+
 Open and not dispatched: **DRA-32** (proxy/Swagger auth — needs the owner's auth-model decision),
-**DRA-33** (DRA-12's option (B), design already written).
+**DRA-33** (DRA-12's option (B), design already written), **DRA-38**, **DRA-40**, **DRA-41** (read but
+deliberately not started — the owner stopped the dispatch to make room for DRA-42).
+
+### The DRA-42 × DRA-37 residual, know this before tuning either
+
+With both changes in, a **successful** terminal publish reaches the wire in ~72 ms and a **Valkey
+outage** degrades the stream to a 0.5–5s poll, so neither is slow. The narrow gap is a *failed publish
+while subscriber reads still succeed*: the stream is not degraded, so it sits in the 15s idle block and
+a terminal event waits on the durable poll. Rare, bounded, and accepted — but it is the same class
+DRA-37 fixed, reintroduced by a rare failure, so do not "fix" one of these two changes without
+re-reading the other.
 
 ### DRA-35's root cause — four wrong theories were paid for, do not re-run them
 
