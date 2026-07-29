@@ -105,6 +105,7 @@ of those let a service be half-added. That is exactly how history-service and ev
 ended up proxyable but missing from `/swagger` (DRA-20). A service's base URL and OpenAPI path
 come from `features/config/lib/dashboard-config.ts`, and every variable that file reads must
 also be listed in `vitest.setup.ts`.
+
 ## The Service Proxy
 
 `app/api/proxy/[service]/[...path]/route.ts` is the single route every browser call
