@@ -117,6 +117,17 @@ class Settings(BaseSettings):
             "max_request_body_bytes", "MAX_REQUEST_BODY_BYTES"
         ),
     )
+    # CORS allowlist (comma-separated). The dashboard reaches the orchestrator via
+    # a server-side proxy (not browser-direct), so a strict allowlist does NOT
+    # break normal dashboard use; the default covers the local dashboard origin.
+    # This must never widen back to "*": Compose publishes 4002 on the host, so a
+    # wildcard lets ANY page a developer visits drive DELETE /sessions/{id} and
+    # POST /sessions/{id}/prompts from the browser — destroying agent sessions and
+    # spending the owner's model budget.
+    cors_allow_origins_raw: str = Field(
+        default="http://localhost:3001,http://127.0.0.1:3001",
+        validation_alias=AliasChoices("cors_allow_origins_raw", "CORS_ALLOW_ORIGINS"),
+    )
     supported_provider_ids: tuple[str, ...] = REQUIRED_PROVIDER_IDS
     context_window_size: int = Field(
         default=128000,
@@ -236,6 +247,11 @@ class Settings(BaseSettings):
         if missing:
             raise ValueError(f"missing provider ids: {', '.join(missing)}")
         return value
+
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        """Configured CORS origins as a list (comma-separated, trimmed)."""
+        return [o.strip() for o in self.cors_allow_origins_raw.split(",") if o.strip()]
 
     @property
     def effective_history_valkey_url(self) -> str:

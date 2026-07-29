@@ -681,6 +681,27 @@ VALKEY_URL=redis://localhost:6381/0
 
 In Docker Compose, agent-orchestrator uses the dedicated `agent-orchestrator-valkey` service.
 
+## Browser CORS
+
+`CORS_ALLOW_ORIGINS` is a comma-separated allowlist of browser origins, defaulting
+to the local dashboard (`http://localhost:3001,http://127.0.0.1:3001`). It must
+never be set to `*`.
+
+Docker Compose publishes 4002 on the host, so under a wildcard allowlist any web
+page a developer happens to visit could issue a cross-origin
+`DELETE http://localhost:4002/sessions/{id}` — destroying an agent session — or
+`POST .../prompts`, spending the owner's model budget. A strict allowlist does not
+affect normal use: the dashboard calls this service through its own server-side
+proxy (`/api/proxy/orchestrator/...`), including the SSE job streams, which are
+`EventSource` calls to relative proxy URLs rather than to port 4002. Those proxied
+requests originate in the dashboard's Node process and carry no `Origin` header, so
+CORS does not apply to them, and neither does it apply to history-service or any
+other server-to-server caller.
+
+**CORS is not authentication.** It stops a browser being used as a confused deputy
+for methods that require a preflight; it does not stop a non-browser client, which
+simply omits `Origin`. Requiring a credential is tracked separately as DRA-32.
+
 ## Tests
 
 From the repo root:

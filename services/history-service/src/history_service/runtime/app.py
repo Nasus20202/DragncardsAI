@@ -141,9 +141,14 @@ def create_app(
     app.state.settings = settings
     instrument_fastapi_app(app)
 
+    # Strict CORS allowlist (configurable), matching eval-service. The dashboard
+    # reaches history-service through its own server-side proxy rather than from
+    # the browser, so the allowlist does not break normal dashboard use, and a
+    # request carrying no ``Origin`` at all — every server-to-server caller,
+    # including that proxy — is outside CORS entirely and unaffected.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.cors_allow_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )

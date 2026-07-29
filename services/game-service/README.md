@@ -28,6 +28,27 @@ Default local URL:
 http://localhost:4001
 ```
 
+## Browser CORS
+
+`CORS_ALLOW_ORIGINS` is a comma-separated allowlist of browser origins, defaulting
+to the local dashboard (`http://localhost:3001,http://127.0.0.1:3001`). It must
+never be set to `*`.
+
+Docker Compose publishes 4001 on the host, so under a wildcard allowlist any web
+page a developer happens to visit could issue a cross-origin
+`DELETE http://localhost:4001/games/{game_id}`, or drive the mutating action
+routes, and the browser would carry it out. A strict allowlist does not affect
+normal use: the dashboard calls this service through its own server-side proxy
+(`/api/proxy/game/...`), so those requests originate in the dashboard's Node
+process and carry no `Origin` header; the agent-orchestrator and history-service
+are server-to-server callers, likewise with no `Origin`; MCP clients are not
+browsers; and this service's own `/docs` playground is same-origin, which CORS
+never applies to. Requests with no `Origin` are unaffected by this setting.
+
+**CORS is not authentication.** It stops a browser being used as a confused deputy
+for methods that require a preflight; it does not stop a non-browser client, which
+simply omits `Origin`. Requiring a credential is tracked separately as DRA-32.
+
 ## What This Service Is For
 
 Use `game-service` when you need to:

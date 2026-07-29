@@ -89,6 +89,28 @@ exclusions are regexes matched against generated OpenAPI paths, so
 than reading the list — a pattern that quietly matches nothing looks identical to
 one that works.
 
+### Browser CORS
+
+`HISTORY_CORS_ALLOW_ORIGINS` is a comma-separated allowlist of browser origins,
+defaulting to the local dashboard. **Never widen it to `*`.** That is what this
+service shipped with (DRA-31), and because Compose publishes 4004 on the host it
+meant any page a developer visited could drive a cross-origin
+`DELETE /games/{game_id}` or backfill forged events — precisely the three
+operations `EXCLUDED_ROUTES` above withholds from a model, which makes withholding
+them decorative. The policy is pinned at the wire level in `tests/unit/test_cors.py`
+and matches eval-service, whose shape it was copied from.
+
+Two things to hold on to when touching this:
+
+- **A request with no `Origin` must keep working.** That is every real caller: the
+  dashboard reaches this service through its own server-side Node proxy, and
+  eval-service, game-service and the orchestrator are server-to-server. CORS does
+  not apply to them at all, and a policy that broke them would break the whole
+  application while looking secure.
+- **CORS is not authentication.** It only stops a *browser* being used as a
+  confused deputy for preflighted methods. Any non-browser client omits `Origin`
+  and is unaffected. Requiring a credential is DRA-32, deliberately separate.
+
 The whole loop these tools exist for is
 [Driving the System End-to-End](../../AGENTS.md#driving-the-system-end-to-end) in
 the root `AGENTS.md`.
