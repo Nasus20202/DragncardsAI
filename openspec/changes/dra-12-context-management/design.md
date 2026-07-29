@@ -1,9 +1,13 @@
 # Design — context management for chat sessions
 
-This document exists because DRA-12 is a proposal, not an implementation. It
-records the design decisions the proposal's two recommended changes imply, the
-alternatives considered inside each one, the failure modes each introduces, and
-the observable signal that would show each worked. Nothing here has been built.
+This document records the design decisions the proposal's recommended changes
+imply, the alternatives considered inside each one, the failure modes each
+introduces, and the observable signal that would show each worked.
+
+**(A) and (C) are built. (B) is not** — the owner approved (A) and (C) and
+withheld sign-off on (B), so the (B) section below, including the spec text it
+would need, is a live proposal and not a description of the code. Where the
+implementation departed from what was designed, the section says so.
 
 ## Scope boundary, stated once
 
@@ -67,6 +71,27 @@ mode, and auto-compaction should always use the checkpointed mode.** That keeps
 the cheap path automatic and the expensive path available when a user believes the
 summary has lost something.
 
+**Two properties of the existing checkpoint that A1 makes load-bearing, found
+while implementing it.** Neither is introduced here and neither is worth changing
+inside this change, but before A1 they had no consequence, because compaction
+re-read everything anyway.
+
+- `covers_up_to_job_id` is the newest **completed or interrupted** job
+  (`repositories/context.py:189-202`), while replay also includes **failed**
+  jobs. So a span whose newest jobs failed leaves the checkpoint behind them, and
+  the next compaction reads those failed jobs a second time. That costs one
+  span's worth of duplication at most, never unbounded growth, since the
+  checkpoint advances on the next completed job. Widening `covers_up_to_job_id`
+  to include failed jobs would change what the "CompactionRecord persistence"
+  requirement says a record covers, which is outside what was approved here.
+- The span filter is `Job.created_at > checkpoint.created_at`
+  (`repositories/context.py:150-155`), so it assumes a session's jobs complete in
+  the order they were created. One worker runs one session's jobs in sequence, and
+  subagents run in their own child sessions, so that holds today. If a session
+  ever runs its jobs concurrently, a job created before the checkpoint but
+  completed after it would fall outside every span, and the fix belongs in that
+  query rather than in compaction.
+
 Whether the drift is bad enough to need more than that is the one genuinely open
 question in this design. What is known: the compaction prompt is already written
 for recursive use, it is already handed the previous summary today, and no
@@ -93,15 +118,22 @@ because the game agent cannot distinguish "absent from the board" from "cut off"
 board is the payload that must survive intact: `SimplifiedGameState` is
 `roundNumber`, `mode`, `villainHitPoints`, `stepId`, `stepDescription`, `players`,
 and `zones` of `SimplifiedCard` records of seven fields each
-(`services/game-service/src/game_service/api/models.py:94-119`). At roughly 120
-characters of JSON per card and a realistic 60-120 visible cards, that is on the
-order of 10-15 KB. A starting default of **20 000 characters** therefore sits
-above a full board and below the payloads that actually need cutting — a
-multi-card `search_cards_marvel_champions` result, a `load_cards` response. The
-implementation task is to instrument the real per-tool character lengths across
-one full game and confirm the default sits above the 99th percentile of
-`get_game_state` before merging; if it does not, the default moves, not the
-mechanism.
+(`services/game-service/src/game_service/api/models.py:94-119`).
+
+The estimate that motivated a **20 000 character** default was 10-15 KB per
+board. The measurement, taken over the running deployment's own `job_events`
+before merging, came out lower and confirms the default with room to spare:
+`get_game_state` results (n=147) reach 6,307 characters at the maximum, 6,299 at
+the 99th percentile and 5,025 at the median. The payloads above the budget are
+`get_raw_game_state_games` (498,056 characters — the single largest thing in the
+deployment), `get_session_actions` (58,295),
+`search_cards_marvel_champions` (50,003),
+`search_prebuilt_sets_marvel_champions` (36,023) and `list_actions` (34,881).
+Tool-call *arguments* peak at 807 characters, so the same budget applied to them
+is inert today and exists only so a future tool cannot smuggle a payload in
+through the arguments side. The default therefore sits about 3x above the board
+that must survive and 1.7x below the smallest payload that has to be cut, which
+is the widest margin available on both sides at once.
 
 ### A3. Total ceiling: drop oldest-first until the request fits
 
@@ -120,6 +152,18 @@ current state and recent activity. Record how much was dropped on the log line a
 in the emitted `compaction` event payload, so a summary produced from a partially
 dropped span is identifiable afterwards rather than indistinguishable from a
 complete one.
+
+**What the implementation does differently, and why.** Re-estimating the whole
+request after every drop would re-encode the entire span once per dropped entry,
+which is quadratic in the length of exactly the spans that need dropping. So the
+fixed part of the request — the system prompt, the previous summary, the
+instruction line — is estimated once with `estimate_tokens_for_messages`, each
+history entry is costed once with `count_tokens_for_text`, and entries are then
+dropped against that running sum. The newest entry is always kept: it is already
+bounded by the per-event budget, and handing the summarizer nothing at all is
+worse than handing it one entry that is marginally over the estimate. If even
+that one entry does not fit, the mechanism logs a warning naming the numbers
+rather than silently producing an empty summary.
 
 **Alternative considered and rejected:** map-reduce summarisation — summarise
 halves, then summarise the summaries. It preserves more, and it costs two or more
@@ -143,6 +187,13 @@ Two sub-decisions:
   (`compaction.py:111`, `:163`). Both mean "nothing to do", and both are reachable
   on an early turn. They should be logged at debug/info and never surface to the
   user. Only a provider or persistence failure warrants the event.
+
+  The implementation does not match on the message to tell them apart, which
+  would break the moment either string is reworded. `perform_compaction` raises a
+  dedicated `NothingToCompactError` instead, which subclasses `ValueError` so the
+  manual endpoint's existing `except ValueError` still answers 422 for it. After
+  A1 the "no history content" case also covers "nothing new since the
+  checkpoint", which is the ordinary state of a session compacted twice in a row.
 - **A new event type costs a dashboard edit.** Emitting `compaction_failed`
   requires adding it to `STREAM_EVENT_TYPES`
   (`services/dashboard/features/play/lib/play-session-events.ts:63-79`), because
@@ -156,9 +207,24 @@ Two sub-decisions:
 
 **Ordering note for whoever implements this:** A4 is the smallest patch of the
 four and is what converts a turn failure into a degraded turn. A1-A3 are what
-stop the failure happening. If (A) has to be split, A4 ships first.
+stop the failure happening. If (A) has to be split, A4 ships first. It did: A4
+landed as its own commit, with the failure reproduced first — a provider that
+rejects a request larger than the window, which marked the user's turn `failed`
+with `context_length_exceeded` until the guard existed.
+
+One further sub-decision the implementation had to make: recording the
+degradation must not be able to fail the job either, so the `append_event` and
+`publish` that write the `compaction_failed` event are themselves wrapped, and a
+failure to record is logged and dropped. A job that survived a failed compaction
+must not then die reporting it.
 
 ## (B) Make the trigger measure the request it protects
+
+**Not implemented. Proposed, and awaiting the owner's sign-off.** Everything in
+this section describes what the trigger *would* do; the code still measures the
+replay only. The requirement text (B) needs is at the end of the section, kept
+out of the change's spec delta on purpose so that archiving cannot write an
+unimplemented requirement into the main spec.
 
 ### What changes arithmetically
 
@@ -233,7 +299,58 @@ compaction means a summary standing in for turns that would previously have been
 replayed verbatim. That is precisely the class of change the issue says must not
 be guessed at, and it is the one place this proposal is not merely fixing a fault.
 It is recommended, with the reasoning above, and it is separable: (A) can be
-approved and merged without it.
+approved and merged without it. That is what happened — (A) shipped, (B) did not.
+
+### Proposed spec text for (B)
+
+This is the requirement (B) would replace "Auto-compaction at job start" with. It
+lives here rather than in `specs/agent-orchestrator/spec.md` in this change,
+because a delta is applied to the main spec on archive and this behaviour does
+not exist. Whoever picks (B) up moves this text into a delta of its own.
+
+> ### Requirement: Auto-compaction at job start
+> Before sending the first model request for a new job, when `multi_turn_memory` is enabled, the system SHALL estimate the size of the request it is about to send and compact automatically if that estimate reaches `CONTEXT_COMPACTION_THRESHOLD` of the model's context window.
+>
+> The estimate SHALL cover every part of the request, using the same tiktoken estimation the context metadata endpoint uses:
+>
+> 1. the system prompt built from the session's active skills and persona state,
+> 2. the tool definitions exposed to the model, built-in and MCP alike,
+> 3. the replayed prior message history, after compaction checkpoint and replay-window limits are applied,
+> 4. the current turn's user message as the model will receive it, including the content of any skills the prompt loaded into itself.
+>
+> The estimate SHALL NOT be taken from cumulative `tokens_used` on job rows, which reflects per-job LLM consumption and underestimates the request.
+>
+> Because compaction can only reduce part (3), the system SHALL NOT attempt compaction when the pressure comes from the parts it cannot reduce. When the total estimate reaches the threshold but the replayed history is too small for a summary to be smaller than it, the system SHALL skip compaction and SHALL log that the threshold was reached by fixed request cost rather than by history.
+>
+> Threshold is configured via `CONTEXT_COMPACTION_THRESHOLD` env var (float, default `0.8`). The context window SHALL be the provider-reported context length for the session's model where available, falling back to `CONTEXT_WINDOW_SIZE` (int, default `128000`).
+>
+> Auto-compaction SHALL log an INFO entry recording the pre-compaction usage ratio and the component estimates it was computed from.
+>
+> #### Scenario: Auto-compaction fires at threshold
+> - **WHEN** a job starts and the estimated request size divided by context window size reaches `CONTEXT_COMPACTION_THRESHOLD`, and the replayed history is large enough for compaction to reduce it
+> - **THEN** the system SHALL compact before sending the first model request
+> - **AND** SHALL log INFO with the pre-compaction ratio and its component estimates
+>
+> #### Scenario: No auto-compaction below threshold
+> - **WHEN** a job starts and the estimated request size is below the threshold
+> - **THEN** the system SHALL proceed without compaction
+>
+> #### Scenario: Skills loaded into the turn count toward the estimate
+> - **WHEN** a job's prompt loaded skill content into its own user message
+> - **THEN** the estimate SHALL include that rendered content, not only the stored prompt text
+>
+> #### Scenario: Tool definitions and system prompt count toward the estimate
+> - **WHEN** a session exposes tool definitions and an active-skill system prompt to the model
+> - **THEN** the estimate SHALL include both alongside the replayed history
+>
+> #### Scenario: Fixed request cost alone does not trigger repeated compaction
+> - **WHEN** the total estimate reaches the threshold but the replayed history is too small for a summary to be smaller than it
+> - **THEN** the system SHALL NOT call the summarizing model
+> - **AND** SHALL log that the threshold was reached by fixed request cost rather than by history
+>
+> #### Scenario: Trigger and reported usage agree
+> - **WHEN** the auto-compaction check and the context metadata endpoint run for the same session with no job in between
+> - **THEN** both SHALL estimate the same replay, system prompt, and tool-definition contributions
 
 ## (C) Say what the limit fields will drop
 
@@ -245,28 +362,45 @@ older ones (`runtime/session_transcript.py:390-421`), or that the message limit
 counts conversational messages only and never the compaction summary
 (`openspec/specs/agent-orchestrator/spec.md:493`).
 
-One line of helper text under each field, following whatever pattern
-`TextInputField` already supports in that panel. No spec delta: the dashboard spec
-requires the fields to exist and does not constrain their labels. This rides along
-with (B) rather than justifying a change of its own.
+One line of helper text under each field. `TextInputField` had no slot for one,
+while its sibling `TextareaField` in the same module already did, so the
+implementation gave `TextInputField` the same optional `description` prop and
+renders it the same way — nothing about either field's existing appearance
+changes. No spec delta: the dashboard spec requires the fields to exist and does
+not constrain their labels.
+
+The wording states what each limit *drops*, since that is the part a bare integer
+cannot convey:
+
+- Recent message limit — "Replays only the newest N conversational messages and
+  drops older ones. Tool exchanges are limited separately, and a compaction
+  summary is never dropped."
+- Recent tool exchange limit — "Replays only the newest N tool call/result pairs.
+  The newest game-state result always keeps a slot, so older board states are the
+  first to go."
+
+Both sentences are asserted by a unit test, so they cannot drift away from
+`_select_recent_message_orders` and `_select_recent_tool_exchange_orders` without
+turning a test red.
 
 ## How each part would be known to have worked
 
-| Part | Signal that it worked | Signal it did not |
-| --- | --- | --- |
-| A1 checkpoint | Estimated compaction-input tokens are roughly constant across successive compactions in one long session, instead of rising monotonically | Input size still tracks total session length |
-| A1 drift risk | Diff of checkpointed vs from-scratch summaries of the same session shows no dropped tracked state (HP, threat, villain phase, cards in play) | Checkpointed summary omits state the from-scratch one keeps |
-| A2 cap | No `get_game_state` result is ever truncated in a real game; oversized card-search results are, with the marker present | A board state gets cut, i.e. the default is too low |
-| A3 ceiling | The assembled compaction request never exceeds `window × threshold`; the drop counter stays at zero in normal play | Drops fire routinely, which is the trigger to reconsider map-reduce |
-| A4 guard | A session with a deliberately failing provider call completes its turn with a `compaction_failed` event instead of a failed job | The job still fails |
-| B measurement | The ratio in the auto-compaction log line and the ratio the context widget shows agree for the same session at the same moment; no request is ever sent above the window | The two still disagree, or a turn still overflows |
-| B guard | A session whose fixed costs alone exceed the threshold logs the skip once per turn and makes no compaction call | Repeated compaction attempts that do not lower the ratio |
-| C | A user setting a tool-exchange limit can state, unprompted, that the newest board state is kept | — |
+| Part | Signal that it worked | Signal it did not | Observed |
+| --- | --- | --- | --- |
+| A1 checkpoint | Estimated compaction-input tokens are roughly constant across successive compactions in one long session, instead of rising monotonically | Input size still tracks total session length | Yes, in a unit test that runs two successive compactions: the second input excludes every pre-checkpoint turn and is shorter than the first despite two more turns of history |
+| A1 drift risk | Diff of checkpointed vs from-scratch summaries of the same session shows no dropped tracked state (HP, threat, villain phase, cards in play) | Checkpointed summary omits state the from-scratch one keeps | Not measured. It needs two real summarizing calls over one long game, and the deployment has no compaction record to compare against yet. The `from_session_start` mode this diff requires now exists, so the measurement is cheap whenever a long game is available |
+| A2 cap | No `get_game_state` result is ever truncated in a real game; oversized card-search results are, with the marker present | A board state gets cut, i.e. the default is too low | Yes, from the deployment's own `job_events`: `get_game_state` peaks at 6,307 characters against a 20,000 budget, and the payloads over it are raw game state, session actions, card search, prebuilt-set search and action lists |
+| A3 ceiling | The assembled compaction request never exceeds `window × threshold`; the drop counter stays at zero in normal play | Drops fire routinely, which is the trigger to reconsider map-reduce | Ceiling verified in a unit test that measures the assembled request against the ceiling and asserts the oldest entry is gone and the newest kept. Whether drops fire in normal play is not yet observable — no session has compacted in the deployment |
+| A4 guard | A session with a deliberately failing provider call completes its turn with a `compaction_failed` event instead of a failed job | The job still fails | Yes. The test was written first against the unguarded code, where the job was marked `failed` with `context_length_exceeded`; with the guard the job completes and carries one `compaction_failed` event |
+| B measurement | The ratio in the auto-compaction log line and the ratio the context widget shows agree for the same session at the same moment; no request is ever sent above the window | The two still disagree, or a turn still overflows | Not implemented, so not observed. The two ratios still disagree |
+| B guard | A session whose fixed costs alone exceed the threshold logs the skip once per turn and makes no compaction call | Repeated compaction attempts that do not lower the ratio | Not implemented |
+| C | A user setting a tool-exchange limit can state, unprompted, that the newest board state is kept | — | The sentence is on the field and asserted by a test; whether a user can then state it is for the owner to judge |
 
-Two of these are measurable only against a real long game, not a unit test:
-A1's constancy and B's agreement with the widget. Both are cheap to observe from
-the existing INFO log line at `prompt_run.py:868-874` once it reports the
-components, and that log line should report them.
+The A1 drift diff and B's agreement with the widget are measurable only against a
+real long game, not a unit test. The INFO log line already reports the compaction
+input's estimated token count, its truncated-event count and its dropped-entry
+count, which is what makes the first of those cheap; reporting the trigger's
+component estimates belongs to (B).
 
 ## Things this design will not do, restated so no one adds them later
 

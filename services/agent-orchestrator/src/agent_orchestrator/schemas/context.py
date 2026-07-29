@@ -5,6 +5,19 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class CompactSessionRequest(BaseModel):
+    """Options for a manually triggered compaction.
+
+    Compaction normally summarizes only the span since the previous checkpoint,
+    on top of that checkpoint's summary. `from_session_start` ignores the
+    checkpoint and re-reads the session's retained raw events instead, so a
+    caller who believes an earlier summary lost something can rebuild it.
+    Automatic compaction always uses the checkpointed form.
+    """
+
+    from_session_start: bool = False
+
+
 class ContextTokenBreakdownResponse(BaseModel):
     system_prompt: int
     replay: int

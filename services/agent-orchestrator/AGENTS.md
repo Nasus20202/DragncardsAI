@@ -39,7 +39,7 @@ Sessions are persistent agent configurations:
 Jobs are prompt executions:
 - Created via `POST /sessions/{id}/prompts`
 - Stream events via `GET /jobs/{id}/events/stream`
-- Events include: `progress`, `reasoning`, `model_output`, `tool_call`, `tool_result`, `skill_loaded`, `compaction`, `subagent_started`, `subagent_completed`, `subagent_failed`, `user_question`, `user_question_answered`, `user_question_closed`, `completion`, `failure`, `cancellation`
+- Events include: `progress`, `reasoning`, `model_output`, `tool_call`, `tool_result`, `skill_loaded`, `compaction`, `compaction_failed`, `subagent_started`, `subagent_completed`, `subagent_failed`, `user_question`, `user_question_answered`, `user_question_closed`, `completion`, `failure`, `cancellation`
 - Only `completion`, `failure`, and `cancellation` are terminal and close the SSE stream
 - A new event type needs no migration (`job_events.event_type` is a free string), but it **must** be
   added to the dashboard's `STREAM_EVENT_TYPES`, because the browser registers one named `EventSource`

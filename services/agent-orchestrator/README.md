@@ -587,6 +587,9 @@ Event types include:
 - `tool_result`
 - `skill_loaded`
 - `compaction`
+- `compaction_failed` — automatic compaction could not complete; the turn ran on the history it
+  already had. Carries the failure `code`, its `message`, and the `usage_ratio` that triggered the
+  attempt
 - `subagent_started`
 - `subagent_completed`
 - `subagent_failed`
@@ -599,6 +602,46 @@ Event types include:
 
 Only `completion`, `failure`, and `cancellation` are terminal and close the SSE stream. The three
 `user_question*` events are not, so the stream stays open while the user decides.
+
+### Context Management
+
+- `GET /sessions/{session_id}/context` — current context health: the estimated next-request size,
+  the model's context window, the usage ratio, the compaction count, and the token breakdown.
+- `POST /sessions/{session_id}/compact` — compact now. The body is optional; `from_session_start`
+  re-reads the whole session instead of the span since the last checkpoint.
+
+When `multi_turn_memory` is enabled, a job estimates its replay before its first model request and
+compacts when the ratio against the model's context window reaches `CONTEXT_COMPACTION_THRESHOLD`.
+
+Compaction summarizes into a `CompactionRecord` and writes a synthetic `job_type='compaction'` job
+so the summary is visible in the transcript. Raw `job_events` rows are never deleted, so a summary
+can always be rebuilt from them.
+
+What the summarizer is given is bounded three ways, so it never grows with the session's total
+length:
+
+- **From the previous checkpoint.** A compaction reads only the jobs created after the previous
+  record's `covers_up_to_job_id`, and is handed that record's `summary_text` as prior context. The
+  manual endpoint's `from_session_start` ignores the checkpoint — the recovery path for a summary
+  believed to have lost something. Automatic compaction always uses the checkpointed form.
+- **Per event.** One tool call's arguments or one tool result contributes at most
+  `CONTEXT_COMPACTION_EVENT_CHAR_BUDGET` characters, followed by a `… [truncated, N chars omitted]`
+  marker. This applies to the summarization input only — a tool result replayed to the game agent is
+  never truncated, because a half-cut board cannot be told apart from a board that is not in play.
+- **In total.** The assembled request is estimated, and while it exceeds
+  `CONTEXT_COMPACTION_THRESHOLD` of the window, the oldest entries are dropped. How many were
+  dropped and how many events were truncated are logged and carried on the `compaction` event.
+
+```bash
+CONTEXT_WINDOW_SIZE=128000                  # fallback when the provider reports no context length
+CONTEXT_COMPACTION_THRESHOLD=0.8            # of the window, for both the trigger and the input ceiling
+CONTEXT_COMPACTION_EVENT_CHAR_BUDGET=20000  # per tool call or tool result, summarization input only
+```
+
+Automatic compaction exists to keep a job inside its context window, so its own failure never fails
+that job: the worker logs it, emits `compaction_failed`, and the turn continues on the history it
+already has. A manual compaction does report its failure — 502 when the summarizing call fails, 422
+when there is nothing to summarize — because the caller asked for it directly.
 
 ## MCP Surface
 

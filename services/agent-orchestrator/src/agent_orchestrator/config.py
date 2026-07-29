@@ -17,6 +17,14 @@ REQUIRED_PROVIDER_IDS = (
     "opencodego",
 )
 
+# How much text one tool call's arguments or one tool result may contribute to a
+# compaction input. Measured against real sessions: a full simplified Marvel
+# Champions board (`get_game_state`) runs to ~6.3k characters at the 99th
+# percentile, while a card search, an action list or a raw game state reach 50k
+# to 500k. This sits well above the board that must survive intact and well
+# below the payloads that have to be cut.
+COMPACTION_EVENT_CHAR_BUDGET_DEFAULT = 20_000
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -139,6 +147,13 @@ class Settings(BaseSettings):
             "context_compaction_threshold", "CONTEXT_COMPACTION_THRESHOLD"
         ),
     )
+    context_compaction_event_char_budget: int = Field(
+        default=COMPACTION_EVENT_CHAR_BUDGET_DEFAULT,
+        validation_alias=AliasChoices(
+            "context_compaction_event_char_budget",
+            "CONTEXT_COMPACTION_EVENT_CHAR_BUDGET",
+        ),
+    )
     enabled_provider_ids_raw: str = Field(
         default=",".join(REQUIRED_PROVIDER_IDS),
         validation_alias=AliasChoices(
@@ -166,6 +181,13 @@ class Settings(BaseSettings):
     def validate_attempts(cls, value: int) -> int:
         if value < 1:
             raise ValueError("default_job_max_attempts must be at least 1")
+        return value
+
+    @field_validator("context_compaction_event_char_budget")
+    @classmethod
+    def validate_compaction_event_char_budget(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("context_compaction_event_char_budget must be positive")
         return value
 
     @field_validator("subagent_wait_timeout_seconds")

@@ -1,5 +1,41 @@
 # Better context management for chat sessions
 
+## Status
+
+The owner approved **(A)** and **(C)** and withheld sign-off on **(B)**. (A) and
+(C) are implemented on this change; (B) is not, and the sections describing it
+below are kept as a live proposal rather than a record of work. Nothing in the
+implementation changed what the auto-compaction trigger measures: it still
+counts the replay only, and `CONTEXT_COMPACTION_THRESHOLD` is still `0.8`.
+
+What (A) changed, measured against the running deployment's own history rather
+than argued from the code (89 sessions, no compaction record among them, so
+every number below is what a first compaction would have read):
+
+| Session | Compaction input before | With the per-event cap (A2) |
+| --- | --- | --- |
+| `aa079410` (71 entries) | 510,608 chars | 32,552 chars |
+| `59a55932` (139 entries) | 424,269 chars | 303,532 chars |
+| `66670497` (223 entries) | 218,345 chars | 167,753 chars |
+| `dbe97e1b` (251 entries) | 166,308 chars | 166,308 chars |
+| `75bfcf05` (384 entries) | 156,911 chars | 103,735 chars |
+
+The first row is one 498 KB `get_raw_game_state_games` result; the last row is
+death by a thousand cuts, which is what (A3)'s total ceiling is for. `dbe97e1b`
+has no single payload over the budget and is unchanged by (A2) — also the point
+of measuring rather than assuming. On top of this, (A1) narrows each compaction
+after the first to the span since its checkpoint, so none of these totals is
+read twice.
+
+The per-event budget's default is 20,000 characters, chosen against the same
+data: `get_game_state` results (n=147) run to 6,307 characters at the maximum
+and 6,299 at the 99th percentile, so a full board is never cut, while the
+payloads that do get cut are `get_raw_game_state_games` (498,056),
+`get_session_actions` (58,295), `search_cards_marvel_champions` (50,003),
+`search_prebuilt_sets_marvel_champions` (36,023) and `list_actions` (34,881).
+Tool-call *arguments* never approach it — the largest in the deployment is 807
+characters.
+
 ## Why
 
 DRA-12 was split out of DRA-6 ("Improve chat experience"), which asked for
@@ -199,7 +235,12 @@ re-derive them.
   (`session_transcript.py:197-201`). The spec describes `context_window_size` as
   "configured `CONTEXT_WINDOW_SIZE`" and lists six fields
   (`openspec/specs/agent-orchestrator/spec.md:749-755`). The code is the better
-  behaviour; the spec text is stale.
+  behaviour; the spec text is stale. This change's delta corrects that
+  requirement. The same staleness exists in the "Auto-compaction at job start"
+  requirement, whose window wording also predates the provider lookup in
+  `maybe_auto_compact`; that requirement is left alone here because (B) rewrites
+  it, and touching it now would codify replay-only measurement as intended
+  behaviour and so prejudge (B).
 - `compaction.py:8` and `:12` import `build_message_history` and
   `estimate_tokens_for_messages` and use neither; `ruff check` reports both as
   F401. They survive because `scripts/lint.sh` runs only `black` for Python
@@ -211,31 +252,35 @@ Nothing about what the model sees on a turn that already fits inside its context
 window. Two changes, both to the compaction machinery, in priority order.
 
 - **(A) Bound and checkpoint the compaction input, and stop a compaction failure
-  from failing the user's turn.** Summarise only what has happened since the
+  from failing the user's turn. Implemented.** Summarise only what has happened since the
   previous `CompactionRecord.covers_up_to_job_id` — the previous summary is
   already supplied as a system message and already carries everything before that
   point — and cap the text each tool event contributes to the summarisation
   transcript, with an explicit marker where text was cut. Wrap the
   auto-compaction call so a failure degrades into a logged, transcript-visible
   event and the turn proceeds on the history it has, instead of failing.
-- **(B) Make the auto-compaction trigger measure the request it is protecting.**
-  Count system prompt + tool definitions + replay + the current turn's rendered
-  user message, which is what the widget already counts plus the turn itself, and
-  evaluate the threshold against that. Keep `CONTEXT_COMPACTION_THRESHOLD` at
-  `0.8`.
-- **(C) Say on the two limit fields what setting them will drop.** The config
-  drawer offers two integers with no indication that a tool-exchange limit
+- **(B) Make the auto-compaction trigger measure the request it is protecting.
+  Proposed and not implemented — the owner withheld sign-off on this part, and it
+  remains a live option.** Count system prompt + tool definitions + replay + the
+  current turn's rendered user message, which is what the widget already counts
+  plus the turn itself, and evaluate the threshold against that. Keep
+  `CONTEXT_COMPACTION_THRESHOLD` at `0.8`. The trigger today still measures the
+  replay only, exactly as it did before this change.
+- **(C) Say on the two limit fields what setting them will drop. Implemented.** The config
+  drawer offered two integers with no indication that a tool-exchange limit
   preserves the newest board state and discards older ones. One line of helper
-  text each. This is cosmetic and rides along with (B); it is not a reason to
-  open a change on its own.
+  text each.
 
-Spec deltas accompany (A) and (B) because both modify existing requirements in
+The spec delta in this change accompanies (A) only, because that is what was
+built. (B)'s proposed requirement text is kept in `design.md` under "Proposed
+spec text for (B)", deliberately outside the delta so that archiving this change
+cannot write an unimplemented requirement into
 `openspec/specs/agent-orchestrator/spec.md`. (C) needs no delta — the dashboard
 spec already requires the fields to exist and does not constrain their labels.
 
 **(B) is the only change that alters when the model's context is compacted, and
 it moves compaction earlier. It needs the owner's explicit sign-off, separately
-from (A).** (A) can be approved on its own and is worth doing on its own.
+from (A).** (A) was approved on its own and shipped on its own.
 
 ## Why not the four directions the issue named
 
@@ -350,17 +395,24 @@ rather than filed as tidiness.
 ## Impact
 
 - `services/agent-orchestrator` — `runtime/compaction.py` (checkpointed input,
-  bounded per-event text), `runtime/prompt_run.py` (trigger inputs, guarded
-  auto-compaction call), `runtime/tokens.py` or a small helper for the shared
-  estimate, plus unit tests.
+  per-event cap, total ceiling, `NothingToCompactError`),
+  `runtime/prompt_run.py` (guarded auto-compaction call, `compaction_failed`
+  event), `api/routers/context.py` and `schemas/context.py` (the
+  `from_session_start` recovery mode, 502 on a failed summarizing call),
+  `config.py` (`CONTEXT_COMPACTION_EVENT_CHAR_BUDGET`), the README's new Context
+  Management section and the event lists in `README.md` / `AGENTS.md`, plus unit
+  tests. (B) would additionally touch `maybe_auto_compact`'s inputs; it has not.
 - `services/dashboard` — helper text on the two limit fields in
-  `features/play/components/play-config-panel.tsx`; a `compaction_failed` event
-  type would also need adding to `STREAM_EVENT_TYPES`, because the browser
+  `features/play/components/play-config-panel.tsx` (via a new optional
+  `description` on `TextInputField`), and `compaction_failed` added to
+  `STREAM_EVENT_TYPES` plus a transcript row for it, because the browser
   registers one named `EventSource` listener per type and silently drops anything
   absent from that list (`services/agent-orchestrator/AGENTS.md:44-46`).
-- `openspec/specs/agent-orchestrator/spec.md` — the "Auto-compaction at job
-  start" and "Manual compaction endpoint" requirements, and the stale
-  `context_window_size` / field-count wording in "Context metadata endpoint".
+- `openspec/specs/agent-orchestrator/spec.md` — the "Manual compaction endpoint"
+  requirement, the stale `context_window_size` / field-count wording in "Context
+  metadata endpoint", and a new requirement for the degraded-turn guarantee. The
+  "Auto-compaction at job start" requirement is untouched, because it belongs to
+  (B).
 - No migration. No new state, in memory or otherwise; the checkpoint (A) needs is
   the `covers_up_to_job_id` column that `compaction_records` already has
   (`0002_context_management.postgresql.sql:5-12`).

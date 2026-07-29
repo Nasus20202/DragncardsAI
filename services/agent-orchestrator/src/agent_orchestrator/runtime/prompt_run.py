@@ -13,7 +13,10 @@ from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError
 from agent_orchestrator.integrations.mcp.client import McpClientError
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.runtime.builtin_tools import build_builtin_registry
-from agent_orchestrator.runtime.compaction import perform_compaction
+from agent_orchestrator.runtime.compaction import (
+    NothingToCompactError,
+    perform_compaction,
+)
 from agent_orchestrator.runtime.history_emitter import (
     SESSION_GAME_ID_KEY,
     SESSION_RESTORED_CONTEXT_KEY,
@@ -833,53 +836,116 @@ class PromptRunService:
         await self._maybe_terminate_child_session(job)
 
     async def maybe_auto_compact(self, job_id: str, session_id: str) -> None:
-        with tracer.start_as_current_span(
-            "agent_orchestrator.maybe_auto_compact",
-            attributes={"job.id": job_id, "session.id": session_id},
-        ):
-            full_job = await self._repository.get_job(job_id)
-            if full_job is None or full_job.session.model_config is None:
-                logger.warning(
-                    "Job %s: cannot auto-compact — missing model config", job_id
+        """Compact the session's history when the replay estimate reaches the threshold.
+
+        This never raises. Auto-compaction exists to keep a job inside its
+        context window, so its own failure must not be the reason that job
+        fails — it is called from inside the job's `try`, whose handlers mark
+        the job failed. A real failure is logged and recorded as a
+        `compaction_failed` event, and the job proceeds on the history it
+        already has; finding nothing to summarize is not a failure at all.
+        """
+        ratio: float | None = None
+        try:
+            with tracer.start_as_current_span(
+                "agent_orchestrator.maybe_auto_compact",
+                attributes={"job.id": job_id, "session.id": session_id},
+            ):
+                full_job = await self._repository.get_job(job_id)
+                if full_job is None or full_job.session.model_config is None:
+                    logger.warning(
+                        "Job %s: cannot auto-compact — missing model config", job_id
+                    )
+                    return
+
+                model_name = full_job.session.model_config.model_name
+                context_length = await self._bifrost_client.get_model_context_length(
+                    full_job.session.model_config.provider_id, model_name
                 )
-                return
+                context_window_size = (
+                    context_length or self._settings.context_window_size
+                )
 
-            model_name = full_job.session.model_config.model_name
-            context_length = await self._bifrost_client.get_model_context_length(
-                full_job.session.model_config.provider_id, model_name
-            )
-            context_window_size = context_length or self._settings.context_window_size
+                threshold = self._settings.context_compaction_threshold
 
-            threshold = self._settings.context_compaction_threshold
+                # Estimate actual replay size (same logic as context metadata endpoint)
+                # so the threshold fires before the LLM receives an oversized request.
+                replay_messages = await self._transcript_service.build_message_history(
+                    session_id, current_job_id=job_id
+                )
+                tokens_used = estimate_tokens_for_messages(replay_messages)
+                ratio = (
+                    tokens_used / context_window_size
+                    if context_window_size > 0
+                    else 0.0
+                )
 
-            # Estimate actual replay size (same logic as context metadata endpoint)
-            # so the threshold fires before the LLM receives an oversized request.
-            replay_messages = await self._transcript_service.build_message_history(
-                session_id, current_job_id=job_id
-            )
-            tokens_used = estimate_tokens_for_messages(replay_messages)
-            ratio = (
-                tokens_used / context_window_size if context_window_size > 0 else 0.0
-            )
+                if ratio < threshold:
+                    return
 
-            if ratio < threshold:
-                return
+                logger.info(
+                    "Job %s: usage ratio %.3f exceeds threshold %.3f — auto-compacting session %s",
+                    job_id,
+                    ratio,
+                    threshold,
+                    session_id,
+                )
 
-            logger.info(
-                "Job %s: usage ratio %.3f exceeds threshold %.3f — auto-compacting session %s",
+                await perform_compaction(
+                    repository=self._repository,
+                    bifrost_client=self._bifrost_client,
+                    session_id=session_id,
+                    model_config=full_job.session.model_config,
+                    current_job_id=job_id,
+                    live_event_bus=self._live_event_bus,
+                    event_char_budget=(
+                        self._settings.context_compaction_event_char_budget
+                    ),
+                    max_input_tokens=int(context_window_size * threshold),
+                )
+        except NothingToCompactError as exc:
+            # Reachable on an early turn, and on a session whose only history is
+            # already summarized. Nothing went wrong, so nothing is reported.
+            logger.info("Job %s: nothing to compact (%s)", job_id, exc)
+        except Exception as exc:
+            # `CancelledError` derives from BaseException and is deliberately
+            # not caught: a cancelled job must still cancel.
+            logger.exception(
+                "Job %s: auto-compaction failed at usage ratio %s — continuing on the existing history",
                 job_id,
-                ratio,
-                threshold,
-                session_id,
+                f"{ratio:.3f}" if ratio is not None else "unknown",
+            )
+            await self._record_compaction_failure(
+                job_id=job_id, session_id=session_id, exc=exc, ratio=ratio
             )
 
-            await perform_compaction(
-                repository=self._repository,
-                bifrost_client=self._bifrost_client,
-                session_id=session_id,
-                model_config=full_job.session.model_config,
-                current_job_id=job_id,
-                live_event_bus=self._live_event_bus,
+    async def _record_compaction_failure(
+        self,
+        *,
+        job_id: str,
+        session_id: str,
+        exc: Exception,
+        ratio: float | None,
+    ) -> None:
+        """Make a degraded compaction visible in the transcript and the stream.
+
+        Recording the degradation must not itself fail the job, so a failure to
+        persist or publish the event is logged and swallowed too.
+        """
+        failure = self.classify_execution_failure(exc)
+        payload: dict[str, Any] = {
+            "code": failure["code"],
+            "message": failure["message"],
+            "usage_ratio": ratio,
+        }
+        try:
+            await self._repository.append_event(
+                job_id, session_id, "compaction_failed", payload
+            )
+            await self._live_event_bus.publish(job_id, "compaction_failed", payload)
+        except Exception:
+            logger.exception(
+                "Job %s: could not record the compaction failure event", job_id
             )
 
     async def append_invalid_tool_result(

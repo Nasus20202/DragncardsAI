@@ -265,6 +265,21 @@ export function AggEventRow({
       return <ToolExchangeBlock call={agg.call} result={agg.result} />;
     case "compaction":
       return <CompactionBlock text={agg.text} />;
+    case "compaction_failed":
+      // Deliberately not the danger styling the `failure` row uses: the turn
+      // this interrupted still ran. What the reader needs to know is that the
+      // history was not summarised, not that something was lost.
+      return (
+        <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm">
+          <span className="mr-1.5 font-semibold text-warning">
+            Context compaction failed
+          </span>
+          <span className="text-default-500">
+            {eventBodyText(agg.event)} — this turn continued on the history it
+            already had.
+          </span>
+        </div>
+      );
     case "skill_loaded":
       return (
         <CollapsibleEventBlock
