@@ -65,26 +65,54 @@ The eval-service SHALL evaluate each target at most once by default, deduplicati
 - **THEN** the stale task's cleanup SHALL NOT evict the newer task from the in-flight registry, so the fresh task remains cancellable
 
 ### Requirement: Per-move evaluation
-The eval-service SHALL evaluate each agent move in isolation, assembling the judge's input from the recorded `agent` move event (the intended action, the agent's reasoning/context, and the action arguments) correlated with the `game-service` state for that move, read from the history-service.
+The eval-service SHALL evaluate each agent move in the context of the round it belongs to — NOT as an isolated action — assembling the judge's input from the recorded `agent` move event (the intended action, the agent's reasoning/context, and the action arguments) correlated with the `game-service` state for that move and with the other agent moves of that move's round, all read from the history-service. The verdict SHALL remain scoped to the single move; the round supplies the context in which that move is judged.
 
 #### Scenario: Evaluate a recorded agent move
 - **WHEN** the eval-service processes an `agent` move event target for a `game_id` and `target_seq`
-- **THEN** the eval-service SHALL assemble the move, the agent's reasoning/context, and the correlated game state from history and SHALL produce a `scope=move` verdict targeting that move's `seq`
+- **THEN** the eval-service SHALL assemble the move, the agent's reasoning/context, the correlated game state, and the move's round context from history, and SHALL produce a `scope=move` verdict targeting that move's `seq`
 
 #### Scenario: Judge input includes the agent's reasoning
 - **WHEN** the eval-service assembles the input for a per-move evaluation
 - **THEN** the input SHALL include the playing agent's reasoning/context for that move so the judge can critique the decision and its rationale
 
+#### Scenario: A move is not graded as though it stood alone
+- **WHEN** the eval-service assembles the input for a move that is one call of a multi-call play, such as exhausting a character to pay for an ability whose effect a later call applies
+- **THEN** the input SHALL identify the round the move belongs to and SHALL present the round's other moves as the play the graded move is part of
+
 ### Requirement: Per-round evaluation
 The eval-service SHALL evaluate each round/turn in isolation, detecting round boundaries from the round/phase information on `game-service` state events, closing the final round on a terminal game status, and producing one round verdict per closed round.
+
+Because a `game-service` event embeds the state **after** its action was applied, the event whose state first reports a different round number is the event that CLOSED the preceding round. That event SHALL be the closing sequence (`to_seq`) of the round it closed, and the next round SHALL start at the sequence after it — so a round's span covers the move that ended it, and a round roll-up is graded against the board as that round ended rather than the board from before its own closing action. This SHALL match how the history transcript attributes a `game-service` event, so an evaluated round span and a displayed round band cover the same events. An event that both closes a round and carries a terminal status SHALL close that round exactly once and SHALL NOT open an additional empty span after itself.
+
+Every round number the eval-service reports or accepts SHALL be the 1-based round of PLAY, which is the recorded `roundNumber` plus one, because DragnCards `roundNumber` counts COMPLETED rounds and reads 0 throughout the first round of play. The round named in a round-level judge prompt and the round numbers accepted in a request's round selection SHALL both use that convention, so a round names the same round the history transcript names. The raw counter SHALL NOT be presented to a judge or a user.
 
 #### Scenario: Evaluate a closed round
 - **WHEN** the eval-service detects that a round has closed at a `game-service` state event with `seq` R
 - **THEN** the eval-service SHALL assemble the round's moves and produce a `scope=round` verdict targeting `seq` R with the round's `from_seq`/`to_seq` span
 
+#### Scenario: A round ends at the event that closed it
+- **WHEN** a `game-service` event's post-action state is the first to report a new round number, at `seq` R, and the preceding round began at `seq` F
+- **THEN** that round's span SHALL be `F` to `R` inclusive, and the next round SHALL begin at `seq` R+1, rather than the round ending at `seq` R-1 and the next round beginning at `seq` R
+
+#### Scenario: The move that closed a round is graded inside that round
+- **WHEN** an agent move advances the game out of a round and the resulting state event reports the new round number
+- **THEN** that move SHALL be part of the span of the round it closed, and the round's closing state SHALL be the state recorded at the round's closing sequence
+
+#### Scenario: The first round of play is round 1, not round 0
+- **WHEN** a round's `game-service` state events report `roundNumber` 0 (DragnCards has not yet counted a completed round)
+- **THEN** the eval-service SHALL report that round as round 1 — in the round-level judge prompt and in the round numbers it accepts in a selection — and SHALL NOT name it round 0
+
+#### Scenario: A selected round number means the round of play
+- **WHEN** an evaluation request selects rounds by number
+- **THEN** the eval-service SHALL resolve each number as the round of play of that ordinal (1 being the first round played), matching the numbering the history transcript displays
+
 #### Scenario: Final round closed by terminal status
 - **WHEN** a game reaches a terminal status (`win` or `loss`) without a subsequent round-change signal
 - **THEN** the eval-service SHALL close the final round at that terminal event and produce its round verdict
+
+#### Scenario: Round change and terminal status on the same event
+- **WHEN** the event that closes a round is also the event carrying the terminal game status
+- **THEN** the eval-service SHALL close that round once at that event and SHALL NOT emit a further round whose span starts after its own closing sequence
 
 ### Requirement: Isolated judge LLM under a dedicated Bifrost identity
 The eval-service SHALL run each evaluation through a fresh, stateless judge LLM invocation routed through the Bifrost gateway under a dedicated judge key that is separate from the game-playing keys, for WHICHEVER provider the configured judge model routes to. The judge model and provider SHALL be operator-configured with NO built-in default; the eval-service SHALL refuse to perform an evaluation when no judge model is configured. The judge SHALL NOT reuse or mutate the game-playing agent's session.
@@ -119,6 +147,8 @@ The eval-service SHALL address the judge key by an operator-configurable NAME, s
 ### Requirement: Structured verdict written back as an evaluator event
 The eval-service SHALL write each evaluation verdict back to the history-service through its HTTP ingest endpoint as a versioned event envelope with actor `evaluator`, whose payload contains an overall 0-10 score, four per-criterion 0-10 scores (`rules_legality`, `strategic_quality`, `tempo_efficiency`, `threat_resource`), a rationale, the evaluation scope, the `evaluator_version`, and the target move `seq` or round span it grades, using an idempotency key derived from `(game_id, target_seq, scope, evaluator_version)`.
 
+A change to HOW the eval-service derives what a verdict grades — including how round spans are detected and numbered — SHALL be surfaced by a change to `evaluator_version`, so verdicts produced under different derivations are distinguishable in recorded history rather than presented as comparable. Verdicts already recorded SHALL NOT be rewritten, re-scored, or deleted by such a change; re-grading SHALL remain an explicit user-requested re-evaluation.
+
 #### Scenario: Verdict ingested as an evaluator event
 - **WHEN** the eval-service completes a verdict for a `game_id` and `target_seq`
 - **THEN** the eval-service SHALL submit it to the history-service HTTP ingest endpoint as an envelope with actor `evaluator` whose payload includes the per-criterion scores, the overall score, the rationale, the scope, and the target reference
@@ -131,19 +161,29 @@ The eval-service SHALL write each evaluation verdict back to the history-service
 - **WHEN** the same verdict for a `(game_id, target_seq, scope, evaluator_version)` is written back more than once
 - **THEN** the history-service SHALL store it exactly once because the verdict carries a stable idempotency key
 
-### Requirement: Failure isolation from ingestion and play
-The eval-service SHALL never block, fail, or slow history ingestion or game play. When a judge call fails or times out, the eval-service SHALL retry up to a configured attempt limit and then skip the target, recording the skip outcome and acknowledging or dead-lettering the queue entry, so that a failing target does not stall the queue.
+#### Scenario: A change in span derivation is not applied silently
+- **WHEN** the eval-service changes how a round's span is derived, so a new round verdict grades a different span from an older verdict of the same round
+- **THEN** the new verdicts SHALL carry a different `evaluator_version` from the older ones, and the older verdicts SHALL remain in history exactly as recorded
 
-#### Scenario: Judge failure results in a skipped target
+### Requirement: Failure isolation from ingestion and play
+The eval-service SHALL never block, fail, or slow history ingestion or game play. When a judge call fails or times out, the eval-service SHALL retry up to a configured attempt limit and then record the target as `failed` carrying the reason, acknowledging or dead-lettering the queue entry, so that a failing target does not stall the queue.
+
+A failure SHALL NOT be recorded as `skipped`. `skipped` SHALL mean only that the target carried no decision a judge could grade, so a client can always distinguish an error from a deliberate skip. Every error path — judge attempts exhausted, an assembly error, an undetectable round boundary, an unreadable recorded timeline, a failed verdict write-back, and no configured judge model — SHALL record `failed` with its reason.
+
+#### Scenario: Judge failure results in a failed target with its reason
 - **WHEN** a judge call for a target fails repeatedly up to the configured attempt limit
-- **THEN** the eval-service SHALL skip that target, record the skip/error outcome, and continue processing subsequent targets without stalling the queue
+- **THEN** the eval-service SHALL record that target as `failed` carrying the reason for the failure, SHALL NOT write a verdict for it, and SHALL continue processing subsequent targets without stalling the queue
+
+#### Scenario: An error is never reported as a skip
+- **WHEN** a target fails for any reason — the judge, assembly, round-boundary detection, the history read, the verdict write-back, or a missing judge model
+- **THEN** its terminal status SHALL be `failed` and SHALL NOT be `skipped`, so it cannot be confused with a deliberately skipped non-strategic action
 
 #### Scenario: Ingestion and play unaffected by judge outage
 - **WHEN** the judge is unavailable while games continue to be played and recorded
 - **THEN** history ingestion and game play SHALL proceed unaffected because the eval-service consumes a copy of already-committed events and only writes advisory evaluator events
 
 ### Requirement: Evaluation cost controls
-The eval-service SHALL provide configurable cost controls including an evaluation sampling mode (per-move, every-Nth-move, or round-only), per-game and global judge concurrency caps, and a per-evaluation judge token budget, so that automatic per-event evaluation cost can be tuned without code changes.
+The eval-service SHALL provide configurable cost controls including an evaluation sampling mode (per-move, every-Nth-move, or round-only), per-game and global judge concurrency caps, and a per-evaluation judge token budget, so that automatic per-event evaluation cost can be tuned without code changes. The concurrency caps SHALL be enforced from durable state rather than from process-local memory, so that a restart or a second worker replica cannot exceed them.
 
 #### Scenario: Sampling mode limits evaluated moves
 - **WHEN** the eval-service is configured with a round-only or every-Nth-move sampling mode
@@ -152,6 +192,10 @@ The eval-service SHALL provide configurable cost controls including an evaluatio
 #### Scenario: Concurrency cap bounds in-flight judge calls
 - **WHEN** the number of in-flight judge calls reaches the configured concurrency cap
 - **THEN** the eval-service SHALL defer additional judge calls until capacity is available rather than exceeding the cap
+
+#### Scenario: Concurrency cap is derived from durable state
+- **WHEN** a worker selects pending targets to evaluate while other targets of the same game are already in flight
+- **THEN** the number it takes on SHALL be limited by the recorded count of in-flight targets, so the cap holds without any in-process registry of running work
 
 #### Scenario: Per-request target cap bounds total enqueued work
 - **WHEN** a selection (`whole_game`, a wide `seq_range`, or a large `seqs` list) expands to more targets than the configured per-request limit
@@ -246,7 +290,11 @@ A target that is cancelled before or during evaluation SHALL NOT have a verdict 
 ### Requirement: Bounded judge input
 The judge input SHALL be reduced by PROJECTION before any character bound is applied: a recorded raw game state SHALL be projected to the information a judge needs to rule on a play — round, phase, per-seat vitals, and the visible cards per zone with the identifiers the move's arguments reference — rather than being character-clipped as recorded. Hidden information SHALL remain hidden: face-down cards and undrawn deck contents SHALL be reported as a count, never by name. A recorded state whose shape the projection does not recognise SHALL be sent as recorded rather than dropped. A configurable character bound SHALL remain as a backstop, and any truncation SHALL be marked in the input and logged.
 
-A per-move judge input SHALL include a CONFIGURABLE WINDOW of the agent's neighbouring moves rather than the whole recorded history, bounded independently for preceding and following moves, so that a move belonging to a multi-step play is not judged in isolation while the input does not grow with the length of the game. The following-moves portion SHALL be labelled as completion context rather than an outcome to grade, and it SHALL be possible to configure it away entirely.
+A per-move judge input SHALL carry the agent moves of THAT MOVE'S OWN ROUND as context, in both directions — the moves recorded earlier in the round and the moves recorded later in it — rather than a fixed count of the nearest moves in the timeline. The round SHALL be the window: the context SHALL NOT extend into an adjacent round, and SHALL NOT stop short of the round's end, so that a move belonging to a multi-call play is always accompanied by the rest of that play while the input never grows with the length of the game. When the round containing a move cannot be determined from recorded state, the input SHALL fall back to a bounded count of the nearest agent moves either side, so a move never loses its context because boundary detection produced nothing.
+
+The moves included as context SHALL NOT be filtered by the non-strategic taxonomy: an action that is skipped as an evaluation TARGET SHALL still appear as context, because it carries the agent's intent even when it carries no gradeable decision.
+
+Configurable per-side bounds SHALL remain as safety backstops against a pathological round, SHALL NOT be the mechanism that decides the window, and it SHALL remain possible to configure the following-moves side away entirely so an operator can grade with no hindsight.
 
 A round-level or game-level judge input SHALL carry the recorded game state for the end of its span, falling back to the nearest recorded state at or before the closing sequence when the closing event itself carries none, so a roll-up is never graded with no board.
 
@@ -266,13 +314,33 @@ A round-level or game-level judge input SHALL carry the recorded game state for 
 - **WHEN** a recorded state is not in the raw shape the projection understands
 - **THEN** it SHALL be serialised as recorded and bounded by the configured character limit, so no content is silently discarded
 
-#### Scenario: Neighbouring moves are windowed, not replayed
-- **WHEN** a per-move evaluation is assembled for a move that sits in the middle of a long recorded game
-- **THEN** the input SHALL include at most the configured number of preceding and following agent moves, and SHALL NOT grow with the total number of moves in the game
+#### Scenario: Move context spans the whole round and nothing beyond it
+- **WHEN** a per-move evaluation is assembled for a move that sits in the middle of a detected round, with agent moves recorded both earlier and later in that round and further agent moves recorded in the adjacent rounds
+- **THEN** the input SHALL include every agent move of that round on both sides of the graded move, and SHALL NOT include any agent move belonging to another round
+
+#### Scenario: Following moves in the round are attached, not only preceding ones
+- **WHEN** the graded move is the first agent move of its round and further agent moves follow it within the same round
+- **THEN** the input SHALL include those following moves as context, and SHALL NOT be limited to the moves preceding the graded one
+
+#### Scenario: Input does not grow with the length of the game
+- **WHEN** a per-move evaluation is assembled for a move in a long recorded game with many rounds
+- **THEN** the size of the attached move context SHALL be determined by the graded move's own round and SHALL NOT grow with the total number of moves in the game
+
+#### Scenario: Undetectable round falls back to a bounded neighbour count
+- **WHEN** a per-move evaluation is assembled for a move that no detected round span contains
+- **THEN** the input SHALL include at most the configured number of nearest preceding and following agent moves, rather than no context at all
+
+#### Scenario: Skipped actions still appear as context
+- **WHEN** the graded move's round contains an action the non-strategic taxonomy would skip as a target, such as a card search
+- **THEN** that action SHALL still appear in the attached move context
+
+#### Scenario: Backstop bounds a pathological round without deciding the window
+- **WHEN** a round contains more agent moves on one side of the graded move than the configured per-side backstop
+- **THEN** the input SHALL include at most that many moves from that side, keeping the ones nearest the graded move
 
 #### Scenario: Window size is configurable including no hindsight
-- **WHEN** an operator configures the following-moves window to zero
-- **THEN** the judge input SHALL contain no moves recorded after the one being graded
+- **WHEN** an operator configures the following-moves side to zero
+- **THEN** the judge input SHALL contain no moves recorded after the one being graded, even within the same round
 
 #### Scenario: Round roll-up is graded against a board
 - **WHEN** a round's closing sequence is an agent move, which carries no recorded state of its own
@@ -283,7 +351,7 @@ The eval-service SHALL NOT spend a judge call on a recorded action that commits 
 
 The set of non-strategic actions SHALL be operator-configurable, and its default SHALL cover read-only queries, session and room plumbing, and pre-game setup that establishes the starting position. Any action outside the configured set — including every action name the service does not recognise — SHALL be evaluated, so that a new or renamed action can never be skipped by accident.
 
-A skipped non-strategic target SHALL be recorded as `skipped` carrying a reason that names the action and why it was skipped, through the same per-target skip channel a judge failure uses, and SHALL NOT be recorded as completed and SHALL NOT have a verdict written to history. Skipping SHALL be possible to disable entirely by configuration.
+A skipped non-strategic target SHALL be recorded as `skipped` carrying a reason that names the action and why it was skipped, and SHALL NOT be recorded as completed and SHALL NOT have a verdict written to history. The `skipped` status SHALL be reserved for this deliberate skip: a target that FAILED is recorded as `failed`, so a client can present a skip and an error differently. Skipping SHALL be possible to disable entirely by configuration.
 
 A round-level or game-level roll-up SHALL exclude non-strategic moves from the moves it grades and SHALL state how many were excluded, so a roll-up score is not influenced by ungradeable actions. A roll-up whose span contains only non-strategic moves SHALL still be produced; the skip is a move-level judgement.
 
@@ -296,6 +364,10 @@ A round-level or game-level roll-up SHALL exclude non-strategic moves from the m
 #### Scenario: A skipped action cannot be mistaken for a passing verdict
 - **WHEN** a client inspects an evaluation request that contained non-strategic targets
 - **THEN** each such target SHALL appear with terminal status `skipped` and its stated reason, and SHALL NOT appear as completed or carry a score
+
+#### Scenario: A skipped action cannot be mistaken for a failure either
+- **WHEN** an evaluation request contains both a deliberately skipped non-strategic target and a target that failed
+- **THEN** the skipped target SHALL carry status `skipped` and the failed target status `failed`, so a client can present the failure as a problem and the skip as routine
 
 #### Scenario: Unrecognised action is evaluated
 - **WHEN** a recorded move names an action the service's taxonomy does not know
@@ -326,7 +398,9 @@ ordered newest-first, so a client can present a persistent queue of in-progress 
 evaluations without knowing each `request_id` in advance. Each listed request SHALL be
 summarized with its `request_id`, `game_id`, overall status (derived from its targets),
 `created_at`, and a per-target summary carrying at least each target's `scope`, `target_seq`,
-`round_span`, and `status`. The endpoint SHALL support filtering to active requests (those
+`round_span`, `status`, and the recorded error detail of any target that has one — including a
+target that is still in progress — so a client polling the listing can report a failure while
+the request is running. The endpoint SHALL support filtering to active requests (those
 with at least one non-terminal target) and SHALL bound the number of returned requests with a
 capped `limit`. The listing SHALL be derived from durable storage, not from any in-memory queue.
 
@@ -334,6 +408,12 @@ capped `limit`. The listing SHALL be derived from durable storage, not from any 
 - **WHEN** a client requests the evaluation list
 - **THEN** the eval-service SHALL return the recent evaluation requests across all games ordered
   newest-first, each with its overall status and per-target scope/seq/round_span/status summary
+
+#### Scenario: Listing carries the error detail of an in-progress failure
+- **WHEN** a client requests the evaluation list while a request has a still-running target whose
+  last judge attempt failed
+- **THEN** that target's summary SHALL carry the recorded error detail, so the client can report
+  the failure without waiting for the request to reach a terminal status
 
 #### Scenario: Filter to active requests
 - **WHEN** a client requests the evaluation list with the active filter enabled
@@ -448,4 +528,115 @@ SHALL the eval-service fall back to deriving the active player from the game sta
 #### Scenario: Legacy games keep heuristic attribution
 - **WHEN** a game recorded without explicit acting-player ids is evaluated
 - **THEN** the eval-service SHALL attribute its moves from the game state exactly as before
+
+### Requirement: Evaluation errors are reported live with redacted detail
+The eval-service SHALL report an evaluation failure as it happens, not only when the target reaches a terminal state. Every failed judge attempt SHALL be recorded with its reason on the target while that target is still in progress, and SHALL be pushed to the live channel so a connected client learns of it immediately. A failure SHALL NOT be reported only through logs.
+
+The recorded reason SHALL be held in durable storage (the service's PostgreSQL), never in process memory, so any replica, poller or stream reads the same detail. Reporting SHALL use the service's existing live channel and target-status projections; it SHALL NOT introduce a second transport.
+
+A retry that eventually succeeds SHALL clear the recorded in-progress error, so a transient failure that was overcome is not left behind as a false failure on a completed target.
+
+All error detail the eval-service records or serves SHALL be redacted and length-bounded before it is stored. Credentials SHALL NOT appear in it: authorization headers and bearer tokens, named gateway key headers, `api_key`/`access_token`/`client_secret`/`password`-style fields, and bare provider key literals SHALL be replaced with a redaction marker. The detail SHALL be truncated to a bounded length so a provider response echoing a full request body — the judge prompt and a recorded game state — can never be persisted or streamed. Redaction SHALL be applied at the storage boundary so no recording path can bypass it, and SHALL run before truncation so a secret beyond the cut cannot survive.
+
+#### Scenario: A failed judge attempt is visible during the run
+- **WHEN** a judge attempt for a target fails and the eval-service is about to retry it
+- **THEN** the attempt's reason SHALL be recorded on that target in durable storage while the target's status is still in progress, the live channel SHALL be signalled, and a client reading the target's status (by stream or by polling) SHALL see the reason before the request reaches a terminal state
+
+#### Scenario: A recovered retry leaves no false failure
+- **WHEN** an earlier judge attempt failed and a later attempt for the same target succeeds
+- **THEN** the target SHALL be recorded as completed with its verdict and SHALL NOT retain the earlier attempt's error detail
+
+#### Scenario: Terminal failure detail reaches the client
+- **WHEN** a target reaches a terminal `failed` state
+- **THEN** its reason SHALL be included in the per-target results of the request-status endpoint, the cross-game listing, and the live stream's status snapshot
+
+#### Scenario: Credentials are never present in error detail
+- **WHEN** a gateway or transport failure message embeds an authorization header, a bearer token, a named key header, an api-key field, or a bare provider key literal
+- **THEN** the eval-service SHALL replace each with a redaction marker before storing the detail, so no credential is written to storage or served to a client
+
+#### Scenario: A provider echoing the request body is truncated
+- **WHEN** an error message carries a provider response body far larger than the recorded-detail bound — for example one echoing the judge prompt and a recorded game state
+- **THEN** the eval-service SHALL store and serve only a bounded excerpt, marked as truncated
+
+#### Scenario: A secret beyond the truncation point is still redacted
+- **WHEN** an error message carries a credential positioned past the length bound
+- **THEN** that credential SHALL be redacted rather than merely cut off, so shortening the message cannot reveal it
+
+### Requirement: Round-aware grading instruction
+The judge SHALL be instructed that a single game decision is normally executed as several recorded actions and SHALL be told to grade the move as the step it is within the play its round reveals. Specifically the instruction SHALL state that a legal, necessary step of a sound play SHALL NOT be scored down for accomplishing nothing on its own, and that one play SHALL NOT be charged against every action that makes it up.
+
+The per-move judge input SHALL name the round the graded move belongs to, and SHALL label its earlier-in-round and later-in-round context distinctly, with the later-in-round context marked as completion context rather than an outcome to grade on hindsight.
+
+Round labels presented to a judge or to a user SHALL use the round of play, which is the recorded DragnCards round number plus one, because that number counts COMPLETED rounds and therefore reads zero throughout the first round of play.
+
+#### Scenario: Multi-call play is not scored down per call
+- **WHEN** the judge is asked to grade an action that only pays a cost, such as exhausting a character, and the round context shows the action whose effect that cost paid for
+- **THEN** the judge instruction SHALL direct that the action be graded as that step of that play rather than as an action that achieved nothing
+
+#### Scenario: Later-in-round context is not an outcome to grade
+- **WHEN** the per-move input includes moves recorded later in the round
+- **THEN** those moves SHALL be labelled as completion context and the instruction SHALL direct the judge not to score the decision on hindsight it did not have
+
+#### Scenario: Round labels count the round of play
+- **WHEN** a recorded state reports a DragnCards round number of 0
+- **THEN** every label derived from it SHALL read as round 1
+
+### Requirement: Detected round listing
+The eval-service SHALL expose a read API listing the rounds it detects for a game, so a client can select a round WITHOUT naming any sequence inside it. Each listed round SHALL carry the round number the evaluation request's round selection accepts, a presentation label, its `from_seq` and `to_seq` span, the number of agent moves in it, and the players who acted in it.
+
+The listed number SHALL be the round of play — the SAME number the round selection accepts and the same number the History transcript shows — so a client never converts between two round-numbering schemes and cannot select the wrong round by picking the raw recorded counter.
+
+A round the listing reports SHALL be a round the eval-service can grade, so that selecting a listed round always expands to at least one target.
+
+#### Scenario: List a game's rounds
+- **WHEN** a client requests the round listing for a `game_id` with recorded events
+- **THEN** the eval-service SHALL return each detected round with its round-of-play number, label, sequence span, agent-move count, and acting players
+
+#### Scenario: The listed number is the number the selection accepts
+- **WHEN** a recorded state reports a DragnCards round number of 0 for the first round of play
+- **THEN** that round SHALL be listed as round 1, and submitting round 1 SHALL select that same round
+
+#### Scenario: A listed round is selectable by number alone
+- **WHEN** a client submits a round-scope evaluation naming only the round numbers from that listing
+- **THEN** the eval-service SHALL expand the request to that round's targets without requiring any move sequence
+
+#### Scenario: Round listing for an unknown game
+- **WHEN** a client requests the round listing for a `game_id` with no recorded events
+- **THEN** the eval-service SHALL respond 404 rather than an empty success
+
+### Requirement: Parallel evaluation without in-memory state
+The eval-service SHALL evaluate multiple targets concurrently, and the concurrency SHALL be bounded WITHOUT any in-process queue, set, or dictionary of work: the pending set, the claim, and the in-flight count SHALL all live in the service's database. Concurrent evaluation SHALL neither lose nor duplicate a result — every claimed target SHALL reach a terminal status exactly once and SHALL produce at most one verdict.
+
+A higher-level target that is re-deferred because its children are still in flight SHALL NOT cause the worker to spin: a drain cycle in which no target made progress SHALL be treated as an idle cycle.
+
+#### Scenario: Multiple targets of one request evaluate in parallel
+- **WHEN** an evaluation request expands to more targets than the per-game concurrency cap
+- **THEN** up to that cap SHALL be evaluated concurrently and the rest SHALL wait for capacity, rather than being evaluated one at a time
+
+#### Scenario: Parallel evaluation neither loses nor duplicates a verdict
+- **WHEN** many targets of a game are drained concurrently
+- **THEN** each target SHALL end in exactly one terminal status and each SHALL have at most one verdict written to history, with none left pending
+
+#### Scenario: No in-process registry bounds the work
+- **WHEN** the service restarts with targets still recorded as in flight
+- **THEN** the concurrency bound SHALL still hold, because it is computed from the recorded target statuses rather than from a process-local structure
+
+#### Scenario: An all-deferred cycle does not hot-loop
+- **WHEN** every target a drain cycle claimed is re-deferred because its children are still being graded
+- **THEN** the worker SHALL treat the cycle as idle and wait before draining again
+
+### Requirement: Verdict comparability across evaluator versions
+Every verdict SHALL record the evaluator version that produced it, and a change that alters what the judge is shown or asked SHALL increment that version. Verdicts produced under different evaluator versions SHALL NOT be aggregated together into one figure; an aggregate SHALL be computed from a single evaluator version and SHALL disclose how many verdicts it excluded.
+
+#### Scenario: Changing the judge input increments the evaluator version
+- **WHEN** the assembled judge input or the grading instruction changes in a way that shifts scores
+- **THEN** the recorded evaluator version SHALL change, so a verdict states which regime produced it
+
+#### Scenario: Aggregates are not mixed across versions
+- **WHEN** a game holds verdicts from more than one evaluator version
+- **THEN** an aggregate score SHALL be computed from one version only and SHALL disclose the number of verdicts left out
+
+#### Scenario: Re-evaluation under a new version is a distinct record
+- **WHEN** a target that already has a verdict from an earlier evaluator version is force re-evaluated
+- **THEN** the new verdict SHALL be recorded as its own history event rather than deduplicated against the earlier one
 

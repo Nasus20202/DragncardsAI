@@ -437,6 +437,8 @@ The worker SHALL determine whether a job is a master job by checking `parent_job
 ### Requirement: spawn_subagent creates monitored child jobs without blocking
 When the `spawn_subagent` built-in tool is invoked the worker SHALL create a child session, configure it with the parent session's model config and skills, enqueue a prompt job with `parent_job_id` set, name the child session from the prompt, and return a tool result immediately containing the `child_job_id` and derived `name`. The child job runs concurrently; the parent agent can continue its work without waiting. A background task SHALL monitor the child job, append the child outcome to the parent job's event log, and terminate the child session when the child reaches a terminal state.
 
+`spawn_subagent` SHALL accept an optional persona name. When a persona applies — either because the call named one or because the parent session records a default subagent persona — the child SHALL be configured from the resolved persona instead of from a plain copy of the parent's model config and skills, and the persona SHALL be captured onto the child at that moment. MCP servers SHALL be inherited from the parent either way. When no persona applies the child SHALL be configured exactly as before: a copy of the parent's model config and skill assignments.
+
 The monitor SHALL resolve the child's outcome the same way `wait_for_subagent` does — from the child's persisted status, with live events short-circuiting the wait — so the reported outcome is the child's actual fate and not a timeout observed because no event was ever published. The `reason` on a `subagent_failed` event SHALL be the terminal status the child reached (`failed`, `cancelled`) or why the monitor stopped observing, and SHALL carry the child's `error_code` and `error_message` when it has them. A child that ended `"interrupted"` produced usable partial work and SHALL be reported as `subagent_completed`.
 
 #### Scenario: Child session created and configured
@@ -458,6 +460,11 @@ The monitor SHALL resolve the child's outcome the same way `wait_for_subagent` d
 #### Scenario: subagent_started payload includes name
 - **WHEN** `spawn_subagent` emits `subagent_started`
 - **THEN** the event payload SHALL include `child_job_id`, `child_session_id`, and `name`
+
+#### Scenario: Child configured from a named persona
+- **WHEN** `spawn_subagent` is called naming an existing persona
+- **THEN** the child session SHALL be configured from that persona's resolved provider, model, options, and skills
+- **AND** the `subagent_started` event payload SHALL name the persona the child was started from
 
 #### Scenario: Background task monitors child and emits outcome
 - **WHEN** the child job reaches a terminal state
@@ -581,31 +588,36 @@ Because context replay only includes `"completed"`, `"interrupted"`, and `"faile
 - **AND** SHALL be followed by the synthetic assistant note for failed jobs
 
 ### Requirement: Subagent jobs use a dedicated system prompt
-Top-level jobs (where `parent_job_id` is null) SHALL receive the full system prompt built by `build_system_prompt`, which includes the subagent delegation section, context discipline rules, and large-payload tool blacklist.
+Subagent jobs SHALL receive a system prompt distinct from the master job prompt.
 
-Subagent jobs (where `parent_job_id` is not null) SHALL receive a separate, leaner prompt built by `build_subagent_system_prompt`, which:
-- Identifies the job as a subagent with a bounded task
-- Instructs it to call large-payload tools directly (`get_game_state`, `search_cards_marvel_champions`, etc.)
-- Explicitly states that `spawn_subagent` and `wait_for_subagent` are unavailable and nesting is blocked
-- Instructs it to return a concise, structured answer only
+A subagent started from a persona SHALL additionally receive that persona's system prompt as its own clearly delimited section of the assembled prompt. The persona prompt SHALL be treated purely as text: it SHALL be concatenated into the message body and SHALL NOT be used as a format string or interpolated into any context where text becomes code, a query, or a shell command. The persona prompt SHALL NOT determine which tools the subagent has, because tool availability is decided from the job's own configuration.
 
-The subagent prompt SHALL NOT contain the top-level context-discipline rules that forbid large-payload tool calls, nor the `spawn_subagent`/`wait_for_subagent` usage guidance.
+#### Scenario: Subagent receives subagent-specific prompt
+- **WHEN** a job with a non-null `parent_job_id` starts execution
+- **THEN** the system prompt SHALL be built from `SUBAGENT_SYSTEM_PROMPT_PARTS`
+- **THEN** the prompt SHALL state the agent is a subagent spawned for a focused task
 
-The system prompt SHALL identify the agent as an AI assistant for Marvel Champions on DragnCards and state its core responsibilities: set up games, manage the board, recommend plays, explain rules, and take game actions via tools.
+#### Scenario: Subagent prompt permits large-payload tools
+- **WHEN** the subagent system prompt is constructed
+- **THEN** it SHALL explicitly permit direct calls to `get_game_state`, `search_cards_marvel_champions`, and other large-payload tools
+- **THEN** it SHALL instruct the subagent to extract only required data
 
-#### Scenario: Top-level job receives full prompt
-- **WHEN** a job with `parent_job_id = null` is started
-- **THEN** the system prompt SHALL contain the subagent delegation section and the large-payload tool blacklist
+#### Scenario: Subagent prompt blocks nesting
+- **WHEN** the subagent system prompt is constructed
+- **THEN** it SHALL state the subagent does not have `spawn_subagent` or `wait_for_subagent`
+- **THEN** it SHALL instruct the subagent to complete work directly rather than delegating
 
-#### Scenario: Subagent job receives lean prompt
-- **WHEN** a job with `parent_job_id != null` is started
-- **THEN** the system prompt SHALL NOT contain `spawn_subagent` delegation instructions
-- **AND** SHALL instruct the agent to call large-payload tools directly
-- **AND** SHALL state that `spawn_subagent` is unavailable
+#### Scenario: Master job receives master prompt
+- **WHEN** a job with a null `parent_job_id` starts execution
+- **THEN** the system prompt SHALL be built from `BASE_SYSTEM_PROMPT_PARTS`
 
-#### Scenario: System prompt contains domain identity
-- **WHEN** a job is started for any session
-- **THEN** the system prompt SHALL contain "DragnCardsAI" and reference "Marvel Champions"
+#### Scenario: Persona prompt is included as its own section
+- **WHEN** a subagent started from a persona begins execution
+- **THEN** its system prompt SHALL contain the persona's prompt as a delimited section in addition to the subagent prompt parts
+
+#### Scenario: A persona prompt cannot grant a tool
+- **WHEN** a persona's prompt instructs the model to use a tool that the persona's allowlist excluded, or to spawn a subagent
+- **THEN** that tool SHALL still be absent from the subagent's tool list, because tool availability is computed from configuration rather than read from the prompt
 
 ### Requirement: System prompt enforces tool usage discipline
 The system prompt SHALL instruct the model to avoid speculative tool calls, prefer targeted tools, batch independent calls in a single round, and never repeat the same call twice in one job.
@@ -1284,4 +1296,293 @@ Announcing is what a blocked parent, the child monitor, and the dashboard's even
 #### Scenario: Crashed child session is released
 - **WHEN** the crashed job is a child job
 - **THEN** its session SHALL be terminated rather than left active
+
+### Requirement: Agent persona persistence
+The agent-orchestrator SHALL let a client define named agent personas and SHALL persist them in PostgreSQL rather than in process memory, in a repository file, or in the runtime skills directory. A persona SHALL be a reusable bundle of a system prompt, a skill selection, and a tool configuration, and SHALL carry: a name that identifies it, an optional display name and description, a system prompt, an optional provider id and model name, gateway and provider option overrides, a skill list, and a tool allowlist.
+
+A persona SHALL be scoped to the deployment rather than to a session or a user, because a persona exists precisely to be reused across sessions and because the service carries no user identity to scope to. A persona's name SHALL be its identity, so a persona is addressable by name in an API path and nameable by an agent in a tool argument.
+
+A persona SHALL NOT carry provider credentials of any kind. Naming a provider and a model SHALL be the only way a persona refers to provider configuration, and API keys SHALL remain in the gateway configuration.
+
+#### Scenario: Persona is created and read back
+- **WHEN** a client writes a persona with a system prompt, a skill list, and a tool allowlist
+- **THEN** the persona SHALL be persisted
+- **AND** reading that persona by name SHALL return the values that were written
+
+#### Scenario: Persona survives a restart
+- **WHEN** a persona has been written and the service is restarted
+- **THEN** listing personas SHALL still return that persona with its stored configuration
+
+#### Scenario: Persona write is an upsert
+- **WHEN** a client writes a persona whose name already exists
+- **THEN** the stored persona SHALL be replaced by the submitted configuration rather than rejected as a duplicate
+
+#### Scenario: Persona is listed and deletable
+- **WHEN** a client lists personas
+- **THEN** every stored persona SHALL be returned
+- **AND** deleting a persona by name SHALL remove it, and deleting a persona that does not exist SHALL return a not-found error
+
+#### Scenario: Unknown persona is not found
+- **WHEN** a client reads a persona name that has never been written
+- **THEN** the request SHALL be rejected with a not-found error
+
+### Requirement: Agent persona validation
+The agent-orchestrator SHALL reject an invalid persona with a client error and SHALL NOT persist it. A persona name SHALL be a lowercase slug. A persona's system prompt SHALL be bounded in length so that a single persona cannot exhaust a context window or a request-body limit on its own, and its description, skill list, and tool allowlist SHALL be bounded likewise.
+
+A persona naming a provider that the deployment has not enabled SHALL be rejected. A persona naming a skill that cannot be resolved in the skill catalogue SHALL be rejected with a message that names the unresolvable skill.
+
+#### Scenario: Invalid persona name
+- **WHEN** a client writes a persona whose name is not a lowercase slug
+- **THEN** the request SHALL be rejected with a client error and nothing SHALL be persisted
+
+#### Scenario: Oversized persona prompt
+- **WHEN** a client writes a persona whose system prompt exceeds the permitted length
+- **THEN** the request SHALL be rejected with a client error and nothing SHALL be persisted
+
+#### Scenario: Unsupported provider
+- **WHEN** a client writes a persona naming a provider that is not enabled for the deployment
+- **THEN** the request SHALL be rejected with a client error
+
+#### Scenario: Unknown skill named on write
+- **WHEN** a client writes a persona naming a skill that cannot be resolved in the skill catalogue
+- **THEN** the request SHALL be rejected with a client error whose message names that skill
+
+### Requirement: Persona resolution against the spawning session
+When a subagent is started from a persona, the agent-orchestrator SHALL resolve the persona against the spawning session before configuring the child. An unset provider or model on the persona SHALL inherit the session's. The persona's gateway and provider options SHALL be overlaid on the session's rather than replacing them wholesale, so a persona can change one option without restating the rest. A persona whose skill list is unset SHALL inherit the session's enabled skills; a persona whose skill list is set — including to an empty list — SHALL replace them.
+
+#### Scenario: Unset provider and model inherit
+- **WHEN** a persona sets a system prompt but no provider or model
+- **THEN** a subagent started from that persona SHALL run with the spawning session's provider and model
+
+#### Scenario: Set provider and model override
+- **WHEN** a persona names a provider and model different from the spawning session's
+- **THEN** a subagent started from that persona SHALL run with the persona's provider and model
+
+#### Scenario: Options are overlaid, not replaced
+- **WHEN** a persona sets one gateway option and the spawning session has others set
+- **THEN** the child's resolved gateway options SHALL contain both the persona's option and the session's other options, with the persona's value winning on a shared key
+
+#### Scenario: Unset skills inherit
+- **WHEN** a persona does not set a skill list
+- **THEN** a subagent started from that persona SHALL have the spawning session's enabled skills enabled
+
+#### Scenario: An empty skill list means no skills
+- **WHEN** a persona sets an empty skill list and the spawning session has skills enabled
+- **THEN** a subagent started from that persona SHALL have no skills enabled
+
+### Requirement: A persona is captured at subagent start and never re-read
+When a subagent is started from a persona, the agent-orchestrator SHALL materialise the resolved persona onto the child at start time: as the child session's model configuration, as the child session's enabled skills, and as a persona snapshot recorded on the child session that carries the resolved system prompt, skill list, tool allowlist, provider, model, the persona's name, and the time of capture. A running or queued child SHALL NOT re-read the persona definition at any later point.
+
+Consequently, editing or deleting a persona SHALL NOT change the behaviour of any subagent already started from it, whether that subagent is running or still queued. A subagent SHALL NOT silently change behaviour mid-game because its persona was edited.
+
+Deleting a persona SHALL be permitted regardless of how many subagents were started from it, precisely because none of them depends on the stored row, and the persona snapshot recorded on each of those children SHALL remain readable afterwards so a past run stays interpretable.
+
+#### Scenario: Persona is materialised onto the child
+- **WHEN** a subagent is started from a persona
+- **THEN** the child session's model configuration SHALL be the resolved persona's provider, model, and options
+- **AND** the child session's enabled skills SHALL be the resolved persona's skills
+- **AND** the child session SHALL carry a persona snapshot naming the persona and holding its resolved prompt, skills, and tool allowlist
+
+#### Scenario: Editing a persona does not affect a running subagent
+- **WHEN** a persona is edited after a subagent was started from it, changing its prompt, its skills, and its tool allowlist
+- **THEN** that subagent SHALL continue to run with the configuration captured at its start, and its persona snapshot SHALL be unchanged
+
+#### Scenario: Deleting a persona does not affect a queued subagent
+- **WHEN** a persona is deleted after a subagent was started from it but before that subagent's job begins executing
+- **THEN** the subagent SHALL still run with the captured configuration, and its execution SHALL NOT fail for want of the persona row
+
+#### Scenario: Deletion leaves the record of past runs intact
+- **WHEN** a persona is deleted
+- **THEN** the persona snapshot on every child session started from it SHALL still name that persona and describe what it ran with
+
+### Requirement: A persona narrows a subagent's tools and never widens them
+A persona's tool configuration SHALL be an allowlist that can only remove tools from what the child session already exposes. The agent-orchestrator SHALL NOT provide any way for a persona to add a tool, an MCP server, or a provider that the child would not otherwise have.
+
+The allowlist SHALL be applied by filtering the child's resolved MCP tool definitions, and the filter SHALL apply both to the tool list presented to the model and to the mapping used to dispatch a call, so that a tool excluded by a persona cannot be invoked by naming it directly. An unset allowlist SHALL mean no narrowing. A name in the allowlist that the child's catalogue does not contain SHALL have no effect.
+
+MCP servers SHALL always be inherited from the spawning session and SHALL NOT be nameable by a persona. The `load_skill` and `load_skill_reference` built-in tools SHALL always remain available regardless of the allowlist, because a persona's own skill list is unusable without them and they read only from the configured skill roots.
+
+#### Scenario: Allowlist narrows the tool list
+- **WHEN** a subagent is started from a persona whose allowlist names one of the tools its session exposes
+- **THEN** the tool list presented to that subagent SHALL contain that tool and SHALL NOT contain the session's other MCP tools
+
+#### Scenario: An excluded tool cannot be invoked by name
+- **WHEN** a subagent started from a narrowing persona requests a tool that the allowlist excluded
+- **THEN** the call SHALL be refused as an unknown tool and SHALL NOT reach the MCP server
+
+#### Scenario: An allowlist cannot add a tool
+- **WHEN** a persona's allowlist names a tool that the child session's catalogue does not contain
+- **THEN** the child's tool list SHALL NOT contain that tool, and no MCP server SHALL be attached to satisfy it
+
+#### Scenario: No allowlist means no narrowing
+- **WHEN** a subagent is started from a persona that sets no tool allowlist
+- **THEN** the child SHALL be presented with every MCP tool its session exposes
+
+#### Scenario: Skill tools survive narrowing
+- **WHEN** a subagent is started from a persona whose allowlist names no built-in tool
+- **THEN** the child SHALL still have `load_skill` and `load_skill_reference` available
+
+### Requirement: A persona's skills are validated when the subagent starts
+The agent-orchestrator SHALL re-validate a persona's skill list against the skill catalogue at the moment a subagent is started from it, because the catalogue mirrors the filesystem and a skill can stop existing after the persona was written. A persona naming a skill that cannot be resolved SHALL fail the spawn with an error result that names both the persona and the missing skill, and SHALL NOT create a child session or a child job. An unresolvable skill SHALL NOT be silently dropped.
+
+#### Scenario: A persona naming a vanished skill fails the spawn
+- **WHEN** a subagent is started from a persona naming a skill that is no longer in the skill catalogue
+- **THEN** the spawn SHALL return an error result naming the persona and the missing skill
+- **AND** no child session and no child job SHALL be created
+
+#### Scenario: Naming an unknown persona fails the spawn
+- **WHEN** a subagent is started naming a persona that does not exist
+- **THEN** the spawn SHALL return an error result naming the requested persona and the personas that are available
+- **AND** no child session and no child job SHALL be created
+
+### Requirement: Session default subagent persona
+A session SHALL be able to record a default persona for the subagents it spawns, so that a persona can be chosen once for a session rather than named on every spawn. An explicitly named persona SHALL take precedence over the session default. A session with no default and a spawn that names no persona SHALL behave exactly as before personas existed: the child copies the parent's model configuration, skills, and MCP servers and runs the standard subagent prompt.
+
+Setting a session's default to a persona that does not exist SHALL be rejected. Deleting a persona that is a session's default SHALL clear that default rather than leaving the session pointing at a persona that is gone.
+
+#### Scenario: Session default applies when no persona is named
+- **WHEN** a session records a default subagent persona and a subagent is spawned without naming one
+- **THEN** the child SHALL be configured from the default persona
+
+#### Scenario: A named persona wins over the session default
+- **WHEN** a session records a default subagent persona and a subagent is spawned naming a different persona
+- **THEN** the child SHALL be configured from the named persona
+
+#### Scenario: No persona anywhere leaves behaviour unchanged
+- **WHEN** a session records no default persona and a subagent is spawned without naming one
+- **THEN** the child SHALL inherit the parent session's model configuration and enabled skills and SHALL run with no persona snapshot
+
+#### Scenario: Unknown default is rejected
+- **WHEN** a client sets a session's default subagent persona to a name that does not exist
+- **THEN** the request SHALL be rejected with a client error
+
+#### Scenario: Deleting a persona clears it as a default
+- **WHEN** a persona that is a session's default subagent persona is deleted
+- **THEN** that session SHALL no longer name it as a default
+
+### Requirement: The agent can ask the user a question with fixed choices
+The orchestrator SHALL offer a built-in `ask_user` tool to top-level prompt jobs, taking a question and between one and eight labelled choices, and optionally permitting a free-text answer. Child jobs and compaction jobs SHALL NOT be offered the tool, because no user surface is attached to them; a child job that calls it anyway SHALL receive an error result rather than a question nobody can see.
+
+The tool SHALL validate the model's arguments before recording anything: the question must be non-empty, the number of choices must be within the permitted bound, every choice must carry a non-empty label and a non-empty value, choice values must be unique so that an answer identifies exactly one choice, and the question, labels, values, and descriptions must be within their length limits. A violation SHALL return an error result naming the problem so the model can correct itself, and SHALL NOT record a question.
+
+The choices recorded for a question SHALL be exactly those the model offered, and SHALL be the authority against which a later answer is checked.
+
+#### Scenario: Ask a question with choices
+- **WHEN** a top-level job calls `ask_user` with a question and two valid choices
+- **THEN** the system SHALL record a pending question carrying that question text and those two choices
+- **AND** the system SHALL record and publish a `user_question` event carrying the question, its identifier, and the offered choices
+
+#### Scenario: The tool is not offered to a child job
+- **WHEN** the effective tool list is built for a child job
+- **THEN** `ask_user` SHALL NOT appear in it
+
+#### Scenario: Reject a question with no choices
+- **WHEN** a job calls `ask_user` with an empty choice list
+- **THEN** the system SHALL return an error result describing the problem and SHALL NOT record a question
+
+#### Scenario: Reject duplicate choice values
+- **WHEN** a job calls `ask_user` with two choices sharing the same value
+- **THEN** the system SHALL return an error result describing the problem and SHALL NOT record a question
+
+### Requirement: A pending question and its answer are durably stored
+A question the agent is waiting on SHALL be stored in the relational database, together with the choices offered and, once given, the answer. It SHALL NOT be held in process memory, because the run that asks and the request that answers are separate processes that may be separate replicas, and because a pending question SHALL survive both a browser reload and a stream reconnect.
+
+A stored question SHALL be in exactly one of three states: awaiting an answer, answered, or closed without an answer. Both transitions out of the awaiting state SHALL be applied conditionally on the question still awaiting an answer, so that exactly one caller can ever make each transition.
+
+A question SHALL be removed when the job or session that owns it is deleted.
+
+#### Scenario: A pending question outlives the request that created it
+- **WHEN** a question has been recorded and the asking run is still waiting
+- **THEN** the question and its offered choices SHALL be readable from the database by a different process
+
+#### Scenario: A question is removed with its session
+- **WHEN** the session owning a job with a recorded question is deleted
+- **THEN** the question SHALL be removed as well
+
+### Requirement: An answer is validated against the choices that were offered
+The orchestrator SHALL expose an endpoint that records the user's answer to a specific question of a specific job. The endpoint SHALL accept exactly one of a chosen value or a free-text answer, and SHALL reject a request carrying both or neither as a bad request.
+
+A chosen value SHALL be checked against the choices read back from the stored question. A value that was not offered SHALL be rejected as a bad request, so that a client cannot answer with something the model never offered and cannot widen the set of answers the model asked for. A free-text answer SHALL be rejected as a bad request unless the stored question permits free text.
+
+An answer to an unknown job or an unknown question SHALL be rejected as not found. A question of a different job SHALL NOT be answerable through that job.
+
+On success the endpoint SHALL record the answer, transition the question to answered, and record and publish a `user_question_answered` event naming the question and the answer given.
+
+#### Scenario: Answer by choosing an offered value
+- **WHEN** a client submits a chosen value that appears in the stored question's choices
+- **THEN** the system SHALL record the answer, mark the question answered, and publish a `user_question_answered` event
+
+#### Scenario: Reject a value that was never offered
+- **WHEN** a client submits a chosen value that does not appear in the stored question's choices
+- **THEN** the system SHALL reject the request as a bad request and the question SHALL remain awaiting an answer
+
+#### Scenario: Reject free text the question did not permit
+- **WHEN** a client submits a free-text answer to a question that does not permit free text
+- **THEN** the system SHALL reject the request as a bad request and the question SHALL remain awaiting an answer
+
+#### Scenario: Reject an answer carrying both forms
+- **WHEN** a client submits both a chosen value and a free-text answer
+- **THEN** the system SHALL reject the request as a bad request
+
+### Requirement: A question is answered at most once
+A question that is no longer awaiting an answer SHALL NOT be answerable. A second answer to a question that has already been answered, or an answer to a question that has been closed, SHALL be rejected as a conflict, and SHALL NOT alter the recorded answer.
+
+An answer SHALL also be rejected as a conflict when the job that asked has reached a terminal status, because nothing is waiting to read it. This is what prevents an answer being accepted for a question whose run died without closing it.
+
+The model SHALL therefore observe exactly one answer to any question it asked.
+
+#### Scenario: The second answer is refused
+- **WHEN** a question has been answered and a second answer is submitted for it
+- **THEN** the system SHALL reject the second request as a conflict and the recorded answer SHALL be unchanged
+
+#### Scenario: A closed question is not answerable
+- **WHEN** a question has been closed without an answer and an answer is then submitted for it
+- **THEN** the system SHALL reject the request as a conflict
+
+#### Scenario: A question of a finished job is not answerable
+- **WHEN** the job that asked a still-pending question has reached a terminal status and an answer is submitted
+- **THEN** the system SHALL reject the request as a conflict
+
+### Requirement: A run waiting on a question always resumes
+The `ask_user` tool SHALL block the calling run until the question is answered or the wait ends, and SHALL always return a result the model can act on. The run SHALL NOT be suspended: the wait happens inside the tool call, and the answer re-enters the model's context as an ordinary tool result in the same message history every other tool result uses. No separate channel SHALL be introduced for it.
+
+While waiting, the run SHALL treat the stored question as the authority and re-read it at a bounded interval, so that an answer recorded by another replica is observed even when no live event reaches the waiting run.
+
+The wait SHALL be bounded by an absolute timeout, configurable together with the polling interval. When the timeout expires the run SHALL close the question, record and publish a `user_question_closed` event giving the reason as a timeout, and return a result stating that nobody answered and that the model should proceed on its own judgement or report that it is blocked. That result SHALL NOT be an error result, so the model does not read it as a transient failure to retry.
+
+When the job's cancellation has been requested while waiting, the run SHALL close the question, record and publish a `user_question_closed` event giving the reason as cancellation, and stop waiting.
+
+Closing a question SHALL happen before the run stops waiting on it, so that an answer submitted afterwards is refused rather than recorded against a question nobody is reading.
+
+#### Scenario: The answer reaches the model as a tool result
+- **WHEN** a user answers a pending question by choosing an offered value
+- **THEN** the waiting `ask_user` call SHALL return a result naming the chosen answer
+- **AND** that result SHALL be appended to the run's message history as the tool result for that call
+
+#### Scenario: Nobody answers
+- **WHEN** the wait for an answer reaches its timeout
+- **THEN** the system SHALL close the question with a timeout reason, publish a `user_question_closed` event, and return a non-error result telling the model that nobody answered
+
+#### Scenario: A late answer to a timed-out question is refused
+- **WHEN** an answer is submitted for a question that the wait already closed on timeout
+- **THEN** the system SHALL reject it as a conflict
+
+#### Scenario: The job is cancelled while waiting
+- **WHEN** cancellation is requested for a job that is waiting on a question
+- **THEN** the system SHALL close the question with a cancellation reason and the run SHALL stop waiting
+
+### Requirement: Question activity appears on the job's event timeline
+The events `user_question`, `user_question_answered`, and `user_question_closed` SHALL each be both persisted against the job and published on the live event bus, following the existing pairing used by every other job event. None of them SHALL be treated as a terminal event, so the event stream stays open while the user decides.
+
+Each event SHALL carry the question identifier, so that a consumer can match an answer or a closure to the question it resolves. The answered event SHALL carry the answer given and whether it came from a choice or from free text; the closed event SHALL carry the reason it was closed.
+
+Because these events are persisted, a consumer that replays a job's events SHALL be able to reconstruct every question's current state without any additional endpoint.
+
+#### Scenario: The timeline reconstructs a question's state
+- **WHEN** a consumer replays a job's persisted events from the beginning
+- **THEN** it SHALL find the `user_question` event and, if the question was resolved, the matching `user_question_answered` or `user_question_closed` event carrying the same question identifier
+
+#### Scenario: A question does not close the event stream
+- **WHEN** a `user_question` event is published for a running job
+- **THEN** the job's event stream SHALL remain open
 
