@@ -36,7 +36,7 @@ async def _resolve_context_window(
     return settings.context_window_size
 
 
-@router.post("/sessions/{session_id}/compact")
+@router.post("/sessions/{session_id}/compact", operation_id="compact_session")
 async def compact_session(
     session_id: str,
     session: AgentSession = Depends(require_session),
@@ -84,7 +84,7 @@ async def compact_session(
     return ContextMetadataResponse(**metadata)
 
 
-@router.get("/sessions/{session_id}/context")
+@router.get("/sessions/{session_id}/context", operation_id="get_session_context")
 async def get_context_metadata(
     session_id: str,
     session: AgentSession = Depends(require_session),

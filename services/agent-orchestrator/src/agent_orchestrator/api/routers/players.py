@@ -33,7 +33,7 @@ from agent_orchestrator.storage.repository import Repository
 router = APIRouter(tags=["players"])
 
 
-@router.get("/sessions/{session_id}/players")
+@router.get("/sessions/{session_id}/players", operation_id="list_session_players")
 async def list_player_configs(
     session_id: str,
     repo: Repository = Depends(get_repository),
@@ -47,7 +47,9 @@ async def list_player_configs(
     )
 
 
-@router.put("/sessions/{session_id}/players/{player_id}")
+@router.put(
+    "/sessions/{session_id}/players/{player_id}", operation_id="save_session_player"
+)
 async def set_player_config(
     session_id: str,
     player_id: str,
@@ -105,7 +107,11 @@ async def set_player_config(
     return {"player": serialize_player_config(item)}
 
 
-@router.delete("/sessions/{session_id}/players/{player_id}", status_code=204)
+@router.delete(
+    "/sessions/{session_id}/players/{player_id}",
+    status_code=204,
+    operation_id="delete_session_player",
+)
 async def delete_player_config(
     session_id: str,
     player_id: str,

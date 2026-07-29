@@ -13,7 +13,7 @@ These instructions apply to the agent-orchestrator service and override the repo
 - **Database**: PostgreSQL for session/job persistence
 - **Streaming**: Valkey (Redis) for transient SSE events
 - **Workers**: Background job processing via Redis/BullMQ
-- **MCP**: Model Context Protocol client for LLM tool integration
+- **MCP**: both directions — an MCP *client* (`integrations/mcp/`) that pulls external tools into a session, and this service's own MCP *server* (`mcp_server.py`) that exposes its HTTP API as tools at `/mcp`. See **Two MCP directions** below
 - **Testing**: pytest with async support
 
 ## Project Structure
@@ -94,6 +94,54 @@ player agent is still a memoryless child terminated with its job.
 - **A seat may act only with its own cards, enforced server-side.** Ownership is
   checked against the seat recorded on the child session, which no tool available to a
   player can write. Never rely on the prompt telling a seat to stay in its lane.
+
+### Two MCP directions
+
+This service is both an MCP client and an MCP server, and confusing the two costs real time
+because both live under the name "MCP":
+
+- **Inbound / client — `integrations/mcp/`.** This service connects *out* to MCP servers
+  (game-service by default) and merges their tool definitions into a session's effective tool
+  catalog, which the worker then exposes to the model. This is the direction the game-playing
+  agent uses; session MCP assignments (`/sessions/{id}/mcps`) configure it.
+- **Outbound / server — `mcp_server.py`.** This service's *own* MCP server, mounted at `/mcp`
+  by `main.py` — deliberately not by the app factory, because the test suites build the app
+  directly and must not start the MCP session manager. Its tools are generated from this
+  service's FastAPI OpenAPI schema by `dragncards_common.mcp`, so a tool *is* the endpoint it
+  came from and a tool's name is that endpoint's `operation_id`. There is no hand-written tool
+  layer, and there should not be one — it would be a second implementation of the API, free to
+  drift from the first.
+
+Because tools come from the schema, **adding a route to this service adds an MCP tool
+automatically**. Give every route an explicit `operation_id`: without one, FastAPI derives a
+name from the function, path and method — `submit_prompt_sessions__session_id__prompts_post` —
+and that string becomes the tool name a model has to read.
+
+`EXCLUDED_ROUTES` in `mcp_server.py` is what is deliberately kept out:
+
+- `stream_job_events` (`GET /jobs/{id}/events/stream`). An MCP tool call reads its response to
+  completion and an SSE stream never completes, so mapping it to a tool hangs the caller until
+  it times out. Poll `list_job_events` with `after` instead.
+- The **writes** to the deployment-global skill registry, MCP registry, and persona table —
+  `register_skill`, `unregister_skill`, `register_mcp`, `unregister_mcp`, `save_persona`,
+  `delete_persona`. An entry changed in any of the three changes what *every* session in the
+  deployment resolves, including sessions the caller does not own. Reads of all three stay
+  exposed (`list_skill_registry`, `list_mcp_registry`, `list_personas`, `get_persona`), and so
+  does the whole per-session lifecycle (`terminate_session`, `delete_session`,
+  `disable_session_skill`, `remove_session_mcp`) — excluding the global registries must not cost
+  an agent the ability to clean up after itself.
+- Health and readiness probes, excluded for every service by the shared bootstrap.
+
+Exclusion applies to MCP only. The HTTP endpoint is untouched, so nothing here limits the
+dashboard or a developer with `curl`; the operation just is not offered to a model as a tool.
+`tests/unit/test_mcp_server.py` asserts the surface against the real app rather than against
+`EXCLUDED_ROUTES`, because an exclusion regex that silently matches nothing looks identical to
+one that works.
+
+The full loop this surface exists for — create a game, start a player agent, read its actions,
+read the live board, request an evaluation, read the verdict — is in the root
+[`AGENTS.md`](../../AGENTS.md#driving-the-system-end-to-end), along with the prerequisites that
+otherwise block it.
 
 ### Provider Integration
 

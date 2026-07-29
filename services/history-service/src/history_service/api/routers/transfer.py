@@ -31,6 +31,7 @@ router = APIRouter(tags=["transfer"])
     "/games/{game_id}/export",
     response_class=StreamingResponse,
     summary="Export a game's history as a human-readable NDJSON bundle",
+    operation_id="export_game_bundle",
 )
 async def export_game(
     game_id: GameIdPath,
@@ -59,7 +60,11 @@ async def export_game(
     )
 
 
-@router.post("/import", response_model=ImportResponse)
+@router.post(
+    "/import",
+    response_model=ImportResponse,
+    operation_id="import_game_bundle",
+)
 async def import_game(
     request: Request,
     game_id: GameIdQuery = None,

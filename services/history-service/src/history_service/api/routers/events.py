@@ -21,7 +21,11 @@ from history_service.storage.repository import Repository
 router = APIRouter(tags=["events"])
 
 
-@router.post("/games/{game_id}/events", response_model=BackfillResponse)
+@router.post(
+    "/games/{game_id}/events",
+    response_model=BackfillResponse,
+    operation_id="backfill_game_event",
+)
 async def backfill_event(
     request: Request,
     game_id: GameIdPath,
@@ -46,7 +50,11 @@ async def backfill_event(
     )
 
 
-@router.get("/games/{game_id}/events", response_model=EventListResponse)
+@router.get(
+    "/games/{game_id}/events",
+    response_model=EventListResponse,
+    operation_id="list_game_events",
+)
 async def list_events(
     game_id: GameIdPath,
     after_seq: int = Query(default=0, ge=0),
@@ -62,7 +70,11 @@ async def list_events(
     )
 
 
-@router.get("/games/{game_id}/timeline", response_model=TimelineListResponse)
+@router.get(
+    "/games/{game_id}/timeline",
+    response_model=TimelineListResponse,
+    operation_id="list_game_timeline",
+)
 async def list_timeline(
     game_id: GameIdPath,
     after_seq: int = Query(default=0, ge=0),

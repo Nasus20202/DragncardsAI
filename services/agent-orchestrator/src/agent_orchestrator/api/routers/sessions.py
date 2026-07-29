@@ -57,7 +57,7 @@ from agent_orchestrator.storage.repository import Repository
 router = APIRouter(tags=["sessions"])
 
 
-@router.get("/sessions")
+@router.get("/sessions", operation_id="list_sessions")
 async def list_sessions(
     repo: Repository = Depends(get_repository),
     status: str | None = Query(default=None),
@@ -86,7 +86,7 @@ async def _require_known_persona(repo: Repository, name: str | None) -> None:
         raise HTTPException(status_code=400, detail=f"Unknown persona: {name}")
 
 
-@router.post("/sessions", status_code=201)
+@router.post("/sessions", status_code=201, operation_id="create_session")
 async def create_session(
     body: SessionCreateRequest,
     repo: Repository = Depends(get_repository),
@@ -104,7 +104,7 @@ async def create_session(
     return {"session": serialize_session_detail(item)}
 
 
-@router.post("/sessions/restore", status_code=201)
+@router.post("/sessions/restore", status_code=201, operation_id="restore_session")
 async def restore_session(
     body: SessionRestoreRequest,
     repo: Repository = Depends(get_repository),
@@ -144,7 +144,7 @@ async def restore_session(
     return SessionRestoreResponse(session_id=item.id)
 
 
-@router.get("/sessions/{session_id}/jobs")
+@router.get("/sessions/{session_id}/jobs", operation_id="list_session_jobs")
 async def list_session_jobs(
     session_id: str,
     repo: Repository = Depends(get_repository),
@@ -163,12 +163,12 @@ async def list_session_jobs(
     )
 
 
-@router.get("/sessions/{session_id}")
+@router.get("/sessions/{session_id}", operation_id="get_session")
 async def get_session(item=Depends(require_session)) -> dict[str, SessionDetail]:
     return {"session": serialize_session_detail(item)}
 
 
-@router.patch("/sessions/{session_id}")
+@router.patch("/sessions/{session_id}", operation_id="update_session")
 async def update_session(
     session_id: str,
     body: SessionUpdateRequest,
@@ -201,7 +201,7 @@ async def update_session(
     return {"session": serialize_session_detail(item)}
 
 
-@router.delete("/sessions/{session_id}", status_code=204)
+@router.delete("/sessions/{session_id}", status_code=204, operation_id="delete_session")
 async def delete_session(
     session_id: str,
     repo: Repository = Depends(get_repository),
@@ -235,7 +235,7 @@ async def delete_session(
         await repo.delete_session(seat_session_id)
 
 
-@router.post("/sessions/{session_id}/terminate")
+@router.post("/sessions/{session_id}/terminate", operation_id="terminate_session")
 async def terminate_session(
     session_id: str,
     repo: Repository = Depends(get_repository),
@@ -251,7 +251,9 @@ async def terminate_session(
     return {"session": serialize_session_detail(item)}
 
 
-@router.put("/sessions/{session_id}/model-config")
+@router.put(
+    "/sessions/{session_id}/model-config", operation_id="set_session_model_config"
+)
 async def set_model_config(
     session_id: str,
     body: ModelConfigRequest,
@@ -301,7 +303,7 @@ async def _register_on_disk_skill(
     )
 
 
-@router.post("/skills", status_code=201)
+@router.post("/skills", status_code=201, operation_id="register_skill")
 async def add_skill_registry(
     body: dict[str, Any],
     repo: Repository = Depends(get_repository),
@@ -323,7 +325,7 @@ async def add_skill_registry(
     }
 
 
-@router.delete("/skills/{skill_name}", status_code=204)
+@router.delete("/skills/{skill_name}", status_code=204, operation_id="unregister_skill")
 async def remove_skill_registry(
     skill_name: str,
     repo: Repository = Depends(get_repository),
@@ -334,7 +336,11 @@ async def remove_skill_registry(
 
 
 # Session Skill enablement endpoints
-@router.post("/sessions/{session_id}/skills", status_code=201)
+@router.post(
+    "/sessions/{session_id}/skills",
+    status_code=201,
+    operation_id="enable_session_skill",
+)
 async def enable_session_skill(
     session_id: str,
     body: SkillAssignmentRequest,
@@ -360,7 +366,7 @@ async def enable_session_skill(
     }
 
 
-@router.get("/sessions/{session_id}/skills")
+@router.get("/sessions/{session_id}/skills", operation_id="list_session_skills")
 async def list_session_skills(
     item=Depends(require_session),
 ) -> dict[str, list[dict[str, Any]]]:
@@ -380,7 +386,10 @@ async def list_session_skills(
     }
 
 
-@router.patch("/sessions/{session_id}/skills/{skill_name}")
+@router.patch(
+    "/sessions/{session_id}/skills/{skill_name}",
+    operation_id="set_session_skill_enabled",
+)
 async def enable_skill_for_session(
     session_id: str,
     skill_name: str,
@@ -403,7 +412,11 @@ async def enable_skill_for_session(
     return {"skill": {"name": skill_name, "enabled": item.enabled}}
 
 
-@router.delete("/sessions/{session_id}/skills/{skill_name}", status_code=204)
+@router.delete(
+    "/sessions/{session_id}/skills/{skill_name}",
+    status_code=204,
+    operation_id="disable_session_skill",
+)
 async def disable_skill_for_session(
     session_id: str,
     skill_name: str,
@@ -432,7 +445,7 @@ async def _disable_session_skill(
 
 
 # Global MCP Registry endpoints
-@router.get("/mcps")
+@router.get("/mcps", operation_id="list_mcp_registry")
 async def list_mcp_registry(
     repo: Repository = Depends(get_repository),
 ) -> dict[str, list[McpRegistryResponse]]:
@@ -440,7 +453,7 @@ async def list_mcp_registry(
     return {"mcps": [serialize_mcp_registry(mcp) for mcp in registries]}
 
 
-@router.post("/mcps", status_code=201)
+@router.post("/mcps", status_code=201, operation_id="register_mcp")
 async def add_mcp_registry(
     body: McpRegistryRequest,
     repo: Repository = Depends(get_repository),
@@ -454,7 +467,7 @@ async def add_mcp_registry(
     return {"mcp": serialize_mcp_registry(item)}
 
 
-@router.delete("/mcps/{mcp_name}", status_code=204)
+@router.delete("/mcps/{mcp_name}", status_code=204, operation_id="unregister_mcp")
 async def remove_mcp_registry(
     mcp_name: str,
     repo: Repository = Depends(get_repository),
@@ -470,7 +483,9 @@ async def remove_mcp_registry(
 
 
 # Session MCP enablement endpoints
-@router.post("/sessions/{session_id}/mcps", status_code=201)
+@router.post(
+    "/sessions/{session_id}/mcps", status_code=201, operation_id="add_session_mcp"
+)
 async def add_mcp_to_session(
     session_id: str,
     body: McpRegistryRequest,
@@ -499,7 +514,7 @@ async def add_mcp_to_session(
     }
 
 
-@router.get("/sessions/{session_id}/mcps")
+@router.get("/sessions/{session_id}/mcps", operation_id="list_session_mcps")
 async def list_session_mcps(
     item=Depends(require_session),
     repo: Repository = Depends(get_repository),
@@ -523,7 +538,11 @@ async def list_session_mcps(
     return {"mcps": result}
 
 
-@router.delete("/sessions/{session_id}/mcps/{mcp_name}", status_code=204)
+@router.delete(
+    "/sessions/{session_id}/mcps/{mcp_name}",
+    status_code=204,
+    operation_id="remove_session_mcp",
+)
 async def disable_mcp_for_session(
     session_id: str,
     mcp_name: str,
@@ -535,7 +554,9 @@ async def disable_mcp_for_session(
     await repo.enable_mcp_for_session(session_id, mcp_name, enabled=False)
 
 
-@router.patch("/sessions/{session_id}/mcps/{mcp_name}")
+@router.patch(
+    "/sessions/{session_id}/mcps/{mcp_name}", operation_id="set_session_mcp_enabled"
+)
 async def enable_mcp_for_session(
     session_id: str,
     mcp_name: str,
@@ -562,7 +583,7 @@ async def enable_mcp_for_session(
     }
 
 
-@router.get("/sessions/{session_id}/tools")
+@router.get("/sessions/{session_id}/tools", operation_id="list_session_tools")
 async def list_session_tools(
     tool_catalog: McpToolCatalog = Depends(get_mcp_tool_catalog),
     repo: Repository = Depends(get_repository),

@@ -600,6 +600,44 @@ Event types include:
 Only `completion`, `failure`, and `cancellation` are terminal and close the SSE stream. The three
 `user_question*` events are not, so the stream stays open while the user decides.
 
+## MCP Surface
+
+This service exposes its own HTTP API as MCP tools over streamable-HTTP:
+
+```text
+http://localhost:4002/mcp/
+```
+
+This is the opposite direction from **Session MCPs** above. A session MCP assignment is this
+service acting as an MCP *client*, pulling someone else's tools in for the game-playing agent to
+call. `/mcp/` is this service acting as an MCP *server*, so a coding agent working on this
+repository can create a session, configure it, submit a prompt, and read the resulting job events
+as tool calls instead of hand-written HTTP requests.
+
+Tools are generated from this service's OpenAPI schema — nothing is hand-written — so every tool
+is exactly the endpoint it came from, with that endpoint's own request and response models, and
+**a tool's name is the endpoint's `operation_id`**: `create_session`, `submit_prompt`,
+`list_job_events`. A new route therefore becomes a tool on its own; give it an explicit
+`operation_id` or the tool inherits FastAPI's generated name.
+
+Some routes are deliberately absent from MCP, declared in
+`src/agent_orchestrator/mcp_server.py`:
+
+- `GET /health` and `GET /ready` — probes are noise in a model's tool list.
+- `GET /jobs/{job_id}/events/stream` — a tool call reads its response to completion and an SSE
+  stream never completes. Poll `GET /jobs/{job_id}/events` with `?after=` instead.
+- The writes to the deployment-global registries: `POST`/`DELETE /skills`, `POST`/`DELETE /mcps`,
+  and `PUT`/`DELETE /personas/{name}` — one entry changed there changes what every session in the
+  deployment resolves. Reading all three stays available, as does the whole per-session
+  lifecycle, so an agent can still clean up the sessions it created.
+
+Exclusion applies to MCP only. Every one of those endpoints still works over HTTP, for the
+dashboard and for a developer who types it deliberately.
+
+The end-to-end debugging loop this surface exists for — create a game, start a player agent, read
+its actions, read the live board, request an evaluation, read the verdict — is documented in the
+root [`AGENTS.md`](../../AGENTS.md#driving-the-system-end-to-end).
+
 ## Typical Workflow
 
 ### Configure a new agent

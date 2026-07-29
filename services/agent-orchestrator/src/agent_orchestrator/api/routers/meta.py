@@ -14,12 +14,12 @@ from agent_orchestrator.storage.repository import Repository
 router = APIRouter(tags=["meta"])
 
 
-@router.get("/health")
+@router.get("/health", operation_id="health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.get("/ready")
+@router.get("/ready", operation_id="ready")
 async def ready(
     request: Request,
     repo: Repository = Depends(get_repository),

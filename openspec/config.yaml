@@ -39,7 +39,9 @@ context: |
     Both interfaces share a single `SessionManager` and WebSocket session pool.
   - **agent-orchestrator** (`services/agent-orchestrator/`): Python/FastAPI service.
     Manages LLM sessions, job queues, skill assignment, and MCP wiring. Persists
-    state in a dedicated PostgreSQL and fans out SSE events via Valkey.
+    state in a dedicated PostgreSQL and fans out SSE events via Valkey. It is both
+    an MCP client (attaching game-service tools to a session) and, at `/mcp`, an
+    MCP server of its own.
   - **history-service** (`services/history-service/`): Python/FastAPI service.
     Ingests the Valkey `history:ingest` stream into its own PostgreSQL as an
     ordered, per-game event store with periodic snapshots, and can restore a
@@ -57,8 +59,9 @@ context: |
     `dragncards_common.telemetry`; see `openspec/specs/observability/spec.md`.
   - **dragncards-common** (`services/shared/`): Internal Python library shared by
     agent-orchestrator, history-service, and eval-service — schema-migration
-    runner, RESP/Valkey client, typed Bifrost errors, httpx base client, and the
-    OpenTelemetry bootstrap.
+    runner, RESP/Valkey client, typed Bifrost errors, httpx base client, the
+    OpenTelemetry bootstrap, and the MCP-surface bootstrap that derives each
+    service's `/mcp` tools from that service's own OpenAPI schema.
   - **bifrost** (`services/bifrost/`): Maximilian AI gateway (`maximhq/bifrost`).
     Routes LLM requests to configured providers. Local LM Studio traffic is routed
     via `lmstudio-proxy` (see below).

@@ -35,7 +35,7 @@ from agent_orchestrator.storage.repository import Repository
 router = APIRouter(tags=["personas"])
 
 
-@router.get("/personas")
+@router.get("/personas", operation_id="list_personas")
 async def list_personas(
     repo: Repository = Depends(get_repository),
 ) -> PersonaListResponse:
@@ -43,7 +43,7 @@ async def list_personas(
     return PersonaListResponse(personas=[serialize_persona(item) for item in personas])
 
 
-@router.get("/personas/{name}")
+@router.get("/personas/{name}", operation_id="get_persona")
 async def get_persona(
     name: str,
     repo: Repository = Depends(get_repository),
@@ -54,7 +54,7 @@ async def get_persona(
     return {"persona": serialize_persona(item)}
 
 
-@router.put("/personas/{name}")
+@router.put("/personas/{name}", operation_id="save_persona")
 async def set_persona(
     name: str,
     body: PersonaRequest,
@@ -101,7 +101,7 @@ async def set_persona(
     return {"persona": serialize_persona(item)}
 
 
-@router.delete("/personas/{name}", status_code=204)
+@router.delete("/personas/{name}", status_code=204, operation_id="delete_persona")
 async def delete_persona(
     name: str,
     repo: Repository = Depends(get_repository),

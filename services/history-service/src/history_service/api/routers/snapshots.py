@@ -10,7 +10,11 @@ from history_service.storage.repository import Repository
 router = APIRouter(tags=["snapshots"])
 
 
-@router.get("/games/{game_id}/snapshots", response_model=SnapshotListResponse)
+@router.get(
+    "/games/{game_id}/snapshots",
+    response_model=SnapshotListResponse,
+    operation_id="list_game_snapshots",
+)
 async def list_snapshots(
     game_id: GameIdPath,
     repo: Repository = Depends(get_repository),

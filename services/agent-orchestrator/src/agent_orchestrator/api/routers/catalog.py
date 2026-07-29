@@ -73,7 +73,7 @@ async def _build_provider_response(
         )
 
 
-@router.get("/providers")
+@router.get("/providers", operation_id="list_providers")
 async def list_providers(
     request: Request,
     refresh: bool = False,
@@ -102,7 +102,7 @@ async def list_providers(
     return {"providers": providers}
 
 
-@router.post("/providers/refresh")
+@router.post("/providers/refresh", operation_id="refresh_providers")
 async def refresh_provider_cache(
     request: Request,
     settings: Settings = Depends(get_settings),
@@ -123,7 +123,7 @@ async def refresh_provider_cache(
     )
 
 
-@router.get("/skills")
+@router.get("/skills", operation_id="list_skill_registry")
 async def list_available_skills(
     registry: SkillRegistry = Depends(get_skill_registry),
 ) -> dict[str, list[SkillDefinitionResponse]]:

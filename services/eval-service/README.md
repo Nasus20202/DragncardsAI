@@ -291,6 +291,42 @@ denotes and are **not** comparable to `eval-2` verdicts; `evaluator_version` on
 each verdict is what tells them apart. Move verdicts are unaffected by boundaries
 (only their `evaluator_version` tag changes).
 
+## MCP surface
+
+The same HTTP API is exposed as MCP tools over streamable-HTTP at
+http://localhost:4005/mcp/ (clients address it with the trailing slash). It exists
+so an assistant working in this repository can grade a recorded game as tool calls —
+list the rounds detected for a game, request an evaluation of a selection of them,
+poll it until it finishes, read the verdicts, cancel a run — instead of
+hand-written `curl` against endpoints whose shape it has to guess. The transport is
+mounted in `main.py`, not in the app factory, so the test suites never start the MCP
+session manager.
+
+Tools are **generated from this service's OpenAPI schema** by
+`dragncards_common.mcp`, so a tool is exactly the endpoint it came from and a
+tool's name is that endpoint's `operation_id`: `list_game_rounds`,
+`create_evaluation`, `get_evaluation`, `cancel_evaluation`, `list_evaluations`,
+`delete_evaluation`.
+
+`eval_service/mcp_server.py` lists what is kept out:
+
+| Not a tool | Why |
+| --- | --- |
+| `stream_evaluation` | Server-sent events: a tool call reads its response to completion and this one only completes when the run does — poll `get_evaluation`, which also carries the live per-target error detail |
+| `clear_evaluations` | Deployment-global bulk delete, including requests the caller never created; `delete_evaluation` for one request stays available so an agent can clean up after itself |
+| `health`, `ready` | Probes are noise in an LLM's tool list |
+
+Exclusion applies to MCP only; every one of those endpoints still works over HTTP.
+
+**An evaluation over MCP still needs a configured judge.** `create_evaluation`
+accepts the request either way, but with no `EVAL_JUDGE_MODEL` (and the routed
+provider's `EVAL_JUDGE_<PROVIDER>_API_KEY`) set, `GET /ready` reports `degraded`
+and every target is recorded as `failed` with the configuration error as its
+reason. See [Judge identity](#judge-identity).
+
+The end-to-end debugging loop these tools exist for is documented in
+[`AGENTS.md`](../../AGENTS.md#driving-the-system-end-to-end).
+
 ## Verdict (evaluator event payload)
 
 ```json
