@@ -13,8 +13,23 @@ TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 
 
 def serialize_live_event(event: LiveJobEvent) -> JobEventResponse:
+    """Render a live-bus event as the stream's client sees it.
+
+    This stream has two sources for the same event: it polls ``list_events`` for
+    durable rows and it forwards the live bus, and almost every publish is
+    preceded by an ``append_event``. So most live events are a second copy of a
+    row this stream also yields from Postgres — sent early, because that is the
+    whole point of the bus.
+
+    Both copies must therefore reach the client under the *same* id, since the
+    id is what the client de-duplicates on. When the publisher recorded a
+    durable row it says so via ``durable_event_id``, and that id wins over the
+    bus's own (a Valkey stream entry id, or an in-memory counter) which
+    identifies the delivery rather than the event. Losing this is what made one
+    question render as two cards (DRA-34).
+    """
     return JobEventResponse(
-        id=str(event.id),
+        id=str(event.durable_event_id or event.id),
         event_type=event.event_type,
         payload=event.payload_json,
         created_at=event.created_at,
@@ -112,9 +127,11 @@ class JobEventStreamService:
                         return
                     continue
 
+                live_payload = serialize_live_event(live_event)
                 yield format_sse_event(
                     event_type=live_event.event_type,
-                    payload=serialize_live_event(live_event),
+                    payload=live_payload,
+                    event_id=live_payload.id,
                 )
                 if live_event.event_type in TERMINAL_EVENT_TYPES:
                     terminal_received = True

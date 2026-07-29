@@ -245,10 +245,15 @@ async def answer_job_question(
         "label": answered.answer_label,
         "text": answered.answer_text,
     }
-    await repo.append_event(
+    durable_event_id = await repo.append_event(
         job_id, answered.session_id, "user_question_answered", payload
     )
-    await live_event_bus.publish(job_id, "user_question_answered", payload)
+    await live_event_bus.publish(
+        job_id,
+        "user_question_answered",
+        payload,
+        durable_event_id=durable_event_id,
+    )
     return {"question": serialize_job_question(answered)}
 
 

@@ -506,7 +506,11 @@ export function subagentReference(
  * something better than "here are your arguments".
  */
 export type ToolPresentation =
-  "generic" | "subagent_launch" | "subagent_wait" | "skill_load";
+  | "generic"
+  | "subagent_launch"
+  | "subagent_wait"
+  | "skill_load"
+  | "user_question";
 
 /**
  * Tool name → presentation. Adding a system tool here is the whole extension
@@ -520,6 +524,7 @@ export const TOOL_PRESENTATIONS: Readonly<Record<string, ToolPresentation>> = {
   wait_for_subagent: "subagent_wait",
   load_skill: "skill_load",
   load_skill_reference: "skill_load",
+  ask_user: "user_question",
 };
 
 export function presentationForTool(toolName: string): ToolPresentation {

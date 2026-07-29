@@ -122,16 +122,18 @@ def make_load_skill_handler(
         if definition is not None:
             ref_count = len(skill_registry.list_reference_files(skill_name))
 
-        await repository.append_event(
-            job_id,
-            session_id,
-            "skill_loaded",
-            {"skill_name": skill_name, "reference_file_count": ref_count},
+        skill_payload = {
+            "skill_name": skill_name,
+            "reference_file_count": ref_count,
+        }
+        durable_event_id = await repository.append_event(
+            job_id, session_id, "skill_loaded", skill_payload
         )
         await live_event_bus.publish(
             job_id,
             "skill_loaded",
-            {"skill_name": skill_name, "reference_file_count": ref_count},
+            skill_payload,
+            durable_event_id=durable_event_id,
         )
         return _text_result(content)
 
@@ -407,11 +409,14 @@ def _make_child_monitor(
                     outcome_payload["error_message"] = outcome.error_message
 
             try:
-                await repository.append_event(
+                durable_event_id = await repository.append_event(
                     job_id, session_id, outcome_event_type, outcome_payload
                 )
                 await live_event_bus.publish(
-                    job_id, outcome_event_type, outcome_payload
+                    job_id,
+                    outcome_event_type,
+                    outcome_payload,
+                    durable_event_id=durable_event_id,
                 )
             except Exception:
                 logger.exception(
@@ -589,10 +594,15 @@ async def _enqueue_child_job(
         "name": name,
         **(event_payload_extra or {}),
     }
-    await repository.append_event(
+    durable_event_id = await repository.append_event(
         job_id, session_id, "subagent_started", started_payload
     )
-    await live_event_bus.publish(job_id, "subagent_started", started_payload)
+    await live_event_bus.publish(
+        job_id,
+        "subagent_started",
+        started_payload,
+        durable_event_id=durable_event_id,
+    )
 
     # Launch background monitor BEFORE scheduling so we don't miss events.
     asyncio.create_task(
@@ -1049,8 +1059,12 @@ async def _announce_wait_timeout(
         "child_status": outcome.last_status,
     }
     try:
-        await repository.append_event(job_id, session_id, "subagent_failed", payload)
-        await live_event_bus.publish(job_id, "subagent_failed", payload)
+        durable_event_id = await repository.append_event(
+            job_id, session_id, "subagent_failed", payload
+        )
+        await live_event_bus.publish(
+            job_id, "subagent_failed", payload, durable_event_id=durable_event_id
+        )
     except Exception:
         logger.exception(
             "Failed to record the abandoned wait for child job %s on parent job %s",
@@ -1318,8 +1332,12 @@ def make_ask_user_handler(
             "choices": choices,
             "allow_free_text": validated.allow_free_text,
         }
-        await repository.append_event(job_id, session_id, "user_question", payload)
-        await live_event_bus.publish(job_id, "user_question", payload)
+        durable_event_id = await repository.append_event(
+            job_id, session_id, "user_question", payload
+        )
+        await live_event_bus.publish(
+            job_id, "user_question", payload, durable_event_id=durable_event_id
+        )
 
         async def job_was_cancelled() -> bool:
             if not job_id:
@@ -1385,10 +1403,15 @@ async def _announce_question_closed(
         "waited_seconds": waited_seconds,
     }
     try:
-        await repository.append_event(
+        durable_event_id = await repository.append_event(
             job_id, session_id, "user_question_closed", payload
         )
-        await live_event_bus.publish(job_id, "user_question_closed", payload)
+        await live_event_bus.publish(
+            job_id,
+            "user_question_closed",
+            payload,
+            durable_event_id=durable_event_id,
+        )
     except Exception:
         logger.exception(
             "Failed to record the closure of question %s on job %s",

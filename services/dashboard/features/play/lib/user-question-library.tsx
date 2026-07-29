@@ -43,9 +43,12 @@ import { UserQuestionPrompt } from "@/features/play/lib/play-session-events";
  * `dangerouslySetInnerHTML`, a markdown renderer, or a browser-resolved
  * attribute (`href`, `src`, `style`, `on*`).
  *
- * The components deliberately use the same Hero UI primitives and Tailwind
- * theme tokens the transcript already used, so adopting OpenUI changed the
- * rendering pipeline without changing a pixel.
+ * The components use the Tailwind theme tokens the rest of the transcript uses.
+ * The choices are hand-rolled `button`s rather than Hero UI ones for the reason
+ * `services/dashboard/AGENTS.md` gives: the transcript is deliberately plain
+ * `div`/`button` plus theme tokens, and an option row here has to be a
+ * full-width two-line block, which is not what any Hero UI `Button` variant is.
+ * The composer's Send button stays Hero UI, as it is elsewhere.
  */
 
 export interface QuestionContextValue {
@@ -67,6 +70,22 @@ export const QuestionContextProvider = QuestionContext.Provider;
 function useQuestionContext(): QuestionContextValue | null {
   return useContext(QuestionContext);
 }
+
+/**
+ * The option row: full width, bordered so it reads as a target, and laid out as
+ * a label above its description rather than a pill of run-together text.
+ *
+ * `disabled:` rather than a conditional class so there is one string to read:
+ * an unanswerable row goes flat and faded and stops responding to the pointer,
+ * which is what tells a reader the question is closed.
+ */
+const CHOICE_ROW_CLASS = [
+  "flex w-full min-w-0 flex-col items-start gap-0.5 rounded-md",
+  "border border-default-200 bg-content1/95 px-2.5 py-1.5 text-left",
+  "transition-colors hover:bg-default-100 active:bg-default-200/70",
+  "disabled:pointer-events-none disabled:border-default-200/50",
+  "disabled:bg-transparent disabled:opacity-50",
+].join(" ");
 
 /**
  * One offered choice, addressed only by its position in the stored list.
@@ -93,22 +112,26 @@ const ChoiceView: ComponentRenderer<{ index: number }> = ({ props }) => {
   const disabled = !context.isAnswerable || context.isSubmitting;
 
   return (
-    <Button
+    <button
+      className={CHOICE_ROW_CLASS}
       data-testid={`user-question-choice-${index}`}
-      isDisabled={disabled}
-      size="sm"
-      variant="ghost"
-      onPress={() => context.onSubmitChoice(index)}
+      disabled={disabled}
+      type="button"
+      onClick={() => context.onSubmitChoice(index)}
     >
-      <span className="flex min-w-0 flex-col items-start text-left">
-        <span className="line-clamp-2 break-words">{choice.label}</span>
-        {choice.description ? (
-          <span className="line-clamp-2 break-words text-[11px] font-normal text-default-400">
-            {choice.description}
-          </span>
-        ) : null}
+      <span className="w-full whitespace-normal break-words text-xs text-foreground">
+        {choice.label}
       </span>
-    </Button>
+      {choice.description ? (
+        // Wrapped, not clipped: a description is what the reader chooses on, so
+        // it must not disappear off the card edge the way a nowrap flex item
+        // did. The clamp is only a bound against a pathological length — a
+        // sentence or two of a real description is well inside it.
+        <span className="line-clamp-4 w-full whitespace-normal break-words text-[11px] text-default-500">
+          {choice.description}
+        </span>
+      ) : null}
+    </button>
   );
 };
 
@@ -127,10 +150,17 @@ const Choice = defineComponent({
   component: ChoiceView,
 });
 
-/** The row of choice buttons. */
+/**
+ * The stack of option rows.
+ *
+ * A column rather than a wrapping row: choices carry descriptions, so laying
+ * them out inline made four options break across three ragged lines and pushed
+ * the longest description off the card. One row each is also the shape a reader
+ * scans.
+ */
 const ChoiceList = defineComponent({
   name: "ChoiceList",
-  description: "A wrapping row of the choices the user can click.",
+  description: "A vertical list of the choices the user can click.",
   props: z.object({
     choices: z
       .array(Choice.ref)
@@ -143,11 +173,14 @@ const ChoiceList = defineComponent({
       return null;
     }
     return (
-      <div data-testid="user-question-choices" className="flex flex-wrap gap-2">
+      <div
+        data-testid="user-question-choices"
+        className="flex w-full min-w-0 flex-col gap-1.5"
+      >
         {choices.map((choice, index) => (
           // Index-keyed on purpose: nothing in a choice is unique. Two stored
           // choices may share a value, and a program may repeat an index.
-          // A Fragment rather than a wrapper element: `gap-2` spaces flex
+          // A Fragment rather than a wrapper element: `gap-1.5` spaces flex
           // items, and a wrapper would become the flex item instead of the
           // button.
           <Fragment key={index}>{renderNode(choice)}</Fragment>
@@ -197,7 +230,9 @@ const FreeTextAnswerView: ComponentRenderer<Record<never, never>> = () => {
   const disabled = !context.isAnswerable || context.isSubmitting;
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    // Full width and wrap-safe like the option rows above it, so the box lines
+    // up with them instead of sizing itself to its placeholder.
+    <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
       <TextField
         fullWidth
         aria-label="Your answer"

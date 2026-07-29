@@ -23,6 +23,17 @@ class LiveJobEvent:
     event_type: str
     payload_json: dict[str, Any]
     created_at: datetime
+    #: The ``job_events.id`` of the durable row this is the live copy of, when
+    #: the publisher had already persisted one.
+    #:
+    #: Nearly every publish is preceded by an ``append_event``, and the SSE
+    #: stream serves both sources: it polls ``list_events`` *and* forwards this
+    #: bus. Without this field the two copies reach the browser under two
+    #: unrelated ids — a Postgres integer and a Valkey stream id — and the
+    #: client's id-keyed de-duplication cannot tell they are one event, so the
+    #: transcript renders the row twice (DRA-34). Carrying the durable id lets
+    #: the stream label the live copy with it so the two collapse.
+    durable_event_id: str | None = None
 
 
 class LiveEventSubscriber(Protocol):
@@ -33,7 +44,12 @@ class LiveEventSubscriber(Protocol):
 
 class LiveEventBus(Protocol):
     async def publish(
-        self, job_id: str, event_type: str, payload_json: dict[str, Any]
+        self,
+        job_id: str,
+        event_type: str,
+        payload_json: dict[str, Any],
+        *,
+        durable_event_id: int | str | None = None,
     ) -> LiveJobEvent: ...
 
     async def subscribe(self, job_id: str) -> LiveEventSubscriber: ...
@@ -73,13 +89,21 @@ class InMemoryLiveEventBus:
         )
 
     async def publish(
-        self, job_id: str, event_type: str, payload_json: dict[str, Any]
+        self,
+        job_id: str,
+        event_type: str,
+        payload_json: dict[str, Any],
+        *,
+        durable_event_id: int | str | None = None,
     ) -> LiveJobEvent:
         event = LiveJobEvent(
             id=str(next(self._next_id)),
             event_type=event_type,
             payload_json=payload_json,
             created_at=datetime.now(timezone.utc),
+            durable_event_id=(
+                None if durable_event_id is None else str(durable_event_id)
+            ),
         )
         self._replay[job_id].append(event)
         for queue in tuple(self._subscribers[job_id]):
@@ -141,6 +165,9 @@ class ValkeyLiveEventSubscriber:
             event_type=payload["event_type"],
             payload_json=raw_payload,
             created_at=datetime.fromisoformat(payload["created_at"]),
+            # Absent on entries written before this field existed, and on
+            # publishes that persist nothing of their own.
+            durable_event_id=payload.get("durable_event_id") or None,
         )
 
     async def aclose(self) -> None:
@@ -177,10 +204,27 @@ class ValkeyLiveEventBus:
         return f"{self._stream_prefix}{job_id}"
 
     async def publish(
-        self, job_id: str, event_type: str, payload_json: dict[str, Any]
+        self,
+        job_id: str,
+        event_type: str,
+        payload_json: dict[str, Any],
+        *,
+        durable_event_id: int | str | None = None,
     ) -> LiveJobEvent:
         created_at = datetime.now(timezone.utc)
         stream_key = self._stream_key(job_id)
+        # Kept out of `payload_json` on purpose: the payload is forwarded to the
+        # browser verbatim, and this is stream plumbing rather than event data.
+        fields = [
+            "event_type",
+            event_type,
+            "payload_json",
+            json.dumps(payload_json),
+            "created_at",
+            created_at.isoformat(),
+        ]
+        if durable_event_id is not None:
+            fields += ["durable_event_id", str(durable_event_id)]
         event_id = await self._conn.execute(
             "XADD",
             stream_key,
@@ -188,12 +232,7 @@ class ValkeyLiveEventBus:
             "~",
             str(self._max_stream_length),
             "*",
-            "event_type",
-            event_type,
-            "payload_json",
-            json.dumps(payload_json),
-            "created_at",
-            created_at.isoformat(),
+            *fields,
         )
         await self._conn.execute("EXPIRE", stream_key, str(self._event_ttl_seconds))
         return LiveJobEvent(
@@ -201,6 +240,9 @@ class ValkeyLiveEventBus:
             event_type=event_type,
             payload_json=payload_json,
             created_at=created_at,
+            durable_event_id=(
+                None if durable_event_id is None else str(durable_event_id)
+            ),
         )
 
     async def subscribe(self, job_id: str) -> ValkeyLiveEventSubscriber:

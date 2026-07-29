@@ -535,13 +535,40 @@ function SkillLoadExchange({
   );
 }
 
+/**
+ * `ask_user`. The orchestrator writes three events for one exchange: the
+ * `tool_call`, the durable `user_question`, and the `tool_result` once it is
+ * answered or times out. The question row already renders the wording, the
+ * choices and the answer far better than a generic card's serialised arguments
+ * do, so a card here would only repeat the question text — hence nothing.
+ *
+ * An *errored* exchange is the exception and keeps the generic card. A failed
+ * `ask_user` (arguments that did not validate, a call from a subagent, a
+ * cancelled or missing question) never produces a `user_question` event at all,
+ * so this card is the only place the failure is visible.
+ */
+function UserQuestionExchange({
+  view,
+  call,
+  result,
+}: {
+  view: ToolExchangeView;
+  call: JobEventResponse | null;
+  result: JobEventResponse | null;
+}) {
+  if (view.status !== "error") {
+    return null;
+  }
+  return <GenericExchange view={view} call={call} result={result} />;
+}
+
 /* ── Registry ────────────────────────────────────────────────────── */
 
 type ToolExchangeRenderer = (props: {
   view: ToolExchangeView;
   call: JobEventResponse | null;
   result: JobEventResponse | null;
-}) => React.ReactElement;
+}) => React.ReactElement | null;
 
 /**
  * Presentation → renderer. To give a new system tool a bespoke card, add it to
@@ -554,6 +581,7 @@ const RENDERERS: Record<string, ToolExchangeRenderer> = {
   subagent_launch: SubagentLaunchExchange,
   subagent_wait: SubagentWaitExchange,
   skill_load: SkillLoadExchange,
+  user_question: UserQuestionExchange,
 };
 
 /**

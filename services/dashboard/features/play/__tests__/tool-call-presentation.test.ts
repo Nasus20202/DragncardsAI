@@ -421,6 +421,7 @@ describe("presentationForTool", () => {
     expect(presentationForTool("wait_for_subagent")).toBe("subagent_wait");
     expect(presentationForTool("load_skill")).toBe("skill_load");
     expect(presentationForTool("load_skill_reference")).toBe("skill_load");
+    expect(presentationForTool("ask_user")).toBe("user_question");
   });
 
   it("falls back to the generic presentation for everything else", () => {
