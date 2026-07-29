@@ -14,14 +14,16 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@heroui/react": "3.2.2",
+    "@heroui/styles": "3.2.2",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/api-logs": "^0.221.0",
     "@opentelemetry/exporter-logs-otlp-http": "^0.221.0",
     "@opentelemetry/instrumentation": "^0.221.0",
     "@opentelemetry/sdk-logs": "^0.221.0",
+    "@openuidev/lang-core": "0.2.10",
+    "@openuidev/react-lang": "0.2.9",
     "@vercel/otel": "^2.0.0",
-    "@heroui/react": "3.2.2",
-    "@heroui/styles": "3.2.2",
     "next": "16.2.12",
     "next-themes": "0.4.6",
     "react": "19.2.8",
@@ -29,7 +31,8 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "swagger-ui": "^5.32.5",
-    "swagger-ui-react": "5.32.11"
+    "swagger-ui-react": "5.32.11",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@eslint/compat": "2.1.0",

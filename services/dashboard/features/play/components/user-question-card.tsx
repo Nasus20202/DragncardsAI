@@ -1,11 +1,17 @@
 "use client";
 
-import { Button, Input, TextField } from "@heroui/react";
-import { useCallback, useRef, useState } from "react";
+import { Renderer } from "@openuidev/react-lang";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   UserQuestionPrompt,
   UserQuestionResolution,
 } from "@/features/play/lib/play-session-events";
+import { buildUserQuestionLang } from "@/features/play/lib/user-question-lang";
+import {
+  QuestionContextProvider,
+  QuestionContextValue,
+  userQuestionLibrary,
+} from "@/features/play/lib/user-question-library";
 import { UserQuestionAnswerRequest } from "@/features/shared/lib/types";
 
 export interface UserQuestionCardProps {
@@ -30,12 +36,24 @@ export interface UserQuestionCardProps {
  * question text, one button per offered choice, and — only when the model
  * allowed it — a free-text field.
  *
- * SECURITY: `question`, and every choice's `label`, `value` and `description`,
- * are model-authored strings. They are rendered as plain React text children
- * only. Nothing here may pass them to a markdown renderer, to
- * `dangerouslySetInnerHTML`, or into an attribute the browser resolves
- * (`href`, `src`, `style`, `on*`), and choice keys are index-based because two
- * choices may share a `value`.
+ * The surface inside the card frame is rendered by OpenUI Lang
+ * (`@openuidev/react-lang`) against the closed component library in
+ * `features/play/lib/user-question-library.tsx`.
+ *
+ * SECURITY: nothing about adopting OpenUI moved the boundary. The submitted
+ * answer is still `choice_value` taken from the stored choice list, and the
+ * server still checks it against `choices_json` read back from the row, so a
+ * forged value is refused there regardless of what was rendered. On this side:
+ *
+ *  - The Lang program is built by `buildUserQuestionLang` from the stored
+ *    question's *shape* only, so no model-authored string is ever interpolated
+ *    into DSL source.
+ *  - A choice is addressed by its index into `question.choices`, so the value
+ *    submitted below comes from this component's own props — never from the
+ *    rendered program.
+ *  - Every model-authored string is rendered as a plain React text child by the
+ *    library's renderers. None reaches `dangerouslySetInnerHTML`, a markdown
+ *    renderer, or a browser-resolved attribute.
  */
 export function UserQuestionCard({
   question,
@@ -44,7 +62,6 @@ export function UserQuestionCard({
   onAnswer,
 }: UserQuestionCardProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [freeText, setFreeText] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   // The state flag drives the disabled styling, but a ref is what actually
   // makes a double-click a single answer: two clicks dispatched before React
@@ -56,7 +73,6 @@ export function UserQuestionCard({
   // re-sending would either double-answer or 409 again.
   const isAnswerable =
     isPending && !isJobTerminal && onAnswer !== undefined && !submitError;
-  const controlsDisabled = !isAnswerable || isSubmitting;
 
   const submit = useCallback(
     async (body: UserQuestionAnswerRequest) => {
@@ -77,6 +93,37 @@ export function UserQuestionCard({
       }
     },
     [onAnswer, question.questionId]
+  );
+
+  // Controls are only ever emitted into the program while the question is
+  // answerable, so a resolved question renders its wording and nothing more.
+  const lang = useMemo(
+    () => buildUserQuestionLang(question, { includeControls: isPending }),
+    [question, isPending]
+  );
+
+  const context = useMemo<QuestionContextValue>(
+    () => ({
+      prompt: question,
+      isAnswerable,
+      isSubmitting,
+      // The index is resolved against this component's own `question` prop, so
+      // the value sent is the stored one whatever the program rendered.
+      onSubmitChoice: (index) => {
+        const choice = question.choices[index];
+        if (!choice) {
+          return;
+        }
+        void submit({ choice_value: choice.value });
+      },
+      onSubmitFreeText: (text) => {
+        if (!question.allowFreeText || text === "") {
+          return;
+        }
+        void submit({ text });
+      },
+    }),
+    [question, isAnswerable, isSubmitting, submit]
   );
 
   const pendingNotice = isJobTerminal
@@ -110,73 +157,12 @@ export function UserQuestionCard({
       </div>
 
       <div className="space-y-2.5 border-t border-default-200/60 px-3 py-2.5">
-        <p
-          data-testid="user-question-text"
-          className="max-h-60 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground"
-        >
-          {question.question}
-        </p>
+        <QuestionContextProvider value={context}>
+          <Renderer library={userQuestionLibrary} response={lang} />
+        </QuestionContextProvider>
 
         {isPending ? (
           <>
-            {question.choices.length > 0 && (
-              <div
-                data-testid="user-question-choices"
-                className="flex flex-wrap gap-2"
-              >
-                {question.choices.map((choice, index) => (
-                  // Index-keyed on purpose: `value` is model-authored and may
-                  // repeat across choices.
-                  <Button
-                    key={`${question.questionId}-${index}`}
-                    data-testid={`user-question-choice-${index}`}
-                    isDisabled={controlsDisabled}
-                    size="sm"
-                    variant="ghost"
-                    onPress={() => void submit({ choice_value: choice.value })}
-                  >
-                    <span className="flex min-w-0 flex-col items-start text-left">
-                      <span className="line-clamp-2 break-words">
-                        {choice.label}
-                      </span>
-                      {choice.description ? (
-                        <span className="line-clamp-2 break-words text-[11px] font-normal text-default-400">
-                          {choice.description}
-                        </span>
-                      ) : null}
-                    </span>
-                  </Button>
-                ))}
-              </div>
-            )}
-
-            {question.allowFreeText && (
-              <div className="flex flex-wrap items-center gap-2">
-                <TextField
-                  fullWidth
-                  aria-label="Your answer"
-                  className="min-w-40 flex-1"
-                  isDisabled={controlsDisabled}
-                >
-                  <Input
-                    data-testid="user-question-free-text"
-                    placeholder="Type an answer..."
-                    value={freeText}
-                    onChange={(event) => setFreeText(event.target.value)}
-                  />
-                </TextField>
-                <Button
-                  data-testid="user-question-free-text-submit"
-                  isDisabled={controlsDisabled || freeText.trim() === ""}
-                  size="sm"
-                  variant="primary"
-                  onPress={() => void submit({ text: freeText.trim() })}
-                >
-                  Send
-                </Button>
-              </div>
-            )}
-
             {isSubmitting && (
               <p className="text-xs text-default-400">Sending your answer...</p>
             )}
