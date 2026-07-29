@@ -5,11 +5,11 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.0 /uv /usr/local/bin/uv
 WORKDIR /app
 
 COPY services/shared /shared
-COPY services/history-service/pyproject.toml ./pyproject.toml
-RUN uv sync --no-dev --no-install-project
+COPY services/history-service/pyproject.toml services/history-service/uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY services/history-service/src ./src
-RUN uv sync --no-dev
+RUN uv sync --frozen --no-dev
 
 ENV PYTHONPATH=/app/src
 ENV PATH=/app/.venv/bin:$PATH
