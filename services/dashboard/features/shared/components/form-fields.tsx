@@ -59,6 +59,7 @@ export function TextInputField({
   id,
   label,
   ariaLabel,
+  description,
   placeholder,
   value,
   disabled,
@@ -69,6 +70,8 @@ export function TextInputField({
   label: string;
   /** Accessible name, when it needs to differ from the visible label. */
   ariaLabel?: string;
+  /** One line under the label, for a field whose effect the label cannot state. */
+  description?: string;
   placeholder?: string;
   value: string;
   disabled?: boolean;
@@ -78,6 +81,7 @@ export function TextInputField({
   return (
     <div className="grid gap-1">
       <FieldLabel id={id}>{label}</FieldLabel>
+      {description && <p className="text-xs text-default-400">{description}</p>}
       <TextField
         fullWidth
         aria-label={ariaLabel ?? label}

@@ -11,6 +11,12 @@ export type AggEvent =
   | { kind: "model_output"; text: string }
   | { kind: "compaction"; text: string }
   /**
+   * Compaction was attempted and could not complete. The turn it was protecting
+   * still ran, on the history it already had — this row exists so that
+   * degradation is visible instead of silent.
+   */
+  | { kind: "compaction_failed"; event: JobEventResponse }
+  /**
    * One tool invocation: the call, and its result once it has arrived. The two
    * events are paired by `tool_call_id` rather than shown as two separate cards,
    * because a tool's name, its arguments and its answer are one thing to read —
@@ -66,6 +72,7 @@ export const STREAM_EVENT_TYPES = [
   "reasoning",
   "model_output",
   "compaction",
+  "compaction_failed",
   "tool_call",
   "tool_result",
   "completion",
@@ -484,6 +491,7 @@ export function aggregateEvents(
       case "user_question":
       case "failure":
       case "cancellation":
+      case "compaction_failed":
       case "compaction":
         flushReasoning();
         flushModel();

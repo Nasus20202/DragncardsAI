@@ -8,11 +8,16 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agent_orchestrator.integrations.bifrost import ChatResponse, ToolCall
+from agent_orchestrator.integrations.bifrost import (
+    BifrostError,
+    ChatResponse,
+    ToolCall,
+)
 from agent_orchestrator.integrations.mcp.client import McpToolDefinition
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
+from agent_orchestrator.runtime.tokens import estimate_tokens_for_messages
 from agent_orchestrator.runtime.worker import WorkerService
 from agent_orchestrator.config import Settings
 from agent_orchestrator.storage.db import create_engine, create_session_factory
@@ -76,6 +81,53 @@ class FakeBifrost:
                 )
             )
         return response
+
+
+class RejectsOversizedRequests(FakeBifrost):
+    """A provider that refuses a request larger than the model's window.
+
+    This is what a real provider does when compaction assembles more than the
+    model can accept, and it is the failure the auto-compaction guard has to
+    absorb: the summarizing call is made from inside the job, so an unguarded
+    error reaches the job's failure handlers and fails the user's turn.
+
+    The summarizing call is the one made without `on_delta` — the job's own
+    calls always stream.
+    """
+
+    def __init__(self, *, window_tokens: int, responses=None):
+        super().__init__(responses=responses)
+        self.window_tokens = window_tokens
+        self.rejected_requests = 0
+
+    async def chat_completion(
+        self,
+        provider_id,
+        model_name,
+        messages,
+        tools,
+        gateway_options,
+        provider_options,
+        on_delta=None,
+    ):
+        if on_delta is None:
+            estimated = estimate_tokens_for_messages(messages)
+            if estimated > self.window_tokens:
+                self.rejected_requests += 1
+                raise BifrostError(
+                    "context_length_exceeded",
+                    f"request of ~{estimated} tokens exceeds the "
+                    f"{self.window_tokens}-token context window",
+                )
+        return await super().chat_completion(
+            provider_id,
+            model_name,
+            messages,
+            tools,
+            gateway_options,
+            provider_options,
+            on_delta=on_delta,
+        )
 
 
 class FakeMcp:
@@ -307,6 +359,119 @@ async def test_auto_compact_does_not_fire_below_threshold(
 
     records = await repository.count_compaction_records(session.id)
     assert records == 0
+
+
+@pytest.mark.asyncio
+async def test_compaction_that_exceeds_the_window_degrades_the_turn(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    """The failure auto-compaction exists to prevent must not fail the turn.
+
+    The provider rejects the summarization request because it is larger than
+    the window. The job is expected to finish on the history it already has,
+    with a `compaction_failed` event and no `failure` event.
+    """
+    session = await _prepare_session(repository)
+    await _make_completed_job(repository, session.id, tokens=10)
+
+    live_event_bus = InMemoryLiveEventBus()
+    bifrost = RejectsOversizedRequests(
+        window_tokens=200,
+        responses=[
+            ChatResponse(
+                content="done", tool_calls=[], raw={"usage": {"total_tokens": 10}}
+            )
+        ],
+    )
+    worker = _make_worker(
+        repository,
+        bifrost,
+        skill_registry,
+        live_event_bus=live_event_bus,
+        settings=Settings(
+            SKILL_ROOTS="/tmp",
+            ENABLED_PROVIDER_IDS=UNIT_ENABLED_PROVIDER_IDS,
+            CONTEXT_COMPACTION_THRESHOLD=0.0,
+            CONTEXT_WINDOW_SIZE=200,
+        ),
+    )
+
+    current_job = await repository.enqueue_prompt_job(
+        session.id, prompt="next turn", metadata_json={}, max_attempts=1
+    )
+    assert current_job is not None
+
+    subscriber = await live_event_bus.subscribe(current_job.id)
+    try:
+        await worker._run_job(await repository.claim_next_job())  # type: ignore[arg-type]
+        streamed = []
+        while True:
+            event = await subscriber.get(0.01)
+            if event is None:
+                break
+            streamed.append(event)
+    finally:
+        await subscriber.aclose()
+
+    assert bifrost.rejected_requests == 1
+
+    stored = await repository.get_job(current_job.id)
+    assert stored is not None
+    assert stored.status == "completed"
+
+    event_types = [event.event_type for event in stored.events]
+    assert "failure" not in event_types
+    assert "compaction_failed" in event_types
+    assert await repository.count_compaction_records(session.id) == 0
+
+    failed = next(
+        event for event in stored.events if event.event_type == "compaction_failed"
+    )
+    assert "context window" in failed.payload_json["message"]
+    assert failed.payload_json["code"] == "context_length_exceeded"
+    assert failed.payload_json["usage_ratio"] > 0.0
+
+    assert [event.event_type for event in streamed].count("compaction_failed") == 1
+
+
+@pytest.mark.asyncio
+async def test_nothing_to_compact_is_not_a_failure(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    """A session with no eligible job records no failure event and still runs."""
+    session = await _prepare_session(repository)
+
+    bifrost = FakeBifrost(
+        responses=[
+            ChatResponse(
+                content="done", tool_calls=[], raw={"usage": {"total_tokens": 10}}
+            )
+        ]
+    )
+    worker = _make_worker(
+        repository,
+        bifrost,
+        skill_registry,
+        settings=Settings(
+            SKILL_ROOTS="/tmp",
+            ENABLED_PROVIDER_IDS=UNIT_ENABLED_PROVIDER_IDS,
+            CONTEXT_COMPACTION_THRESHOLD=0.0,
+        ),
+    )
+
+    current_job = await repository.enqueue_prompt_job(
+        session.id, prompt="first turn", metadata_json={}, max_attempts=1
+    )
+    assert current_job is not None
+    await worker._run_job(await repository.claim_next_job())  # type: ignore[arg-type]
+
+    stored = await repository.get_job(current_job.id)
+    assert stored is not None
+    assert stored.status == "completed"
+    event_types = [event.event_type for event in stored.events]
+    assert "compaction_failed" not in event_types
+    assert "failure" not in event_types
+    assert await repository.count_compaction_records(session.id) == 0
 
 
 @pytest.mark.asyncio

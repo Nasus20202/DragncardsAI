@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from agent_orchestrator.runtime.memory import build_message_history
+from agent_orchestrator.config import COMPACTION_EVENT_CHAR_BUDGET_DEFAULT
 from agent_orchestrator.runtime.tokens import (
     count_tokens_for_text,
-    extract_tokens_from_response,
     estimate_tokens_for_messages,
+    extract_tokens_from_response,
 )
 from agent_orchestrator.storage.models import CompactionRecord
 
@@ -20,6 +20,18 @@ if TYPE_CHECKING:
     from agent_orchestrator.storage.repository import Repository
 
 logger = logging.getLogger(__name__)
+
+
+class NothingToCompactError(ValueError):
+    """There is no history for compaction to summarize.
+
+    Raised instead of a bare ``ValueError`` so an automatic compaction can tell
+    "nothing to do" apart from "the summarization failed": the first is normal
+    on an early turn and must stay silent, the second degrades the turn and is
+    reported. It stays a ``ValueError`` so the manual endpoint keeps answering
+    422 for it.
+    """
+
 
 COMPACTION_SYSTEM_PROMPT = """\
 You are compressing an AI agent session history into a compact summary to free up context window space.
@@ -92,6 +104,72 @@ Also record:
 """
 
 
+HISTORY_REQUEST_PREFIX = "Please summarize this session history:\n\n"
+
+
+def _truncate_for_summary(text: str, budget: int) -> tuple[str, bool]:
+    """Cap one event's contribution, saying where it was cut.
+
+    The marker matters: the reader is a summarizer, and a fragment presented as
+    a whole is a lie it cannot detect. Truncation is defensible here and nowhere
+    in replay — a game agent handed half a board cannot tell "not in play" from
+    "cut off".
+    """
+    if len(text) <= budget:
+        return text, False
+    omitted = len(text) - budget
+    return f"{text[:budget]}… [truncated, {omitted} chars omitted]", True
+
+
+def _drop_oldest_until_within_ceiling(
+    *,
+    history_parts: list[str],
+    prefix_messages: list[dict[str, Any]],
+    max_input_tokens: int | None,
+) -> tuple[list[str], int]:
+    """Drop the oldest history entries until the assembled request fits.
+
+    Oldest-first, because the previous summary already covers older material in
+    outline and the compaction prompt's own priorities are current state and
+    recent activity. The newest entry is always kept: it is already bounded by
+    the per-event budget, and a summary of nothing is worse than one built from
+    a request that is marginally over the estimate.
+
+    Returns the entries to keep and how many were dropped.
+    """
+    if max_input_tokens is None or len(history_parts) <= 1:
+        return history_parts, 0
+
+    # Estimated once, with an empty history, so the per-entry costs below are
+    # the only thing that has to be re-summed as entries are dropped. Measuring
+    # the whole request after every drop would re-encode the entire span each
+    # time.
+    overhead = estimate_tokens_for_messages(
+        prefix_messages + [{"role": "user", "content": HISTORY_REQUEST_PREFIX}]
+    )
+    available = max_input_tokens - overhead
+    part_tokens = [count_tokens_for_text(part) for part in history_parts]
+    # One newline joins each pair of entries.
+    total = sum(part_tokens) + len(history_parts) - 1
+
+    dropped = 0
+    while dropped < len(history_parts) - 1 and total > available:
+        total -= part_tokens[dropped] + 1
+        dropped += 1
+
+    if total > available:
+        logger.warning(
+            "Compaction input still estimates at %d tokens against a %d-token ceiling "
+            "after dropping %d of %d entries: the newest entry alone exceeds it",
+            total + overhead,
+            max_input_tokens,
+            dropped,
+            len(history_parts),
+        )
+
+    return history_parts[dropped:], dropped
+
+
 async def perform_compaction(
     *,
     repository: Repository,
@@ -100,46 +178,74 @@ async def perform_compaction(
     model_config: SessionModelConfig,
     current_job_id: str | None = None,
     live_event_bus: LiveEventBus | None = None,
+    event_char_budget: int = COMPACTION_EVENT_CHAR_BUDGET_DEFAULT,
+    max_input_tokens: int | None = None,
+    from_session_start: bool = False,
 ) -> CompactionRecord:
     """Summarize the session's message history and persist a CompactionRecord.
 
-    If current_job_id is None, covers all completed jobs.
+    The summarization input is bounded three ways, so that it never grows with
+    the session's total length and never exceeds what the model accepts:
+
+    - it starts at the previous `CompactionRecord.covers_up_to_job_id`, whose
+      `summary_text` is supplied as prior context, unless `from_session_start`
+      asks for a rebuild from the retained raw events;
+    - each tool call's arguments and each tool result are capped at
+      `event_char_budget` characters, with a marker where text was cut;
+    - the assembled request is estimated and, while it exceeds
+      `max_input_tokens`, the oldest entries are dropped.
+
+    `current_job_id` is the job being run, excluded from the span and used to
+    publish the resulting `compaction` event; when it is None (the manual
+    endpoint) nothing is excluded and no event is published.
     """
     # Get the latest completed job id to mark as checkpoint
     covers_up_to_job_id = await repository.get_latest_completed_job_id(session_id)
     if covers_up_to_job_id is None:
-        raise ValueError("No completed jobs to compact")
+        raise NothingToCompactError("No completed jobs to compact")
 
-    # Reconstruct the full history to summarize
+    # Reconstruct the history to summarize
     # Use a sentinel job id that won't exist so we get ALL completed jobs
     if current_job_id is None:
         sentinel = "__compaction_sentinel__"
     else:
         sentinel = current_job_id
 
+    existing_compaction = await repository.get_latest_compaction_record(session_id)
+
+    # Summarize from the previous checkpoint, not from session start. The
+    # previous summary is supplied below as prior context and is by construction
+    # a complete account of everything up to its `covers_up_to_job_id`, so
+    # re-reading that span raw adds no information and makes every compaction
+    # cost at least as much as the last one. `from_session_start` is the
+    # recovery path for a summary a user believes has lost something.
+    after_job_id = (
+        None
+        if from_session_start or existing_compaction is None
+        else existing_compaction.covers_up_to_job_id
+    )
+
     prior_jobs = await repository.list_completed_jobs_for_replay(
         session_id,
         current_job_id=sentinel,
-        after_job_id=None,  # Get everything (compaction covers it all)
+        after_job_id=after_job_id,
     )
 
-    # Also check for existing compaction record to include its summary
-    existing_compaction = await repository.get_latest_compaction_record(session_id)
-
-    summarization_messages: list[dict[str, Any]] = [
+    prefix_messages: list[dict[str, Any]] = [
         {"role": "system", "content": COMPACTION_SYSTEM_PROMPT},
     ]
 
     if existing_compaction:
-        summarization_messages.append(
+        prefix_messages.append(
             {
                 "role": "system",
                 "content": f"Previous summary:\n{existing_compaction.summary_text}",
             }
         )
 
-    # Add all prior job events as the history to compress
+    # Add the prior job events in this span as the history to compress
     history_text_parts: list[str] = []
+    truncated_events = 0
     for job in prior_jobs:
         if job.prompt:
             history_text_parts.append(f"USER: {job.prompt}")
@@ -150,31 +256,50 @@ async def perform_compaction(
                 )
             elif event.event_type == "tool_call":
                 p = event.payload_json
+                arguments, was_truncated = _truncate_for_summary(
+                    str(p.get("arguments", {})), event_char_budget
+                )
+                truncated_events += int(was_truncated)
                 history_text_parts.append(
-                    f"TOOL CALL: {p.get('exposed_tool_name')}({p.get('arguments', {})})"
+                    f"TOOL CALL: {p.get('exposed_tool_name')}({arguments})"
                 )
             elif event.event_type == "tool_result":
                 p = event.payload_json
+                result, was_truncated = _truncate_for_summary(
+                    str(p.get("result", {})), event_char_budget
+                )
+                truncated_events += int(was_truncated)
                 history_text_parts.append(
-                    f"TOOL RESULT: {p.get('exposed_tool_name')} -> {p.get('result', {})}"
+                    f"TOOL RESULT: {p.get('exposed_tool_name')} -> {result}"
                 )
 
     if not history_text_parts:
-        raise ValueError("No history content to compact")
+        raise NothingToCompactError("No history content to compact")
 
-    history_text = "\n".join(history_text_parts)
-    summarization_messages.append(
-        {
-            "role": "user",
-            "content": f"Please summarize this session history:\n\n{history_text}",
-        }
+    history_text_parts, dropped_history_entries = _drop_oldest_until_within_ceiling(
+        history_parts=history_text_parts,
+        prefix_messages=prefix_messages,
+        max_input_tokens=max_input_tokens,
     )
 
+    history_text = "\n".join(history_text_parts)
+    summarization_messages: list[dict[str, Any]] = [
+        *prefix_messages,
+        {"role": "user", "content": f"{HISTORY_REQUEST_PREFIX}{history_text}"},
+    ]
+
     logger.info(
-        "Compacting session %s: summarizing %d jobs (covers_up_to=%s)",
+        "Compacting session %s: summarizing %d jobs since %s (covers_up_to=%s, "
+        "from_session_start=%s, estimated_tokens=%d, truncated_events=%d, "
+        "dropped_history_entries=%d)",
         session_id,
         len(prior_jobs),
+        after_job_id or "session start",
         covers_up_to_job_id,
+        from_session_start,
+        estimate_tokens_for_messages(summarization_messages),
+        truncated_events,
+        dropped_history_entries,
     )
 
     response = await bifrost_client.chat_completion(
@@ -214,6 +339,11 @@ async def perform_compaction(
                 "tokens_used": summary_tokens,
                 "covers_up_to_job_id": covers_up_to_job_id,
                 "compaction_job_id": compaction_job_id,
+                # A summary built from a partially dropped span must be
+                # identifiable afterwards, not indistinguishable from a
+                # complete one.
+                "truncated_events": truncated_events,
+                "dropped_history_entries": dropped_history_entries,
             },
         )
 

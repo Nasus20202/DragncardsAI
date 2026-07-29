@@ -13,11 +13,14 @@ from agent_orchestrator.api.deps import (
     require_session,
 )
 from agent_orchestrator.config import Settings
-from agent_orchestrator.integrations.bifrost import BifrostClient
+from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.runtime.compaction import perform_compaction
 from agent_orchestrator.runtime.skills import SkillRegistry
-from agent_orchestrator.schemas.context import ContextMetadataResponse
+from agent_orchestrator.schemas.context import (
+    CompactSessionRequest,
+    ContextMetadataResponse,
+)
 from agent_orchestrator.storage.models import AgentSession
 from agent_orchestrator.storage.repository import Repository
 
@@ -39,6 +42,7 @@ async def _resolve_context_window(
 @router.post("/sessions/{session_id}/compact", operation_id="compact_session")
 async def compact_session(
     session_id: str,
+    request: CompactSessionRequest | None = None,
     session: AgentSession = Depends(require_session),
     repo: Repository = Depends(get_repository),
     bifrost_client: BifrostClient = Depends(get_bifrost_client),
@@ -47,6 +51,10 @@ async def compact_session(
     settings: Settings = Depends(get_settings),
 ) -> ContextMetadataResponse:
     """Trigger manual compaction for a session.
+
+    Summarizes the span since the last compaction checkpoint by default.
+    `from_session_start` rebuilds the summary from the session's retained raw
+    events instead, for a caller who believes an earlier summary lost something.
 
     Returns 409 if multi_turn_memory is disabled on the session.
     """
@@ -62,19 +70,30 @@ async def compact_session(
             status_code=422, detail="Session has no model configuration"
         )
 
+    context_window_size = await _resolve_context_window(
+        session, settings, bifrost_client
+    )
+
+    # A manual compaction reports its own failure, unlike the automatic one:
+    # the caller asked for compaction directly and is entitled to be told it
+    # did not happen. Automatic compaction degrades the turn instead.
     try:
         await perform_compaction(
             repository=repo,
             bifrost_client=bifrost_client,
             session_id=session_id,
             model_config=model_config,
+            event_char_budget=settings.context_compaction_event_char_budget,
+            max_input_tokens=int(
+                context_window_size * settings.context_compaction_threshold
+            ),
+            from_session_start=bool(request and request.from_session_start),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except BifrostError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    context_window_size = await _resolve_context_window(
-        session, settings, bifrost_client
-    )
     metadata = await repo.get_context_metadata(
         session_id,
         context_window_size,

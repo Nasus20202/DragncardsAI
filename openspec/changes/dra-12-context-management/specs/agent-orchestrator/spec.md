@@ -8,10 +8,12 @@ Compaction SHALL: call the LLM with a summarization prompt instructing preservat
 The history a compaction summarizes SHALL be bounded, and its size SHALL NOT grow with the session's total length:
 
 1. When a previous `CompactionRecord` exists, compaction SHALL summarize only jobs created after that record's `covers_up_to_job_id`, on top of that record's `summary_text`, which SHALL be supplied to the summarizing model as prior context. It SHALL NOT re-read history the previous summary already covers.
-2. The text a single tool call or tool result contributes to the summarization input SHALL be bounded by a configured character budget. Where text is omitted, the input SHALL carry an explicit marker naming how much was omitted, so the summarizing model is not presented with a fragment as though it were complete.
-3. The assembled summarization request SHALL be estimated before it is sent and SHALL NOT be sent larger than the compaction threshold applied to the model's context window. Where entries must be dropped to satisfy that bound, the oldest SHALL be dropped first, and the number dropped SHALL be recorded.
+2. The text a single tool call's arguments or a single tool result contributes to the summarization input SHALL be bounded by a configured character budget (`CONTEXT_COMPACTION_EVENT_CHAR_BUDGET`, int, default `20000`, which SHALL be positive). Where text is omitted, the input SHALL carry an explicit marker naming how much was omitted, so the summarizing model is not presented with a fragment as though it were complete. This bound applies to the summarization input only; a tool result replayed to the game agent SHALL NOT be truncated.
+3. The assembled summarization request SHALL be estimated before it is sent and SHALL NOT be sent larger than `CONTEXT_COMPACTION_THRESHOLD` applied to the model's context window. Where entries must be dropped to satisfy that bound, the oldest SHALL be dropped first, and the number dropped SHALL be recorded on the log line and on the emitted `compaction` event.
 
-The manual endpoint SHALL additionally accept a request to summarize from the beginning of the session, ignoring the previous checkpoint, so a user who believes a summary has lost information can rebuild it from the retained raw events. Automatic compaction SHALL always use the checkpointed form.
+The manual endpoint SHALL additionally accept a request body with `from_session_start`, which summarizes from the beginning of the session and ignores the previous checkpoint, so a user who believes a summary has lost information can rebuild it from the retained raw events. The body SHALL be optional and default to the checkpointed form. Automatic compaction SHALL always use the checkpointed form.
+
+When there is nothing to summarize — no eligible completed job, or no history content in the span since the checkpoint — the endpoint SHALL return HTTP 422. When the summarizing model call fails, it SHALL return HTTP 502.
 
 #### Scenario: Manual compaction succeeds
 - **WHEN** a client sends `POST /sessions/{session_id}/compact`
@@ -30,9 +32,18 @@ The manual endpoint SHALL additionally accept a request to summarize from the be
 - **THEN** the summarization input SHALL contain the previous summary plus only the jobs created after that record's `covers_up_to_job_id`
 - **AND** SHALL NOT contain the raw events of jobs the previous summary already covers
 
+#### Scenario: Nothing new since the checkpoint
+- **WHEN** compaction runs for a session with no job created since the previous `CompactionRecord`
+- **THEN** the system SHALL NOT call the summarizing model
+- **AND** the manual endpoint SHALL return HTTP 422
+
 #### Scenario: An oversized tool payload is truncated with a marker
 - **WHEN** a tool call's arguments or a tool result's content exceeds the configured per-event character budget
 - **THEN** the summarization input SHALL carry that payload truncated to the budget followed by a marker stating how many characters were omitted
+
+#### Scenario: A board-sized tool result is not truncated
+- **WHEN** a tool result carries a full simplified game state, which is smaller than the configured budget
+- **THEN** the summarization input SHALL carry it whole, with no marker
 
 #### Scenario: The summarization request is never assembled over the ceiling
 - **WHEN** the assembled summarization request estimates above the compaction threshold applied to the model's context window
@@ -40,52 +51,13 @@ The manual endpoint SHALL additionally accept a request to summarize from the be
 - **AND** SHALL record how many entries were dropped
 
 #### Scenario: Rebuilding a summary from session start
-- **WHEN** a client sends `POST /sessions/{session_id}/compact` requesting summarization from the beginning of the session
+- **WHEN** a client sends `POST /sessions/{session_id}/compact` with `from_session_start` set
 - **THEN** compaction SHALL summarize every eligible job in the session regardless of any existing checkpoint
 
-### Requirement: Auto-compaction at job start
-Before sending the first model request for a new job, when `multi_turn_memory` is enabled, the system SHALL estimate the size of the request it is about to send and compact automatically if that estimate reaches `CONTEXT_COMPACTION_THRESHOLD` of the model's context window.
-
-The estimate SHALL cover every part of the request, using the same tiktoken estimation the context metadata endpoint uses:
-
-1. the system prompt built from the session's active skills and persona state,
-2. the tool definitions exposed to the model, built-in and MCP alike,
-3. the replayed prior message history, after compaction checkpoint and replay-window limits are applied,
-4. the current turn's user message as the model will receive it, including the content of any skills the prompt loaded into itself.
-
-The estimate SHALL NOT be taken from cumulative `tokens_used` on job rows, which reflects per-job LLM consumption and underestimates the request.
-
-Because compaction can only reduce part (3), the system SHALL NOT attempt compaction when the pressure comes from the parts it cannot reduce. When the total estimate reaches the threshold but the replayed history is too small for a summary to be smaller than it, the system SHALL skip compaction and SHALL log that the threshold was reached by fixed request cost rather than by history.
-
-Threshold is configured via `CONTEXT_COMPACTION_THRESHOLD` env var (float, default `0.8`). The context window SHALL be the provider-reported context length for the session's model where available, falling back to `CONTEXT_WINDOW_SIZE` (int, default `128000`).
-
-Auto-compaction SHALL log an INFO entry recording the pre-compaction usage ratio and the component estimates it was computed from.
-
-#### Scenario: Auto-compaction fires at threshold
-- **WHEN** a job starts and the estimated request size divided by context window size reaches `CONTEXT_COMPACTION_THRESHOLD`, and the replayed history is large enough for compaction to reduce it
-- **THEN** the system SHALL compact before sending the first model request
-- **AND** SHALL log INFO with the pre-compaction ratio and its component estimates
-
-#### Scenario: No auto-compaction below threshold
-- **WHEN** a job starts and the estimated request size is below the threshold
-- **THEN** the system SHALL proceed without compaction
-
-#### Scenario: Skills loaded into the turn count toward the estimate
-- **WHEN** a job's prompt loaded skill content into its own user message
-- **THEN** the estimate SHALL include that rendered content, not only the stored prompt text
-
-#### Scenario: Tool definitions and system prompt count toward the estimate
-- **WHEN** a session exposes tool definitions and an active-skill system prompt to the model
-- **THEN** the estimate SHALL include both alongside the replayed history
-
-#### Scenario: Fixed request cost alone does not trigger repeated compaction
-- **WHEN** the total estimate reaches the threshold but the replayed history is too small for a summary to be smaller than it
-- **THEN** the system SHALL NOT call the summarizing model
-- **AND** SHALL log that the threshold was reached by fixed request cost rather than by history
-
-#### Scenario: Trigger and reported usage agree
-- **WHEN** the auto-compaction check and the context metadata endpoint run for the same session with no job in between
-- **THEN** both SHALL estimate the same replay, system prompt, and tool-definition contributions
+#### Scenario: The summarizing model call fails
+- **WHEN** a client sends `POST /sessions/{session_id}/compact` and the summarizing model call fails
+- **THEN** the response SHALL be HTTP 502 with the failure message
+- **AND** no `CompactionRecord` SHALL be created
 
 ### Requirement: Context metadata endpoint
 The system SHALL expose `GET /sessions/{session_id}/context` returning current context health metadata.
@@ -132,16 +104,18 @@ Response SHALL include:
 ## ADDED Requirements
 
 ### Requirement: A failed compaction degrades the turn instead of failing it
-Automatic compaction runs to protect a job from exceeding its context window, so its own failure SHALL NOT be the reason that job fails. When automatic compaction cannot complete, the worker SHALL log the failure with the usage ratio that triggered it, SHALL record a transcript-visible event naming the failure, and SHALL continue the job with the message history it already has.
+Automatic compaction runs to protect a job from exceeding its context window, so its own failure SHALL NOT be the reason that job fails. When automatic compaction cannot complete, the worker SHALL log the failure with the usage ratio that triggered it, SHALL record a transcript-visible `compaction_failed` event carrying the failure code, its message and that ratio, and SHALL continue the job with the message history it already has.
 
-A compaction attempt that finds nothing to summarize is not a failure: when the session has no eligible completed job or no history content, the worker SHALL treat it as a no-op, SHALL NOT record a failure event, and SHALL proceed.
+A compaction attempt that finds nothing to summarize is not a failure: when the session has no eligible completed job or no history content since the checkpoint, the worker SHALL treat it as a no-op, SHALL NOT record a failure event, and SHALL proceed.
+
+Recording the degradation SHALL NOT be able to fail the job either: a failure to persist or publish the event SHALL be logged and SHALL NOT propagate.
 
 Any event type the worker emits for this SHALL be registered in the dashboard's stream event list, because the browser subscribes per named event type and silently drops any type absent from that list.
 
-#### Scenario: The summarizing model call fails
+#### Scenario: The summarizing model call fails during a turn
 - **WHEN** automatic compaction is triggered and the summarizing model call fails
 - **THEN** the worker SHALL log the failure with the triggering usage ratio
-- **AND** SHALL record a transcript-visible event naming the failure
+- **AND** SHALL record a transcript-visible `compaction_failed` event naming the failure
 - **AND** SHALL continue the job with its existing message history rather than marking the job failed
 
 #### Scenario: Nothing to compact is not a failure

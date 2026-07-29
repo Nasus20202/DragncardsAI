@@ -269,9 +269,17 @@ export function PlayConfigPanel({
 
             <Separator />
 
+            {/*
+              Both limits drop history the agent would otherwise see, and what
+              they drop depends on facts the field cannot show — so each says
+              it. The wording tracks `_select_recent_message_orders` and
+              `_select_recent_tool_exchange_orders` in the orchestrator's
+              session_transcript module.
+            */}
             <TextInputField
               id="cfg-rmsg-limit"
               label="Recent message limit"
+              description="Replays only the newest N conversational messages and drops older ones. Tool exchanges are limited separately, and a compaction summary is never dropped."
               placeholder="Unlimited"
               value={draft.recentMessageLimit}
               onChange={(v) => set("recentMessageLimit", v)}
@@ -280,6 +288,7 @@ export function PlayConfigPanel({
             <TextInputField
               id="cfg-rtool-limit"
               label="Recent tool exchange limit"
+              description="Replays only the newest N tool call/result pairs. The newest game-state result always keeps a slot, so older board states are the first to go."
               placeholder="Unlimited"
               value={draft.recentToolExchangeLimit}
               onChange={(v) => set("recentToolExchangeLimit", v)}
