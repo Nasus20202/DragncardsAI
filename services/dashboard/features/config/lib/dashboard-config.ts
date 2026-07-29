@@ -1,6 +1,9 @@
 import { DashboardConfig, CustomMcpDraft } from "@/features/shared/lib/types";
 
 const DEFAULT_APP_NAME = "DragncardsAI";
+// Every first-party service is a FastAPI app, so they all serve their document
+// at the framework default unless an override is configured.
+const DEFAULT_OPENAPI_PATH = "/openapi.json";
 
 function splitCsv(raw: string | undefined): string[] {
   if (!raw) {
@@ -66,10 +69,15 @@ export function getServerConfig() {
     evalServiceUrl,
     dragncardsFrontendUrl,
     bifrostUiUrl,
+    // One entry per ServiceKey (features/proxy/lib/proxy.ts).
     orchestratorOpenApiPath:
-      process.env.AGENT_ORCHESTRATOR_OPENAPI_PATH ?? "/openapi.json",
+      process.env.AGENT_ORCHESTRATOR_OPENAPI_PATH ?? DEFAULT_OPENAPI_PATH,
     gameServiceOpenApiPath:
-      process.env.GAME_SERVICE_OPENAPI_PATH ?? "/openapi.json",
+      process.env.GAME_SERVICE_OPENAPI_PATH ?? DEFAULT_OPENAPI_PATH,
+    historyServiceOpenApiPath:
+      process.env.HISTORY_SERVICE_OPENAPI_PATH ?? DEFAULT_OPENAPI_PATH,
+    evalServiceOpenApiPath:
+      process.env.EVAL_SERVICE_OPENAPI_PATH ?? DEFAULT_OPENAPI_PATH,
     publicConfig: {
       appName: process.env.APP_NAME ?? DEFAULT_APP_NAME,
       defaultProviderId: process.env.DEFAULT_PROVIDER_ID ?? "openrouter",

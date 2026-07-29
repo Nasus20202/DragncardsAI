@@ -1,13 +1,11 @@
 import { getServerConfig } from "@/features/config/lib/dashboard-config";
-import { ServiceKey } from "@/features/proxy/lib/proxy";
+import {
+  SERVICE_KEYS,
+  ServiceKey,
+  getServiceBaseUrl,
+  getServiceProxyPrefix,
+} from "@/features/proxy/lib/proxy";
 import { MergedOpenApiResult, JsonValue } from "@/features/shared/lib/types";
-
-const SERVICE_PREFIX: Record<ServiceKey, string> = {
-  orchestrator: "/orchestrator",
-  game: "/game",
-  history: "/history",
-  eval: "/eval",
-};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -70,11 +68,12 @@ function namespaceDocument(
   document: Record<string, unknown>,
   service: ServiceKey
 ) {
+  const prefix = getServiceProxyPrefix(service);
   const prefixedPaths = Object.fromEntries(
     Object.entries(
       (document.paths as Record<string, unknown> | undefined) ?? {}
     ).map(([path, pathItem]) => [
-      `${SERVICE_PREFIX[service]}${path}`,
+      `${prefix}${path}`,
       deepRewriteRefs(pathItem, service),
     ])
   );
@@ -123,17 +122,24 @@ function namespaceDocument(
   };
 }
 
+/** Where a service's OpenAPI document lives, per `ServiceKey`. */
+function resolveOpenApiUrl(service: ServiceKey): URL {
+  const config = getServerConfig();
+  const openApiPaths: Record<ServiceKey, string> = {
+    orchestrator: config.orchestratorOpenApiPath,
+    game: config.gameServiceOpenApiPath,
+    history: config.historyServiceOpenApiPath,
+    eval: config.evalServiceOpenApiPath,
+  };
+
+  return new URL(openApiPaths[service], getServiceBaseUrl(service));
+}
+
 async function fetchOpenApiDocument(
   service: ServiceKey,
   fetchImpl: typeof fetch
 ): Promise<Record<string, unknown>> {
-  const config = getServerConfig();
-  const target = new URL(
-    service === "orchestrator"
-      ? config.orchestratorOpenApiPath
-      : config.gameServiceOpenApiPath,
-    service === "orchestrator" ? config.orchestratorUrl : config.gameServiceUrl
-  );
+  const target = resolveOpenApiUrl(service);
   const response = await fetchImpl(target, {
     headers: { accept: "application/json" },
     cache: "no-store",
@@ -145,7 +151,15 @@ async function fetchOpenApiDocument(
     );
   }
 
-  const document = (await response.json()) as unknown;
+  // The merged document — including these error strings — is served unauthenticated,
+  // so never let a parser message carry a prefix of the upstream response body into it.
+  let document: unknown;
+  try {
+    document = (await response.json()) as unknown;
+  } catch {
+    throw new Error(`${service} OpenAPI document is not valid JSON`);
+  }
+
   if (!isRecord(document)) {
     throw new Error(`${service} OpenAPI document is not an object`);
   }
@@ -170,26 +184,23 @@ export async function buildMergedOpenApi(
     components: {},
   };
 
-  for (const service of ["orchestrator", "game"] as const) {
+  // The index is complete only if it walks the same keys the proxy accepts.
+  for (const service of SERVICE_KEYS) {
     try {
       const document = await fetchOpenApiDocument(service, fetchImpl);
       const namespaced = namespaceDocument(document, service);
       Object.assign(merged.paths as Record<string, unknown>, namespaced.paths);
-      Object.assign(merged.components as Record<string, unknown>, {
-        ...(merged.components as Record<string, unknown>),
-        ...Object.fromEntries(
-          Object.entries(namespaced.components).map(([section, value]) => {
-            const existing =
-              (merged.components as Record<string, Record<string, unknown>>)[
-                section
-              ] ?? {};
-            return [
-              section,
-              { ...existing, ...(value as Record<string, unknown>) },
-            ];
-          })
-        ),
-      });
+
+      const components = merged.components as Record<
+        string,
+        Record<string, unknown>
+      >;
+      for (const [section, value] of Object.entries(namespaced.components)) {
+        components[section] = {
+          ...(components[section] ?? {}),
+          ...(value as Record<string, unknown>),
+        };
+      }
       (merged.tags as JsonValue[]).push(...namespaced.tags);
     } catch (error) {
       errors.push({

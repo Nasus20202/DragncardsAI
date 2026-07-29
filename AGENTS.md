@@ -192,7 +192,8 @@ stale — in the same change, not as a follow-up:
 - **Scripts and make targets** — `scripts/*.sh` and any equivalent make targets, especially the ones
   that enumerate services to lint, test, build, or start. A script with a hardcoded service list is a
   place a new service gets silently omitted.
-- **Swagger / API index** and any other page that lists endpoints or services.
+- **Swagger / API index** — `services/dashboard/features/swagger/lib/openapi.ts`, and any other
+  page that lists endpoints or services.
 
 The recurring failure this prevents: a service is added, its code works, and it is quietly missing
 from the telemetry stack, the API index, and half the scripts — each omission found weeks later as a
@@ -254,8 +255,25 @@ one:
 - **`scripts/service-helpers.sh`**: `list_services`, `service_test_command`,
   `service_start_command`, and `service_http_port`.
 - **`scripts/lint.sh`**: the per-language loop that formats and checks the service.
+- **The dashboard's service set — one declaration, no second list.**
+  `services/dashboard/features/proxy/lib/proxy.ts` holds `SERVICE_KEYS`, the single declaration
+  of which first-party services the dashboard fronts; `ServiceKey` is derived from that array,
+  and the `/api/proxy/[service]` route, the upstream base-URL lookup, and the merged Swagger
+  index in `services/dashboard/features/swagger/lib/openapi.ts` are all keyed by it. Adding a
+  service is: its key in `SERVICE_KEYS`, its base URL and OpenAPI path in
+  `services/dashboard/features/config/lib/dashboard-config.ts` (plus
+  `services/dashboard/vitest.setup.ts`, which clears every variable the config reads), then
+  fixing the `Record<ServiceKey, …>` type errors that follow. Never write a second list of
+  services beside `SERVICE_KEYS`, and never iterate a literal array of service names. DRA-20 is
+  the worked example: the merge looped a hardcoded `["orchestrator", "game"]` and branched
+  two-way for the upstream URL, so `history-service` and `eval-service` were reachable through
+  the proxy yet entirely absent from `http://localhost:3001/swagger` — `history` was already a
+  valid `ServiceKey` with a path prefix, and its document was simply never fetched. Confirm the
+  new service actually serves a document (all four are FastAPI apps serving `/openapi.json`) and
+  configure its path if it differs, rather than adding an index entry whose fetch fails.
 - **`README.md`**: the service URL table, the architecture diagram, the prose describing what
-  the service does, and the Observability section if the wiring changed.
+  the service does, the Swagger playground note, and the Observability section if the wiring
+  changed.
 - **`AGENTS.md`**: this file's *Useful Reading* and *Service-Level Guides* lists, plus a
   `services/<service>/AGENTS.md` of the service's own.
 - **`openspec/specs/`**: the capability spec that now covers the service — including

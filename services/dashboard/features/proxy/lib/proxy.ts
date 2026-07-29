@@ -1,6 +1,22 @@
 import { getServerConfig } from "@/features/config/lib/dashboard-config";
 
-export type ServiceKey = "orchestrator" | "game" | "history" | "eval";
+/**
+ * The single declaration of which first-party services the dashboard fronts.
+ * Everything per-service — the proxy route's accepted segments, the upstream base
+ * URLs, trace-context propagation, and the merged Swagger index — is a loop over
+ * this array or a `Record<ServiceKey, …>`, so adding a service is one edit here
+ * plus the type errors that follow. Never write a second list of service names
+ * beside it: a partial list is how `history` and `eval` were reachable through
+ * the proxy while being absent from the Swagger index (DRA-20).
+ */
+export const SERVICE_KEYS = [
+  "orchestrator",
+  "game",
+  "history",
+  "eval",
+] as const;
+
+export type ServiceKey = (typeof SERVICE_KEYS)[number];
 
 const SERVICE_NAMES: Record<ServiceKey, string> = {
   orchestrator: "agent-orchestrator",
@@ -10,16 +26,32 @@ const SERVICE_NAMES: Record<ServiceKey, string> = {
 };
 
 export function isServiceKey(value: string): value is ServiceKey {
-  return (
-    value === "orchestrator" ||
-    value === "game" ||
-    value === "history" ||
-    value === "eval"
-  );
+  return (SERVICE_KEYS as readonly string[]).includes(value);
 }
 
 export function getServiceLabel(service: ServiceKey): string {
   return SERVICE_NAMES[service];
+}
+
+/** The configured upstream base URL for a service. */
+export function getServiceBaseUrl(service: ServiceKey): string {
+  const config = getServerConfig();
+  const baseUrls: Record<ServiceKey, string> = {
+    orchestrator: config.orchestratorUrl,
+    game: config.gameServiceUrl,
+    history: config.historyServiceUrl,
+    eval: config.evalServiceUrl,
+  };
+
+  return baseUrls[service];
+}
+
+/**
+ * The path prefix a service's endpoints carry in the merged OpenAPI document:
+ * the `[service]` segment of the `/api/proxy/[service]/[...path]` route.
+ */
+export function getServiceProxyPrefix(service: ServiceKey): string {
+  return `/${service}`;
 }
 
 /** Thrown when a proxy path segment is invalid (e.g. path traversal). */
@@ -55,15 +87,7 @@ export function resolveProxyUrl(
   pathSegments: string[],
   search: string
 ): URL {
-  const config = getServerConfig();
-  const baseUrl =
-    service === "orchestrator"
-      ? config.orchestratorUrl
-      : service === "history"
-        ? config.historyServiceUrl
-        : service === "eval"
-          ? config.evalServiceUrl
-          : config.gameServiceUrl;
+  const baseUrl = getServiceBaseUrl(service);
   const normalizedPath = pathSegments
     .map((segment) => {
       assertSafeSegment(segment);
