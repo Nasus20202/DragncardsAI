@@ -1,7 +1,31 @@
 # service-mcp-surface Specification
 
 ## Purpose
-TBD - created by archiving change dra-24-mcp-dev-flow. Update Purpose after archive.
+
+Make every first-party backend service drivable by an agent as tools rather than as
+documentation, so that the whole loop this system exists to run — create a game, start a
+player agent, read the actions it took, read the resulting board, request an evaluation,
+read the verdict — can be exercised end to end without a human reading source to guess at
+request shapes.
+
+The loop spans four services, and only `game-service` was ever reachable this way. An agent
+debugging a run had tool schemas for the board and nothing for the sessions that drove it,
+the events that recorded it, or the verdicts that graded it, so three quarters of the flow
+had to be inferred from code and curl. That asymmetry, not any missing endpoint, is what
+this capability removes.
+
+Two properties make the surface trustworthy enough to keep. **Tools are generated from each
+service's own OpenAPI schema**, so a tool is the endpoint it came from and cannot drift from
+it; there is deliberately no hand-written tool layer to maintain as a second implementation
+of the API. And **each service declares what it keeps out**, because these services
+authenticate nobody: an operation that never completes (an SSE stream), that would buffer a
+whole recorded game into a caller's context, that destroys the only durable record of what
+an agent did, or that mutates deployment-global state shared with sessions the caller does
+not own, is not offered to a model as a tool. Exclusion is an MCP-surface decision only —
+the HTTP endpoint is untouched, so nothing here constrains the dashboard or a developer with
+`curl`. Per-session cleanup stays exposed on purpose, so excluding the dangerous cases never
+costs an agent the ability to undo its own work.
+
 ## Requirements
 ### Requirement: Every first-party backend service exposes an MCP surface
 The system SHALL expose `game-service`, `agent-orchestrator`, `history-service` and `eval-service` as MCP servers over the streamable-HTTP transport at the path `/mcp` on each service's own HTTP port, and SHALL register all four in the repository's MCP client configuration so an assistant working in the repository can reach them without further setup.
