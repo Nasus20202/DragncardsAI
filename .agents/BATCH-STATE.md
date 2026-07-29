@@ -87,12 +87,18 @@ was closed earlier; it reopens with `gh pr reopen 305` only on an explicit reque
 - `EVAL_JUDGE_OPENROUTER_API_KEY` is unset in `services/bifrost/.env`, so any judge-latency figure is
   a projection, not a measurement.
 
-## Check baselines on the integration tip (`175d2e1`, DRA-35 merged and archived)
+## Check baselines on the integration tip (`8295107`, DRA-35 and DRA-34 merged and archived)
 
 - `./scripts/lint.sh` — clean.
-- Unit: game-service **384**, agent-orchestrator **487**, history-service **177**,
-  eval-service **258**, shared **38**, dashboard **609** (74 files).
-  (history-service and shared each gained 2 tests in DRA-35; they were 175 and 36 on `98192f3`.)
+- Unit: game-service **384**, agent-orchestrator **490**, history-service **177**,
+  eval-service **258**, shared **38**, dashboard **614** (74 files).
+  (Against `98192f3`: DRA-35 added 2 to history-service and 2 to shared; DRA-34 added 3 to
+  agent-orchestrator and 5 to the dashboard.)
+- `pnpm typecheck` in `services/dashboard` — clean.
+
+**`except A, B:` without parentheses is valid here — do not "fix" it.** `job_event_stream.py` uses it
+twice. It is PEP 758, new in Python 3.14, and this repo runs 3.14. It reads like a Python 2 relic and
+`ast.parse` accepts it; verify before touching it.
 - Integration: agent-orchestrator **28**, history-service **8**, eval-service **13**,
   game-service **63**.
 - `openspec validate --all` — 16 passed, 1 failed (the pre-existing one above).
@@ -172,7 +178,28 @@ wait for the others.**
 
 - **DRA-35** (Urgent) — **MERGED at `7915ec6`, archived at `175d2e1`, closed.** See the root cause
   below; it is worth reading before anyone touches `resp.py` again.
-- **DRA-34** — `wt-dra34`, duplicate questions.
+- **DRA-34** — **MERGED at `33d009c`, archived at `8295107`, closed.** It was a *server* defect, not a
+  renderer one, and **not question-specific**. `JobEventStreamService.stream` has two sources for the
+  same event — it polls `list_events` *and* forwards the live bus — and almost every publish is
+  preceded by an `append_event`, so most live events are a second, earlier copy of a row the stream
+  also yields from Postgres. The earliness is the point of the bus; what was missing is that the two
+  copies were not *identifiable as one event*, because `serialize_live_event` passed through the bus's
+  own id (a Valkey stream entry id or an in-memory counter) while the dashboard de-duplicates on
+  `JobEventResponse.id`. `LiveJobEvent` now carries `durable_event_id` and the stream prefers it. Two
+  things had hidden this: `aggregateEvents` already kept only the last `failure` "so the UI doesn't
+  show duplicate error cards" — the same bug patched at the symptom for one type — and streaming
+  chunks already solve it properly via `snapshot_event_id`, which is the shape that was generalised.
+  It equally affected `failure`, `completion`, `skill_loaded`, `subagent_started/failed`,
+  `compaction_failed`, `cancellation` and both question-resolution events.
+  Three deliberate exemptions are commented in place: streaming chunks (`snapshot_event_id`),
+  `compaction` (its durable home is a separate compaction job, so no twin exists to duplicate), and
+  the two `cancellation` publishes in `prompt_run.py`, which were **removed** rather than converted
+  because `mark_job_cancelled` appends that row inside the repository, which has no bus to hand an id
+  to. The stream still closes on a cancel via its terminal-job-status path, ~200 ms later.
+  `missing_model_config` now persists the payload it publishes, since collapsed copies must agree.
+  **It touched none of `play-transcript.tsx`, `play-session-events.ts` or `STREAM_EVENT_TYPES`** — so
+  the conflict expected with DRA-30 did not materialise, and DRA-30 now rebases onto its orchestrator
+  changes instead.
 - **DRA-30** — `wt-dra30`, seat guard / messaging / findings store, implementing sections 5–7 of the
   still-active `dra-19-agents-orchestration` spec. Runs with four sub-agents in that one worktree.
   Migration `0012`. Expect `play-transcript.tsx`, `play-session-events.ts` and `STREAM_EVENT_TYPES`
