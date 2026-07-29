@@ -155,8 +155,10 @@ def test_simplify_marvel_state_extracts_essential_fields():
     assert card["id"] == "uuid-123"
     assert card["instanceId"] == "card-abc"
     assert card["name"] == "Web Shooters"
-    assert card["currentSide"] == "A"
-    assert card["exhausted"] is False
+    # Compact: currentSide="A" and exhausted=False are the schema defaults
+    # and are therefore omitted from the emitted card.
+    assert "currentSide" not in card
+    assert "exhausted" not in card
     assert card["tokens"] == {"damage": 1}
     assert card["stackSize"] == 1
 
@@ -310,10 +312,7 @@ def test_simplify_marvel_state_hides_facedown_cards():
     assert len(result_dict["zones"]["player1Play1"]) == 1
     card = result_dict["zones"]["player1Play1"][0]
     assert card["name"] == "HIDDEN"
-    assert card["id"] == "Unknown"
-    assert card["instanceId"] == "card-a"
-    assert card["currentSide"] == "A"
-    assert card["stackSize"] == 1
+    assert card == {"name": "HIDDEN", "stackSize": 1}
 
 
 def test_simplify_marvel_state_shows_exhausted_cards():
@@ -397,13 +396,10 @@ def test_simplify_marvel_state_hides_facedown_stacked_cards():
     result = _simplify_marvel_state(raw)
     result_dict = result.model_dump() if hasattr(result, "model_dump") else result
 
-    # Both cards facedown, shows HIDDEN with stack size 2, masks id details
+    # Both cards facedown, shows HIDDEN with stack size 2
     assert len(result_dict["zones"]["player1Play1"]) == 1
     card = result_dict["zones"]["player1Play1"][0]
-    assert card["name"] == "HIDDEN"
-    assert card["id"] == "Unknown"
-    assert card["instanceId"] == "card-a"
-    assert card["stackSize"] == 2
+    assert card == {"name": "HIDDEN", "stackSize": 2}
 
 
 def test_simplify_marvel_state_masks_id_for_player_encounter_cards():
@@ -434,13 +430,10 @@ def test_simplify_marvel_state_masks_id_for_player_encounter_cards():
     result = _simplify_marvel_state(raw)
     result_dict = result.model_dump() if hasattr(result, "model_dump") else result
 
-    # Player card merged into HIDDEN since it has masked id
+    # Player card merged into HIDDEN
     assert len(result_dict["zones"]["sharedVillain"]) == 1
     card = result_dict["zones"]["sharedVillain"][0]
-    assert card["name"] == "HIDDEN"
-    assert card["id"] == "Unknown"
-    assert card["instanceId"] == "card-player"
-    assert card["stackSize"] == 1
+    assert card == {"name": "HIDDEN", "stackSize": 1}
 
 
 def test_simplify_marvel_state_merges_unknown_cards_in_zone():
@@ -498,9 +491,7 @@ def test_simplify_marvel_state_merges_unknown_cards_in_zone():
         c for c in result_dict["zones"]["sharedVillain"] if c["name"] == "Goblin"
     ]
     assert len(hidden) == 1
-    assert hidden[0]["id"] == "Unknown"
-    assert hidden[0]["instanceId"] == "card-facedown-1"
-    assert hidden[0]["stackSize"] == 2
+    assert hidden[0] == {"name": "HIDDEN", "stackSize": 2}
     assert len(visible) == 1
 
 
@@ -600,3 +591,251 @@ async def test_get_game_state_raw_for_non_marvel():
     body = response.json()
     # Original nested structure preserved for non-Marvel
     assert body["state"]["game"]["roundNumber"] == 1
+
+
+def test_simplify_marvel_state_hides_default_values():
+    """A face-up unexhausted card with no tokens must emit only the four
+    always-present fields, so a typical mid-game state fits the MCP
+    WebSocket transport limit (DRA-43)."""
+    raw = {
+        "game": {
+            "roundNumber": 2,
+            "mode": "hero",
+            "villainHitPoints": 0,
+            "playerData": {},
+            "cardById": {
+                "card-quiet": {
+                    "databaseId": "uuid-quiet",
+                    "currentSide": "A",
+                    "groupId": "player1Hand",
+                    "stackId": "card-quiet",
+                    "sides": {"A": {"name": "Spider-Man"}},
+                    "exhausted": False,
+                    "tokens": {
+                        "damage": 0,
+                        "threat": 0,
+                        "generic": 0,
+                        "acceleration": 0,
+                        "confused": 0,
+                        "stunned": 0,
+                        "tough": 0,
+                    },
+                },
+            },
+        }
+    }
+    result = _simplify_marvel_state(raw)
+
+    card = result["zones"]["player1Hand"][0]
+    # Only the four always-present fields are emitted.
+    assert set(card.keys()) == {"id", "instanceId", "name", "stackSize"}
+    assert card["id"] == "uuid-quiet"
+    assert card["instanceId"] == "card-quiet"
+    assert card["name"] == "Spider-Man"
+    assert card["stackSize"] == 1
+
+
+def test_simplify_marvel_state_keeps_non_default_token_counters():
+    """A card with one non-zero token counter emits only that counter, not
+    the full seven-key dict."""
+    raw = {
+        "game": {
+            "roundNumber": 2,
+            "mode": "hero",
+            "villainHitPoints": 0,
+            "playerData": {},
+            "cardById": {
+                "card-damaged": {
+                    "databaseId": "uuid-damaged",
+                    "currentSide": "A",
+                    "groupId": "player1Play1",
+                    "stackId": "card-damaged",
+                    "sides": {"A": {"name": "Iron Man"}},
+                    "exhausted": False,
+                    "tokens": {
+                        "damage": 3,
+                        "threat": 0,
+                        "generic": 0,
+                        "acceleration": 0,
+                        "confused": 0,
+                        "stunned": 0,
+                        "tough": 0,
+                    },
+                },
+            },
+        }
+    }
+    result = _simplify_marvel_state(raw)
+
+    card = result["zones"]["player1Play1"][0]
+    assert card["tokens"] == {"damage": 3}
+    # Default-valued fields stay omitted.
+    assert "currentSide" not in card
+    assert "exhausted" not in card
+
+
+def test_simplify_marvel_state_hidden_entry_has_only_name_and_stack_size():
+    """HIDDEN entries collapse to {name, stackSize} — the agent never needs
+    to target face-down cards, and the count is the only thing it acts on."""
+    raw = {
+        "game": {
+            "roundNumber": 1,
+            "mode": "hero",
+            "villainHitPoints": 0,
+            "playerData": {},
+            "cardById": {
+                "card-facedown": {
+                    "databaseId": "uuid-1",
+                    "currentSide": "A",
+                    "groupId": "sharedEncounterDeck",
+                    "stackId": "card-facedown",
+                    "sides": {"A": {"name": "Mysterio"}},
+                    "exhausted": False,
+                    "rotation": 180,
+                },
+            },
+        }
+    }
+    result = _simplify_marvel_state(raw)
+
+    hidden = result["zones"]["sharedEncounterDeck"][0]
+    assert hidden == {"name": "HIDDEN", "stackSize": 1}
+
+
+def test_simplify_marvel_state_payload_fits_mcp_limit():
+    """Regression for DRA-43: a 4-player table with a full encounter set
+    must produce a JSON payload that fits the 1,048,576-byte MCP WebSocket
+    message size limit. The compact format must keep the body well under
+    a quarter of that limit so the LLM can keep calling get_game_state
+    mid-round without bouncing off the cap.
+    """
+    import json
+
+    zones_layout = [
+        ("player1Hand", 5, False),
+        ("player1Deck", 30, True),  # face-down
+        ("player1Discard", 4, False),
+        ("player1Play1", 1, False),
+        ("player1Play2", 1, False),
+        ("player1Play3", 1, False),
+        ("player1Play4", 1, False),
+        ("player1Engaged", 1, False),
+        ("player2Hand", 5, False),
+        ("player2Deck", 30, True),
+        ("player2Discard", 4, False),
+        ("player2Play1", 1, False),
+        ("player2Play2", 1, False),
+        ("player2Play3", 1, False),
+        ("player2Play4", 1, False),
+        ("player2Engaged", 1, False),
+        ("player3Hand", 5, False),
+        ("player3Deck", 30, True),
+        ("player3Discard", 4, False),
+        ("player3Play1", 1, False),
+        ("player3Play2", 1, False),
+        ("player3Play3", 1, False),
+        ("player3Play4", 1, False),
+        ("player3Engaged", 1, False),
+        ("player4Hand", 5, False),
+        ("player4Deck", 30, True),
+        ("player4Discard", 4, False),
+        ("player4Play1", 1, False),
+        ("player4Play2", 1, False),
+        ("player4Play3", 1, False),
+        ("player4Play4", 1, False),
+        ("player4Engaged", 1, False),
+        ("sharedVillain", 1, False),
+        ("sharedVillainDeck", 4, True),
+        ("sharedMainScheme", 1, False),
+        ("sharedMainSchemeDeck", 3, True),
+        ("sharedEncounterDeck", 8, True),
+        ("sharedEncounterDiscard", 3, False),
+        ("sharedEncounter2Deck", 3, True),
+        ("sharedEncounter2Discard", 1, False),
+        ("sharedEncounter3Deck", 3, True),
+        ("sharedEncounter3Discard", 1, False),
+    ]
+    card_by_id: dict = {}
+    group_by_id: dict = {}
+    card_index = 0
+    for zone_id, count, face_down in zones_layout:
+        stack_ids = []
+        for i in range(count):
+            card_id = f"card-{zone_id}-{i}"
+            stack_ids.append(card_id)
+            card_by_id[card_id] = {
+                "databaseId": f"uuid-{card_index}",
+                "currentSide": "A",
+                "groupId": zone_id,
+                "stackId": card_id,
+                "sides": {"A": {"name": f"Card {card_index}"}},
+                "exhausted": False,
+                "tokens": {
+                    "damage": 0,
+                    "threat": 0,
+                    "generic": 0,
+                    "acceleration": 0,
+                    "confused": 0,
+                    "stunned": 0,
+                    "tough": 0,
+                },
+            }
+            if face_down:
+                card_by_id[card_id]["rotation"] = 180
+            card_index += 1
+        group_by_id[zone_id] = {"stackIds": stack_ids}
+
+    raw = {
+        "game": {
+            "roundNumber": 2,
+            "mode": "hero",
+            "villainHitPoints": 30,
+            "playerData": {
+                f"player{n}": {
+                    "alias": f"Hero {n}",
+                    "hitPoints": 12,
+                    "handSize": 5,
+                }
+                for n in range(1, 5)
+            },
+            "cardById": card_by_id,
+            "groupById": group_by_id,
+        }
+    }
+
+    result = _simplify_marvel_state(raw)
+    payload = json.dumps(result, separators=(",", ":")).encode()
+    # Compact format must keep the body well under 1/4 of the 1 MiB limit
+    # so even larger custom-content tables stay well under the cap.
+    assert len(payload) < 256_000, (
+        f"Simplified state payload is {len(payload)} bytes, "
+        f"exceeds the 256_000-byte soft cap (DRA-43)"
+    )
+
+    # And the structural rules hold across the whole payload.
+    for zone_id, cards in result["zones"].items():
+        for card in cards:
+            if card.get("name") == "HIDDEN":
+                assert set(card.keys()) == {"name", "stackSize"}, (
+                    f"HIDDEN entry in {zone_id} leaked extra fields: {card}"
+                )
+            else:
+                # Visible cards only carry the four always-present fields
+                # plus non-default currentSide / exhausted / tokens.
+                allowed = {
+                    "id",
+                    "instanceId",
+                    "name",
+                    "stackSize",
+                    "currentSide",
+                    "exhausted",
+                    "tokens",
+                }
+                assert set(card.keys()).issubset(allowed), (
+                    f"Visible card in {zone_id} emitted unexpected fields: "
+                    f"{set(card.keys()) - allowed}"
+                )
+                if "tokens" in card:
+                    assert all(value for value in card["tokens"].values()), (
+                        f"Visible card in {zone_id} has a zero token: {card}"
+                    )
