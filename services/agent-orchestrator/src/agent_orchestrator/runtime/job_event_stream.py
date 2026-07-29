@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 
+from agent_orchestrator.runtime.live_event_resilience import LiveBusDegradation
 from agent_orchestrator.runtime.live_events import LiveEventBus, LiveJobEvent
 from agent_orchestrator.schemas.jobs import JobEventResponse
 from agent_orchestrator.storage.repository import Repository
@@ -71,6 +72,10 @@ class JobEventStreamService:
     ) -> AsyncIterator[str]:
         cursor = after
         terminal_received = False
+        # Owned by this generator and discarded with it: paces the retry of a
+        # failing live subscriber so the loop keeps serving durable events
+        # instead of dying with the bus (DRA-42).
+        degradation = LiveBusDegradation(job_id)
         live_subscriber = await self._live_event_bus.subscribe(job_id)
         try:
             while True:
@@ -102,7 +107,25 @@ class JobEventStreamService:
                 if is_disconnected is not None and await is_disconnected():
                     return
 
-                live_event = await live_subscriber.get(self._poll_interval_seconds)
+                # A live-bus failure degrades this stream to poll-only; it must
+                # never end the response. Letting it propagate is what turned a
+                # single Valkey reset into `GET .../events/stream 500` and a
+                # transcript that stopped mid-run (DRA-42). `list_events` above
+                # yields every durable event, so the client loses latency and
+                # nothing else. `Exception` on purpose: `CancelledError` and
+                # `GeneratorExit` derive from `BaseException` and belong to the
+                # handler below, which closes the stream as the client asked.
+                try:
+                    live_event = await live_subscriber.get(self._poll_interval_seconds)
+                except Exception:
+                    await degradation.note_failure()
+                    # Fall through as if the subscriber had simply timed out, so
+                    # a job that reaches a terminal status while the bus is down
+                    # still closes the stream instead of hanging on it forever.
+                    live_event = None
+                else:
+                    degradation.note_success()
+
                 if live_event is None:
                     job = await asyncio.shield(self._repository.get_job(job_id))
                     if job is None:

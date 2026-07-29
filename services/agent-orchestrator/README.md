@@ -603,6 +603,25 @@ Event types include:
 Only `completion`, `failure`, and `cancellation` are terminal and close the SSE stream. The three
 `user_question*` events are not, so the stream stays open while the user decides.
 
+#### When Valkey Is Unavailable
+
+Every event above is written to PostgreSQL before it is published to the Valkey live bus, and the
+SSE endpoint polls the persisted rows as well as forwarding the bus. So the bus is a latency
+optimisation, not a system of record, and a transport failure on it degrades rather than fails:
+
+- **Publishing is best-effort.** A failed publish is logged and the caller carries on. It cannot
+  fail a job, abort a streaming model response, or make a job miss its terminal status. Writes to
+  PostgreSQL still raise as before.
+- **The SSE stream degrades to poll-only.** A failed live read does not end the response; the
+  stream keeps serving persisted events on a short backoff and resumes live delivery once the bus
+  recovers. A job that finishes while the bus is down still closes its stream normally.
+- **Clients lose latency, not events**, with one exception: `compaction` is the only event whose
+  durable home is a separate compaction job rather than a row on the job being compacted, so
+  dropping its live copy means the summary appears on the next session load instead of immediately.
+- **Logs stay readable.** A publish happens once per streaming delta, so a sustained outage emits
+  one traceback, a thinning trail of counted warnings, and one recovery line naming the streak
+  length — not one stack per failure.
+
 ### Context Management
 
 - `GET /sessions/{session_id}/context` — current context health: the estimated next-request size,

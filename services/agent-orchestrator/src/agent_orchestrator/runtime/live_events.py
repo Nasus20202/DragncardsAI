@@ -43,6 +43,11 @@ class LiveEventSubscriber(Protocol):
 
 
 class LiveEventBus(Protocol):
+    #: ``None`` means the event never reached the bus. Publishing is best-effort
+    #: by design — see ``BestEffortLiveEventBus``, which every consumer in the
+    #: running service is handed: the durable ``job_events`` row written before
+    #: the publish is the source of truth, and the SSE stream polls it. Callers
+    #: are not expected to read this value, and none in this service do.
     async def publish(
         self,
         job_id: str,
@@ -50,7 +55,7 @@ class LiveEventBus(Protocol):
         payload_json: dict[str, Any],
         *,
         durable_event_id: int | str | None = None,
-    ) -> LiveJobEvent: ...
+    ) -> LiveJobEvent | None: ...
 
     async def subscribe(self, job_id: str) -> LiveEventSubscriber: ...
 
@@ -234,7 +239,26 @@ class ValkeyLiveEventBus:
             "*",
             *fields,
         )
-        await self._conn.execute("EXPIRE", stream_key, str(self._event_ttl_seconds))
+        # The XADD above has already succeeded, so the event *is* in the stream
+        # and every subscriber will see it. Refreshing the TTL is housekeeping
+        # that the next publish will redo anyway, and the worst a missed refresh
+        # can do is expire a stream whose job has stopped producing events. A
+        # reset on this second command used to abort the publish regardless,
+        # which is how one dropped TTL refresh killed a streaming model call
+        # mid-response (DRA-42).
+        try:
+            await self._conn.execute("EXPIRE", stream_key, str(self._event_ttl_seconds))
+        except Exception as exc:  # noqa: BLE001
+            # Not `logger.exception`: this is recoverable, it repeats once per
+            # streaming delta while Valkey is unhappy, and the publish it belongs
+            # to succeeded. One line, no stack.
+            logger.warning(
+                "Refreshing the TTL of live event stream %s failed (%s: %s); "
+                "the event was published",
+                stream_key,
+                type(exc).__name__,
+                exc,
+            )
         return LiveJobEvent(
             id=str(event_id),
             event_type=event_type,

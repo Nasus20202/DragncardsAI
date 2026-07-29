@@ -27,6 +27,9 @@ from agent_orchestrator.runtime.history_emitter import (
     HistoryEventEmitter,
     ValkeyHistoryEventBus,
 )
+from agent_orchestrator.runtime.live_event_resilience import (
+    best_effort_live_event_bus,
+)
 from agent_orchestrator.runtime.live_events import (
     LiveEventBus,
     ValkeyLiveEventBus,
@@ -163,10 +166,15 @@ def create_app(
                 "Initializing Valkey live event bus for %s", settings.valkey_url
             )
             created_live_event_bus = ValkeyLiveEventBus(settings.valkey_url)
-            app.state.live_event_bus = created_live_event_bus
+            resolved_live_event_bus: LiveEventBus = created_live_event_bus
         else:
             logger.info("Using injected live event bus")
-            app.state.live_event_bus = live_event_bus
+            resolved_live_event_bus = live_event_bus
+        # Everything in the running service reads its bus from here — the worker,
+        # the API routers, the SSE stream — so wrapping once makes every publish
+        # in the process best-effort. A transient Valkey error then costs a
+        # browser some latency instead of costing a job its run (DRA-42).
+        app.state.live_event_bus = best_effort_live_event_bus(resolved_live_event_bus)
 
         app.state.settings = settings
         app.state.skill_registry = skill_registry or SkillRegistry(settings.skill_roots)

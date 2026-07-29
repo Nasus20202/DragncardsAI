@@ -13,6 +13,7 @@ from agent_orchestrator.repositories.questions import (
 )
 from agent_orchestrator.runtime.display_names import generate_agent_name
 from agent_orchestrator.runtime.history_emitter import SESSION_GAME_ID_KEY
+from agent_orchestrator.runtime.live_event_resilience import LiveBusDegradation
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.personas import (
     SESSION_PERSONA_KEY,
@@ -287,6 +288,12 @@ async def resolve_child_outcome(
     """
     deadline = time.monotonic() + timeout_seconds
     last_status: str | None = None
+    # Owned by this wait and discarded with it. The child's row is already the
+    # authority here, so a live bus that fails costs the wait its early return
+    # and nothing more — but only if the failure is caught. Unguarded it escaped
+    # `wait_for_subagent` into the parent job's own handler and failed the
+    # parent, which is the orchestrated multi-agent path DRA-42 was reported on.
+    degradation = LiveBusDegradation(child_job_id)
 
     # Subscribing before the first read means an event published while we are
     # reading is queued rather than missed.
@@ -322,7 +329,18 @@ async def resolve_child_outcome(
                         last_status,
                     )
                     return ChildOutcome(kind="timeout", last_status=last_status)
-                event = await _next_event(subscriber, min(next_poll_at, deadline) - now)
+                try:
+                    event = await _next_event(
+                        subscriber, min(next_poll_at, deadline) - now
+                    )
+                except Exception:
+                    # The row re-read below is what actually resolves the wait,
+                    # so falling back to it loses only the early return. The
+                    # backoff keeps this from becoming a busy loop, and the
+                    # deadline is still absolute.
+                    await degradation.note_failure()
+                    continue
+                degradation.note_success()
                 if event is None:
                     continue
                 outcome = _outcome_from_event(event)

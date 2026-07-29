@@ -7,7 +7,11 @@ import pytest
 from agent_orchestrator.config import Settings
 
 from ..settings_env import scrub_settings_env, settings_env_var_names
-from .api_test_support import build_integration_app, build_real_mcp_app
+from .api_test_support import (
+    UnreachableLiveEventBus,
+    build_integration_app,
+    build_real_mcp_app,
+)
 
 _SETTINGS_ENV_VAR_NAMES = settings_env_var_names(Settings)
 # The integration suite builds its apps in-process against fakes, so the only
@@ -30,6 +34,17 @@ def isolated_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 async def app(tmp_path: Path):
     app, engine = await build_integration_app(tmp_path)
+    async with app.router.lifespan_context(app):
+        yield app
+    await engine.dispose()
+
+
+@pytest.fixture
+async def unreachable_live_bus_app(tmp_path: Path):
+    """The integration app with a live event bus that fails every operation."""
+    app, engine = await build_integration_app(
+        tmp_path, live_event_bus=UnreachableLiveEventBus()
+    )
     async with app.router.lifespan_context(app):
         yield app
     await engine.dispose()

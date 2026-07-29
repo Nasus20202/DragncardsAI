@@ -291,3 +291,68 @@ async def test_event_filter_with_after_cursor_returns_later_matching_events_only
     assert len(filtered_events) == 1
     assert filtered_events[0]["event_type"] == "completion"
     assert filtered_events[0]["id"] > first_tool_call["id"]
+
+
+@pytest.mark.asyncio
+async def test_event_stream_answers_200_when_the_live_bus_is_unreachable(
+    unreachable_live_bus_app,
+):
+    """DRA-42, end to end over HTTP: what the browser actually got was a 500.
+
+    The unit pins drive `stream()` directly, which cannot show this. The reporter's
+    failure was a *response* dying — the exception escaped the async generator into
+    Starlette's `stream_response`, so the proxy logged `failed to pipe response` and
+    returned `GET .../events/stream 500 in 41s`. This exercises the real ASGI path
+    with every live-bus operation failing, and asserts the whole run still works:
+    the request is 200, the transcript arrives from PostgreSQL, and the job
+    completes.
+    """
+    app = unreachable_live_bus_app
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_id = (await client.post("/sessions", json={"name": "demo"})).json()[
+            "session"
+        ]["id"]
+        await client.put(
+            f"/sessions/{session_id}/model-config", json=INTEGRATION_MODEL_CONFIG
+        )
+        await client.post(
+            f"/sessions/{session_id}/skills", json={"skill_name": "test-skill"}
+        )
+        await client.post(
+            f"/sessions/{session_id}/mcps",
+            json={"name": "game-service", "server_url": "http://game-service/mcp"},
+        )
+        job_id = (
+            await client.post(f"/sessions/{session_id}/prompts", json={"prompt": "go"})
+        ).json()["job"]["id"]
+
+        async with client.stream("GET", f"/jobs/{job_id}/events/stream") as response:
+            assert response.status_code == 200
+            lines = [line async for line in response.aiter_lines() if line]
+
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in lines
+        if line.startswith("data: ")
+    ]
+    types = {event["event_type"] for event in events}
+    # Every one of these reached the browser from `job_events`, with the live bus
+    # refusing every command for the whole run.
+    assert "tool_call" in types
+    assert "completion" in types
+    assert "failure" not in types
+
+    # The stream closes on the terminal *event*, which `complete_job` appends
+    # before it marks the job, so poll for the status rather than assuming the
+    # two land together.
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        for _ in range(50):
+            job = (await client.get(f"/jobs/{job_id}")).json()["job"]
+            if job["status"] != "running":
+                break
+            await asyncio.sleep(0.05)
+    assert job["status"] == "completed"
