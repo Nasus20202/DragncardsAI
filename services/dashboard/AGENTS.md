@@ -105,6 +105,40 @@ of those let a service be half-added. That is exactly how history-service and ev
 ended up proxyable but missing from `/swagger` (DRA-20). A service's base URL and OpenAPI path
 come from `features/config/lib/dashboard-config.ts`, and every variable that file reads must
 also be listed in `vitest.setup.ts`.
+## The Service Proxy
+
+`app/api/proxy/[service]/[...path]/route.ts` is the single route every browser call
+to agent-orchestrator, game-service, history-service, and eval-service goes
+through. It is a **pass-through**, and the bodies it carries are large: a lossless
+history export of a real game is tens of megabytes, and the import endpoint it
+feeds validates line by line.
+
+Rules it must keep:
+
+- **Never read a body.** The request body goes out as `request.body` (via
+  `buildProxyRequestInit`) and the response comes back as `upstreamResponse.body`.
+  `await request.arrayBuffer()`, `await upstreamResponse.json()`, or any other read
+  makes the whole payload resident in this process and defeats an upstream that
+  streams. A `ReadableStream` body also requires `duplex: "half"` on the outbound
+  `fetch` — Node throws without it.
+- **The proxy has no size cap, deliberately.** Each service enforces its own, and
+  they differ on purpose (the orchestrator's `MAX_REQUEST_BODY_BYTES` is 8 MiB,
+  history's `HISTORY_IMPORT_MAX_BYTES` is 64 MiB). Adding one here would pick a
+  single number for four services. Do forward a declared `Content-Length` so those
+  services can still refuse an oversized upload before reading it.
+- **Keep the header filters doing their job.** `filterProxyRequestHeaders` drops
+  the hop-by-hop set — `transfer-encoding` above all, which Node's `fetch` refuses
+  to send and which is the header a request-smuggling attempt needs — plus the
+  browser's `cookie`/`authorization` and all `x-forwarded-*`.
+  `filterProxyResponseHeaders` drops the upstream's framing headers while keeping
+  `content-disposition` so downloads keep their filename.
+- **Keep the request checks ahead of the forward.** Cross-site rejection, the
+  service-name check, and `assertSafeSegment` all run before any upstream
+  connection, so a rejected request sends no bytes anywhere.
+
+`features/proxy/__tests__/proxy-route.test.ts` exercises the route against a real
+loopback server on an ephemeral port, because whether a body streams is a wire
+property no stubbed `fetch` can show. Add to it rather than mocking `fetch`.
 
 ## Working Rules
 
