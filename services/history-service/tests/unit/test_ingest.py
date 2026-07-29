@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from history_service.config import Settings
 from history_service.runtime.ingest import (
     ENVELOPE_FIELD,
+    INGEST_RETRY_MAX_SECONDS,
+    INGEST_RETRY_MIN_SECONDS,
     StreamIngester,
     decode_envelope_fields,
     encode_envelope_fields,
@@ -117,6 +121,25 @@ class PELValkey:
 
     async def aclose(self):
         return None
+
+
+class ReclaimFailsValkey(PELValkey):
+    """PELValkey whose XAUTOCLAIM dies the way a reset connection dies.
+
+    A ``ConnectionResetError`` rather than a ``RespError``: a transport failure is
+    not a server reply, so it must not be mistaken for the "unknown command"
+    signal that triggers the XPENDING fallback.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.autoclaim_attempts = 0
+
+    async def execute(self, *parts):
+        if str(parts[0]).upper() == "XAUTOCLAIM":
+            self.autoclaim_attempts += 1
+            raise ConnectionResetError(104, "Connection reset by peer")
+        return await super().execute(*parts)
 
 
 class NoAutoclaimValkey(PELValkey):
@@ -382,3 +405,73 @@ async def test_reclaim_falls_back_to_xpending_xclaim(repository):
     assert [e.producer_offset for e in events] == [0]
     assert valkey.acked == {e0}
     assert valkey.pending == set()
+
+
+async def test_reclaim_failure_does_not_discard_the_batch(repository, caplog):
+    """A transport failure while reclaiming must not cost us the new entries.
+
+    Regression pin for DRA-35. ``reclaim_pending`` runs first in ``process_batch``,
+    so its failure used to abort the whole batch before ``XREADGROUP`` ever ran.
+    Nothing was ingested, the poll loop retried in a hot cycle, and a transient
+    Valkey blip became an unbounded error flood. Reclaiming is best-effort -- the
+    entries it would have claimed stay pending and are retried next cycle -- so it
+    must degrade to a warning rather than take the batch down with it.
+    """
+    valkey = ReclaimFailsValkey()
+    e0 = valkey.add(encode_envelope_fields(make_envelope("g1", producer_offset=0)))
+    ingester = StreamIngester(settings=Settings(), repository=repository, client=valkey)
+    await ingester.ensure_group()
+
+    with caplog.at_level(logging.WARNING):
+        processed = await ingester.process_batch()
+
+    # The new entry was read, committed and acked despite the reclaim failure.
+    assert processed == 1
+    assert [e.producer_offset for e in await repository.list_events("g1")] == [0]
+    assert valkey.acked == {e0}
+    assert valkey.autoclaim_attempts == 1
+    # The failure is reported, but as a one-line warning rather than a traceback.
+    assert any("Reclaiming pending entries failed" in r.message for r in caplog.records)
+    assert not any(r.exc_info for r in caplog.records)
+
+
+async def test_run_forever_backs_off_and_logs_one_traceback_per_outage(
+    repository, caplog, monkeypatch
+):
+    """A sustained failure must back off and stop re-logging the same traceback.
+
+    Regression pin for DRA-35, whose complaint was log volume: the loop retried on
+    a fixed 500ms delay and called ``logger.exception`` every time, so a Valkey
+    outage emitted a full stack roughly twice a second for as long as it lasted.
+    """
+    valkey = PELValkey()
+    ingester = StreamIngester(settings=Settings(), repository=repository, client=valkey)
+
+    async def always_fails() -> int:
+        raise ConnectionResetError(104, "Connection reset by peer")
+
+    monkeypatch.setattr(ingester, "process_batch", always_fails)
+
+    delays: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        delays.append(seconds)
+        if len(delays) >= 6:
+            ingester._running = False
+
+    monkeypatch.setattr("history_service.runtime.ingest.asyncio.sleep", fake_sleep)
+
+    with caplog.at_level(logging.INFO):
+        await ingester.run_forever()
+
+    # The delay grows instead of pinning the loop at 500ms forever.
+    assert delays[0] == INGEST_RETRY_MIN_SECONDS
+    assert delays == sorted(delays)
+    assert delays[-1] > delays[0]
+    assert all(d <= INGEST_RETRY_MAX_SECONDS for d in delays)
+
+    # Exactly one traceback for the whole outage; the rest carry a running count.
+    with_tracebacks = [r for r in caplog.records if r.exc_info]
+    assert len(with_tracebacks) == 1
+    assert "Ingest batch failed" in with_tracebacks[0].message
+    assert sum("still failing" in r.message for r in caplog.records) == len(delays) - 1

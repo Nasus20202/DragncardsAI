@@ -126,6 +126,18 @@ class RespConnection:
             skip_wait_closed = True
             raise
         except BaseException as exc:
+            # The command already failed, so the connection is unusable and there
+            # is nothing to wait for. Skipping the close waiter is not just an
+            # optimisation: asyncio stores ONE exception instance on the protocol
+            # and hands the same object to both the reader and the close waiter.
+            # Awaiting the waiter here re-raises that very object, and even though
+            # the re-raise is swallowed below, the raise has already appended
+            # ``wait_closed`` frames to the object's ``__traceback__``. The
+            # original exception then keeps propagating with a traceback that
+            # points at ``await writer.wait_closed()`` instead of the real failure
+            # site, which is how a mid-command read reset came to look like a
+            # cosmetic close error (DRA-35).
+            skip_wait_closed = True
             if span is not None:
                 span.record_exception(exc)
                 if isinstance(exc, asyncio.CancelledError):

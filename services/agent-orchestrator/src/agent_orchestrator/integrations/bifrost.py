@@ -19,6 +19,19 @@ from agent_orchestrator.storage.valkey import RespConnection
 logger = logging.getLogger(__name__)
 
 
+def _brief(exc: BaseException) -> str:
+    """Render an exception as one short line for a recoverable-failure log.
+
+    The model cache is an optimisation: every reader falls back to a live Bifrost
+    fetch when it misses, so a transport error here costs latency and nothing else.
+    It was logged with a full stack trace, which made an entirely handled condition
+    look like a crash and helped drown the log when Valkey churned (DRA-35). The
+    type and message identify the fault; the traceback added nothing, because the
+    only call that can throw is the line above the log.
+    """
+    return f"{type(exc).__name__}: {exc}"
+
+
 def _ttl_int(seconds: float) -> int:
     """Round a TTL to whole seconds for SETEX.
 
@@ -123,8 +136,12 @@ class BifrostClient:
             if raw is None:
                 return None
             return json.loads(raw)
-        except Exception:
-            logger.warning("Valkey cache GET failed for key %r", key, exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "Valkey cache GET failed for key %r (%s); serving live",
+                key,
+                _brief(exc),
+            )
             return None
 
     async def _cache_set(
@@ -134,8 +151,12 @@ class BifrostClient:
             return
         try:
             await self._valkey.execute("SETEX", key, str(ttl), json.dumps(data))
-        except Exception:
-            logger.warning("Valkey cache SETEX failed for key %r", key, exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "Valkey cache SETEX failed for key %r (%s); not cached",
+                key,
+                _brief(exc),
+            )
 
     async def _cache_get_unavailable(self, key: str) -> dict[str, Any] | None:
         if self._valkey is None:
@@ -146,8 +167,12 @@ class BifrostClient:
                 return None
             value = json.loads(raw)
             return value if isinstance(value, dict) else None
-        except Exception:
-            logger.warning("Valkey cache GET failed for key %r", key, exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "Valkey cache GET failed for key %r (%s); serving live",
+                key,
+                _brief(exc),
+            )
             return None
 
     async def _cache_del(self, *keys: str) -> None:
@@ -155,8 +180,10 @@ class BifrostClient:
             return
         try:
             await self._valkey.execute("DEL", *keys)
-        except Exception:
-            logger.warning("Valkey cache DEL failed for keys %r", keys, exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "Valkey cache DEL failed for keys %r (%s)", keys, _brief(exc)
+            )
 
     async def clear_model_cache(self, provider_ids: list[str]) -> dict[str, int]:
         """Flush positive and negative model-cache entries.
