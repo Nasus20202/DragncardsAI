@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  SERVICE_KEYS,
   filterProxyRequestHeaders,
   filterProxyResponseHeaders,
+  getServiceBaseUrl,
   isCrossSiteRequest,
   isServiceKey,
   resolveProxyUrl,
@@ -17,14 +19,16 @@ const GAME_SERVICE_URL = "http://game.test:4001";
 const HISTORY_SERVICE_URL = "http://history.test:4004";
 const EVAL_SERVICE_URL = "http://eval.test:4005";
 
-describe("resolveProxyUrl", () => {
-  beforeEach(() => {
-    process.env.AGENT_ORCHESTRATOR_URL = ORCHESTRATOR_URL;
-    process.env.GAME_SERVICE_URL = GAME_SERVICE_URL;
-    process.env.HISTORY_SERVICE_URL = HISTORY_SERVICE_URL;
-    process.env.EVAL_SERVICE_URL = EVAL_SERVICE_URL;
-  });
+// The test setup clears these before every test, so every suite that resolves an
+// upstream url sets them back.
+beforeEach(() => {
+  process.env.AGENT_ORCHESTRATOR_URL = ORCHESTRATOR_URL;
+  process.env.GAME_SERVICE_URL = GAME_SERVICE_URL;
+  process.env.HISTORY_SERVICE_URL = HISTORY_SERVICE_URL;
+  process.env.EVAL_SERVICE_URL = EVAL_SERVICE_URL;
+});
 
+describe("resolveProxyUrl", () => {
   it("maps orchestrator paths under the configured base url", () => {
     const url = resolveProxyUrl(
       "orchestrator",
@@ -88,6 +92,32 @@ describe("isServiceKey", () => {
 
   it("accepts the eval service key", () => {
     expect(isServiceKey("eval")).toBe(true);
+  });
+
+  it("accepts exactly the declared service keys", () => {
+    expect([...SERVICE_KEYS]).toEqual([
+      "orchestrator",
+      "game",
+      "history",
+      "eval",
+    ]);
+    for (const service of SERVICE_KEYS) {
+      expect(isServiceKey(service)).toBe(true);
+    }
+  });
+});
+
+describe("getServiceBaseUrl", () => {
+  // A branch chain that falls through would give two service keys the same
+  // upstream, which is how history and eval could have been merged from the
+  // game-service document without anything failing.
+  it("gives every declared service key its own configured base url", () => {
+    expect(SERVICE_KEYS.map((service) => getServiceBaseUrl(service))).toEqual([
+      ORCHESTRATOR_URL,
+      GAME_SERVICE_URL,
+      HISTORY_SERVICE_URL,
+      EVAL_SERVICE_URL,
+    ]);
   });
 });
 

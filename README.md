@@ -19,9 +19,17 @@ docker compose up -d
 | History Service    | http://localhost:4004           |
 | Eval Service       | http://localhost:4005           |
 | Dashboard          | http://localhost:3001           |
+| Swagger playground | http://localhost:3001/swagger   |
 | Bifrost AI-Gateway | http://localhost:4003           |
 | Grafana            | http://localhost:3004           |
 | Login              | dev_user@example.com / password |
+
+The Swagger playground merges the OpenAPI document of **every** first-party service —
+game-service, agent-orchestrator, history-service and eval-service — into one index, and
+executes requests through the dashboard's `/api/proxy/<service>` routes. Which services it
+covers is derived from `SERVICE_KEYS` in
+`services/dashboard/features/proxy/lib/proxy.ts`, so a service appears there as soon as it is
+added to that one declaration.
 
 ## Architecture
 

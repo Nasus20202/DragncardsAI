@@ -91,6 +91,21 @@ so it keeps the transcript's look. Two rules a renderer must not break:
 - Everything displayed is text and goes through `redactSecrets`. Tool arguments
   are model-supplied and results are server-supplied.
 
+### Per-Service Lists
+
+`features/proxy/lib/proxy.ts` declares `SERVICE_KEYS` once — the first-party services the
+dashboard fronts — and derives `ServiceKey` from it. The `/api/proxy/[service]` route, the
+upstream base-URL lookup (`getServiceBaseUrl`), the OpenAPI path prefix
+(`getServiceProxyPrefix`), and the merged Swagger index in `features/swagger/lib/openapi.ts`
+all key off that one declaration.
+
+Anything per-service is a `Record<ServiceKey, …>` or a loop over `SERVICE_KEYS`, never a
+literal list of names and never a branch chain that falls through to a default service — both
+of those let a service be half-added. That is exactly how history-service and eval-service
+ended up proxyable but missing from `/swagger` (DRA-20). A service's base URL and OpenAPI path
+come from `features/config/lib/dashboard-config.ts`, and every variable that file reads must
+also be listed in `vitest.setup.ts`.
+
 ## Working Rules
 
 - Use Hero UI components for all interactive elements

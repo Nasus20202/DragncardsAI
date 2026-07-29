@@ -1,21 +1,18 @@
 import { describe, expect, it } from "vitest";
 
+import { SERVICE_KEYS, getServiceLabel } from "@/features/proxy/lib/proxy";
 import { propagateContextUrls } from "../../../instrumentation";
 
 describe("trace-context propagation targets", () => {
   it("covers every first-party backend the dashboard proxies to", () => {
     // A backend missing here gets its own disconnected trace instead of a child
     // span, which is how history-service and eval-service were invisible in
-    // dashboard-initiated traces (DRA-23).
+    // dashboard-initiated traces (DRA-23). Driven by SERVICE_KEYS so a service
+    // added to that declaration cannot be missing from this list either.
     const urls = propagateContextUrls(undefined);
 
-    for (const service of [
-      "agent-orchestrator",
-      "game-service",
-      "history-service",
-      "eval-service",
-    ]) {
-      expect(urls).toContain(service);
+    for (const service of SERVICE_KEYS) {
+      expect(urls).toContain(getServiceLabel(service));
     }
   });
 
