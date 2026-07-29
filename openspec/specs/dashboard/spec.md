@@ -444,6 +444,10 @@ The dashboard SHALL map a tool name to a presentation through a registry, and SH
 
 The control that opens a subagent SHALL be offered only where there is somewhere to open it, so a transcript rendered outside the Play workspace shows the card without a dead control.
 
+A registry renderer MAY render no card at all, and SHALL do so only where another transcript row is already that exchange's representation. Rendering both would print the same content twice, which is the whole reason the exception exists rather than a matter of taste. Suppression SHALL NOT extend to an exchange that failed: where a tool's other representation is written only on success, the card is the sole place a failure is visible, so a failed exchange SHALL keep the generic readable card including its error surface.
+
+`ask_user` SHALL be presented this way. Its exchange is represented by the question row the transcript renders from the durable question event, which shows the wording, the choices offered and the answer given, so no tool card SHALL be rendered for a successful or still-pending `ask_user` call. A failed `ask_user` call — arguments that did not validate, a call from a context with no user attached, or a question that was cancelled or could not be found — records no question event, so such a call SHALL render the generic readable card.
+
 #### Scenario: A spawn offers a way into the subagent it started
 - **WHEN** a `spawn_subagent` call has returned a child job id
 - **THEN** the card SHALL name that child
@@ -470,6 +474,20 @@ The control that opens a subagent SHALL be offered only where there is somewhere
 #### Scenario: An unregistered tool still reads well
 - **WHEN** a tool with no registry entry is called
 - **THEN** the transcript SHALL render it with the generic readable card
+
+#### Scenario: An answered question is not also printed as a tool card
+- **WHEN** an `ask_user` call has been answered
+- **THEN** the transcript SHALL render no tool card for it
+- **AND** the question's wording SHALL appear only in the question row
+
+#### Scenario: A pending question is not also printed as a tool card
+- **WHEN** an `ask_user` call is still waiting for an answer
+- **THEN** the transcript SHALL render no tool card for it
+
+#### Scenario: A failed ask_user call is still visible
+- **WHEN** an `ask_user` call returns an error, having recorded no question
+- **THEN** the transcript SHALL render the generic readable card for it
+- **AND** that card SHALL show that the exchange failed
 
 ### Requirement: Displayed tool arguments and results are redacted
 The dashboard SHALL redact credential-shaped text from every tool argument value, every tool result string, and every provenance value it displays, using the same shapes the eval service redacts from stored error detail: named credential fields and headers with a `:` or `=` separator, bare bearer tokens, and bare provider key literals. Redaction SHALL happen before any length cap is applied, and a value cut short SHALL NOT expose the leading part of a credential the cap fell inside.
@@ -1248,4 +1266,46 @@ This is required because a subagent name recorded before names were generated is
 #### Scenario: The subagent output view redacts its title
 - **WHEN** the subagent output view is opened on a subagent whose name carries credential-shaped text
 - **THEN** its header SHALL show that name with the credential replaced
+
+### Requirement: A question's choices read as a list of targets
+
+The dashboard SHALL lay out the choices offered by a question as a vertical list of
+full-width rows, one row per choice, rather than as inline controls flowed across a
+line. A question's choices carry descriptions and sentence-length labels, so flowing
+them inline breaks a handful of choices across ragged lines and gives no row a
+predictable width.
+
+Each row SHALL be visually distinguishable as something to click — bounded by its own
+border and responding to hover and to being pressed — so that a choice is not mistaken
+for static text. A row that cannot be chosen, because the question is already resolved,
+the run has ended, an answer is in flight, or the surface is read-only, SHALL be
+visually distinct from one that can and SHALL NOT respond to the pointer.
+
+A choice's label SHALL be shown above its description rather than run together with
+it. Both SHALL wrap within the row, and neither SHALL extend beyond the width of the
+card containing it. Where a length bound is applied, it SHALL be generous enough that
+an ordinary description is shown in full, and it SHALL bound the text vertically
+rather than horizontally, so that no part of a description is lost off the edge of the
+transcript.
+
+The choice rows SHALL be built from the same plain elements and theme tokens the rest
+of the transcript uses, consistent with the transcript being deliberately hand-rolled
+rather than assembled from the component library used for the surrounding chrome.
+
+#### Scenario: Choices are stacked, not flowed
+
+- **WHEN** a question offering several choices is rendered
+- **THEN** each choice SHALL occupy its own full-width row in a vertical stack
+
+#### Scenario: A long description wraps inside the card
+
+- **WHEN** a choice carries a description longer than the width of the transcript
+- **THEN** that description SHALL wrap onto further lines within its row
+- **AND** SHALL NOT be clipped at, or extend past, the edge of the card
+
+#### Scenario: An unanswerable choice looks and behaves inert
+
+- **WHEN** a question can no longer be answered
+- **THEN** its choice rows SHALL be rendered in a visually distinct inert state
+- **AND** SHALL NOT respond to the pointer
 
