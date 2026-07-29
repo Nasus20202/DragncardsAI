@@ -653,6 +653,7 @@ After a successful deletion the dashboard SHALL drop the session from the list a
 #### Scenario: Selection moves on after deleting the selected session
 - **WHEN** the deleted session was the selected one
 - **THEN** the dashboard SHALL select the next session the list shows, or no session at all when the list is empty
+
 ### Requirement: New sessions preserve last-used settings
 The dashboard SHALL create new Play sessions seeded with the user's last-used settings — provider, model, reasoning enabled state and effort, selected skills, recent message and tool-exchange limits, and advanced/MCP option selections — instead of resetting every field to configuration defaults.
 
@@ -677,6 +678,7 @@ The dashboard SHALL fall back to configuration defaults only when there is no pr
 #### Scenario: First session falls back to defaults
 - **WHEN** a user creates a new session and there is no prior draft, remembered configuration, or session to copy settings from
 - **THEN** the dashboard SHALL seed the new session from the configuration defaults
+
 ### Requirement: Transcript scroll lock
 The dashboard transcript SHALL follow new content only while the scroll lock is engaged, and SHALL start engaged so that the newest output is visible by default. Following SHALL scroll to the true bottom of the transcript rather than to a position short of it.
 
@@ -705,6 +707,7 @@ The dashboard SHALL keep the lock honest as the transcript resizes for reasons t
 #### Scenario: Nothing to scroll withdraws the control
 - **WHEN** the transcript shrinks until it fits within one viewport while the lock is released
 - **THEN** the dashboard SHALL re-engage the lock rather than leaving the re-engage control on screen
+
 ### Requirement: Resilient provider and model loading
 The dashboard initial load SHALL tolerate a slow or failed providers fetch and unusable providers without blocking or breaking the rest of the dashboard. A failure in any single initial-load call SHALL degrade gracefully rather than failing the whole dashboard.
 
@@ -743,3 +746,130 @@ When the provider catalog arrives, the dashboard SHALL point the selectors at a 
 #### Scenario: A degraded catalog does not reset a carried selection
 - **WHEN** a new session is created while the provider catalog is empty because it failed to load
 - **THEN** the dashboard SHALL carry the last-used provider and model forward rather than resetting them to the configuration defaults
+
+### Requirement: Persona editor
+The dashboard SHALL provide a dedicated page for authoring agent personas, reachable from the application shell's navigation, listing the personas that exist and letting a user create, edit, and delete one. The editor SHALL expose every field a persona carries: name, display name, description, system prompt, provider, model, reasoning, skill selection, and tool allowlist.
+
+The editor SHALL be built from the shared field components the existing configuration panels use, so a new surface renders the same controls rather than hand-rolled equivalents, and SHALL NOT change the appearance of any existing panel.
+
+The editor SHALL show the persona prompt's length against its limit while the user types, and SHALL prevent a save that would be rejected for exceeding it, so the bound is visible before the request rather than only in an error.
+
+An empty persona list SHALL be stated as such rather than rendering an empty container, and a failed load or save SHALL surface the orchestrator's message rather than failing silently.
+
+#### Scenario: Personas are listed
+- **WHEN** a user opens the personas page and personas exist
+- **THEN** the dashboard SHALL list them by name with their descriptions
+
+#### Scenario: Empty state is explicit
+- **WHEN** a user opens the personas page and no personas exist
+- **THEN** the dashboard SHALL state that no personas are defined
+
+#### Scenario: A persona is created
+- **WHEN** a user fills in a name and a system prompt and saves
+- **THEN** the dashboard SHALL submit the persona to the agent-orchestrator and show it in the list
+
+#### Scenario: A persona is edited
+- **WHEN** a user selects an existing persona
+- **THEN** the form SHALL be populated from the stored persona
+- **AND** saving SHALL submit the edited values under the same name
+
+#### Scenario: A persona is deleted
+- **WHEN** a user deletes a persona
+- **THEN** the dashboard SHALL submit the deletion and remove it from the list
+
+#### Scenario: Prompt length is bounded in the UI
+- **WHEN** a user types a system prompt longer than the permitted length
+- **THEN** the dashboard SHALL show that the limit is exceeded and SHALL NOT allow the save
+
+#### Scenario: A rejected save is reported
+- **WHEN** the agent-orchestrator rejects a persona — for instance because it names an unknown skill
+- **THEN** the dashboard SHALL display the returned message rather than discarding it
+
+### Requirement: Session default subagent persona picker
+The session settings panel SHALL let a user choose which persona the session's subagents are started from by default, with an explicit option meaning "no persona". The picker SHALL be populated from the personas the agent-orchestrator reports, SHALL show the currently persisted choice when a session is selected, and SHALL submit the choice as part of the session configuration. A deployment with no personas SHALL NOT render the picker, so a feature nobody has configured does not add an empty control to the panel.
+
+Adding the picker SHALL NOT restyle or re-theme any other control in the panel.
+
+#### Scenario: Picker offers the defined personas and no-persona
+- **WHEN** a user opens the settings panel for a session and personas are defined
+- **THEN** the panel SHALL offer each persona plus an explicit no-persona option
+
+#### Scenario: Persisted choice is shown
+- **WHEN** a user selects a session that already records a default subagent persona
+- **THEN** the panel SHALL show that persona as the current choice
+
+#### Scenario: Choice is saved with the session
+- **WHEN** a user picks a persona and saves the session configuration
+- **THEN** the dashboard SHALL submit the chosen persona as the session's default subagent persona
+
+#### Scenario: Choice is clearable
+- **WHEN** a user picks the no-persona option and saves
+- **THEN** the dashboard SHALL submit a cleared default, and the session's subagents SHALL again inherit the session's own configuration
+
+#### Scenario: No personas means no picker
+- **WHEN** a user opens the settings panel and no personas are defined
+- **THEN** the panel SHALL NOT render the persona picker
+
+### Requirement: A question from the agent is answered by clicking
+When a job's event timeline carries a question from the agent, the transcript SHALL render it as its own surface showing the question and one clickable control per offered choice, rather than as a generic tool-call block. Activating a control SHALL submit that choice as the answer without the user typing anything.
+
+When the question permits a free-text answer, the surface SHALL additionally offer a text field and a way to submit it. When it does not, no text field SHALL be offered, so the surface never invites an answer the orchestrator will refuse.
+
+While an answer is being submitted, every control on the surface SHALL be disabled, so one user cannot submit two answers by clicking twice.
+
+The surface SHALL be a new component and SHALL follow the transcript's existing visual language. No existing transcript, composer, or tool-call rendering SHALL be restyled by this change.
+
+#### Scenario: Clicking a choice answers the question
+- **WHEN** the transcript shows a question awaiting an answer with two offered choices
+- **THEN** it SHALL render one control per choice
+- **AND WHEN** the user activates one
+- **THEN** the dashboard SHALL submit that choice's value as the answer for that question
+
+#### Scenario: Free text is offered only when permitted
+- **WHEN** a question that does not permit free text is awaiting an answer
+- **THEN** the surface SHALL NOT offer a text field
+
+#### Scenario: Controls are disabled while submitting
+- **WHEN** the user has activated a choice and the submission has not yet resolved
+- **THEN** every control on the surface SHALL be disabled
+
+### Requirement: A question's state survives a reload
+The dashboard SHALL derive each question's state from the job's persisted event timeline, which it already replays on load and on reconnect, and SHALL NOT hold pending-question state anywhere else. Reloading the page or losing and re-establishing the event stream SHALL therefore restore what the user was looking at.
+
+A question that is still awaiting an answer SHALL come back with its controls live. A question that has been answered SHALL come back showing the answer that was recorded, with no controls, because answering again is impossible. A question that was closed without an answer SHALL come back saying so, distinguishing a question nobody answered in time from one ended by cancellation.
+
+The events that resolve a question SHALL resolve the question's own surface rather than appearing as separate entries in the transcript, so a question and its answer read as one exchange.
+
+#### Scenario: An answered question comes back answered
+- **WHEN** a job's replayed timeline contains a question followed by its answer
+- **THEN** the transcript SHALL show the recorded answer and SHALL NOT render any answering controls
+
+#### Scenario: A closed question comes back closed
+- **WHEN** a job's replayed timeline contains a question followed by its closure
+- **THEN** the transcript SHALL say the question is no longer awaiting an answer, naming whether it timed out or was cancelled, and SHALL NOT render any answering controls
+
+#### Scenario: An answer is not a separate transcript entry
+- **WHEN** a job's replayed timeline contains a question and its answer
+- **THEN** the answer SHALL be shown on the question's own surface and SHALL NOT appear as an additional transcript entry
+
+### Requirement: A question that can no longer be answered offers no controls
+When the job that asked a question has reached a terminal status while the question is still awaiting an answer, the surface SHALL disable its controls and explain that the question can no longer be answered. This is the case where the run that was waiting is gone, and offering a control that the orchestrator will refuse would be misleading.
+
+When a submission is refused because the question is no longer awaiting an answer, the surface SHALL show the reason the orchestrator gave and SHALL leave its controls disabled rather than inviting a retry.
+
+#### Scenario: A finished job's pending question is inert
+- **WHEN** a question is still awaiting an answer but its job has reached a terminal status
+- **THEN** the surface SHALL disable its controls and SHALL explain that the question can no longer be answered
+
+#### Scenario: A refused answer is explained, not retried
+- **WHEN** submitting an answer is refused because the question is no longer awaiting one
+- **THEN** the surface SHALL show the reason given and SHALL leave its controls disabled
+
+### Requirement: Model-authored question text is rendered as text
+The question text and each choice's label, value, and description are authored by the model. The dashboard SHALL render them as plain text only. It SHALL NOT render them as markup or markdown, and SHALL NOT interpolate them into an attribute, a style, or anything else that is executed or resolved as a reference.
+
+#### Scenario: Markup in a choice label stays literal
+- **WHEN** a choice label contains characters that would form an HTML element
+- **THEN** the transcript SHALL display those characters as text
+- **AND** no element described by that text SHALL exist in the rendered output
+

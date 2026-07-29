@@ -86,9 +86,29 @@ The dashboard SHALL surface `evaluator` events on the game history timeline, vis
 ### Requirement: Request evaluation of selected moves or rounds
 The dashboard SHALL provide a control for the user to select which targets of a game to evaluate — one or more moves, one or more rounds, a range, or the whole game — and to submit that evaluation request to the eval-service, then surface the request's progress and resulting verdicts on the timeline.
 
+Choosing what to evaluate SHALL be ONE question, not two independent ones. The control SHALL offer a single mutually-exclusive choice of what is being graded — moves, rounds, or the whole game — and each choice SHALL own whatever further input it needs. Selecting a round SHALL mean selecting a round: the user SHALL pick rounds from a list of the game's actual rounds and SHALL NOT be required to select a move, a sequence, or a range in order to grade a round. The round list SHALL come from the eval-service's own round detection rather than being re-derived in the dashboard, so a round the user can pick is a round the service can grade, and each round SHALL be labelled with its round of play together with its sequence span and how many moves it contains.
+
+The whole-game choice SHALL require no further input. The moves choice SHALL be the only one that consults the transcript selection or a sequence range. Combinations that carry no meaning SHALL NOT be expressible.
+
 #### Scenario: Select targets and request evaluation
 - **WHEN** a user selects one or more moves/rounds (or the whole game) on the history view and confirms an evaluation request
 - **THEN** the dashboard SHALL submit an evaluation request for exactly those targets and SHALL show that the request was accepted
+
+#### Scenario: Grading a round needs no move selected
+- **WHEN** the user chooses to evaluate rounds with no transcript event selected, picks one or more rounds from the offered list, and submits
+- **THEN** the dashboard SHALL submit a round-scope request naming those rounds, SHALL NOT require a move or sequence to be chosen, and SHALL NOT report a missing selection
+
+#### Scenario: Rounds are offered with a readable label
+- **WHEN** the user chooses to evaluate rounds for a game whose first recorded round reports a DragnCards round number of 0
+- **THEN** that round SHALL be offered as round 1, alongside its sequence span and its number of moves, and submitting it SHALL name the same number the service listed rather than a converted one
+
+#### Scenario: Round list comes from the service
+- **WHEN** the dashboard offers the rounds of a game
+- **THEN** the offered rounds SHALL be those the eval-service reports for that game
+
+#### Scenario: What-to-evaluate is a single choice
+- **WHEN** the user picks the whole game
+- **THEN** no further target input SHALL be requested, and the transcript selection and sequence range SHALL have no bearing on what is submitted
 
 #### Scenario: Surface evaluation progress and results
 - **WHEN** an evaluation request the user submitted is in progress or completes
@@ -245,10 +265,43 @@ SHALL offer a Cancel action while the request is non-terminal. The queue SHALL r
 changes over time (by polling the eval-service listing) and SHALL surface an active-count
 indicator so the user can tell, without opening it, that evaluations are running.
 
+A queue entry SHALL also show the failure detail of every target of that request that has one,
+identified by the target it happened on, so a user can tell WHY an evaluation failed and not
+merely that it did. This detail SHALL appear while the request is still running — the
+eval-service records a failed judge attempt on the target as it happens — so a failure is
+reported during the evaluation rather than only in its final status. The entry MAY cap how many
+individual failures it lists provided it states how many more there are. A deliberately skipped
+non-strategic target's reason SHALL NOT be presented as a failure, and neither SHALL the
+bookkeeping reason of a cancelled target.
+
+The queue SHALL obtain this detail from the evaluation listing it already polls; it SHALL NOT
+open a second live connection for it.
+
 #### Scenario: See in-progress evaluations across games
 - **WHEN** the user opens the evaluations queue while evaluations are running for one or more games
 - **THEN** the dashboard SHALL list those evaluations with their game, scope label, and live
   status, and SHALL keep the list updated as their status changes
+
+#### Scenario: A failure is reported while the evaluation is still running
+- **WHEN** a target of a queued evaluation has recorded a failure and the request has not yet
+  reached a terminal status
+- **THEN** the queue entry SHALL show that failure's detail alongside the target it happened on,
+  on the queue's normal refresh, without waiting for the request to finish
+
+#### Scenario: A terminal failure states its reason
+- **WHEN** a queued evaluation ends with one or more failed targets
+- **THEN** the queue entry SHALL show each failed target's reason, and SHALL NOT show only the
+  request's overall status
+
+#### Scenario: Many failures are summarized rather than dropped
+- **WHEN** a queued evaluation has more failed targets than the entry lists individually
+- **THEN** the entry SHALL show the listed failures and SHALL state how many further failures
+  there are, so none of them is silently hidden
+
+#### Scenario: A deliberate skip is not presented as a failure
+- **WHEN** a queued evaluation contains a target skipped as a non-strategic action, carrying the
+  reason for that skip
+- **THEN** the queue entry SHALL NOT present that reason as a failure
 
 #### Scenario: Cancel from the queue
 - **WHEN** the user activates Cancel on a non-terminal evaluation in the queue
@@ -329,7 +382,9 @@ The dashboard history transcript SHALL collapse each event's detail body by defa
 
 ### Requirement: Transcript search
 
-The dashboard history transcript SHALL provide a search input that filters the visible events by a case-insensitive match across each event's action label, actor, and payload text (including intended action, reasoning, prompt, and stringified arguments/state). Round headers SHALL remain only for rounds that still have at least one matching event, and the transcript SHALL show a no-matches empty state when no event matches. Searching SHALL NOT disturb the auto-follow scroll behavior.
+The dashboard history transcript SHALL provide a search input that filters the visible events by a case-insensitive match across each event's action label, actor, and the payload text the listing carries — the intended action, the reasoning, the prompt, and the stringified arguments. Round headers SHALL remain only for rounds that still have at least one matching event, and the transcript SHALL show a no-matches empty state when no event matches. Searching SHALL NOT disturb the auto-follow scroll behavior.
+
+Search SHALL NOT be expected to match text inside the raw DragnCards room state. That state is not carried by the listing, and searching it was never useful: on a 122-event game it made the search haystack 25 MiB of card definitions, plugin configuration and undo-log entries, costing 86 ms to rebuild on every keystroke, none of which is text a reviewer is looking for.
 
 #### Scenario: Typing filters the events
 
@@ -388,6 +443,11 @@ scorecard that shows each player's move/round/game scores side by side so player
 compared. Move/round/game verdicts SHALL be visually distinguishable by both their level and
 their player.
 
+The scorecard SHALL NOT average verdicts produced by different evaluator versions into one
+figure, because a change to what the judge is shown or asked moves the scale. It SHALL aggregate
+the newest evaluator version present for the game and SHALL disclose how many older-version
+verdicts it excluded, so an out-of-date verdict is visible rather than silently folded in.
+
 #### Scenario: Verdicts show their player
 - **WHEN** the dashboard renders an evaluation verdict in the transcript
 - **THEN** it SHALL show which player the verdict pertains to (alongside its scope/level), and
@@ -396,6 +456,10 @@ their player.
 #### Scenario: Per-player game scorecard
 - **WHEN** a game has per-player evaluations
 - **THEN** the dashboard SHALL present a scorecard comparing each player's move/round/game scores
+
+#### Scenario: Scorecard excludes stale evaluator versions
+- **WHEN** a game holds verdicts from an older evaluator version alongside verdicts from the newest one
+- **THEN** the scorecard SHALL average only the newest version's verdicts and SHALL state how many older-version verdicts it left out
 
 ### Requirement: Request a cascade evaluation
 The dashboard SHALL let the user request a higher-level (round or whole-game) evaluation that
@@ -436,19 +500,28 @@ than in a separate fixed controls column. Game-level evaluation remains a header
 
 ### Requirement: Complete event timeline loaded via cursor pagination
 
-The dashboard SHALL load a recorded game's **complete** event timeline rather than a single page of it, by following the history-service's existing `after_seq` / `next_after_seq` cursor: it SHALL request pages at the server's per-request maximum (`limit` 1000) and SHALL keep requesting until the cursor is exhausted, concatenating the pages in ascending `seq`. The dashboard SHALL NOT require any change to the history-service read API, its `limit` ceiling, or its transport.
+The dashboard SHALL load a recorded game's **complete** event timeline rather than a single page of it, by following the history-service's `after_seq` / `next_after_seq` cursor: it SHALL keep requesting until the cursor is exhausted, concatenating the pages in ascending `seq`.
 
-A client-side page bound SHALL remain (at most 20 pages, i.e. 20,000 events) so a pathological game cannot hang the browser. Because that bound exists, truncation SHALL be disclosed and SHALL NOT be silent: when the loaded timeline is shorter than the game's known total event count, the dashboard SHALL state how many events it is showing out of that total. When the whole timeline is loaded, the dashboard SHALL NOT claim any truncation.
+It SHALL load that timeline from the history-service's **timeline** read, not its events read. The events read carries every payload in full, and a recorded DragnCards state is ~450-470 KB, so walking it costs tens of megabytes and seconds of server time for a few hundred events — measured at 2.3 s and 86 MiB for a 400-event game, against 0.57 s and 262 KiB for the same walk over timeline entries. The dashboard SHALL request pages at the timeline read's per-request maximum. It SHALL NOT require any change to the events read, its `limit` ceiling, or its transport.
+
+Because the log is append-only, a refresh of an already-loaded game SHALL resume from the highest `seq` already held and append what is new, rather than re-reading the whole timeline. This applies to the periodic poll, the refresh on window focus or visibility change, and the refresh that follows an evaluation settling. A refresh SHALL NOT disturb the current selection.
+
+A client-side page bound SHALL remain (at most 20,000 events) so a pathological game cannot hang the browser. Because that bound exists, truncation SHALL be disclosed and SHALL NOT be silent: when the loaded timeline is shorter than the game's known total event count, the dashboard SHALL state how many events it is showing out of that total. When the whole timeline is loaded, the dashboard SHALL NOT claim any truncation.
 
 #### Scenario: A game with more events than one page shows all of them
 
 - **WHEN** a user opens the history view for a game whose recorded event count exceeds one page
-- **THEN** the dashboard SHALL follow the `next_after_seq` cursor until it is exhausted and SHALL render every recorded event in ascending `seq`, including the events beyond the first page
+- **THEN** the dashboard SHALL follow the `next_after_seq` cursor until it is exhausted and SHALL hold every recorded event in ascending `seq`, including the events beyond the first page
 
 #### Scenario: A single page ends the pagination
 
 - **WHEN** the first page's response carries no further cursor
-- **THEN** the dashboard SHALL issue no further requests and SHALL render exactly the events it received
+- **THEN** the dashboard SHALL issue no further requests and SHALL hold exactly the events it received
+
+#### Scenario: A refresh reads only what is new
+
+- **WHEN** the history view refreshes a game whose timeline is already loaded
+- **THEN** the dashboard SHALL request only the events recorded after the highest `seq` it already holds, and SHALL append them to the loaded timeline
 
 #### Scenario: Truncation at the client bound is disclosed
 
@@ -489,3 +562,185 @@ Because a `game-service` history event embeds the state **after** its action was
 
 - **WHEN** an `agent`, `user`, or `evaluator` event appears between two `game-service` events
 - **THEN** it SHALL be attributed to the most recently observed round and step
+
+### Requirement: Export and import controls in the history header
+
+The dashboard history view SHALL offer an export control and an import control in its header action bar, styled as the header's existing actions are.
+
+The export control SHALL be offered only while a game is selected, and SHALL download that game's history bundle by navigating to the history-service export endpoint rather than fetching and buffering it, so that a bundle running to tens of megabytes is streamed to disk by the browser instead of held in the tab.
+
+The import control SHALL be offered whether or not a game is selected, because an import creates a game rather than modifying the selected one. It SHALL open a file picker restricted to bundle files, SHALL send the picked file as the import request body, and SHALL indicate that an import is in progress.
+
+The outcome of an import SHALL be reported inline in the history view — in the dashboard's existing notice style, since the dashboard has no toast layer — and never silently. A successful import SHALL state how many events and snapshots were written and under which game, and SHALL select that game so its timeline is immediately visible. A rejected import SHALL surface the history-service's own message, including the line of the file at fault, as an alert, and SHALL NOT change the selected game.
+
+#### Scenario: Export the selected game
+
+- **WHEN** a game is selected and the user activates the export control
+- **THEN** the dashboard SHALL start a download from that game's export endpoint, and SHALL leave no download element behind in the document
+
+#### Scenario: Export is not offered without a selection
+
+- **WHEN** no game is selected
+- **THEN** the dashboard SHALL NOT offer the export control, and SHALL still offer the import control
+
+#### Scenario: A successful import is reported and opened
+
+- **WHEN** the user picks a bundle file and the history-service accepts it
+- **THEN** the dashboard SHALL show a status notice stating the number of events and snapshots written and the game they were written to, and SHALL select that game
+
+#### Scenario: A rejected import is reported as an alert
+
+- **WHEN** the user picks a bundle file and the history-service rejects it
+- **THEN** the dashboard SHALL show the service's message — including the offending line — as an alert, and SHALL NOT change the selected game
+
+### Requirement: Full event payloads fetched on demand
+
+The dashboard SHALL fetch an event's complete payload from the history-service's
+events read at the moment something needs it, and SHALL NOT present a reduced
+payload as if it were the whole recording. This is necessary because the dashboard
+lists a game from the timeline read, whose entries omit the raw DragnCards `state`
+and an agent move's `conversation_context`.
+
+The moment that needs it is an event's detail body, which is where those two
+fields are shown. The dashboard SHALL therefore fetch the complete event when a
+body is first opened, SHALL fetch it at most once per event (a recorded event never
+changes, the log being append-only), and SHALL NOT fetch it for an event whose
+payload is already complete.
+
+While the fetch is in flight the dashboard SHALL show that the event is loading;
+if it fails the dashboard SHALL say so rather than render an empty body.
+
+#### Scenario: Opening a body fetches the event
+
+- **WHEN** the user expands the body of an event whose listed payload is reduced
+- **THEN** the dashboard SHALL fetch that event's complete payload and render the body from it
+
+#### Scenario: A collapsed transcript fetches nothing
+
+- **WHEN** the transcript is rendered and no event body has been opened
+- **THEN** the dashboard SHALL NOT request any event's complete payload
+
+#### Scenario: An already-complete payload is not re-fetched
+
+- **WHEN** the user expands the body of an event whose payload is already complete
+- **THEN** the dashboard SHALL render the body directly and SHALL NOT request the event again
+
+#### Scenario: A failed detail fetch is reported
+
+- **WHEN** fetching an event's complete payload fails
+- **THEN** the dashboard SHALL show an error on that event rather than an empty body
+
+### Requirement: Endless scroll over the loaded timeline
+
+The dashboard history transcript SHALL render a contiguous window of the loaded
+timeline rather than all of it, and SHALL grow that window as the reader reaches
+its edges, so that the cost of rendering a game does not scale with the length of
+the game.
+
+The window SHALL open at the **newest** end of the timeline, because the last
+thing that happened is what a reader wants first. Reaching the top of the rendered
+window SHALL extend it towards older events; reaching the bottom SHALL extend it
+towards newer ones. Extension SHALL also be reachable without scroll detection, so
+the transcript remains usable where an intersection observer is unavailable.
+
+The window SHALL stop offering to extend in a direction once it reaches that end
+of the loaded timeline, and a timeline short enough to fit in one window SHALL be
+rendered whole with no extension affordance at all.
+
+When the length of the list beneath the window changes — a search query narrowing
+it, or live play appending to it — the window SHALL be re-fitted rather than
+reset: a window that was following the newest end SHALL keep following it, and a
+window parked mid-game SHALL stay where the reader left it. A window emptied by a
+query that matched nothing SHALL return to a full window when the query is
+cleared, not to a single row.
+
+The existing auto-follow and scroll-lock behaviour SHALL continue to hold, and the
+"jump to latest" affordance SHALL move the window as well as the scroll position,
+so that it returns to the newest events from anywhere. It SHALL be offered
+whenever the window stops short of the newest loaded event, not only when the
+scroll position is away from the bottom.
+
+#### Scenario: A long timeline renders only a window, anchored at the newest events
+
+- **WHEN** the user opens the history view for a game with several hundred recorded events
+- **THEN** the transcript SHALL render the most recent events and SHALL NOT render the whole timeline at once
+
+#### Scenario: Reaching the top loads earlier events
+
+- **WHEN** the reader scrolls to the top of the rendered window and older events remain
+- **THEN** the transcript SHALL extend the window towards those older events while keeping the newest events rendered
+
+#### Scenario: Scrolling far enough reaches the first event
+
+- **WHEN** the reader keeps extending the window towards older events
+- **THEN** the transcript SHALL eventually render the first recorded event and SHALL stop offering to load earlier ones
+
+#### Scenario: A short timeline is rendered whole
+
+- **WHEN** the loaded timeline is shorter than one window
+- **THEN** the transcript SHALL render every event and SHALL offer no scroll-extension affordance
+
+#### Scenario: Clearing a no-match search restores a full window
+
+- **WHEN** the reader clears a search query that had matched no events
+- **THEN** the transcript SHALL render a full window of events again
+
+### Requirement: Jump to a round
+
+The dashboard history transcript SHALL provide a control that moves the transcript
+directly to a chosen round, because with only a window of the timeline rendered,
+scrolling is no longer a way to reach an early round of a long game.
+
+The control SHALL offer the same rounds, in the same order and under the same
+labels, as the game → rounds → moves navigation tree — the Setup band, then each
+round of play numbered on DragnCards' completed-round convention — so the two
+never disagree about what a round is called. It SHALL offer no round that has no
+moves, and SHALL render nothing at all when the game has no rounds.
+
+Choosing a round SHALL move the transcript to that round's first move and select
+it. It SHALL be repeatable: choosing the round the transcript is already showing
+SHALL jump again rather than do nothing.
+
+A selection that falls outside the rendered window SHALL bring the window with it,
+so that jumping to a round — from this control or from the navigation tree —
+renders that round. A jump far from the current window SHALL rebuild the window
+around the target rather than render everything in between.
+
+#### Scenario: The control lists the game's rounds
+
+- **WHEN** the user opens the jump-to-round control on a game spanning setup and two rounds of play
+- **THEN** it SHALL offer "Setup", "Round 1" and "Round 2", and SHALL NOT label the first round of play as "Setup"
+
+#### Scenario: Choosing a round moves the transcript to it
+
+- **WHEN** the user chooses a round from the control
+- **THEN** the transcript SHALL select that round's first move and SHALL render it
+
+#### Scenario: Jumping to a distant round does not render the events in between
+
+- **WHEN** the user jumps from the newest events to an early round of a long game
+- **THEN** the transcript SHALL render a window around that round and SHALL NOT render the events between it and the end of the timeline
+
+#### Scenario: Returning to the newest events after a jump
+
+- **WHEN** the transcript is showing an early round after a jump
+- **THEN** the "jump to latest" affordance SHALL be offered and SHALL return the transcript to the newest events
+
+#### Scenario: A game with no rounds offers no control
+
+- **WHEN** the selected game has no recorded rounds
+- **THEN** the jump-to-round control SHALL NOT be rendered
+
+### Requirement: Hero UI controls in the evaluate panel
+Every interactive control in the dashboard's evaluate panel SHALL be a Hero UI component or one of the dashboard's shared field wrappers built from them, and SHALL NOT be a hand-rolled native form element. Specifically the what-to-evaluate choice SHALL be a radio group, the round picker SHALL be a checkbox group, the sequence range bounds SHALL be labelled text fields of the same shared kind the judge panel uses, re-evaluate SHALL be a toggle switch row rather than a native checkbox, and the error and confirmation states SHALL be Hero UI alerts.
+
+Adopting these components SHALL NOT change the panel's behavior or remove its automation surface: submission SHALL stay disabled while a request is in flight or no game is selected, and each control SHALL expose an accessible name and a stable test id.
+
+#### Scenario: Controls are Hero UI components
+- **WHEN** the user opens the evaluate panel
+- **THEN** each control SHALL be a Hero UI component or a shared field wrapper built from one, and the panel SHALL NOT render a bare native radio, number, or checkbox input
+
+#### Scenario: Behaviour is unchanged by the components
+- **WHEN** a game is not selected, or an evaluation request is being submitted
+- **THEN** the panel's controls and its submit action SHALL be disabled, exactly as before
+
