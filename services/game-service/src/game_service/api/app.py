@@ -9,6 +9,7 @@ has no dependency on FastMCP.
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +30,24 @@ from game_service.telemetry import instrument_fastapi_app
 
 logger = logging.getLogger(__name__)
 
+# CORS allowlist, comma-separated. Read straight from the environment because this
+# service has no Settings class — ``main.py`` reads its configuration from
+# ``os.environ`` the same way. The default covers the local dashboard origin.
+#
+# This must never widen back to "*": Compose publishes 4001 on the host, so a
+# wildcard lets ANY page a developer visits drive DELETE /games/{game_id} and the
+# mutating action routes from the browser. The dashboard reaches game-service
+# through its own server-side proxy rather than from the browser, so an allowlist
+# does not break it, and this service's own /docs playground is same-origin and
+# therefore outside CORS entirely.
+DEFAULT_CORS_ALLOW_ORIGINS = "http://localhost:3001,http://127.0.0.1:3001"
+
+
+def cors_allow_origins() -> list[str]:
+    """The configured CORS origins as a list (comma-separated, trimmed)."""
+    raw = os.environ.get("CORS_ALLOW_ORIGINS", DEFAULT_CORS_ALLOW_ORIGINS)
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
 
 def create_app(session_manager: SessionManager | None = None) -> FastAPI:
     """
@@ -43,10 +62,9 @@ def create_app(session_manager: SessionManager | None = None) -> FastAPI:
         description="HTTP REST API and MCP server for programmatic interaction with DragnCards games.",
     )
 
-    # CORS — allow all origins for development; restrict in production
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_allow_origins(),
         allow_methods=["*"],
         allow_headers=["*"],
     )

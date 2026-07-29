@@ -126,6 +126,21 @@ a game's recorded history or editing the shared skill/MCP/persona registries.
 Exclusion applies to MCP only — every one of those endpoints still works over
 HTTP.
 
+Because those endpoints remain on HTTP, all four services also carry a strict
+browser **CORS allowlist**, defaulting to the dashboard's origin
+(`http://localhost:3001,http://127.0.0.1:3001`) and configurable per service via
+`CORS_ALLOW_ORIGINS` (game-service, agent-orchestrator),
+`HISTORY_CORS_ALLOW_ORIGINS`, and `EVAL_CORS_ALLOW_ORIGINS`. Compose publishes
+4001, 4002, 4004 and 4005 on the host, so a wildcard allowlist would let any web
+page a developer happens to visit reach exactly the operations withheld above —
+deleting a game's recorded history, backfilling forged events, deleting agent
+sessions, spending the model budget — straight from the browser. Nothing
+legitimately calls these services from a browser: the dashboard fronts all four
+through its own server-side proxy under `/api/proxy/<service>/`, and every other
+caller is server-to-server, so none of them send an `Origin` header and none are
+subject to CORS. CORS is a browser control rather than authentication — it does not
+restrict `curl` or any other non-browser client, which is tracked separately.
+
 The end-to-end debugging loop these surfaces exist for — create a game, start a
 player agent, analyse its actions, read the live board, request an evaluation,
 read the verdict — is documented in

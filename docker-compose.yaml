@@ -28,6 +28,11 @@ services:
       BOT_PASSWORD: ${BOT_PASSWORD:-password}
       HTTP_HOST: ${GAME_SERVICE_HTTP_HOST:-0.0.0.0}
       HTTP_PORT: ${GAME_SERVICE_HTTP_PORT:-8000}
+      # Browser CORS allowlist. This port is published on the host, so a wildcard
+      # would let any page a developer visits drive the mutating routes. The
+      # dashboard reaches this service through its own server-side proxy, so only
+      # the dashboard's browser origin needs listing.
+      CORS_ALLOW_ORIGINS: ${GAME_SERVICE_CORS_ALLOW_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001}
       # TTL reaper for non-emitting ephemeral reconstruction sessions.
       EPHEMERAL_SESSION_TTL_SECONDS: ${EPHEMERAL_SESSION_TTL_SECONDS:-1800}
       EPHEMERAL_REAPER_INTERVAL_SECONDS: ${EPHEMERAL_REAPER_INTERVAL_SECONDS:-60}
@@ -68,6 +73,11 @@ services:
       ENABLED_PROVIDER_IDS: ${ENABLED_PROVIDER_IDS:-nvidia,openrouter,mistral,claude,openai,lmstudio,gemini}
       HTTP_HOST: ${AGENT_ORCHESTRATOR_HTTP_HOST:-0.0.0.0}
       HTTP_PORT: ${AGENT_ORCHESTRATOR_HTTP_PORT:-8010}
+      # Browser CORS allowlist. This port is published on the host, so a wildcard
+      # would let any page a developer visits delete sessions and submit prompts
+      # that spend the model budget. The dashboard reaches this service through
+      # its own server-side proxy, so only its browser origin needs listing.
+      CORS_ALLOW_ORIGINS: ${AGENT_ORCHESTRATOR_CORS_ALLOW_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001}
       SKILL_ROOTS: ${SKILL_ROOTS:-/app/skills}
       GAME_SERVICE_MCP_URL: ${GAME_SERVICE_MCP_URL:-http://game-service:8000/mcp}
       VALKEY_URL: ${AGENT_ORCHESTRATOR_VALKEY_URL:-redis://agent-orchestrator-valkey:6379/0}
@@ -111,6 +121,11 @@ services:
       HISTORY_IMPORT_MAX_BYTES: ${HISTORY_IMPORT_MAX_BYTES:-67108864}
       HTTP_HOST: ${HISTORY_SERVICE_HTTP_HOST:-0.0.0.0}
       HTTP_PORT: ${HISTORY_SERVICE_HTTP_PORT:-4004}
+      # Browser CORS allowlist. This port is published on the host, so a wildcard
+      # would let any page a developer visits DELETE a game's whole recorded
+      # history or backfill forged events. The dashboard reaches this service
+      # through its own server-side proxy, so only its browser origin needs listing.
+      HISTORY_CORS_ALLOW_ORIGINS: ${HISTORY_CORS_ALLOW_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001}
       OTEL_SERVICE_NAME: ${HISTORY_SERVICE_OTEL_SERVICE_NAME:-history-service}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${HISTORY_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-lgtm:4318}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${HISTORY_SERVICE_OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
@@ -173,6 +188,10 @@ services:
       EVAL_JUDGE_MOVE_CONTEXT_AFTER: ${EVAL_JUDGE_MOVE_CONTEXT_AFTER:-100}
       HTTP_HOST: ${EVAL_SERVICE_HTTP_HOST:-0.0.0.0}
       HTTP_PORT: ${EVAL_SERVICE_HTTP_PORT:-4005}
+      # Browser CORS allowlist, the same policy the other three services carry.
+      # eval-service has read this setting since it shipped, but it was never
+      # exposed here, so the Compose deployment could not configure it.
+      EVAL_CORS_ALLOW_ORIGINS: ${EVAL_CORS_ALLOW_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001}
       OTEL_SERVICE_NAME: ${EVAL_SERVICE_OTEL_SERVICE_NAME:-eval-service}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${EVAL_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-lgtm:4318}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${EVAL_SERVICE_OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}

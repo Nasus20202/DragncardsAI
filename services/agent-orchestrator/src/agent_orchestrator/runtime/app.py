@@ -259,9 +259,15 @@ def create_app(
         MaxBodySizeMiddleware,
         max_bytes=settings.max_request_body_bytes,
     )
+    # Strict CORS allowlist (configurable), matching eval-service. The dashboard
+    # reaches the orchestrator through its own server-side proxy rather than from
+    # the browser — including the SSE job streams, which are EventSource calls to
+    # relative /api/proxy/orchestrator/... URLs — so the allowlist does not break
+    # normal dashboard use, and a request carrying no ``Origin`` at all (every
+    # server-to-server caller, including that proxy) is outside CORS entirely.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.cors_allow_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )

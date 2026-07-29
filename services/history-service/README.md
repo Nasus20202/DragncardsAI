@@ -32,6 +32,7 @@ All settings have secret-free defaults; secrets live only in
 | `HISTORY_IMPORT_MAX_BYTES` | `67108864` | Largest accepted `POST /import` body |
 | `GAME_SERVICE_BASE_URL` | `http://localhost:4001` | Snapshot export/import + replay |
 | `AGENT_ORCHESTRATOR_BASE_URL` | `http://localhost:4002` | Resume-from-context |
+| `HISTORY_CORS_ALLOW_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001` | Comma-separated browser CORS allowlist (see [Browser CORS](#browser-cors)) |
 
 Standard OpenTelemetry variables (`OTEL_SERVICE_NAME`,
 `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SDK_DISABLED`)
@@ -127,6 +128,42 @@ Exclusion applies to MCP only; every one of those endpoints still works over HTT
 
 The end-to-end debugging loop these tools exist for is documented in
 [`AGENTS.md`](../../AGENTS.md#driving-the-system-end-to-end).
+
+## Browser CORS
+
+`HISTORY_CORS_ALLOW_ORIGINS` is a comma-separated allowlist of browser origins,
+defaulting to the local dashboard (`http://localhost:3001,http://127.0.0.1:3001`).
+It must never be set to `*`.
+
+Docker Compose publishes 4004 on the host, so under a wildcard allowlist *any* web
+page a developer happens to visit while the stack is running could issue a
+cross-origin `DELETE http://localhost:4004/games/{game_id}` — or backfill forged
+events — and the browser would carry it out. That reaches exactly the three
+operations the table above withholds from MCP, which makes withholding them
+decorative: `delete_game_history`, `backfill_game_event` and `import_game_bundle`
+are kept away from a model and then handed to any page in a browser.
+
+A strict allowlist does not affect normal use, because nothing reaches this service
+from a browser directly:
+
+- The dashboard calls it **through its own server-side proxy**
+  (`/api/proxy/history/...`), so the request to 4004 originates in the dashboard's
+  Node process and carries no `Origin` header at all. That proxy also strips
+  `cookie` and `authorization` and rewrites `host`, and rejects cross-site browser
+  requests via `isCrossSiteRequest`.
+- eval-service, game-service and the agent-orchestrator are server-to-server
+  callers, likewise with no `Origin`.
+- MCP clients are not browsers.
+
+Requests with no `Origin` are outside CORS entirely and are unaffected by this
+setting — that is the path the whole application actually depends on.
+
+**CORS is not authentication.** It stops a browser being used as a confused deputy
+for methods that require a preflight (`DELETE`, `PUT`, and `POST` with a JSON
+content type), which is the attack above. It does not stop a non-browser client —
+`curl`, a script, anything that can reach the port — from calling this service
+directly, because such a client simply omits `Origin`. Requiring a credential is
+tracked separately as DRA-32.
 
 ## Event envelope
 

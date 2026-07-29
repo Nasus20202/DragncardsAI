@@ -159,6 +159,27 @@ otherwise block it.
 - Cache provider models to reduce Bifrost load
 - **Never store state in instance variables.** Use PostgreSQL for persistent data and Valkey for ephemeral shared state. Example: `BifrostClient` model-listing cache lives in Valkey under `agent-orchestrator:model-cache:*`, not in `self._models_cache`.
 
+## Browser CORS
+
+`CORS_ALLOW_ORIGINS` is a comma-separated allowlist of browser origins, defaulting
+to the local dashboard. **Never widen it to `*`.** That is what this service
+shipped with, and because Compose publishes 4002 on the host it meant any page a
+developer visited could drive a cross-origin `DELETE /sessions/{id}` or
+`POST /sessions/{id}/prompts` — destroying sessions and spending the owner's model
+budget (DRA-31). The policy is pinned at the wire level in
+`tests/unit/test_cors.py`.
+
+Two things to hold on to when touching this:
+
+- **A request with no `Origin` must keep working.** That is every real caller: the
+  dashboard reaches this service through its own server-side Node proxy, including
+  the SSE job streams — those are `EventSource` calls to relative
+  `/api/proxy/orchestrator/...` URLs, never to port 4002 — and history-service is
+  a server-to-server caller.
+- **CORS is not authentication.** It only stops a *browser* being used as a
+  confused deputy for preflighted methods. Any non-browser client omits `Origin`
+  and is unaffected. Requiring a credential is DRA-32, deliberately separate.
+
 ## Provider Configuration
 
 ```text

@@ -30,6 +30,28 @@ game-service/
 - Keep MCP tools and HTTP endpoints consistent in behavior
 - Phoenix Channel messages are defined in DragnCards protocol
 
+## Browser CORS
+
+`CORS_ALLOW_ORIGINS` is a comma-separated allowlist of browser origins, read in
+`api/app.py` (this service has no `Settings` class; `main.py` reads `os.environ`
+the same way) and defaulting to the local dashboard. **Never widen it to `*`.**
+That is what this service shipped with, behind a comment conceding it was a
+development shortcut, and because Compose publishes 4001 on the host it meant any
+page a developer visited could drive a cross-origin `DELETE /games/{session_id}`
+or the mutating action routes (DRA-31). The policy is pinned at the wire level in
+`tests/unit/test_cors.py`.
+
+Two things to hold on to when touching this:
+
+- **A request with no `Origin` must keep working.** That is every real caller: the
+  dashboard reaches this service through its own server-side Node proxy, the
+  orchestrator and history-service are server-to-server, MCP clients are not
+  browsers, and this service's own `/docs` playground is same-origin, which CORS
+  never applies to.
+- **CORS is not authentication.** It only stops a *browser* being used as a
+  confused deputy for preflighted methods. Any non-browser client omits `Origin`
+  and is unaffected. Requiring a credential is DRA-32, deliberately separate.
+
 ## MCP surface
 
 `mcp/server.py` derives the MCP tools from this service's own FastAPI OpenAPI schema, so

@@ -27,6 +27,21 @@ class Settings(BaseSettings):
     http_host: str = "0.0.0.0"
     http_port: int = 4004
 
+    # CORS allowlist (comma-separated). The dashboard reaches history-service via
+    # a server-side proxy (not browser-direct), so a strict allowlist does NOT
+    # break normal dashboard use; the default covers the local dashboard origin.
+    # This must never widen back to "*": Compose publishes 4004 on the host, so a
+    # wildcard lets ANY page a developer visits drive DELETE /games/{game_id} and
+    # POST /games/{game_id}/events from the browser, destroying or forging the one
+    # durable record of what an agent did — the same operations deliberately
+    # withheld from the MCP surface (see ``mcp_server.EXCLUDED_ROUTES``).
+    history_cors_allow_origins: str = Field(
+        default="http://localhost:3001,http://127.0.0.1:3001",
+        validation_alias=AliasChoices(
+            "history_cors_allow_origins", "HISTORY_CORS_ALLOW_ORIGINS"
+        ),
+    )
+
     # Shared ingestion stream contract (must match producers).
     history_ingest_stream: str = Field(
         default="history:ingest",
@@ -158,6 +173,13 @@ class Settings(BaseSettings):
         if not 1 <= value <= 65535:
             raise ValueError("http_port must be a valid TCP port")
         return value
+
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        """Configured CORS origins as a list (comma-separated, trimmed)."""
+        return [
+            o.strip() for o in self.history_cors_allow_origins.split(",") if o.strip()
+        ]
 
     @property
     def consumer_name(self) -> str:
