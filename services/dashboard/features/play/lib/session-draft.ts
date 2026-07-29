@@ -24,18 +24,16 @@ export function isSelectableSession(
   );
 }
 
-export function buildDefaultSessionName(now = new Date()): string {
-  return now
-    .toLocaleString("en-CA", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })
-    .replace(",", "");
-}
+/**
+ * A new session starts unnamed on purpose. It used to start as a timestamp,
+ * which told two sessions apart only by the minute they were created in, and the
+ * dashboard then overwrote that with the first sixty characters of the first
+ * prompt. Both are gone: the orchestrator names a session it finds unnamed when
+ * it takes that session's first prompt, generating one name in one place and
+ * storing it, so every client reads the same name rather than deriving its own.
+ * A name typed here is still the user's and is never overwritten.
+ */
+const UNNAMED_SESSION = "";
 
 function safeJsonStringify(value: unknown): string {
   return JSON.stringify(value, null, 2);
@@ -132,7 +130,7 @@ export function applyReasoningToGatewayOptions(
 
 export function createDefaultDraft(config: DashboardConfig): SessionDraft {
   return {
-    name: buildDefaultSessionName(),
+    name: UNNAMED_SESSION,
     providerId: config.defaultProviderId,
     modelName: config.defaultModelName,
     recentMessageLimit: "",
@@ -238,8 +236,9 @@ export function withUsableProviderModel(
  * Build the draft for a brand-new session. Carries forward the user's
  * last-used settings (provider, model, reasoning, skills, replay limits, and
  * advanced/MCP options) from {@link lastUsed} when available, falling back to
- * the configuration defaults when there is no prior draft to copy from. Only
- * the session name is always freshly generated.
+ * the configuration defaults when there is no prior draft to copy from. The
+ * session name is never carried: a new session starts unnamed and is named from
+ * its first prompt.
  *
  * The carried provider/model is validated against the currently available
  * {@link providers} by {@link withUsableProviderModel} so a new session is never
@@ -256,7 +255,7 @@ export function createNewSessionDraft(
 
   const carried: SessionDraft = {
     ...lastUsed,
-    name: buildDefaultSessionName(),
+    name: UNNAMED_SESSION,
     reasoning: { ...lastUsed.reasoning },
     selectedSkills: [...lastUsed.selectedSkills],
   };

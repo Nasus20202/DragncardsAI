@@ -117,6 +117,14 @@ describe("session draft helpers", () => {
     expect(draft.selectedSkills).toEqual(["demo-skill"]);
   });
 
+  it("leaves a new session unnamed so the orchestrator can name it", () => {
+    // The dashboard used to seed a timestamp here, which told two sessions apart
+    // only by the minute they were created in.
+    expect(createDefaultDraft(config).name).toBe("");
+    expect(createNewSessionDraft(config, null).name).toBe("");
+    expect(createNewSessionDraft(config, lastUsedAnthropic, []).name).toBe("");
+  });
+
   it("carries forward last-used settings into a new session draft", () => {
     const lastUsed = lastUsedAnthropic;
 
@@ -136,7 +144,7 @@ describe("session draft helpers", () => {
     expect(draft.gatewayOptionsText).toBe('{"temperature":0.3}');
     expect(draft.providerOptionsText).toBe('{"foo":"bar"}');
     expect(draft.selectedSkills).toEqual(["skill-a", "skill-b"]);
-    // A fresh name is always generated rather than reused.
+    // The previous session's name is never carried onto the new one.
     expect(draft.name).not.toBe("Old session name");
     // Mutating the new draft must not affect the source draft.
     draft.selectedSkills.push("skill-c");

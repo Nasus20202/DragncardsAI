@@ -11,6 +11,7 @@ from agent_orchestrator.repositories.questions import (
     QUESTION_STATUS_ANSWERED,
     QUESTION_STATUS_CLOSED,
 )
+from agent_orchestrator.runtime.display_names import generate_agent_name
 from agent_orchestrator.runtime.history_emitter import SESSION_GAME_ID_KEY
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.personas import (
@@ -434,7 +435,7 @@ async def _launch_child_agent(
     job_id: str,
     parent_session: Any,
     prompt: str,
-    name: str,
+    name: str | None,
     child_metadata: dict[str, Any],
     model_config: ResolvedPlayerAgentConfig | ResolvedPersona | None,
     skills: list[str] | None,
@@ -464,6 +465,14 @@ async def _launch_child_agent(
     a seat that already owns a session is prompted again on that same session, so
     its configuration is the one captured when the seat was created and is not
     re-derived (which is what makes a persona snapshot hold for a whole game).
+
+    ``name`` is the caller's display name for the child, used when the caller
+    already has a meaningful one — a seat's hero name, say. Passing ``None`` asks
+    for a generated one, which is seeded on the child session's own id so that no
+    two children ever share a codename. That is why the session is created
+    unnamed and then named: the seed does not exist until the row does. The name
+    is stored on the child session and copied into every event that mentions it,
+    so no reader ever recomputes it.
     """
     if existing_child_session is not None:
         return await _enqueue_child_job(
@@ -484,6 +493,9 @@ async def _launch_child_agent(
         child_metadata,
         multi_turn_memory=multi_turn_memory,
     )
+    if name is None:
+        name = generate_agent_name(child_session.id, prompt)
+        await repository.update_session(child_session.id, name=name)
     if on_child_session_created is not None:
         await on_child_session_created(child_session.id)
 
@@ -703,8 +715,6 @@ def make_spawn_subagent_handler(
         if not prompt:
             return _text_result("prompt is required.", is_error=True)
 
-        name = prompt[:50]
-
         parent_session = await repository.get_session(session_id)
         if parent_session is None:
             return _text_result("Parent session not found.", is_error=True)
@@ -732,7 +742,9 @@ def make_spawn_subagent_handler(
             job_id=job_id,
             parent_session=parent_session,
             prompt=prompt,
-            name=name,
+            # No caller-supplied name: a spawn's own truncated prompt is exactly
+            # the unreadable label DRA-21 removed, so the child is named for us.
+            name=None,
             child_metadata=child_metadata,
             model_config=persona,
             skills=None if persona is None else persona.skills,

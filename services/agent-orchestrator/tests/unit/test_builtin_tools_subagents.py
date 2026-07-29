@@ -8,6 +8,7 @@ from agent_orchestrator.runtime.builtin_tools import (
     make_spawn_subagent_handler,
     make_wait_for_subagent_handler,
 )
+from agent_orchestrator.runtime.display_names import generate_agent_name
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.repository import Repository
@@ -53,14 +54,18 @@ async def test_spawn_subagent_returns_immediately_with_child_job_id(
     text = result["content"][0]["text"]
     assert "child_job_id" in text
     assert "name" in text
-    assert "do the thing" in text
 
     events = await repository.list_events(parent_job.id)
     event_types = [e.event_type for e in events]
     assert "subagent_started" in event_types
 
     started = next(e for e in events if e.event_type == "subagent_started")
-    assert started.payload_json["name"] == "do the thing"
+    # The name announced to the parent is the generated one stored on the child,
+    # so the tool result, the event and the session row all say the same thing.
+    child_session_id = started.payload_json["child_session_id"]
+    expected = generate_agent_name(child_session_id, "do the thing")
+    assert started.payload_json["name"] == expected
+    assert expected in text
 
     await await_job_event(repository, parent_job.id, "subagent_completed")
     assert scheduled
@@ -127,7 +132,7 @@ async def test_spawn_subagent_blocked_for_child_job(
 
 
 @pytest.mark.asyncio
-async def test_spawn_subagent_child_session_named_from_prompt(
+async def test_spawn_subagent_child_session_gets_a_generated_name(
     repository: Repository,
     live_event_bus: InMemoryLiveEventBus,
 ):
@@ -158,7 +163,13 @@ async def test_spawn_subagent_child_session_named_from_prompt(
     child_session_id = started.payload_json["child_session_id"]
     child_session = await repository.get_session(child_session_id)
     assert child_session is not None
-    assert child_session.name == prompt[:50]
+    # Seeded on the child's own id, so the codename is unique per child, and
+    # stored on the row so nothing recomputes it.
+    assert child_session.name == generate_agent_name(child_session_id, prompt)
+    assert child_session.name == started.payload_json["name"]
+    # The topic half comes from the prompt's content words, not its opening.
+    assert "analyse" in child_session.name
+    assert "game state" in child_session.name
 
 
 @pytest.mark.asyncio

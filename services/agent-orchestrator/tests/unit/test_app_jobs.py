@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from agent_orchestrator.runtime.display_names import generate_agent_name
+
 from .app_test_support import FailingMcpClient, build_test_app
 
 
@@ -119,3 +121,46 @@ def test_cancel_job_requests_cancellation_and_records_event(app):
     events = events_response.json()["events"]
     assert len(events) == 1
     assert events[0]["payload"] == {"requested": True}
+
+
+def test_unnamed_session_is_named_from_its_first_prompt(app):
+    """An unnamed session gets a generated name the first time it is prompted."""
+    with TestClient(app) as client:
+        session_id = client.post("/sessions", json={"name": ""}).json()["session"]["id"]
+
+        client.post(f"/sessions/{session_id}/prompts", json={"prompt": "hello"})
+        first_name = client.get(f"/sessions/{session_id}").json()["session"]["name"]
+
+        client.post(
+            f"/sessions/{session_id}/prompts",
+            json={"prompt": "shuffle the villain deck"},
+        )
+        second_name = client.get(f"/sessions/{session_id}").json()["session"]["name"]
+
+    assert first_name == generate_agent_name(session_id, "hello")
+    # The second prompt does not rename a session that has already run.
+    assert second_name == first_name
+
+
+def test_named_session_keeps_the_name_its_creator_chose(app):
+    with TestClient(app) as client:
+        session_id = client.post("/sessions", json={"name": "regression run"}).json()[
+            "session"
+        ]["id"]
+        client.post(f"/sessions/{session_id}/prompts", json={"prompt": "hello"})
+        name = client.get(f"/sessions/{session_id}").json()["session"]["name"]
+
+    assert name == "regression run"
+
+
+def test_session_created_without_a_name_is_named_on_first_prompt(app):
+    with TestClient(app) as client:
+        session_id = client.post("/sessions", json={}).json()["session"]["id"]
+        client.post(
+            f"/sessions/{session_id}/prompts",
+            json={"prompt": "Deal the encounter card to Rhino and resolve the boost"},
+        )
+        name = client.get(f"/sessions/{session_id}").json()["session"]["name"]
+
+    assert name is not None
+    assert "deal encounter" in name

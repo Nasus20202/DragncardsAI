@@ -21,6 +21,7 @@ from agent_orchestrator.api.tool_catalog import list_effective_session_tools
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.repositories.questions import QUESTION_STATUS_PENDING
 from agent_orchestrator.runtime.builtin_tools import TERMINAL_JOB_STATUSES
+from agent_orchestrator.runtime.display_names import generate_agent_name
 from agent_orchestrator.runtime.job_event_stream import JobEventStreamService
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.skills import (
@@ -70,6 +71,11 @@ async def submit_prompt(
     if inline_skills:
         metadata[JOB_INLINE_SKILLS_KEY] = inline_skills
 
+    # Read before enqueuing so "this is the session's first prompt" is decided
+    # without counting the job we are about to add.
+    session = await repo.get_session(session_id)
+    _, prior_job_count = await repo.list_session_jobs(session_id, limit=1)
+
     try:
         item = await repo.enqueue_prompt_job(
             session_id,
@@ -84,6 +90,20 @@ async def submit_prompt(
         )
     if item is None:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # An unnamed session gets its name from the first prompt it is given: that is
+    # the earliest moment there is anything to name it after. A session that
+    # already carries a name — one its creator chose — is never renamed, and a
+    # session that has run before is never renamed either.
+    if (
+        prior_job_count == 0
+        and session is not None
+        and not (session.name or "").strip()
+    ):
+        await repo.update_session(
+            session_id, name=generate_agent_name(session_id, body.prompt)
+        )
+
     return {"job": serialize_job(item)}
 
 

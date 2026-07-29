@@ -7,6 +7,7 @@ import {
   aggregateEvents,
   upsertStreamEvent,
 } from "@/features/play/lib/play-session-events";
+import { redactSecrets } from "@/features/play/lib/tool-call-presentation";
 import { AggEventRow } from "@/features/play/components/play-transcript";
 
 const TERMINAL_TYPES = new Set(["completion", "failure", "cancellation"]);
@@ -121,8 +122,13 @@ export function SubagentOutputModal({
                 />
               </svg>
             )}
+            {/*
+              Redacted like every other displayed name: a subagent recorded
+              before the orchestrator generated names carries a raw slice of a
+              model-written prompt, and stored events are replayed forever.
+            */}
             <span className="text-xs font-semibold text-default-500">
-              {name}
+              {redactSecrets(name)}
             </span>
           </div>
           <button
