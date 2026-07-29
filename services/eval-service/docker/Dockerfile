@@ -1,16 +1,16 @@
 FROM python:3.14.6-alpine
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.33 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.0 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
 COPY services/shared /shared
-COPY services/eval-service/pyproject.toml ./pyproject.toml
-RUN uv sync --no-dev --no-install-project
+COPY services/eval-service/pyproject.toml services/eval-service/uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY services/eval-service/src ./src
 COPY skills ./skills
-RUN uv sync --no-dev
+RUN uv sync --frozen --no-dev
 
 ENV PYTHONPATH=/app/src
 ENV PATH=/app/.venv/bin:$PATH
