@@ -90,9 +90,23 @@ The dashboard SHALL read the DragnCards frontend URL from the `DRAGNCARDS_FRONTE
 ### Requirement: Agent session management
 The dashboard SHALL allow users to create, select, inspect, update, and terminate agent sessions through agent-orchestrator APIs.
 
-#### Scenario: Create session with defaults
+A session the dashboard creates SHALL be created without a name, because the agent-orchestrator names an unnamed session from its first prompt and a name generated in one place and stored is a name every client agrees on. The dashboard SHALL NOT derive a session name of its own — neither at creation nor from a prompt — and saving a session's configuration with an empty name field SHALL leave the session unnamed rather than inventing one. A name the user types SHALL be sent as given and SHALL NOT be overwritten.
+
+A session with no name SHALL be presented under a placeholder in the sidebar, so an unprompted session is still selectable and removable.
+
+#### Scenario: Create session without a name
 - **WHEN** a user creates a new Play session
-- **THEN** the dashboard SHALL name it with the current date and time, submit it to the agent-orchestrator, and display the created session in the sidebar
+- **THEN** the dashboard SHALL submit it to the agent-orchestrator with no name of its own and display the created session in the sidebar
+- **AND** the sidebar SHALL show a placeholder for it until it has a name
+
+#### Scenario: A typed name is kept
+- **WHEN** a user types a session name and saves the configuration
+- **THEN** the dashboard SHALL send that name
+- **AND** SHALL NOT replace it with a generated or derived one
+
+#### Scenario: Saving settings does not name an unnamed session
+- **WHEN** a user saves the configuration of a session that has no name, leaving the name field empty
+- **THEN** the dashboard SHALL leave the session unnamed, so its first prompt can still name it
 
 #### Scenario: Inspect selected session
 - **WHEN** a user selects a session from the sidebar
@@ -226,6 +240,8 @@ The dashboard SHALL expose a stable browser automation path for the Play workspa
 
 The automation path SHALL rely on stable labels, roles, or explicit test selectors for the controls required by that smoke flow rather than incidental DOM structure.
 
+Submitting a prompt SHALL NOT patch the session's name. Naming an unnamed session from its first prompt belongs to the agent-orchestrator and happens inside the same request, so the dashboard SHALL refresh the session list after submitting and display whatever name came back.
+
 #### Scenario: Submit prompt
 - **WHEN** a user submits a prompt for an active session
 - **THEN** the dashboard SHALL create a prompt job through the agent-orchestrator and append the user prompt to the transcript
@@ -238,10 +254,10 @@ The automation path SHALL rely on stable labels, roles, or explicit test selecto
 - **WHEN** a browser automation client opens the Play workspace and creates or selects a session
 - **THEN** it SHALL be able to locate the prompt input and submit control through stable automation-facing selectors or accessible labels
 
-#### Scenario: First prompt auto-generates session title
-- **WHEN** the user submits the first prompt and no non-timestamp name has been set on the session
-- **THEN** the dashboard SHALL call `PATCH /sessions/{id}` with the session name set to the first 60 characters of the prompt text
-- **THEN** the session list and any visible title area SHALL update to reflect the new name
+#### Scenario: The dashboard does not name the session it prompts
+- **WHEN** the user submits the first prompt in a session
+- **THEN** the dashboard SHALL NOT call `PATCH /sessions/{id}` to set the session's name
+- **AND** SHALL refresh the session list so the name the agent-orchestrator generated is shown
 
 #### Scenario: Subsequent prompts leave session title unchanged
 - **WHEN** the user submits a second or later prompt in the same session
@@ -545,30 +561,6 @@ Achieving this containment SHALL NOT change what a transcript renders: any given
 #### Scenario: A streamed token rebuilds no settled tool card
 - **WHEN** a job event arrives for the streaming job in a session whose earlier jobs hold completed tool exchanges
 - **THEN** the dashboard SHALL NOT rebuild the presentation of any of those earlier tool exchanges
-
-### Requirement: Subagent cards rendered inline in the chat area
-The dashboard SHALL render each spawned subagent as an expandable card in the main chat column, positioned above the context health widget and below the main job thread. The card SHALL use the same `JobThread` / `AggEventRow` transcript rendering as the parent thread. There SHALL be no subagent panel in the config sidebar.
-
-#### Scenario: Subagent card appears on subagent_started
-- **WHEN** the parent job's SSE stream emits `subagent_started`
-- **THEN** a subagent card is inserted in the chat area with the subagent's `name` as its header title
-- **THEN** the card immediately opens an SSE connection to the child job's event stream and begins rendering events live
-
-#### Scenario: Subagent card stops streaming on terminal event
-- **WHEN** the child job's SSE stream emits a terminal event
-- **THEN** the card closes its SSE connection and switches to static display
-
-#### Scenario: Multiple subagent cards stack in order
-- **WHEN** multiple `subagent_started` events are received
-- **THEN** each gets its own card stacked below the previous one in chronological order
-
-#### Scenario: Subagent card collapses and expands
-- **WHEN** the user clicks the subagent card header
-- **THEN** the card body toggles collapsed or expanded
-
-#### Scenario: Config sidebar has no subagent panel
-- **WHEN** subagent activity exists for the active session
-- **THEN** the config sidebar SHALL NOT contain a subagent panel or subagent list
 
 ### Requirement: Merged Swagger playground
 The dashboard SHALL provide a Swagger section that displays a merged OpenAPI document for
@@ -1185,4 +1177,75 @@ surface never invites an answer the orchestrator would refuse.
 - **WHEN** a program requests a free-text box for a question that does not permit a
   free-text answer
 - **THEN** no text field SHALL be rendered
+
+### Requirement: The subagent list is bounded, scrollable, and filterable by status
+The Play workspace SHALL present a session's subagents in a list floating over the transcript, and that list SHALL keep its entries inside a container with a maximum height and its own vertical overflow. The list SHALL therefore never extend past the height of that container regardless of how many subagents a session has spawned, and the entries beyond the visible height SHALL be reachable by scrolling within the list rather than by scrolling the page. Scrolling past the end of the list SHALL NOT continue into the transcript underneath it.
+
+Collapsed, the list SHALL show the subagents that are still running and the ones that failed, and SHALL state how many failed. Expanded, the list SHALL offer a status filter over All, running, completed and failed, SHALL label each status with how many subagents currently hold it, and SHALL show all subagents until the reader chooses otherwise. Choosing a status SHALL show only the subagents holding it. Choosing a status that nothing holds SHALL say so rather than presenting an empty list.
+
+The filter SHALL be the reader's current view state and SHALL NOT be persisted anywhere.
+
+Each entry SHALL show its subagent's name, SHALL make the whole name available when the row is too narrow for it, and SHALL fall back to a short form of the child job id for a subagent that has no name. Selecting an entry SHALL open the subagent output view on that child job.
+
+The list SHALL keep the existing appearance of the workspace: the header, the entry rows, the status marks and the failure tooltip are unchanged, and the filter control SHALL be sized to the list it sits in.
+
+#### Scenario: The entries are held in a bounded box that scrolls itself
+- **WHEN** the subagent list is shown for a session with more subagents than fit
+- **THEN** the entries SHALL be inside a container with a maximum height and its own vertical scrolling
+- **AND** the page SHALL NOT grow to fit the list
+
+#### Scenario: Every entry is reachable
+- **WHEN** a session has far more subagents than the container's height allows
+- **THEN** every entry SHALL be present inside the scrolling container
+
+#### Scenario: A collapsed list shows what needs attention
+- **WHEN** the list is collapsed for a session with running, completed and failed subagents
+- **THEN** the running and failed subagents SHALL be shown and the completed ones SHALL NOT
+- **AND** the number that failed SHALL be stated
+
+#### Scenario: The filter appears with the expanded list
+- **WHEN** the list is collapsed
+- **THEN** no status filter SHALL be offered
+- **WHEN** the reader expands the list
+- **THEN** a status filter SHALL be offered
+
+#### Scenario: Each status is labelled with its count
+- **WHEN** the expanded list is shown for a session with two completed, one running and one failed subagent
+- **THEN** the filter SHALL label the statuses with those counts and the total
+
+#### Scenario: Choosing a status narrows the list
+- **WHEN** the reader chooses the failed status
+- **THEN** only failed subagents SHALL be shown
+- **WHEN** the reader chooses the running status
+- **THEN** only running subagents SHALL be shown, and completed and failed ones SHALL NOT
+
+#### Scenario: Choosing All restores the whole list
+- **WHEN** the reader has narrowed the list and then chooses All
+- **THEN** every subagent SHALL be shown again
+
+#### Scenario: An empty status says so
+- **WHEN** the reader chooses a status that no subagent currently holds
+- **THEN** the list SHALL state that nothing holds that status
+
+#### Scenario: An entry with no name falls back to its job id
+- **WHEN** a subagent entry carries no name
+- **THEN** the entry SHALL show a short form of its child job id
+
+#### Scenario: Selecting an entry opens that subagent
+- **WHEN** the reader selects an entry
+- **THEN** the subagent output view SHALL open on that entry's child job
+
+### Requirement: Displayed subagent names and failure reasons are redacted
+The dashboard SHALL redact credential-shaped text from a subagent's name and from its failure reason wherever it displays them, including in the subagent list and in the header of the subagent output view, using the same redaction the transcript's tool cards apply.
+
+This is required because a subagent name recorded before names were generated is a slice of a model-written prompt, and a failure reason is a server-supplied message that can carry a provider error body. Both are replayed from stored events for as long as the session exists, so neither can be assumed safe to display verbatim.
+
+#### Scenario: A credential in a stored subagent name is not shown
+- **WHEN** a subagent entry's name carries credential-shaped text
+- **THEN** the list SHALL show the name with the credential replaced
+- **AND** the credential SHALL NOT appear anywhere in the rendered list
+
+#### Scenario: The subagent output view redacts its title
+- **WHEN** the subagent output view is opened on a subagent whose name carries credential-shaped text
+- **THEN** its header SHALL show that name with the credential replaced
 
