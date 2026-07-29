@@ -87,15 +87,22 @@ was closed earlier; it reopens with `gh pr reopen 305` only on an explicit reque
 - `EVAL_JUDGE_OPENROUTER_API_KEY` is unset in `services/bifrost/.env`, so any judge-latency figure is
   a projection, not a measurement.
 
-## Check baselines on the integration tip (`ccb0fb9`)
+## Check baselines on the integration tip (`98192f3`)
 
 - `./scripts/lint.sh` — clean.
-- Unit: game-service **378**, agent-orchestrator **470**, history-service **159**,
-  eval-service **252**, shared **36**, dashboard **598** (73 files). Python total 1295.
-- Integration: agent-orchestrator **28**, history-service **8**, eval-service **13**.
-- `openspec validate --all` — 17 passed, 1 failed (the pre-existing one above).
+- Unit: game-service **384**, agent-orchestrator **487**, history-service **175**,
+  eval-service **258**, shared **36**, dashboard **609** (74 files).
+- Integration: agent-orchestrator **28**, history-service **8**, eval-service **13**,
+  game-service **63**.
+- `openspec validate --all` — 16 passed, 1 failed (the pre-existing one above).
 - `pnpm typecheck` in `services/dashboard` — clean.
 - Placeholder grep over all of `openspec/specs/` — clean.
+- Every commit signed: `git log --format="%h %G? %s"` shows no `N`.
+
+**A flaky pair, pre-existing** — reproduced on `eb0a7e6`, so not caused by this batch:
+`test_player_seat_sessions.py::test_a_chat_session_still_spawns_a_memoryless_child` and
+`test_builtin_tools_subagents.py::test_spawn_subagent_child_failure_emitted_async` fail
+intermittently under xdist with random ordering; both pass in isolation.
 
 ## Environment notes
 
@@ -119,17 +126,42 @@ the directory. Running `./scripts/docker.sh` from `wt-integration` creates a **s
 what reuses the `dragncardsai_*` volumes. Do not rebuild from the main checkout instead — it sits on
 an older branch and would build the wrong code.
 
-## Second batch, in flight as of 2026-07-29
+## Second batch — complete
 
-Owner decisions that scope it: **DRA-12 gets (A) + (C), not (B)** — (B) changes *when* history is
-summarised and sign-off was withheld; A4 (the guard) ships first. **DRA-31 is fixed now, DRA-32 is
-filed** for later because it needs an auth model decision.
+All four issues merged, archived and pushed. **No worktrees or feature branches remain.** The two
+local branches `features/history-harden` and `features/history-play-style-browser` are from
+2026-06-29 and are the owner's — do not delete them.
 
-| Branch | Issue | Scope |
-| --- | --- | --- |
-| `stanislaw/dra-26-history-restore-and-board-view` | DRA-26 + DRA-28 | Together on purpose: DRA-26's third bullet ("open board at this event" must not overwrite the live game) *is* DRA-28's subject. Two agents on one surface would collide. |
-| `stanislaw/dra-12-bounded-compaction` | DRA-12 | (A) checkpointed + capped + fitted compaction input, A4 guard first; (C) helper text. (B) explicitly untouched. |
-| `stanislaw/dra-31-history-cors` | DRA-31 | CORS only, aligned to eval-service, plus a four-service audit. No auth. |
+- **DRA-31** — CORS wildcard replaced by a configurable dashboard-origin allowlist on **three**
+  services, not one. game-service and agent-orchestrator were equally exposed (`DELETE /games/{id}`,
+  `DELETE /sessions/{id}`, `POST /sessions/{id}/prompts`), so fixing only history-service would have
+  left the hole open while looking closed. eval-service was genuinely deliberate and is unchanged.
+- **DRA-12** — (A) + (C) only, per the owner. (B) is **DRA-33**. The agent correctly moved (B)'s
+  requirement out of the spec delta into `design.md`, because a delta is applied on archive and would
+  have written unimplemented behaviour into the durable spec.
+- **DRA-26 + DRA-28** — one real bug (the in-place 404, which originates in *agent-orchestrator*'s
+  `get_active_session_by_game_id` requiring `status == "active"`), and **two false premises** proven
+  false rather than "fixed": branch mode always did create a new game, and open-board never
+  overwrote anything (sha256 identical before/after through the UI). The real defect in both was
+  that neither action *said* what it did.
+- **DRA-6** auto-closed when DRA-12, its last open child, went Done.
+
+Open: **DRA-30** (seat guard — spec already written, change still active), **DRA-32** (proxy/Swagger
+auth — needs the owner's auth-model decision), **DRA-33** ((B), design already written).
+
+**Not filed, deliberately — recorded here and in DRA-28's comment so it is not lost.** The
+board-at-time click is still slow and the root cause is *not* payload size: `POST /games` fans out to
+≥5 sequential external round trips at a measured 65 ms floor. The two named causes are that the
+DragnCards token is re-authenticated per room (the obvious in-memory cache would violate the
+no-in-memory-state rule, so it belongs in **Valkey**) and that ephemeral rooms are recreated rather
+than reused. The owner was offered this as a follow-up and has not yet asked for it.
+
+**A GPG trap that will recur.** `commit.gpgsign=true` with no `~/.gnupg/gpg-agent.conf`, so the
+default 600 s passphrase cache expires mid-session and commits fail with `gpg: signing failed:
+Timeout`. Two agents hit it; one silently used `-c commit.gpgsign=false`, so **its commits were
+unsigned**. That is harmless here only because each issue lands as one squash commit created by the
+orchestrating agent, which *is* signed — verify with `git log --format="%h %G? %s"` and check no
+commit on the branch shows `N`. Ask the owner to unlock rather than disabling signing.
 
 ## Known follow-ups worth filing as issues
 
