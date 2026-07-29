@@ -48,6 +48,51 @@ game-state (nearest snapshot + forward replay of `game-service` mutating events)
 and agent-context (latest `agent` event's captured conversation context handed
 to the orchestrator). Agent events are never replayed as game mutations.
 
+### MCP surface
+
+The service mounts its own MCP server at `/mcp`, wired in `main.py` and
+deliberately NOT in the app factory: the test suites build the app directly and
+must not start the MCP session manager. `mcp_server.py` declares only the name and
+the exclusion list; the mounting itself is `dragncards_common.mcp`.
+
+Tools are generated from this service's FastAPI OpenAPI schema, so a tool IS its
+endpoint — with the endpoint's own request and response models as its schema — and
+a tool's name is that endpoint's `operation_id`. There is no hand-written tool
+layer that could drift from the API.
+
+**Adding a route adds an MCP tool automatically, so give every route an explicit
+`operation_id`.** Without one, FastAPI generates a name from the function and path
+(`list_events_games__game_id__events_get`), and that is what the tool ends up
+called.
+
+`EXCLUDED_ROUTES` in `mcp_server.py` keeps four things out, each for a specific
+reason:
+
+- `delete_game_history` (`DELETE /games/{game_id}`) — irreversible. The event store
+  is the only durable record of what an agent did, so losing one game's history
+  destroys the evidence a debugging loop exists to read.
+- `backfill_game_event` (`POST /games/{game_id}/events`) and `import_game_bundle`
+  (`POST /import`) — writes into the ordered store. They are the restore and
+  migration paths; a fabricated event corrupts the record while every read still
+  looks healthy.
+- `export_game_bundle` (`GET /games/{game_id}/export`) — a streaming whole-game
+  NDJSON bundle. As a tool call it would buffer an entire recorded game, hundreds
+  of raw DragnCards states, into the caller's context. Use the paged
+  `list_game_events` instead.
+- The `health` and `ready` probes, excluded for every service by the shared
+  bootstrap: an LLM client gains nothing from them and they crowd the tool list.
+
+Exclusion applies to MCP only. Every one of those endpoints still works over HTTP,
+so nothing here reduces what the dashboard or a human with `curl` can do. The
+exclusions are regexes matched against generated OpenAPI paths, so
+`tests/unit/test_mcp_server.py` asserts tool names against the real app rather
+than reading the list — a pattern that quietly matches nothing looks identical to
+one that works.
+
+The whole loop these tools exist for is
+[Driving the System End-to-End](../../AGENTS.md#driving-the-system-end-to-end) in
+the root `AGENTS.md`.
+
 ### Observability
 
 Telemetry comes from `dragncards_common.telemetry`; `history_service/telemetry.py`

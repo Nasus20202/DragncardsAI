@@ -90,13 +90,14 @@ def test_main_initializes_telemetry_before_serving(monkeypatch):
     monkeypatch.setattr(
         main_module, "create_app", lambda settings: calls.append("create_app")
     )
+    monkeypatch.setattr(main_module, "mount_mcp", lambda app: calls.append("mount_mcp"))
     monkeypatch.setattr(
         main_module.uvicorn, "run", lambda app, host, port: calls.append("run")
     )
 
     main_module.main()
 
-    assert calls == ["setup_telemetry", "create_app", "run"]
+    assert calls == ["setup_telemetry", "create_app", "mount_mcp", "run"]
 
 
 def test_instrument_fastapi_app_forwards_this_services_identity(monkeypatch):

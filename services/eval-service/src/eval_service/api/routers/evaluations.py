@@ -56,7 +56,11 @@ def validate_game_id(game_id: str) -> str:
     return game_id
 
 
-@router.get("/evaluations", response_model=EvaluationListResponse)
+@router.get(
+    "/evaluations",
+    response_model=EvaluationListResponse,
+    operation_id="list_evaluations",
+)
 async def list_evaluations(
     active: bool = False,
     limit: int = Query(default=50, ge=1),
@@ -84,7 +88,11 @@ async def list_evaluations(
     return EvaluationListResponse(requests=items)
 
 
-@router.post("/evaluations/clear", response_model=ClearEvaluationsResponse)
+@router.post(
+    "/evaluations/clear",
+    response_model=ClearEvaluationsResponse,
+    operation_id="clear_evaluations",
+)
 async def clear_evaluations(
     repo: Repository = Depends(get_repository),
 ) -> ClearEvaluationsResponse:
@@ -100,7 +108,11 @@ async def clear_evaluations(
     return ClearEvaluationsResponse(deleted_count=deleted)
 
 
-@router.delete("/evaluations/{request_id}", status_code=204)
+@router.delete(
+    "/evaluations/{request_id}",
+    status_code=204,
+    operation_id="delete_evaluation",
+)
 async def delete_evaluation(
     request_id: str,
     repo: Repository = Depends(get_repository),
@@ -125,7 +137,11 @@ async def delete_evaluation(
     return None
 
 
-@router.get("/games/{game_id}/rounds", response_model=RoundListResponse)
+@router.get(
+    "/games/{game_id}/rounds",
+    response_model=RoundListResponse,
+    operation_id="list_game_rounds",
+)
 async def list_game_rounds(
     game_id: str = Depends(validate_game_id),
     service: RoundsService = Depends(get_rounds_service),
@@ -149,6 +165,7 @@ async def list_game_rounds(
     "/games/{game_id}/evaluations",
     response_model=CreateEvaluationResponse,
     status_code=201,
+    operation_id="create_evaluation",
 )
 async def create_evaluation(
     game_id: str = Depends(validate_game_id),
@@ -170,6 +187,7 @@ async def create_evaluation(
 @router.get(
     "/games/{game_id}/evaluations/{request_id}",
     response_model=RequestStatusResponse,
+    operation_id="get_evaluation",
 )
 async def get_evaluation(
     request_id: str,
@@ -189,7 +207,10 @@ async def get_evaluation(
     )
 
 
-@router.get("/games/{game_id}/evaluations/{request_id}/stream")
+@router.get(
+    "/games/{game_id}/evaluations/{request_id}/stream",
+    operation_id="stream_evaluation",
+)
 async def stream_evaluation(
     request: Request,
     request_id: str,
@@ -213,6 +234,7 @@ async def stream_evaluation(
 @router.post(
     "/games/{game_id}/evaluations/{request_id}/cancel",
     response_model=CancelResponse,
+    operation_id="cancel_evaluation",
 )
 async def cancel_evaluation(
     request_id: str,

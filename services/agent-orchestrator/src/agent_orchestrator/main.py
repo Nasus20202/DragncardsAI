@@ -7,6 +7,7 @@ import uvicorn
 
 from agent_orchestrator.runtime.app import create_app
 from agent_orchestrator.config import Settings
+from agent_orchestrator.mcp_server import mount as mount_mcp
 from agent_orchestrator.telemetry import setup_telemetry
 
 logging.basicConfig(
@@ -26,6 +27,9 @@ def main() -> None:
         os.environ.get("HTTP_PORT", str(settings.http_port)),
     )
     app = create_app(settings=settings)
+    # Mounted here rather than in the app factory: the test suites build the
+    # app directly and must not start the MCP session manager.
+    mount_mcp(app)
     uvicorn.run(
         app,
         host=os.environ.get("HTTP_HOST", settings.http_host),

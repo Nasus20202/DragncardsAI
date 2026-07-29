@@ -98,6 +98,36 @@ fast, unverified):
 | one event's full payload | 7 ms, 428 KiB | 7 ms, 428 KiB |
 | `GET /games` | 8 ms | 8 ms |
 
+## MCP surface
+
+The same HTTP API is exposed as MCP tools over streamable-HTTP at
+http://localhost:4004/mcp/ (clients address it with the trailing slash). It exists
+so an assistant working in this repository can read a recorded game as tool calls —
+list recorded games, walk a game's events and timeline, inspect snapshots, restore
+a session to a past moment — instead of hand-written `curl` against endpoints whose
+shape it has to guess. The transport is mounted in `main.py`, not in the app
+factory, so the test suites never start the MCP session manager.
+
+Tools are **generated from this service's OpenAPI schema** by
+`dragncards_common.mcp`, so a tool is exactly the endpoint it came from and a
+tool's name is that endpoint's `operation_id`: `list_recorded_games`,
+`list_game_events`, `list_game_timeline`, `list_game_snapshots`, `restore_game`.
+
+`history_service/mcp_server.py` lists what is kept out:
+
+| Not a tool | Why |
+| --- | --- |
+| `delete_game_history` | Irreversible — the event store is the only record of what an agent did |
+| `backfill_game_event` | Writes into the ordered store; a fabricated event corrupts the record while every read still looks healthy |
+| `import_game_bundle` | Same write path, for a whole bundle |
+| `export_game_bundle` | Streams a whole recorded game; as a tool it would buffer tens of megabytes into the caller's context — use the paged `list_game_events` |
+| `health`, `ready` | Probes are noise in an LLM's tool list |
+
+Exclusion applies to MCP only; every one of those endpoints still works over HTTP.
+
+The end-to-end debugging loop these tools exist for is documented in
+[`AGENTS.md`](../../AGENTS.md#driving-the-system-end-to-end).
+
 ## Event envelope
 
 ```json

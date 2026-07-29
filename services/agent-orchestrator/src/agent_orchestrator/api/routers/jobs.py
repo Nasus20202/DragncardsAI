@@ -43,7 +43,9 @@ from agent_orchestrator.storage.repository import Repository
 router = APIRouter(tags=["jobs"])
 
 
-@router.post("/sessions/{session_id}/prompts", status_code=202)
+@router.post(
+    "/sessions/{session_id}/prompts", status_code=202, operation_id="submit_prompt"
+)
 async def submit_prompt(
     request: Request,
     session_id: str,
@@ -107,7 +109,7 @@ async def submit_prompt(
     return {"job": serialize_job(item)}
 
 
-@router.get("/jobs/{job_id}")
+@router.get("/jobs/{job_id}", operation_id="get_job")
 async def get_job(
     job_id: str,
     repo: Repository = Depends(get_repository),
@@ -137,12 +139,12 @@ async def get_job(
     }
 
 
-@router.get("/jobs/{job_id}/status")
+@router.get("/jobs/{job_id}/status", operation_id="get_job_status")
 async def get_job_status(item=Depends(require_job)) -> dict[str, JobSummary]:
     return {"job": serialize_job(item)}
 
 
-@router.post("/jobs/{job_id}/cancel")
+@router.post("/jobs/{job_id}/cancel", operation_id="cancel_job")
 async def cancel_job(
     job_id: str, repo: Repository = Depends(get_repository)
 ) -> dict[str, JobSummary]:
@@ -152,7 +154,9 @@ async def cancel_job(
     return {"job": serialize_job(item)}
 
 
-@router.post("/jobs/{job_id}/questions/{question_id}/answer")
+@router.post(
+    "/jobs/{job_id}/questions/{question_id}/answer", operation_id="answer_job_question"
+)
 async def answer_job_question(
     job_id: str,
     question_id: str,
@@ -248,7 +252,7 @@ async def answer_job_question(
     return {"question": serialize_job_question(answered)}
 
 
-@router.get("/jobs/{job_id}/events")
+@router.get("/jobs/{job_id}/events", operation_id="list_job_events")
 async def list_job_events(
     job_id: str,
     after: int = 0,
@@ -263,7 +267,7 @@ async def list_job_events(
     return {"events": [serialize_event(event) for event in events]}
 
 
-@router.get("/jobs/{job_id}/events/stream")
+@router.get("/jobs/{job_id}/events/stream", operation_id="stream_job_events")
 async def stream_job_events(
     request: Request,
     job_id: str,

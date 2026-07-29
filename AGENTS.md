@@ -21,6 +21,11 @@ Write rules in terms of *what* to do, naming a specific tool or command only as 
 ## Useful Reading
 
 - Start with [`README.md`](README.md) for local setup, test commands, and service URLs.
+- Read **[Driving the System End-to-End](#driving-the-system-end-to-end)** below before
+  verifying a change by hand. It is the full loop — create a game, start a player agent,
+  read its actions, read the live board, request an evaluation, read the verdict — over the
+  MCP surface every service exposes, plus the prerequisites that otherwise cost an
+  afternoon.
 - Read [`services/game-service/README.md`](services/game-service/README.md) when working on DragnCards session control, MCP tools, or game actions.
 - Read [`services/agent-orchestrator/README.md`](services/agent-orchestrator/README.md) when working on agent sessions, skills, providers, or background jobs.
 - Read [`services/history-service/README.md`](services/history-service/README.md) when working on the recorded event store, snapshots, or restore.
@@ -207,6 +212,246 @@ and say in the final report which ancillary files you updated.
 - Use `scripts/test.sh integration` for integration tests when the Docker stack is running.
 - Use `scripts/docker.sh build` when a rebuild is needed.
 - Follow existing structure inside each service instead of forcing one pattern across the monorepo.
+
+## Driving the System End-to-End
+
+This section is for **you**, an agent changing this repository, not for a person playing
+the game. It is the loop that lets you verify your own change instead of reporting "the
+unit tests pass" and hoping: create a game, start a player agent on it, read what the
+agent actually did, read the live board, ask the judge to grade it, read the verdict.
+
+Every service exposes its whole HTTP API over MCP at `/mcp`, and `.mcp.json` registers
+all four servers, so the loop is tool calls rather than hand-written `curl`. **An MCP
+tool's name is its endpoint's `operation_id`** — `create_game`, `submit_prompt`,
+`list_game_events`, `list_game_rounds` — and a client normally prefixes it with the
+server name, so the same tool appears as `game-service_create_game` to the game-playing
+agent and as `create_game` under the `game-service` server to you. When a tool you
+expect is missing, the route was deliberately excluded (see *What is not a tool*); the
+HTTP endpoint still works.
+
+### 0. Prerequisites, and the four things that waste an afternoon
+
+**Initialise submodules in a new worktree.** `git worktree add` does **not** populate
+them, and nothing warns you:
+
+```bash
+git submodule update --init --recursive
+```
+
+`external/dragncards` and `external/dragncards-mc-plugin` come up empty otherwise, and
+game-service's typed-action registry is generated from the plugin JSON at import time —
+with no JSON, the generated `Literal` collapses to `Literal[()]` and the game-service
+suite fails with roughly 384 collection errors that look nothing like a missing
+submodule. Check `ls external/dragncards-mc-plugin/json` returns files before running
+anything.
+
+**Start infrastructure, and know what "infrastructure" means.**
+
+```bash
+./scripts/docker-infrastructure.sh start   # DragnCards, the databases, Valkey, Bifrost, otel-lgtm
+make run                                   # the five app services, from source, on top of it
+```
+
+Ports: dashboard `3001`, game-service `4001`, agent-orchestrator `4002`, bifrost `4003`,
+history-service `4004`, eval-service `4005`, Grafana `3004`, DragnCards frontend `3000`
+and backend `4000`.
+
+**Confirm the running services match your source before you conclude anything.** A
+Compose stack that was started before your change is serving the old image, and a missing
+endpoint then looks like a bug in your reasoning rather than a stale container. The cheap
+check is to diff the live route list against the routers you just edited:
+
+```bash
+curl -s http://localhost:4005/openapi.json | python3 -c 'import sys,json; print(sorted(json.load(sys.stdin)["paths"]))'
+```
+
+If a route you can see in `services/*/src/*/api/routers/` is absent from that list, the
+container is old: `./scripts/docker.sh build` and restart it, or run that one service
+from source. This is not hypothetical — it is the normal state of a long-running local
+stack.
+
+**Configure the judge before you get to step 5.** eval-service needs a judge model and a
+judge API key, and it fails *every* target without them rather than refusing the request
+up front. Check first, and treat `degraded` as a blocker for the evaluation step:
+
+```bash
+curl -s http://localhost:4005/ready     # {"status":"degraded", …, "judge_configured":false} == not ready
+```
+
+`EVAL_JUDGE_MODEL` has no default. The key is per provider and named
+`EVAL_JUDGE_<PROVIDER>_API_KEY` (`EVAL_JUDGE_OPENROUTER_API_KEY` for OpenRouter) so the
+judge bills to its own budget under the `eval-judge` Bifrost identity — it must never
+fall back to a game-playing key. Set these in your environment or a local `.env`, never
+in a committed file.
+
+### 1. Create a game
+
+`create_game` on **game-service**, body `{"plugin_name": "marvel-champions"}` — both
+fields default, so `{}` works too. Keep `session.session_id` from the response: it is the
+id every later game-service call takes, **and** it is the `game_id` history-service and
+eval-service key on. Do not pass `ephemeral: true`: an ephemeral session emits no history,
+so nothing downstream of step 3 will exist.
+
+Then set the table up, in this order:
+
+1. `set_player_count_action` — `{"type": "set_player_count", "num_players": 1, "layout_id": …}`.
+   Read the valid `layout_id` values from `get_session_actions` →
+   `plugin_metadata.player_count_layouts[].layout_id`; they are generated from the plugin
+   JSON, so they are not in the Python source.
+2. `search_prebuilt_sets_marvel_champions` with `name=` to resolve deck ids — never
+   hardcode a deck UUID.
+3. `load_prebuilt_deck` once per hero, **then** the villain/scenario set. `deck_id` is a
+   **query parameter**, not a body field. The wrong order fails with "Load all player
+   decks before loading the scenario".
+4. `mulligan_draw_hand` per seat, `{"type": "mulligan_draw_hand", "player_n": "player1"}`.
+
+**Worked?** `get_game_state` returns a `state` with populated `zones` and a `players` entry
+for each seat. Open `http://localhost:3000/room/<room_slug>` to see the same table.
+
+### 2. Start a player agent on it
+
+On **agent-orchestrator**:
+
+1. `create_session` — every field is optional, `{}` is valid. Keep `session.id`.
+2. `list_providers` — pick an entry with `available: true` and a non-empty `models`, then
+   `set_session_model_config` with `{"provider_id": …, "model_name": …}` taking
+   `model_name` verbatim from that list (it already carries the provider prefix).
+3. `enable_session_skill` with `{"skill_name": "marvel-champions-play"}`. Skill names are
+   the directory names under the repo-root `skills/`.
+4. The game-service MCP server is already attached: a non-custom registry entry is seeded
+   at startup and every new session enables it. Confirm with `list_session_mcps`, and
+   confirm the tools resolved with `list_session_tools` — you should see
+   `game-service_*` names.
+5. `submit_prompt` with `{"prompt": …}`. Returns `202` and a `job.id`.
+
+**Nothing binds a session to a game, and this is the step agents get wrong.** There is no
+"attach session to game" endpoint. The agent learns its game and its seat *only from your
+prompt text*, so the prompt must state the game-service `session_id`, the hero, and the
+seat (`player1`). `session.metadata.game_id` is then populated automatically from the
+agent's first game-service tool call, and that is what stamps the history events — so an
+agent that never calls a game-service tool records nothing under the game.
+
+**Worked?** `get_job_status` moves off `queued`, and `list_job_events` starts returning
+`tool_call` events whose `assignment` is `game-service`.
+
+### 3. Analyse what the agent did
+
+`list_job_events` on agent-orchestrator, `{"after": <last id seen>}` — ascending,
+`after` exclusive, so poll by advancing the cursor. Prefer this over
+`stream_job_events`: the SSE endpoint is not an MCP tool (a tool call reads its response
+to completion and a stream never completes).
+
+The events worth reading: `tool_call` carries `tool_name` (the real name),
+`exposed_tool_name` (what the model saw), `assignment` (the MCP server) and `arguments`;
+`tool_result` carries the matching `tool_call_id`, `is_error` and `result`. `reasoning`
+and `model_output` show what the model was thinking between calls.
+
+**Know when it stopped.** `completion`, `failure` and `cancellation` are the only terminal
+events. Poll `get_job_status` as the authority: terminal statuses are `completed`,
+`failed`, `cancelled` and `interrupted`. Note the asymmetry — hitting the tool-round limit
+emits a `completion` event but leaves the job `interrupted`, so an agent that only watches
+events concludes success from a truncated run.
+
+### 4. Fetch the live board state
+
+`get_game_state` on game-service. For Marvel Champions the response is the *simplified*
+state — the same view the playing agent sees — with top-level `roundNumber`, `mode`,
+`villainHitPoints`, `stepId`, `stepDescription`, `players` and `zones`. Face-down cards and
+deck contents collapse to a single `HIDDEN` entry carrying a `stackSize` count.
+
+`stepId` gives the phase, not the acting player: whose turn it is is not a field anywhere,
+and the orchestrating prompt tracks it. `mode` is `unknown | in progress | win | loss`.
+
+`GET /games/{id}/state/raw` exists for the rare case where you need DragnCards' own
+structure, and is deliberately HTTP-only: it is ~450 KB per game, about half of it the
+engine's `deltas` undo log, and putting that in a context window is never what you wanted.
+
+### 5. Invoke the evaluation agent
+
+Recording is asynchronous, so first confirm the game reached the event store:
+`list_recorded_games` on **history-service** returns `games[]` ordered by most recent
+activity, with `game_id` equal to the game-service session id and an `event_count`. Read
+the ordered transcript with `list_game_timeline` (pruned payloads, up to 5000) or
+`list_game_events` (full payloads, up to 1000 — tens of MB for a real game); both page on
+`after_seq` and you follow `next_after_seq` until it is absent.
+
+Then on **eval-service**:
+
+1. `list_game_rounds` → `rounds[]` with `round_number` (1-based round *of play*),
+   `from_seq`, `to_seq`, `move_count` and the `players` who acted. A `404` here means the
+   game has no recorded events — go back to step 2 and check `metadata.game_id`.
+2. `create_evaluation` with `{"scope": "round", "selection": {"rounds": [1]}}`. `scope` is
+   `move`, `round` or `game`; `selection` needs at least one of `rounds`, `seqs`,
+   `seq_range` or `whole_game`. There is no `player` field — attribution is derived from
+   the recorded moves, and a round request fans out to one target per acting player. Pass
+   `"force": true` to re-grade something already judged. Keep `request_id`.
+
+Select rounds by number rather than picking a single action: a Marvel Champions play is
+normally several recorded events (play the card, exhaust to pay, assign the damage), and
+grading one of them alone marks a good play down once per event.
+
+### 6. Read the verdict
+
+`get_evaluation` with the `game_id` and `request_id`. **It is done when `status` is
+anything other than `pending`** — then `completed`, `partial`, `failed` or `cancelled`.
+The verdicts are in this response: each `targets[]` entry carries `player`, `target_seq`,
+`round_span`, a per-target `status`, and a `verdict` with `overall_score`, the four
+`scores` (`rules_legality`, `strategic_quality`, `tempo_efficiency`, `threat_resource`),
+a `rationale`, `flags` and the `evaluator` identity.
+
+Read the per-target `status` before the score. `skipped` means the action held no decision
+to grade and is **not** a bad verdict; `failed` is a real error whose reason is on `error`
+— and every target `failed` with the judge unconfigured is exactly the prerequisite from
+step 0.
+
+Verdicts are also written back to history-service as events with `actor: "evaluator"` and
+`event_type: "evaluation"`, so `list_game_events` filtered on that pair is the durable
+copy if you want the verdict alongside the moves it grades.
+
+### Clean up after yourself
+
+The stack is shared. `delete_game` on game-service and `terminate_session` /
+`delete_session` on agent-orchestrator remove what you created. Say in your report which
+games and sessions you created on a stack you do not own — a stray running session keeps
+spending tokens.
+
+### What is not a tool, and why
+
+Excluding a route removes it from MCP only; the HTTP endpoint is untouched, so nothing here
+limits the dashboard or a deliberate `curl`. Three kinds are kept out of every service's
+surface, and `dragncards_common.mcp` is where the rule lives:
+
+- **Liveness and readiness probes**, for every service — noise in a tool list.
+- **Server-sent event streams** — `stream_job_events`, `stream_evaluation`,
+  `export_game_bundle`. A tool call reads its response to completion; these do not
+  complete, or complete only by handing back an entire recorded game. Poll the paged read
+  next to them instead.
+- **Irreversible destruction and deployment-global mutation** — deleting a game's whole
+  recorded history, backfilling or importing events into the ordered store, bulk-clearing
+  the evaluation queue, and editing the shared skill / MCP / persona registries. These change state
+  for every session in the deployment, including the owner's. game-service set this
+  precedent by keeping its snapshot import/export, room-control and raw-DragnLang routes
+  on HTTP only.
+
+Per-session and per-object cleanup stays available on purpose, so an agent can always undo
+its own work.
+
+### Checks, and what is safe to run against a live stack
+
+```bash
+./scripts/lint.sh --fix
+./scripts/test.sh unit                        # no network needed
+./scripts/test.sh integration <service>       # safe against a running instance
+openspec validate --all
+```
+
+`scripts/test.sh integration` is safe against a live deployment because its fixtures create
+a throwaway `*_test_<uuid>` database per run and drop it at the end, so the suite never
+touches the data the running services are using. Naming one service keeps the run short.
+
+`openspec validate --all` reports **exactly one** pre-existing failure,
+`spec/typed-game-actions`, on `main` and on every branch off it. One failure is the expected
+result; two means you caused one.
 
 ## Adding or Changing a Service
 

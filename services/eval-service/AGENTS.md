@@ -143,6 +143,53 @@ does not hold for a second replica. `EvaluationWorker.drain_once` reports PROGRE
 rather than rows touched, so a cycle where every roll-up merely re-deferred is
 idle and the worker waits instead of hot-looping on the database.
 
+### MCP surface
+
+The service mounts its own MCP server at `/mcp`, wired in `main.py` and
+deliberately NOT in the app factory: the test suites build the app directly and
+must not start the MCP session manager. `mcp_server.py` declares only the name and
+the exclusion list; the mounting itself is `dragncards_common.mcp`.
+
+Tools are generated from this service's FastAPI OpenAPI schema, so a tool IS its
+endpoint — with the endpoint's own request and response models as its schema — and
+a tool's name is that endpoint's `operation_id`. There is no hand-written tool
+layer that could drift from the API.
+
+**Adding a route adds an MCP tool automatically, so give every route an explicit
+`operation_id`.** Without one, FastAPI generates a name from the function and path
+(`get_evaluation_games__game_id__evaluations__request_id__get`), and that is what
+the tool ends up called.
+
+`EXCLUDED_ROUTES` in `mcp_server.py` keeps three things out, each for a specific
+reason:
+
+- `stream_evaluation` (`GET /games/{game_id}/evaluations/{request_id}/stream`) —
+  server-sent events. A tool call reads its response to completion and this one
+  only completes when the run does, so as a tool it would hang the caller until it
+  timed out. Poll `get_evaluation` instead, which reports per-target status and the
+  live error detail this service records during a run.
+- `clear_evaluations` (`POST /evaluations/clear`) — deployment-global. It clears
+  the queue for the whole deployment, including requests the caller never created.
+  `delete_evaluation` for a single request by id stays available, so an agent can
+  still clean up after itself.
+- The `health` and `ready` probes, excluded for every service by the shared
+  bootstrap: an LLM client gains nothing from them and they crowd the tool list.
+
+Exclusion applies to MCP only. Every one of those endpoints still works over HTTP,
+so nothing here reduces what the dashboard or a human with `curl` can do. The
+exclusions are regexes matched against generated OpenAPI paths, so
+`tests/unit/test_mcp_server.py` asserts tool names against the real app rather
+than reading the list — a pattern that quietly matches nothing looks identical to
+one that works.
+
+A judge is still required to get a verdict over MCP, exactly as over HTTP:
+`create_evaluation` accepts the request either way, but with no `EVAL_JUDGE_MODEL`
+configured every target is recorded as `failed` with the configuration error.
+
+The whole loop these tools exist for is
+[Driving the System End-to-End](../../AGENTS.md#driving-the-system-end-to-end) in
+the root `AGENTS.md`.
+
 ### Observability
 
 Telemetry comes from `dragncards_common.telemetry`; `eval_service/telemetry.py`

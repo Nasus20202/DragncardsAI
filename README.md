@@ -10,19 +10,19 @@ make up
 docker compose up -d
 ```
 
-| Service            | URL                             |
-| ------------------ | ------------------------------- |
-| Frontend           | http://localhost:3000           |
-| Backend API        | http://localhost:4000           |
-| Game Service       | http://localhost:4001           |
-| Agent Orchestrator | http://localhost:4002           |
-| History Service    | http://localhost:4004           |
-| Eval Service       | http://localhost:4005           |
-| Dashboard          | http://localhost:3001           |
-| Swagger playground | http://localhost:3001/swagger   |
-| Bifrost AI-Gateway | http://localhost:4003           |
-| Grafana            | http://localhost:3004           |
-| Login              | dev_user@example.com / password |
+| Service            | URL                             | MCP endpoint               |
+| ------------------ | ------------------------------- | -------------------------- |
+| Frontend           | http://localhost:3000           | —                          |
+| Backend API        | http://localhost:4000           | —                          |
+| Game Service       | http://localhost:4001           | http://localhost:4001/mcp/ |
+| Agent Orchestrator | http://localhost:4002           | http://localhost:4002/mcp/ |
+| History Service    | http://localhost:4004           | http://localhost:4004/mcp/ |
+| Eval Service       | http://localhost:4005           | http://localhost:4005/mcp/ |
+| Dashboard          | http://localhost:3001           | —                          |
+| Swagger playground | http://localhost:3001/swagger   | —                          |
+| Bifrost AI-Gateway | http://localhost:4003           | —                          |
+| Grafana            | http://localhost:3004           | —                          |
+| Login              | dev_user@example.com / password | —                          |
 
 The Swagger playground merges the OpenAPI document of **every** first-party service —
 game-service, agent-orchestrator, history-service and eval-service — into one index, and
@@ -103,7 +103,35 @@ The system runs DragnCards (frontend + backend) with PostgreSQL. The game-servic
 
 The game-service and agent-orchestrator publish game/agent events onto a Valkey `history:ingest` stream. The **history-service** ingests that stream into its own PostgreSQL as an ordered, per-game event store with periodic snapshots (fetched from the game-service), and can restore a session to any past moment (seeding a resumed agent-orchestrator session). A recorded game can also be exported to, and imported from, a human-readable NDJSON bundle (see [`services/history-service/README.md`](services/history-service/README.md#history-bundles-export--import)). The **eval-service** reads recorded games from the history-service and produces hierarchical per-player move/round/game evaluations, judging via Bifrost and writing verdicts back to the history-service; it uses its own dedicated PostgreSQL. A move is judged in the context of the ROUND it belongs to, not as an isolated action, because a single play is normally several recorded actions (play the card, exhaust to pay the cost, assign the damage) and grading one of them alone marks a good play down once per action. Rounds are selected by round number from `GET /games/{game_id}/rounds` rather than by naming a move inside them, and multiple targets are graded in parallel under durable per-game and global concurrency caps. The dashboard provides a UI over all of these — live play, game history, evaluations, and persona authoring.
 
-The Python services (agent-orchestrator, history-service, eval-service) share the internal **dragncards-common** library (schema-migration runner, RESP/Valkey client, typed Bifrost errors, an httpx base client, and the OpenTelemetry bootstrap). All services send telemetry to otel-lgtm for observability.
+The Python services (agent-orchestrator, history-service, eval-service) share the internal **dragncards-common** library (schema-migration runner, RESP/Valkey client, typed Bifrost errors, an httpx base client, the OpenTelemetry bootstrap, and the MCP-surface bootstrap). All services send telemetry to otel-lgtm for observability.
+
+## MCP surfaces
+
+Each of the four backend services exposes its HTTP API as MCP tools over
+streamable-HTTP at `/mcp`, and `.mcp.json` registers all four so an assistant
+working in this repository can drive the whole system as tool calls. The
+game-service surface is also what the game-playing agent itself consumes, wired
+through the agent-orchestrator's session MCP registry.
+
+Tools are **generated from each service's own OpenAPI schema** — `game-service`
+does this in `services/game-service/src/game_service/mcp/server.py`, and the
+other three through `dragncards_common.mcp` — so a tool is always exactly the
+endpoint it came from, and a tool's name is that endpoint's `operation_id`. There
+is no hand-written tool layer to drift from the API.
+
+Each service declares the routes it keeps out of MCP, in its own `mcp_server.py`
+(`mcp/server.py` for game-service): health and readiness probes, server-sent
+event streams, and irreversible or deployment-global operations such as deleting
+a game's recorded history or editing the shared skill/MCP/persona registries.
+Exclusion applies to MCP only — every one of those endpoints still works over
+HTTP.
+
+The end-to-end debugging loop these surfaces exist for — create a game, start a
+player agent, analyse its actions, read the live board, request an evaluation,
+read the verdict — is documented in
+[`AGENTS.md`](AGENTS.md#driving-the-system-end-to-end), including the
+prerequisites (submodules, a matching build, a configured judge model) that block
+it.
 
 ## Observability
 

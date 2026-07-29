@@ -4,6 +4,18 @@
       "type": "http",
       "url": "http://localhost:4001/mcp/"
     },
+    "agent-orchestrator": {
+      "type": "http",
+      "url": "http://localhost:4002/mcp/"
+    },
+    "history-service": {
+      "type": "http",
+      "url": "http://localhost:4004/mcp/"
+    },
+    "eval-service": {
+      "type": "http",
+      "url": "http://localhost:4005/mcp/"
+    },
     "context7": {
       "type": "http",
       "url": "https://mcp.context7.com/mcp"

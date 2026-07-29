@@ -10,7 +10,11 @@ from history_service.schemas.api import RestoreRequest, RestoreResponse
 router = APIRouter(tags=["restore"])
 
 
-@router.post("/games/{game_id}/restore", response_model=RestoreResponse)
+@router.post(
+    "/games/{game_id}/restore",
+    response_model=RestoreResponse,
+    operation_id="restore_game",
+)
 async def restore_game(
     game_id: GameIdPath,
     body: RestoreRequest,

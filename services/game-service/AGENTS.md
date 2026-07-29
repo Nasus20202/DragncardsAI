@@ -30,6 +30,29 @@ game-service/
 - Keep MCP tools and HTTP endpoints consistent in behavior
 - Phoenix Channel messages are defined in DragnCards protocol
 
+## MCP surface
+
+`mcp/server.py` derives the MCP tools from this service's own FastAPI OpenAPI schema, so
+a tool *is* the endpoint it came from and a tool's name is that endpoint's
+`operation_id`. There is no hand-written tool layer, which is why MCP and HTTP cannot
+drift: **adding a route adds a tool automatically, so give every route an explicit
+`operation_id`** or the tool inherits FastAPI's generated
+`get_game_state_games__session_id__state_get` style name.
+
+The `route_maps` list in `mcp/server.py` is what a route is kept *out* with, and it is the
+security surface: this service has no authentication, so anything left in is something a
+model can invoke on a running deployment. Excluded here: `/health`, snapshot
+import/export, the room-control and room-observability routes, and the debug routes —
+raw state, the generic `POST /actions`, and raw DragnLang. Exclusion applies to MCP only;
+every one of those endpoints still works over HTTP for a developer who types it
+deliberately.
+
+The three Python services that came later do the same thing through
+`dragncards_common.mcp`; this service predates that helper and keeps its own equivalent
+copy, the same way it keeps its own telemetry bootstrap. The end-to-end loop these
+surfaces exist for is documented in the root
+[`AGENTS.md`](../../AGENTS.md#driving-the-system-end-to-end).
+
 ## DragnCards Concepts
 
 ### Session Management

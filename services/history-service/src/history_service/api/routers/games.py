@@ -14,7 +14,11 @@ from history_service.storage.repository import Repository
 router = APIRouter(tags=["games"])
 
 
-@router.get("/games", response_model=GameListResponse)
+@router.get(
+    "/games",
+    response_model=GameListResponse,
+    operation_id="list_recorded_games",
+)
 async def list_games(
     repo: Repository = Depends(get_repository),
 ) -> GameListResponse:
@@ -32,7 +36,11 @@ async def list_games(
     )
 
 
-@router.delete("/games/{game_id}", response_model=GameDeletionResponse)
+@router.delete(
+    "/games/{game_id}",
+    response_model=GameDeletionResponse,
+    operation_id="delete_game_history",
+)
 async def delete_game(
     game_id: GameIdPath,
     repo: Repository = Depends(get_repository),
