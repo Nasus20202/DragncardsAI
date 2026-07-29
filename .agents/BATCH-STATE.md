@@ -93,18 +93,18 @@ was closed earlier; it reopens with `gh pr reopen 305` only on an explicit reque
 - Unit: game-service **384**, agent-orchestrator **503**, history-service **177**,
   eval-service **258**, shared **38**, dashboard **614** (74 files).
   (Against `98192f3`: DRA-35 added 2 to history-service and 2 to shared; DRA-34 added 3 to
-  agent-orchestrator and 5 to the dashboard.)
-- `pnpm typecheck` in `services/dashboard` — clean.
-
-**`except A, B:` without parentheses is valid here — do not "fix" it.** `job_event_stream.py` uses it
-twice. It is PEP 758, new in Python 3.14, and this repo runs 3.14. It reads like a Python 2 relic and
-`ast.parse` accepts it; verify before touching it.
-- Integration: agent-orchestrator **29**, history-service **8**, eval-service **13**,
+  agent-orchestrator and 5 to the dashboard; DRA-42 added 13 to agent-orchestrator.)
+- Integration: agent-orchestrator **29** (DRA-42 added 1), history-service **8**, eval-service **13**,
   game-service **63**.
 - `openspec validate --all` — 16 passed, 1 failed (the pre-existing one above).
 - `pnpm typecheck` in `services/dashboard` — clean.
 - Placeholder grep over all of `openspec/specs/` — clean.
-- Every commit signed: `git log --format="%h %G? %s"` shows no `N`.
+- Every commit signed: `git log --format="%h %G? %s"` shows no `N` except Nasus's own `a8390a8`
+  ("feat: add opencodego provider", 07-28), which was already on `origin`. Leave it alone.
+
+**`except A, B:` without parentheses is valid here — do not "fix" it.** `job_event_stream.py` uses it
+twice. It is PEP 758, new in Python 3.14, and this repo runs 3.14. It reads like a Python 2 relic and
+`ast.parse` accepts it; verify before touching it.
 
 **A flaky pair, pre-existing** — reproduced on `eb0a7e6`, so not caused by this batch:
 `test_player_seat_sessions.py::test_a_chat_session_still_spawns_a_memoryless_child` and
