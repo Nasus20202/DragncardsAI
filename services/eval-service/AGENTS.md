@@ -91,6 +91,14 @@ changes evaluation results: bump `EVALUATOR_VERSION` and state in the spec why
 older verdicts are no longer comparable, rather than silently re-scoping them.
 See [Round boundaries](README.md#round-boundaries).
 
+A verdict therefore records TWO different numbers about its round and they are not
+interchangeable: `round_span` is the `[from_seq, to_seq]` SEQ span it graded, and
+`round_number` is the round of PLAY it is (round scope only). Name a round from
+`round_number`, never from the span — reading the span as a round range labelled a
+real game's first round "Rounds 1-63" (DRA-25). Keep `round_of_play()` the single
+conversion there is: put the converted number on the payload instead of leaving a
+client to re-derive it from seqs.
+
 ### Non-strategic actions are skipped, never silently
 
 `judge/actions.py` classifies recorded actions. The line is whether the action

@@ -135,6 +135,39 @@ async def test_round_verdict_for_player_considers_only_that_players_moves(reposi
 
 
 @pytest.mark.asyncio
+async def test_round_verdict_records_the_round_of_play_beside_its_seq_span(repository):
+    # The fixture's states report raw ``roundNumber`` 1 over seqs 1-4, so the round
+    # of PLAY is 2 while the seq span is [1, 4]. The verdict must carry both, and
+    # they must not be confused: a consumer that reads the span as round numbers
+    # calls this "Rounds 1-4" (DRA-25).
+    events = _round1_events_with_move_verdicts()
+    history = FakeHistoryClient({"g1": events})
+    judge = StubJudgeClient()
+    evaluator = Evaluator(
+        settings=_settings(), repository=repository, history=history, judge=judge
+    )
+    target_id = await _claim_round(repository, player="player1")
+
+    await evaluator.evaluate_target(
+        target_id=target_id,
+        game_id="g1",
+        target_seq=4,
+        scope="round",
+        events=events,
+        player="player1",
+    )
+
+    _, envelope = history.written[-1]
+    payload = envelope["payload"]
+    assert payload["scope"] == "round"
+    assert payload["round_span"] == [1, 4]
+    assert payload["round_number"] == 2
+    # And it is stored on the bookkeeping row's verdict too.
+    row = await repository.get_target_by_id(target_id)
+    assert row.verdict_json["round_number"] == 2
+
+
+@pytest.mark.asyncio
 async def test_round_rollup_defers_while_a_move_child_is_pending(repository):
     # A round roll-up must NOT be produced while a child move target is still
     # in flight: it is re-deferred to ``pending`` instead.

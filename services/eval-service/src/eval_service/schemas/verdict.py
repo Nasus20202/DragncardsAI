@@ -30,7 +30,20 @@ class VerdictPayload(BaseModel):
 
     scope: Scope
     target_seq: int
+    # The SEQUENCE span this verdict covers, ``[from_seq, to_seq]`` — event seqs
+    # on the game timeline, NOT round numbers. It is what seq-correlates a
+    # round/game verdict to the events it graded. Reading its two elements as
+    # round numbers labels the first round of a real game "Rounds 1-63"; the round
+    # to name is ``round_number`` below.
     round_span: list[int] | None = None
+    # The 1-based round of PLAY this verdict grades (``assembly.round_of_play``,
+    # i.e. DragnCards' completed-round counter + 1) — the same number the History
+    # transcript and ``GET /games/{id}/rounds`` name a round by. Set for
+    # ``scope=round`` only: a move is named by its own seq and a game verdict spans
+    # every round, so neither has one round to name. ``None`` on a verdict recorded
+    # before this field existed, which a consumer labels without a round number
+    # rather than deriving one from ``round_span``.
+    round_number: int | None = None
     # The player this verdict pertains to (e.g. ``player1``). Optional for
     # backward compatibility with move/round verdicts that predate per-player
     # scoring; per-player round/game verdicts always carry it.

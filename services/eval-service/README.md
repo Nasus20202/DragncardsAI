@@ -295,9 +295,10 @@ each verdict is what tells them apart. Move verdicts are unaffected by boundarie
 
 ```json
 {
-  "scope": "move",
-  "target_seq": 12,
-  "round_span": [10, 18],
+  "scope": "round",
+  "target_seq": 63,
+  "round_span": [1, 63],
+  "round_number": 1,
   "scores": { "rules_legality": 8, "strategic_quality": 6,
               "tempo_efficiency": 7, "threat_resource": 7 },
   "overall_score": 7,
@@ -306,6 +307,25 @@ each verdict is what tells them apart. Move verdicts are unaffected by boundarie
   "evaluator": { "model": "...", "provider": "...", "evaluator_version": "eval-2" }
 }
 ```
+
+`round_span` and `round_number` are **not** the same kind of number, and neither is
+derived from the other:
+
+- `round_span` is `[from_seq, to_seq]` — event sequence numbers on the game
+  timeline. It is what seq-correlates a round or game verdict to the events it
+  graded. A game verdict's span is the whole game; a move verdict has none.
+- `round_number` is the 1-based round of **play** (`round_of_play()`, the raw
+  `roundNumber` + 1) — the number the History transcript and
+  `GET /games/{game_id}/rounds` name that round by. It is set for `scope=round`
+  only: a move is named by its own seq, and a game verdict spans every round.
+
+A consumer labels a round verdict from `round_number`, never from `round_span`:
+reading the span's two elements as round numbers labels the first round of the game
+above "Rounds 1–63" (DRA-25). Verdicts recorded before `round_number` existed — all
+`eval-1` verdicts and the earliest `eval-2` ones — do not carry it and are labelled
+without a round number rather than having one inferred from their span. Adding the
+field changed neither the prompt, the graded span, nor the score scale, so it did
+not move `EVALUATOR_VERSION`.
 
 Written back via `POST {history}/games/{game_id}/events` as actor `evaluator`,
 event_type `evaluation`, with

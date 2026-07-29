@@ -42,7 +42,7 @@ describe("eval-queue helpers", () => {
           ],
         })
       )
-    ).toBe("Round 3");
+    ).toBe("Round #3");
     expect(
       requestScopeLabel(
         req({
@@ -62,6 +62,26 @@ describe("eval-queue helpers", () => {
         req({ targets: [{ target_seq: 0, scope: "game", status: "running" }] })
       )
     ).toBe("Whole game");
+  });
+
+  it("labels a round target by its seq span, never as a range of rounds", () => {
+    // Pinned to the recorded game 35128894-0cad-4b53-b195-d74b7428fe2c, whose
+    // round 2 spans seqs 64–103. `round_span` is a seq pair, so rendering its two
+    // elements as round numbers read "Rounds 64–103" (DRA-25).
+    const label = requestScopeLabel(
+      req({
+        targets: [
+          {
+            target_seq: 103,
+            scope: "round",
+            round_span: [64, 103],
+            status: "running",
+          },
+        ],
+      })
+    );
+    expect(label).toBe("Round #64–#103");
+    expect(label).not.toBe("Rounds 64–103");
   });
 
   it("summarizes a multi-target request", () => {
@@ -133,7 +153,7 @@ describe("eval-queue helpers", () => {
         detail: "judge attempt 1/3 failed: timed out",
       },
       {
-        label: "Rounds 1\u20133",
+        label: "Round #1\u2013#3",
         status: "failed",
         detail: "judge failed after retry limit: no judge key",
       },
