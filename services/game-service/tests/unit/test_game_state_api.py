@@ -816,9 +816,10 @@ def test_simplify_marvel_state_payload_fits_mcp_limit():
     for zone_id, cards in result["zones"].items():
         for card in cards:
             if card.get("name") == "HIDDEN":
-                assert set(card.keys()) == {"name", "stackSize"}, (
-                    f"HIDDEN entry in {zone_id} leaked extra fields: {card}"
-                )
+                assert set(card.keys()) == {
+                    "name",
+                    "stackSize",
+                }, f"HIDDEN entry in {zone_id} leaked extra fields: {card}"
             else:
                 # Visible cards only carry the four always-present fields
                 # plus non-default currentSide / exhausted / tokens.
@@ -836,6 +837,6 @@ def test_simplify_marvel_state_payload_fits_mcp_limit():
                     f"{set(card.keys()) - allowed}"
                 )
                 if "tokens" in card:
-                    assert all(value for value in card["tokens"].values()), (
-                        f"Visible card in {zone_id} has a zero token: {card}"
-                    )
+                    assert all(
+                        value for value in card["tokens"].values()
+                    ), f"Visible card in {zone_id} has a zero token: {card}"
