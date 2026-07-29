@@ -120,9 +120,15 @@ full sort happened.
 
 - **Todo → In Progress** when the branch and worktree exist and work has begun — not when the work
   is discussed or planned.
-- **In Progress → Done** only once the change is merged into the integration branch, the full check
-  set passes on the merged tip, and the OpenSpec change is archived. A delegated agent reporting
-  success is not Done; Done requires the orchestrating agent's own verification.
+- **In Progress → Done** means **ready for the owner's testing**: the change is merged into the
+  integration branch, the full check set passes on the merged tip, the OpenSpec change is archived,
+  and the branch is pushed. `Done` is not a claim that a human has exercised the feature — the owner
+  does manual testing after, and the rule of thumb is that if it was good enough to push, it is
+  `Done`. A delegated agent reporting success is still not enough: the orchestrating agent verifies
+  the merged tip itself.
+- Drive the feature in the running app wherever it is practical, and say in the finishing comment
+  exactly what was and was not exercised — an unverified path named plainly is useful, whereas
+  withholding `Done` until every path has been clicked just hides finished work behind a status.
 - Blocked work moves back to `Todo` with a comment naming the blocker. It does not sit in
   `In Progress` where it reads as active.
 

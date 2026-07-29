@@ -54,7 +54,9 @@ Do not mark `Done` on a delegated agent's report. Verify yourself, then:
    ` (DRA-<n>)`.
 2. Run the full check set on the merged tip (`./scripts/lint.sh`, `./scripts/test.sh unit`, the
    service test suites, `openspec validate --all`).
-3. Drive the running app through the feature or the fixed path — Playwright MCP, not tests alone.
+3. Drive the running app through the feature or the fixed path where practical (Playwright MCP, not
+   tests alone), and name in the comment what was and was not exercised. `Done` means ready for the
+   owner's testing, not that a human has already clicked it.
 4. Archive the OpenSpec change and sync `openspec/specs/`. Replace every placeholder the archive
    generated — a `TBD` `## Purpose` left behind becomes a false record of what the system does.
 5. Post the **finishing** comment, then move the issue to `Done`.
