@@ -416,6 +416,62 @@ describe("system tool exchanges", () => {
   });
 });
 
+describe("ask_user exchanges", () => {
+  const question = "Which card do you want to play this turn?";
+
+  it("renders no tool card for an answered ask_user call", () => {
+    renderTranscript([
+      makeJob("job-1", [
+        toolCall("ask_user", { question, choices: ["Bait and Switch"] }, "c1"),
+        toolResult("ask_user", "The user answered: Bait and Switch", "c1"),
+      ]),
+    ]);
+
+    // The question row is that exchange's representation; a tool card here would
+    // only print the question wording a second time.
+    expect(screen.queryAllByTestId("tool-exchange")).toHaveLength(0);
+    expect(document.body.textContent).not.toContain(question);
+  });
+
+  it("renders no tool card while an ask_user call is still waiting", () => {
+    renderTranscript([
+      makeJob("job-1", [toolCall("ask_user", { question }, "c1")], "running"),
+    ]);
+
+    expect(screen.queryAllByTestId("tool-exchange")).toHaveLength(0);
+    expect(
+      screen.queryByRole("button", { name: /expand tool call: ask_user/i })
+    ).toBeNull();
+  });
+
+  it("keeps the generic card when an ask_user call failed", () => {
+    // A failed ask_user writes no `user_question` event at all, so this card is
+    // the only surface the failure has.
+    renderTranscript([
+      makeJob("job-1", [
+        toolCall("ask_user", { question }, "c1"),
+        toolResult(
+          "ask_user",
+          "ask_user is not available to subagents.",
+          "c1",
+          true
+        ),
+      ]),
+    ]);
+
+    expect(screen.getByTestId("tool-exchange")).toBeInTheDocument();
+    expect(screen.getByTestId("tool-error-chip")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /expand tool call: ask_user/i })
+    );
+    expect(screen.getByText("Result (error)")).toBeInTheDocument();
+    expect(
+      screen.getByText(/ask_user is not available to subagents\./)
+    ).toBeInTheDocument();
+  });
+});
+
 describe("large payloads", () => {
   const bigCardList = Array.from({ length: 20_000 }, (_, i) => ({
     card_id: `card-${i}`,

@@ -237,14 +237,17 @@ class WorkerService:
             )
         except Exception:
             logger.exception("Failed to mark crashed job %s as failed", job.id)
+        durable_event_id: int | None = None
         try:
-            await self._repository.append_event(
+            durable_event_id = await self._repository.append_event(
                 job.id, job.session_id, "failure", failure
             )
         except Exception:
             logger.exception("Failed to record the crash of job %s", job.id)
         try:
-            await self._live_event_bus.publish(job.id, "failure", failure)
+            await self._live_event_bus.publish(
+                job.id, "failure", failure, durable_event_id=durable_event_id
+            )
         except Exception:
             logger.exception("Failed to announce the crash of job %s", job.id)
         await self._maybe_terminate_child_session(job)

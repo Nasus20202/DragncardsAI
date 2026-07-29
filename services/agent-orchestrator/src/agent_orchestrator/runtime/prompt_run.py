@@ -104,11 +104,13 @@ class PromptRunService:
                 if await self._repository.get_job_cancellation_requested(job.id):
                     logger.info("Job %s cancelled before execution", job.id)
                     job_span.set_attribute("job.status", "cancelled")
+                    # No live publish here: `mark_job_cancelled` already appends
+                    # the `cancellation` event, and the stream's own poll (200 ms
+                    # by default) delivers it. Publishing a second copy of a row
+                    # the repository owns is what showed one cancellation twice —
+                    # and the repository has no bus to hand its event id to.
                     await self._repository.mark_job_cancelled(
                         job.id, reason="cancelled before execution"
-                    )
-                    await self._live_event_bus.publish(
-                        job.id, "cancellation", {"reason": "cancelled before execution"}
                     )
                     await self._maybe_terminate_child_session(job)
                     return
@@ -126,10 +128,19 @@ class PromptRunService:
                         "message": "Session model configuration is required",
                         "retryable": False,
                     }
-                    await self._repository.append_event(
-                        job.id, session.id, "failure", {"code": "missing_model_config"}
+                    # The durable row and the live copy are the same event and
+                    # now share an id, so they must carry the same payload —
+                    # persisting only the code left a reload showing less than
+                    # the live stream had. This matches `fail_job` below.
+                    durable_event_id = await self._repository.append_event(
+                        job.id, session.id, "failure", failure
                     )
-                    await self._live_event_bus.publish(job.id, "failure", failure)
+                    await self._live_event_bus.publish(
+                        job.id,
+                        "failure",
+                        failure,
+                        durable_event_id=durable_event_id,
+                    )
                     await self._repository.mark_job_failed(
                         job.id,
                         error_code="missing_model_config",
@@ -252,13 +263,11 @@ class PromptRunService:
                 for _ in range(self._settings.worker_max_tool_rounds):
                     if await self._repository.get_job_cancellation_requested(job.id):
                         logger.info("Job %s cancelled during execution", job.id)
+                        # As above: `mark_job_cancelled` appends the durable
+                        # `cancellation` event, so a live copy of it would only
+                        # reach the browser twice under a second id.
                         await self._repository.mark_job_cancelled(
                             job.id, reason="cancelled during execution"
-                        )
-                        await self._live_event_bus.publish(
-                            job.id,
-                            "cancellation",
-                            {"reason": "cancelled during execution"},
                         )
                         await self._maybe_terminate_child_session(full_job)
                         return
@@ -307,6 +316,12 @@ class PromptRunService:
                                     await self._repository.update_event(
                                         reasoning_event_id, {"text": full}
                                     )
+                            # A chunk carries `snapshot_event_id` in its payload
+                            # rather than `durable_event_id`, because it is not a
+                            # copy of a finished row: it is a growing prefix of one
+                            # the client must keep replacing in place. That key is
+                            # what collapses the chunks and the final row into one
+                            # transcript entry; see `upsertStreamEvent`.
                             await self._live_event_bus.publish(
                                 job.id,
                                 "reasoning",
@@ -551,7 +566,7 @@ class PromptRunService:
                     "My partial work above is preserved in context. "
                     "Please send a follow-up message to continue."
                 )
-                await self._repository.append_event(
+                durable_event_id = await self._repository.append_event(
                     job.id,
                     session.id,
                     "completion",
@@ -561,6 +576,7 @@ class PromptRunService:
                     job.id,
                     "completion",
                     {"text": interrupt_message},
+                    durable_event_id=durable_event_id,
                 )
                 await self._repository.mark_job_interrupted(
                     job.id, result_text=interrupt_message
@@ -695,10 +711,12 @@ class PromptRunService:
                 "skill_name": skill_name,
                 "reference_file_count": reference_count,
             }
-            await self._repository.append_event(
+            durable_event_id = await self._repository.append_event(
                 job_id, session_id, "skill_loaded", payload
             )
-            await self._live_event_bus.publish(job_id, "skill_loaded", payload)
+            await self._live_event_bus.publish(
+                job_id, "skill_loaded", payload, durable_event_id=durable_event_id
+            )
 
     def _emit_user_prompt_event(self, *, session: Any, prompt: str) -> None:
         """Fire-and-forget emission of a ``user_prompt`` history event.
@@ -754,8 +772,12 @@ class PromptRunService:
         task.add_done_callback(self._history_tasks.discard)
 
     async def record_failure(self, job: Job, failure: dict[str, Any]) -> None:
-        await self._repository.append_event(job.id, job.session.id, "failure", failure)
-        await self._live_event_bus.publish(job.id, "failure", failure)
+        durable_event_id = await self._repository.append_event(
+            job.id, job.session.id, "failure", failure
+        )
+        await self._live_event_bus.publish(
+            job.id, "failure", failure, durable_event_id=durable_event_id
+        )
         await self._repository.mark_job_failed(
             job.id,
             error_code=failure["code"],
@@ -820,7 +842,7 @@ class PromptRunService:
     async def complete_job(
         self, job: Job, content: str, accumulated_job_tokens: int
     ) -> None:
-        await self._repository.append_event(
+        durable_event_id = await self._repository.append_event(
             job.id,
             job.session.id,
             "completion",
@@ -830,6 +852,7 @@ class PromptRunService:
             job.id,
             "completion",
             {"text": content},
+            durable_event_id=durable_event_id,
         )
         await self._repository.update_job_tokens_used(job.id, accumulated_job_tokens)
         await self._repository.mark_job_completed(job.id, content)
@@ -939,10 +962,15 @@ class PromptRunService:
             "usage_ratio": ratio,
         }
         try:
-            await self._repository.append_event(
+            durable_event_id = await self._repository.append_event(
                 job_id, session_id, "compaction_failed", payload
             )
-            await self._live_event_bus.publish(job_id, "compaction_failed", payload)
+            await self._live_event_bus.publish(
+                job_id,
+                "compaction_failed",
+                payload,
+                durable_event_id=durable_event_id,
+            )
         except Exception:
             logger.exception(
                 "Job %s: could not record the compaction failure event", job_id

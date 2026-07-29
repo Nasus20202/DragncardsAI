@@ -298,6 +298,53 @@ describe("the OpenUI library as a security boundary", () => {
     expect(screen.getByTestId("user-question-free-text-submit")).toBeDisabled();
   });
 
+  it("lays the choices out as a stack of full-width rows", () => {
+    // The regression this guards (DRA-34): the choices were inline flex items in
+    // a `flex-wrap` row, so four of them broke across ragged lines, and each
+    // one's label had Hero UI's `whitespace-nowrap`, so the longest description
+    // ran off the card edge and was clipped instead of wrapping.
+    const description =
+      "Recommended first game: 2-player, Spider-Man (Justice) and " +
+      "Captain Marvel (Leadership) vs Rhino (Standard, Bomb Scare)";
+    const verbose: UserQuestionPrompt = {
+      ...prompt,
+      choices: [{ label: "Guided setup", value: "guided", description }],
+    };
+    renderLang(buildUserQuestionLang(verbose, { includeControls: true }), {
+      prompt: verbose,
+    });
+
+    const list = screen.getByTestId("user-question-choices");
+    expect(list.className).toContain("flex-col");
+    expect(list.className).not.toContain("flex-wrap");
+
+    // A bordered, hoverable, full-width row is what makes an option read as
+    // clickable rather than as a line of static text.
+    const row = screen.getByTestId("user-question-choice-0");
+    expect(row.className).toContain("w-full");
+    expect(row.className).toContain("border-default-200");
+    expect(row.className).toContain("hover:bg-default-100");
+
+    const descriptionNode = screen.getByText(description);
+    expect(descriptionNode.className).toContain("whitespace-normal");
+    expect(descriptionNode.className).toContain("break-words");
+    expect(descriptionNode.className).not.toContain("truncate");
+  });
+
+  it("styles an unanswerable row as inert off its disabled state", () => {
+    renderLang(buildUserQuestionLang(prompt, { includeControls: true }), {
+      isAnswerable: false,
+    });
+
+    const row = screen.getByTestId("user-question-choice-0");
+    expect(row).toBeDisabled();
+    // There is one class string for a row, so the `disabled` attribute is what
+    // has to carry the difference: a disabled row goes flat and faded and stops
+    // answering the pointer.
+    expect(row.className).toContain("disabled:opacity-50");
+    expect(row.className).toContain("disabled:pointer-events-none");
+  });
+
   it("renders nothing at all outside a question context", () => {
     // Belt and braces: the renderers are only meaningful inside a card that
     // supplied the stored question, and degrade to nothing without one.

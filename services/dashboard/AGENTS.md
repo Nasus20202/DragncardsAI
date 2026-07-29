@@ -93,6 +93,13 @@ so it keeps the transcript's look. Two rules a renderer must not break:
 - Everything displayed is text and goes through `redactSecrets`. Tool arguments
   are model-supplied and results are server-supplied.
 
+A renderer may also return `null` to render **no** card, which is how `ask_user`
+is presented: its exchange is already the `user_question` row, so a tool card
+would only reprint the question. It returns the generic card when the exchange
+errored, because a failed `ask_user` writes no `user_question` event and would
+otherwise be invisible. Suppress a card only when another transcript row is that
+exchange's representation, and never for its error path.
+
 ### Per-Service Lists
 
 `features/proxy/lib/proxy.ts` declares `SERVICE_KEYS` once — the first-party services the

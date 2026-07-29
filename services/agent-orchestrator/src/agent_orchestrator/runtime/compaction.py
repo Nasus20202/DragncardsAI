@@ -331,6 +331,10 @@ async def perform_compaction(
     )
 
     if live_event_bus is not None and current_job_id is not None:
+        # Deliberately no `durable_event_id`: the summary's durable home is the
+        # compaction job created above, not a `job_events` row on the job being
+        # compacted. So this publish has no twin in that job's event list for the
+        # stream's poll to deliver a second time.
         await live_event_bus.publish(
             current_job_id,
             "compaction",

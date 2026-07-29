@@ -417,3 +417,40 @@ async def test_deleting_the_session_removes_its_questions(repository: Repository
 
     assert await repository.delete_session(session.id) is True
     assert await repository.get_job_question(question.id) is None
+
+
+# --- one question, one transcript row (DRA-34) --------------------------------
+
+
+async def test_the_question_is_published_under_its_durable_event_id(
+    repository: Repository, live_event_bus: InMemoryLiveEventBus
+):
+    """The live copy of `user_question` must not arrive as a second event.
+
+    `ask_user` both appends the question to `job_events` and publishes it, and
+    the SSE stream serves both sources. The browser de-duplicates on the event
+    id, so if the live copy kept the bus's own id the transcript rendered the
+    same question as two cards.
+    """
+    session, job = await _make_job_row(repository)
+    handler = _handler(
+        repository, live_event_bus, session.id, job.id, timeout_seconds=0.05
+    )
+    subscriber = await live_event_bus.subscribe(job.id)
+
+    try:
+        await handler({"question": "Who plays?", "choices": CHOICES})
+
+        durable = [
+            event
+            for event in await repository.list_events(job.id)
+            if event.event_type == "user_question"
+        ]
+        assert len(durable) == 1
+
+        published = await subscriber.get(timeout_seconds=1.0)
+        assert published is not None
+        assert published.event_type == "user_question"
+        assert published.durable_event_id == str(durable[0].id)
+    finally:
+        await subscriber.aclose()
