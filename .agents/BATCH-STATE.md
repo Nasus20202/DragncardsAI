@@ -87,11 +87,12 @@ was closed earlier; it reopens with `gh pr reopen 305` only on an explicit reque
 - `EVAL_JUDGE_OPENROUTER_API_KEY` is unset in `services/bifrost/.env`, so any judge-latency figure is
   a projection, not a measurement.
 
-## Check baselines on the integration tip (`98192f3`)
+## Check baselines on the integration tip (`175d2e1`, DRA-35 merged and archived)
 
 - `./scripts/lint.sh` — clean.
-- Unit: game-service **384**, agent-orchestrator **487**, history-service **175**,
-  eval-service **258**, shared **36**, dashboard **609** (74 files).
+- Unit: game-service **384**, agent-orchestrator **487**, history-service **177**,
+  eval-service **258**, shared **38**, dashboard **609** (74 files).
+  (history-service and shared each gained 2 tests in DRA-35; they were 175 and 36 on `98192f3`.)
 - Integration: agent-orchestrator **28**, history-service **8**, eval-service **13**,
   game-service **63**.
 - `openspec validate --all` — 16 passed, 1 failed (the pre-existing one above).
@@ -169,16 +170,8 @@ Dispatched off the integration tip `9cffc45`, one worktree and branch per issue,
 locally only. Nothing merged yet. **Merge DRA-35 alone the moment it is ready — the owner said not to
 wait for the others.**
 
-- **DRA-35** (Urgent) — `wt-dra35`, Valkey/RESP connection-error tracebacks on the owner's machine.
-  His HEAD *is* `9cffc45` with `resp.py` byte-identical and no local edits, and he fully restarted, so
-  this is a **regression he rebuilt onto**, not a longstanding condition: "yesterday it worked". Prime
-  suspect `6a4972e` (DRA-23, OTel, 07-28 22:48). Two dead hypotheses, do not revisit: a different or
-  older checkout, and the `try/except Exception: pass` in `execute()`'s `finally` — that guard only
-  ever wrapped `writer.wait_closed()`; the connection error comes from `open_connection`/`_read_resp`
-  in the `try`, is caught by `except BaseException as exc:` and is **deliberately re-raised**. The
-  open question is whether the errors are newly *occurring* (DRA-23 weakened the per-entry ingest
-  isolation added in `99f594d`, so one failed command aborts a whole batch) or newly *logged*
-  (`span.record_exception` plus the new export path). Different bugs; the report must say which.
+- **DRA-35** (Urgent) — **MERGED at `7915ec6`, archived at `175d2e1`, closed.** See the root cause
+  below; it is worth reading before anyone touches `resp.py` again.
 - **DRA-34** — `wt-dra34`, duplicate questions.
 - **DRA-30** — `wt-dra30`, seat guard / messaging / findings store, implementing sections 5–7 of the
   still-active `dra-19-agents-orchestration` spec. Runs with four sub-agents in that one worktree.
@@ -198,6 +191,46 @@ wait for the others.**
 Open and not dispatched: **DRA-32** (proxy/Swagger auth — needs the owner's auth-model decision),
 **DRA-33** (DRA-12's option (B), design already written).
 
+### DRA-35's root cause — four wrong theories were paid for, do not re-run them
+
+The traceback pointed at `await writer.wait_closed()` in `execute()`'s `finally`, and it was lying.
+**asyncio stores one exception instance on the protocol and hands that same object to both the reader
+and the close waiter** (`StreamReaderProtocol.connection_lost` does `reader.set_exception(exc)` *and*
+`self._closed.set_exception(exc)` with the same `exc`). So on a mid-command reset, `_read_resp` raises
+it, the `finally` awaits the close waiter which raises **the same object again**, and although
+`except Exception: pass` correctly swallows that second raise, the raise has already appended the
+`wait_closed` frames to the object's `__traceback__`. The original exception then finished propagating
+carrying a traceback that ended at the cleanup line. Proven by object identity, not argued. The fix
+sets `skip_wait_closed = True` on the error path — `writer.close()` still runs everywhere, and the
+success path is unchanged and still guarded, because a reset *after* a valid reply must not fail the
+command.
+
+Dead theories, all four disproven: (1) a different or older checkout — his HEAD was `9cffc45` with
+`resp.py` byte-identical; (2) a stale process — he fully restarted; (3) the `finally` guard "not
+holding" — it holds, the damage is the traceback mutation; (4) **`6a4972e` (DRA-23, OTel) as the
+regression boundary** — refuted by reading the diff: it only wraps `process_batch` in a span,
+`reclaim_pending()` was already the first unguarded statement, and the `logger.exception` +
+`sleep(0.5)` pair is byte-identical in `6a4972e^`. The amplification predates DRA-23. That suspect was
+mine, on the strength of its 07-28 22:48 timestamp matching "yesterday it worked"; a timestamp is not
+a mechanism.
+
+**The resets themselves are still not root-caused and are probably environmental.** The owner's Docker
+stack ran an hour with zero occurrences over the compose network; the reporter runs outside Docker
+against host-published ports. Chasing further needs his host setup. What was fixed is the
+amplification, which was real either way: ~1440 log lines per 60s outage became 18, and ~86400 per
+hour became 136. A failing reclaim pass no longer discards the whole batch (unclaimed entries stay in
+the PEL, which is what `XAUTOCLAIM`'s idle window is for), retries back off 0.5s→30s with one
+traceback per outage plus a recovery line, and four Bifrost model-cache warnings lost `exc_info=True`
+because that degradation was already correct. Still surfaced unchanged: a failing `XREADGROUP`,
+failing commit, failing `XACK`, malformed envelopes. Nothing is acked without a successful commit.
+
+**Deferred, measured, not built: connection pooling in `resp.py`.** The client opens one TCP
+connection *per command* — measured at **3 connect+teardown per idle ingest poll, forever**. That
+churn is why a mid-command reset is plausible rather than exotic, so it is the real long-term fix, but
+it touches shared code four services depend on and DRA-35 was urgent. **DRA-37 is scoped to call sites
+precisely so it does not collide with this**, and its `design.md` is to carry the write-up. Sequence
+it deliberately, as its own change.
+
 ## Known follow-ups worth filing as issues
 
 - **`history-service` sets `allow_origins=["*"]` with `allow_methods=["*"]`** — any page a developer
@@ -210,3 +243,6 @@ Open and not dispatched: **DRA-32** (proxy/Swagger auth — needs the owner's au
 - No fetch timeout on the Swagger merge: one wedged upstream stalls `/swagger` for undici's 300 s
   default. `swagger-workspace.tsx` also builds the 166 KB merged document twice per page view.
 - Add `ruff check` to `scripts/lint.sh`.
+- **Connection pooling / pipelining in `dragncards_common.resp`** — one TCP connection per command,
+  3 connect+teardown per idle ingest poll. Measurements are in DRA-35's archived change. The single
+  highest-value Valkey change left, and deliberately not folded into DRA-35 or DRA-37.
