@@ -163,6 +163,41 @@ unsigned**. That is harmless here only because each issue lands as one squash co
 orchestrating agent, which *is* signed — verify with `git log --format="%h %G? %s"` and check no
 commit on the branch shows `N`. Ask the owner to unlock rather than disabling signing.
 
+## Third batch — in flight
+
+Dispatched off the integration tip `9cffc45`, one worktree and branch per issue, agents committing
+locally only. Nothing merged yet. **Merge DRA-35 alone the moment it is ready — the owner said not to
+wait for the others.**
+
+- **DRA-35** (Urgent) — `wt-dra35`, Valkey/RESP connection-error tracebacks on the owner's machine.
+  His HEAD *is* `9cffc45` with `resp.py` byte-identical and no local edits, and he fully restarted, so
+  this is a **regression he rebuilt onto**, not a longstanding condition: "yesterday it worked". Prime
+  suspect `6a4972e` (DRA-23, OTel, 07-28 22:48). Two dead hypotheses, do not revisit: a different or
+  older checkout, and the `try/except Exception: pass` in `execute()`'s `finally` — that guard only
+  ever wrapped `writer.wait_closed()`; the connection error comes from `open_connection`/`_read_resp`
+  in the `try`, is caught by `except BaseException as exc:` and is **deliberately re-raised**. The
+  open question is whether the errors are newly *occurring* (DRA-23 weakened the per-entry ingest
+  isolation added in `99f594d`, so one failed command aborts a whole batch) or newly *logged*
+  (`span.record_exception` plus the new export path). Different bugs; the report must say which.
+- **DRA-34** — `wt-dra34`, duplicate questions.
+- **DRA-30** — `wt-dra30`, seat guard / messaging / findings store, implementing sections 5–7 of the
+  still-active `dra-19-agents-orchestration` spec. Runs with four sub-agents in that one worktree.
+  Migration `0012`. Expect `play-transcript.tsx`, `play-session-events.ts` and `STREAM_EVENT_TYPES`
+  to conflict with DRA-34 — resolve as unions, not by picking a side.
+- **DRA-36** — `wt-dra36`, Valkey-backed DragnCards token cache (the follow-up recorded below).
+  **Owns nothing in `resp.py`** — that file is DRA-35's for this batch.
+- **DRA-37** (Low, filed 07-29 16:29) — `wt-dra37`, "copious amounts of Valkey calls": an
+  agent-orchestrator trace with 6K+ spans. Scoped to **call-site** reduction only; `resp.py` is
+  DRA-35's, so transport-level pooling/pipelining is to be written up in `design.md` and handed back
+  for sequencing rather than implemented. The agent must first separate too many commands *issued*
+  from too many spans *emitted* per command — DRA-23 opens a `valkey.execute` span for every command,
+  so the trace may be cardinality, not waste.
+- Two dashboard items also in flight: suppressing the redundant `ask_user` tool card, and question
+  card visuals.
+
+Open and not dispatched: **DRA-32** (proxy/Swagger auth — needs the owner's auth-model decision),
+**DRA-33** (DRA-12's option (B), design already written).
+
 ## Known follow-ups worth filing as issues
 
 - **`history-service` sets `allow_origins=["*"]` with `allow_methods=["*"]`** — any page a developer
