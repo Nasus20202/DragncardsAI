@@ -146,11 +146,27 @@ async def get_job_status(item=Depends(require_job)) -> dict[str, JobSummary]:
 
 @router.post("/jobs/{job_id}/cancel", operation_id="cancel_job")
 async def cancel_job(
-    job_id: str, repo: Repository = Depends(get_repository)
+    job_id: str,
+    repo: Repository = Depends(get_repository),
+    live_event_bus: LiveEventBus = Depends(get_live_event_bus),
 ) -> dict[str, JobSummary]:
-    item = await repo.request_cancel(job_id)
+    item, appended = await repo.request_cancel(job_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    # A `cancellation` is terminal, so an undelivered one leaves the user
+    # watching a stream that will not close. The durable rows are already
+    # written; these publishes are what make the click land at once rather than
+    # on the stream's next fallback poll, and carrying each row's own id keeps
+    # the live copy collapsing into it instead of rendering twice (DRA-34).
+    # A queued job is cancelled outright here and never reaches the worker, so
+    # for that case this is the only announcement there will ever be.
+    for record in appended:
+        await live_event_bus.publish(
+            record.job_id,
+            "cancellation",
+            {"requested": True},
+            durable_event_id=record.event_id,
+        )
     return {"job": serialize_job(item)}
 
 

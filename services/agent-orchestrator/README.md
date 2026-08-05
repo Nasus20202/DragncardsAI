@@ -792,6 +792,67 @@ VALKEY_URL=redis://localhost:6381/0
 
 In Docker Compose, agent-orchestrator uses the dedicated `agent-orchestrator-valkey` service.
 
+### Valkey command volume on the streaming path
+
+The shared RESP client opens a fresh TCP connection and emits one `valkey.execute`
+span for every command, so a Valkey command, a TCP connection and a span are the
+same unit of cost here. Two properties of the live-event path exist to keep that
+unit count proportional to work done rather than to tokens streamed or seconds
+elapsed, and both are easy to undo by accident:
+
+- **Publishing an event is one command.** Appending to a job's stream and
+  re-arming the stream's TTL happen in a single scripted round trip. Splitting
+  them back into `XADD` and `EXPIRE` doubles the cost of the busiest path in the
+  service, because a streaming model publishes one live event per token.
+- **A subscriber reads a batch per command.** `XREAD` asks for up to 64 entries
+  and the surplus is buffered inside that one subscriber until it is asked for
+  them. Taking a single entry per command made the consumer issue as many
+  commands as the producer.
+
+`JOB_EVENT_STREAM_IDLE_BLOCK_SECONDS` (default 15) is the third: it is how long a
+quiet SSE stream waits on the live bus before re-reading the job's status from
+PostgreSQL. It is a fallback interval, not a latency budget — a published event
+ends the wait at once, so nothing the client sees arrives later for making it
+long. It must not be set from `WORKER_POLL_INTERVAL_SECONDS`, whose 0.2s is tuned
+for how fast the worker claims a queued job; reusing it here cost five Valkey
+commands and ten database queries a second per open stream, for the whole life of
+a job.
+
+That interval has a counterpart in `LIVE_BUS_DEGRADED_MIN_SECONDS` /
+`LIVE_BUS_DEGRADED_MAX_SECONDS` (`runtime/live_event_resilience.py`, 0.5s to 5s):
+when a stream's own live reads start failing it polls at that rate instead, so an
+outage costs latency rather than the response. The two constants bracket one
+narrow case from opposite sides — a publish that fails while the same stream's
+reads keep succeeding leaves the stream undegraded and therefore sitting in the
+full idle block. It is bounded and accepted; the reasoning, and why shortening
+the idle block is the wrong way to cover it, is in
+`openspec/changes/dra-37-valkey-call-volume/design.md`. Read that before moving
+either constant.
+
+### Publish every event a client waits on
+
+The stream has two sources for the same event: it polls `list_events` and it
+forwards the live bus. So a durable row with no matching `publish` still arrives —
+but only on the next fallback pass, which is now seconds rather than 200ms.
+
+**When you add an `append_event`, publish it too**, passing the durable row's id as
+`durable_event_id=` so the live copy and the polled copy collapse into one
+transcript entry instead of rendering twice. Two cases are not optional:
+
+- **Terminal events** (`completion`, `failure`, `cancellation`). Until a terminal
+  event is *delivered* the client's stream stays open, so an unpublished one is a
+  UI that hangs rather than one that merely lags. This is why `mark_job_cancelled`
+  and `request_cancel` return the ids of the rows they append: the repository has
+  no bus, so their callers do the publishing.
+- **`tool_call` and `tool_result`.** A tool call is recorded before the tool runs,
+  which is exactly when the bus falls quiet, so leaving these to the poll makes a
+  slow tool look like a stalled agent.
+
+The one durable event deliberately left to the fallback pass is
+`progress {"status": "running"}`: it is not terminal, so it cannot hold a stream
+open, and the same fact is already on the job row the dashboard renders from.
+Anything else you choose to leave, say so where you leave it.
+
 ## Browser CORS
 
 `CORS_ALLOW_ORIGINS` is a comma-separated allowlist of browser origins, defaulting

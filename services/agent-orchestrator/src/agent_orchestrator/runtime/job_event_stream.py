@@ -52,16 +52,29 @@ def format_sse_event(
 
 
 class JobEventStreamService:
+    """Streams one job's events to a client as Server-Sent Events.
+
+    ``idle_block_seconds`` is how long a quiet stream waits on the live event bus
+    before falling back to the database. It is a *fallback* interval, not a
+    latency budget: a published event ends the wait immediately, so nothing the
+    client sees arrives any later for making it long. What it does bound is how
+    long the stream stays open after a job reached a terminal status without a
+    live event announcing it — a degraded path, since every ordinary terminal
+    transition publishes. Making it short buys almost nothing and costs a Valkey
+    command, a TCP connection, a span and two database round trips per tick, for
+    every open stream, for as long as the job runs.
+    """
+
     def __init__(
         self,
         *,
         repository: Repository,
         live_event_bus: LiveEventBus,
-        poll_interval_seconds: float,
+        idle_block_seconds: float,
     ):
         self._repository = repository
         self._live_event_bus = live_event_bus
-        self._poll_interval_seconds = poll_interval_seconds
+        self._idle_block_seconds = idle_block_seconds
 
     async def stream(
         self,
@@ -107,6 +120,14 @@ class JobEventStreamService:
                 if is_disconnected is not None and await is_disconnected():
                     return
 
+                if terminal_received:
+                    # The terminal event has already been delivered from the
+                    # database, so all that is left is one more pass to pick up
+                    # anything persisted after it. Waiting on the live bus here
+                    # would add a whole idle interval to closing a stream whose
+                    # job is already over.
+                    continue
+
                 # A live-bus failure degrades this stream to poll-only; it must
                 # never end the response. Letting it propagate is what turned a
                 # single Valkey reset into `GET .../events/stream 500` and a
@@ -116,7 +137,7 @@ class JobEventStreamService:
                 # `GeneratorExit` derive from `BaseException` and belong to the
                 # handler below, which closes the stream as the client asked.
                 try:
-                    live_event = await live_subscriber.get(self._poll_interval_seconds)
+                    live_event = await live_subscriber.get(self._idle_block_seconds)
                 except Exception:
                     await degradation.note_failure()
                     # Fall through as if the subscriber had simply timed out, so

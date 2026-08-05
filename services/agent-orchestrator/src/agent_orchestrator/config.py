@@ -43,6 +43,21 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("skill_roots_raw", "SKILL_ROOTS"),
     )
     worker_poll_interval_seconds: float = 0.2
+    # How long an idle SSE job-event stream waits on the live event bus before
+    # re-reading the job's status from the database. Deliberately not
+    # `worker_poll_interval_seconds`: that value is tuned for how quickly the
+    # worker claims a queued job from PostgreSQL, and reusing it here made every
+    # open stream issue five blocking Valkey reads and ten database queries a
+    # second for the whole life of a job. A published event ends the wait at
+    # once, so this only bounds the rare case of a job going terminal without
+    # publishing anything.
+    job_event_stream_idle_block_seconds: float = Field(
+        default=15.0,
+        validation_alias=AliasChoices(
+            "job_event_stream_idle_block_seconds",
+            "JOB_EVENT_STREAM_IDLE_BLOCK_SECONDS",
+        ),
+    )
     worker_max_tool_rounds: int = 64
     default_job_max_attempts: int = 2
     subagent_wait_timeout_seconds: float = 600.0
@@ -167,6 +182,13 @@ class Settings(BaseSettings):
     def validate_poll_interval(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("worker_poll_interval_seconds must be positive")
+        return value
+
+    @field_validator("job_event_stream_idle_block_seconds")
+    @classmethod
+    def validate_job_event_stream_idle_block(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("job_event_stream_idle_block_seconds must be positive")
         return value
 
     @field_validator("worker_max_tool_rounds")

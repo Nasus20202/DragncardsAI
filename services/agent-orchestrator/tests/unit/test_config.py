@@ -21,6 +21,29 @@ def test_settings_validate_poll_interval():
         Settings(worker_poll_interval_seconds=0)
 
 
+def test_settings_job_event_stream_idle_block_is_independent_of_the_worker_tick():
+    """The SSE fallback interval must not inherit the worker's job-claim tick.
+
+    Reusing `worker_poll_interval_seconds` (0.2s) made every open stream issue
+    five blocking Valkey reads and ten database queries a second for the whole
+    life of a job.
+    """
+    settings = Settings()
+    assert settings.job_event_stream_idle_block_seconds == 15.0
+    assert (
+        settings.job_event_stream_idle_block_seconds
+        != settings.worker_poll_interval_seconds
+    )
+    assert (
+        Settings(
+            JOB_EVENT_STREAM_IDLE_BLOCK_SECONDS=30
+        ).job_event_stream_idle_block_seconds
+        == 30
+    )
+    with pytest.raises(ValueError):
+        Settings(job_event_stream_idle_block_seconds=0)
+
+
 def test_settings_validate_provider_models_cache_ttl():
     with pytest.raises(ValueError):
         Settings(provider_models_cache_ttl_seconds=-1)

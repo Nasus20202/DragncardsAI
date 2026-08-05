@@ -191,7 +191,7 @@ def create_app(
         app.state.job_event_stream = JobEventStreamService(
             repository=app.state.repository,
             live_event_bus=app.state.live_event_bus,
-            poll_interval_seconds=settings.worker_poll_interval_seconds,
+            idle_block_seconds=settings.job_event_stream_idle_block_seconds,
         )
 
         if history_event_bus is None and settings.history_ingest_enabled:
