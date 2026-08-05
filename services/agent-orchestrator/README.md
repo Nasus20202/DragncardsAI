@@ -218,6 +218,11 @@ A player agent's output reaches the orchestrator only inside a server-built
 the seat's own session, and the seat's text sits in one delimited block labelled as
 untrusted data. Player text never enters the orchestrator's system prompt.
 
+A session also carries two persona-related settings, both editable for its whole
+life and both described under [Agent Personas](#agent-personas): `session_persona`,
+the persona its own agent runs as, and `allowed_subagents`, the personas its agent
+may spawn a subagent from — where an **empty list means none**.
+
 - `GET /sessions`
 - `POST /sessions`
 - `GET /sessions/{session_id}`
@@ -440,18 +445,100 @@ persona is a delete plus a create, and an agent can name a persona in a tool arg
 A persona holds **no credentials**. It names a provider and a model; API keys stay in the Bifrost
 gateway configuration and no persona field is read as a secret.
 
+#### A session may run as a persona itself
+
+`session_persona` on `POST /sessions` and `PATCH /sessions/{id}` names the persona the session's
+**own** agent runs as. It contributes exactly two things:
+
+- its system prompt, added as the same `## Persona` section a subagent gets, after the base rules
+  which it cannot override; and
+- its `allowed_tools`, narrowing the session's own tool surface by the same filter a subagent's
+  persona applies.
+
+It deliberately does **not** change the session's provider, model, gateway options or skills. Those
+have their own controls on the same session — the model config row and the enabled-skill rows, both
+written by the settings panel — and a persona overwriting rows the panel also writes would make the
+visible pickers misreport what the agent runs with. A spawned child has no competing control, which
+is why a child materialises the whole persona and a session does not.
+
+The persona is **resolved and snapshotted when the name is set**, into the `agent_persona` key of
+the session's metadata — the same key and the same reader a spawned child uses. Editing or deleting
+the persona afterwards therefore does not change a session that already adopted it, for the same
+reason it does not change a running subagent. The snapshot is server-owned: `PATCH /sessions` with a
+`metadata` body can neither forge nor drop it, because a client changes the persona by name only.
+Deleting the persona clears the name (so nothing re-adopts it) and leaves the snapshot (because the
+session already became it).
+
+`session_persona` is **editable for the life of the session**, unlike `session_mode`. Nothing
+durable is keyed to it — no seat sessions, no child rows — so changing it orphans nothing; the turns
+already taken keep the snapshot they ran under, which is what the capture rule guarantees.
+
+#### Which personas a session may spawn
+
+`allowed_subagents` is the per-session allowlist of personas the agent may start a subagent from. It
+is shaped like the session's skill selection — a per-session choice from a deployment-global
+catalogue — and is managed either atomically on `POST /sessions` / `PATCH /sessions/{id}` or one at a
+time:
+
+| Method   | Path                                          | Operation id                   |
+| -------- | --------------------------------------------- | ------------------------------ |
+| `POST`   | `/sessions/{id}/subagents`                    | `allow_session_subagent`       |
+| `GET`    | `/sessions/{id}/subagents`                    | `list_session_subagents`       |
+| `PATCH`  | `/sessions/{id}/subagents/{persona_name}`     | `set_session_subagent_allowed` |
+| `DELETE` | `/sessions/{id}/subagents/{persona_name}`     | `disallow_session_subagent`    |
+
+**An empty allowlist means no persona may be spawned.** It is never read as "all personas". A
+control whose emptiest-looking state is its most permissive one cannot be reasoned about, and
+"empty means all" would leave no way to express "no personas at all" — the state an operator most
+plausibly wants. A session that should be able to spawn every persona lists every persona. Spawning
+a subagent with **no** persona, which copies the session's own configuration, is unaffected by the
+allowlist and remains available to every session.
+
+So that nobody has to interpret an empty array, `GET /sessions/{id}/subagents` returns **every**
+persona in the catalogue with its own `allowed` flag, rather than returning only the permitted names.
+The session response also carries `allowed_subagents` as a plain list, with the empty-means-none rule
+stated in its OpenAPI description (and therefore in the generated MCP tool schema).
+
+The allowlist is **enforced server-side at spawn dispatch**, in `_resolve_spawn_persona`
+(`runtime/builtin_tools.py`), above the persona lookup — so a disallowed name is refused however the
+spawn was reached: a model naming it, a session's `default_subagent_persona` falling through to it,
+or a scripted HTTP/MCP client driving a prompt. The refusal names the permitted set so the model can
+correct itself. The system-prompt catalogue is filtered to the allowlist as well, but that is
+presentation only; a model can name anything, and the dispatch check is what makes the control real.
+
+Two consistency rules keep the configuration from contradicting itself, both reported as `400`:
+
+- `default_subagent_persona` must be on the allowlist. It is what a bare `spawn_subagent` becomes, so
+  a default nothing may spawn is not a stricter setting but a broken one.
+- Revoking a persona that is still the default is refused. Revocation is always available — that is
+  what makes this a control rather than a preference — but it has to take the default with it, which
+  one `PATCH /sessions` carrying both fields does. The two are validated against the state the
+  request *produces*, before either is written, so a rejected combination leaves the session
+  untouched.
+
+Migration `0013` backfills the allowlist of every session that existed when it ran with the whole
+persona catalogue, so no session already in flight lost a capability. New sessions start closed.
+
+`allowed_subagents` is editable for the life of the session, deliberately: a security control you
+cannot revoke mid-game is not a security control.
+
+**Seat personas are out of scope.** In orchestrated mode a seat's persona
+(`session_player_configs.persona`) is chosen by the operator in the roster and is not nameable by any
+agent, so it is not one of "the subagents this session may spawn". It keeps its own DRA-30
+validation.
+
 #### Starting a subagent from a persona
 
 `spawn_subagent` takes an optional `persona` argument. A session may also record a
 `default_subagent_persona`, which applies when the agent names none; an explicit argument wins over
-the default. Setting a session default to a persona that does not exist is rejected, and deleting a
-persona clears it from any session that defaulted to it. With no persona anywhere, a spawn behaves
-exactly as it did before personas existed: the child copies the parent's model config, skills, and
-MCP servers.
+the default. Both are subject to the allowlist above. Setting a session default to a persona that
+does not exist is rejected, and deleting a persona clears it from any session that defaulted to it
+and from every session that allowlisted it. With no persona anywhere, a spawn behaves exactly as it
+did before personas existed: the child copies the parent's model config, skills, and MCP servers.
 
-Master prompt jobs see the persona catalogue — names and descriptions only — in their system prompt,
-so the agent can pick one. A persona's own prompt is the *child's* instruction and is never inlined
-into the parent's context.
+Master prompt jobs see the persona catalogue — names and descriptions only, and only the personas
+this session allows — in their system prompt, so the agent can pick one. A persona's own prompt is
+the *child's* instruction and is never inlined into the parent's context.
 
 #### A persona is captured at start time and never re-read
 
@@ -765,8 +852,10 @@ root [`AGENTS.md`](../../AGENTS.md#driving-the-system-end-to-end).
 5. `POST /sessions/{session_id}/skills`
 6. `POST /sessions/{session_id}/mcps`
 7. `GET /sessions/{session_id}/tools`
-8. `PUT /personas/{name}` then `PATCH /sessions/{session_id}` with `default_subagent_persona`, when
-   the session's subagents should run as a persona rather than as copies of the session
+8. `PUT /personas/{name}` then `PATCH /sessions/{session_id}` with `allowed_subagents` (and
+   optionally `default_subagent_persona`, which must be one of them), when the session's subagents
+   should run as a persona rather than as copies of the session. Send both in the same request: a
+   default outside the allowlist is refused.
 
 ### Run a prompt
 

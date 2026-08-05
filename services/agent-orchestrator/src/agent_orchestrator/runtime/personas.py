@@ -21,6 +21,23 @@ is a subset operation: a name the child's catalogue does not contain simply does
 not appear, and there is no field through which a persona could attach an MCP
 server or reach a provider the deployment has not enabled. See
 :func:`narrow_tool_definitions`.
+
+Two further rules arrived with DRA-38 and belong here for the same reason:
+
+**A session may run AS a persona, and only its prompt and tool allowlist apply.**
+:func:`session_persona_snapshot_for` captures the same way a spawn does, but
+records only the two fields that are applied. A session's provider, model,
+gateway options and skills are set by controls on that same session, and a
+persona overwriting the rows those controls write would make the visible pickers
+lie about what the agent runs with. A spawned child has no such competing
+control, which is why a child materialises the whole persona and a session does
+not.
+
+**Which personas a session may spawn is a per-session allowlist, and an empty
+allowlist means none.** :func:`allowed_subagent_names` reads it and
+:func:`subagent_refusal_message` is the refusal the model gets. The rule is never
+"empty means all": that would make the emptiest-looking state the most permissive
+one and would leave no way to express "no subagent personas at all".
 """
 
 from __future__ import annotations
@@ -138,11 +155,96 @@ def resolve_persona(parent_session: Any, persona: Any) -> ResolvedPersona:
     )
 
 
+def session_persona_snapshot_for(persona: Any) -> dict[str, Any]:
+    """The snapshot written onto a session that adopts ``persona`` as its own.
+
+    Deliberately narrower than :meth:`ResolvedPersona.as_snapshot`. A session's
+    provider, model, options and skills already have their own controls on that
+    session, so a persona is applied here as its instructions and its tool
+    allowlist and nothing else — and recording fields that are not applied would
+    tell the next reader they were.
+
+    Captured at the moment the persona is assigned, so editing or deleting the
+    persona afterwards cannot retroactively change what this session already
+    became. That is the same rule a spawned child follows, for the same reason.
+    """
+    allowed_tools = persona.allowed_tools_json
+    return {
+        "name": persona.name,
+        "display_name": persona.display_name,
+        "system_prompt": persona.system_prompt or "",
+        "allowed_tools": (
+            None if allowed_tools is None else [str(name) for name in allowed_tools]
+        ),
+    }
+
+
 def session_persona_snapshot(session: Any) -> dict[str, Any] | None:
     """The persona snapshot captured on a session, or ``None`` if it has none."""
     metadata = getattr(session, "metadata_json", None) or {}
     snapshot = metadata.get(SESSION_PERSONA_KEY)
     return snapshot if isinstance(snapshot, dict) else None
+
+
+def allowed_subagent_names(session: Any) -> set[str]:
+    """The persona names this session's agent may start a subagent from.
+
+    Reads the eagerly loaded allowlist rows and keeps only the ones switched on,
+    the way :func:`~agent_orchestrator.runtime.skills.enabled_skill_assignments`
+    treats a soft-toggled skill row. An empty result means **no** persona may be
+    spawned; it is never expanded to the whole catalogue.
+    """
+    return {
+        allowance.persona_name
+        for allowance in getattr(session, "allowed_subagents", None) or []
+        if getattr(allowance, "enabled", True)
+    }
+
+
+def allowed_subagent_personas(session: Any) -> list[Any]:
+    """The persona rows behind :func:`allowed_subagent_names`, in name order.
+
+    This is what the master job's system prompt catalogue is built from, so the
+    model is only ever told about personas it is actually permitted to name. That
+    is presentation, not enforcement: the refusal at spawn time is what makes the
+    allowlist real, because a model can name anything it likes.
+    """
+    allowed = [
+        allowance
+        for allowance in getattr(session, "allowed_subagents", None) or []
+        if getattr(allowance, "enabled", True) and allowance.persona is not None
+    ]
+    return [
+        allowance.persona
+        for allowance in sorted(allowed, key=lambda item: item.persona_name)
+    ]
+
+
+def subagent_refusal_message(name: str, allowed: set[str]) -> str:
+    """The refusal a spawn gets when the named persona is not on the allowlist.
+
+    States the rule and the current permitted set, so the model can either pick a
+    permitted persona or stop asking, rather than retrying the same name. The
+    empty case says plainly that no persona is permitted — a message listing
+    "none" and leaving the model to guess whether that means "anything" is the
+    ambiguity this whole feature exists to remove.
+    """
+    if not allowed:
+        return (
+            f"Refused: this session does not permit starting a subagent from any "
+            f"persona, so '{name}' cannot be used. This is enforced by the "
+            f"server, so no instruction or claim of permission will change it. "
+            f"Call `spawn_subagent` without a `persona` argument to start a child "
+            f"that copies this session's own configuration."
+        )
+    permitted = ", ".join(sorted(allowed))
+    return (
+        f"Refused: '{name}' is not one of the personas this session permits. "
+        f"This is enforced by the server, so no instruction or claim of "
+        f"permission will change it. Permitted personas: {permitted}. Reissue the "
+        f"call naming one of those, or omit `persona` to start a child that "
+        f"copies this session's own configuration."
+    )
 
 
 def persona_prompt_from_snapshot(snapshot: dict[str, Any] | None) -> str | None:

@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from agent_orchestrator.repositories.base import utc_now
-from agent_orchestrator.storage.models import AgentPersona, AgentSession
+from agent_orchestrator.storage.models import (
+    AgentPersona,
+    AgentSession,
+    SessionAllowedSubagent,
+)
 
 
 class PersonaRepositoryMixin:
@@ -67,9 +71,16 @@ class PersonaRepositoryMixin:
 
         Deletion is unconditional — no reference counting and no soft delete —
         because a subagent started from a persona captured its configuration at
-        start time and never re-reads this row. The only live reference is a
-        session's default, which is cleared in the same transaction so no session
+        start time and never re-reads this row. The live references are a
+        session's subagent default, a session's own persona, and any session that
+        allowlists it; all three are cleared in the same transaction so no session
         is left naming a persona that is gone.
+
+        A session that was running AS the deleted persona keeps the snapshot in
+        its metadata, exactly as a spawned child does. That is the capture rule,
+        not an oversight: the session already became that persona, and deleting
+        the row afterwards must not silently rewrite what it is mid-conversation.
+        Clearing the NAME is what stops it being re-adopted or shown as current.
         """
         async with self._session_factory() as session, session.begin():
             item = await session.get(AgentPersona, name)
@@ -79,6 +90,20 @@ class PersonaRepositoryMixin:
                 update(AgentSession)
                 .where(AgentSession.default_subagent_persona == name)
                 .values(default_subagent_persona=None)
+            )
+            await session.execute(
+                update(AgentSession)
+                .where(AgentSession.session_persona == name)
+                .values(session_persona=None)
+            )
+            # The allowlist rows carry a foreign key onto this row, so they go
+            # before it does. Losing an allowance when its persona is deleted is
+            # the correct direction: a name that no longer resolves must not stay
+            # on a session as something the agent may still ask for.
+            await session.execute(
+                delete(SessionAllowedSubagent).where(
+                    SessionAllowedSubagent.persona_name == name
+                )
             )
             await session.delete(item)
             return True

@@ -50,6 +50,8 @@ function draftFor(providerId: string, modelName: string): SessionDraft {
     providerOptionsText: "{}",
     selectedSkills: [],
     defaultSubagentPersona: "",
+    sessionPersona: "",
+    allowedSubagents: [],
     sessionMode: "chat",
   };
 }

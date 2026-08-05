@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, select, update
 from agent_orchestrator.repositories.base import utc_now
 from agent_orchestrator.runtime.session_modes import SESSION_MODE_CHAT
 from agent_orchestrator.storage.models import (
+    AgentPersona,
     AgentSession,
     CompactionRecord,
     Job,
@@ -16,6 +17,7 @@ from agent_orchestrator.storage.models import (
     McpRegistry,
     PlayerIllegalAction,
     PlayerMessage,
+    SessionAllowedSubagent,
     SessionEnabledMcp,
     SessionModelConfig,
     SessionEnabledSkill,
@@ -69,6 +71,7 @@ class SessionRepositoryMixin:
         context_recent_message_limit: int | None = None,
         context_recent_tool_exchange_limit: int | None = None,
         default_subagent_persona: str | None = None,
+        session_persona: str | None = None,
     ) -> AgentSession:
         async with self._session_factory() as session, session.begin():
             item = AgentSession(
@@ -79,6 +82,7 @@ class SessionRepositoryMixin:
                 context_recent_message_limit=context_recent_message_limit,
                 context_recent_tool_exchange_limit=context_recent_tool_exchange_limit,
                 default_subagent_persona=default_subagent_persona,
+                session_persona=session_persona,
             )
             session.add(item)
             await session.flush()
@@ -201,6 +205,8 @@ class SessionRepositoryMixin:
                 ]
             if "default_subagent_persona" in changes:
                 item.default_subagent_persona = changes["default_subagent_persona"]
+            if "session_persona" in changes:
+                item.session_persona = changes["session_persona"]
             item.updated_at = utc_now()
         return await self.get_session(session_id)
 
@@ -331,6 +337,11 @@ class SessionRepositoryMixin:
             await session.execute(
                 delete(SessionPlayerConfig).where(
                     SessionPlayerConfig.session_id == session_id
+                )
+            )
+            await session.execute(
+                delete(SessionAllowedSubagent).where(
+                    SessionAllowedSubagent.session_id == session_id
                 )
             )
             # The player channel and the findings hang off the ORCHESTRATING
@@ -466,6 +477,97 @@ class SessionRepositoryMixin:
     ) -> SessionEnabledSkill | None:
         async with self._session_factory() as session:
             return await session.get(SessionEnabledSkill, (session_id, skill_name))
+
+    async def set_subagent_allowed(
+        self, session_id: str, persona_name: str, enabled: bool
+    ) -> SessionAllowedSubagent | None:
+        """Allow or disallow one persona for this session's spawns.
+
+        Mirrors :meth:`enable_skill_for_session`: the row is created on first use
+        and thereafter toggled rather than deleted, and a name with no
+        ``agent_personas`` row is refused with ``None`` so the caller can answer
+        400 instead of writing a dangling reference.
+        """
+        async with self._session_factory() as session, session.begin():
+            if await session.get(AgentSession, session_id) is None:
+                return None
+            if await session.get(AgentPersona, persona_name) is None:
+                return None
+            item = await session.get(SessionAllowedSubagent, (session_id, persona_name))
+            if item is None:
+                item = SessionAllowedSubagent(
+                    session_id=session_id,
+                    persona_name=persona_name,
+                    enabled=enabled,
+                )
+                session.add(item)
+            else:
+                item.enabled = enabled
+                item.updated_at = utc_now()
+        return item
+
+    async def replace_session_allowed_subagents(
+        self, session_id: str, persona_names: list[str]
+    ) -> bool:
+        """Make the session's allowlist exactly ``persona_names``, in one write.
+
+        The per-persona endpoints exist too, and mirror the skill endpoints, but a
+        client that holds a whole configuration — the dashboard's settings panel —
+        needs the list applied atomically. Applying it one call at a time makes the
+        session pass through states nobody asked for: a moment where the default
+        subagent persona is no longer allowed, which a validating write would then
+        refuse. Returns ``False`` when the session does not exist.
+        """
+        requested = list(dict.fromkeys(persona_names))
+        async with self._session_factory() as session, session.begin():
+            if await session.get(AgentSession, session_id) is None:
+                return False
+            existing_result = await session.execute(
+                select(SessionAllowedSubagent).where(
+                    SessionAllowedSubagent.session_id == session_id
+                )
+            )
+            existing = {item.persona_name: item for item in existing_result.scalars()}
+            for name in requested:
+                item = existing.pop(name, None)
+                if item is None:
+                    session.add(
+                        SessionAllowedSubagent(
+                            session_id=session_id,
+                            persona_name=name,
+                            enabled=True,
+                        )
+                    )
+                elif not item.enabled:
+                    item.enabled = True
+                    item.updated_at = utc_now()
+            # Anything the client did not list is removed rather than left
+            # disabled: this call states the whole allowlist, so a row it omitted
+            # is a row it says should not be there.
+            for leftover in existing.values():
+                await session.delete(leftover)
+            return True
+
+    async def list_session_allowed_subagents(
+        self, session_id: str
+    ) -> list[SessionAllowedSubagent]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(SessionAllowedSubagent)
+                .where(SessionAllowedSubagent.session_id == session_id)
+                .order_by(SessionAllowedSubagent.persona_name)
+            )
+            return list(result.scalars().unique())
+
+    async def remove_subagent_allowance(
+        self, session_id: str, persona_name: str
+    ) -> bool:
+        async with self._session_factory() as session, session.begin():
+            item = await session.get(SessionAllowedSubagent, (session_id, persona_name))
+            if item is None:
+                return False
+            await session.delete(item)
+            return True
 
     async def add_mcp_registry(
         self,

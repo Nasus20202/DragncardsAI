@@ -241,3 +241,149 @@ async def test_spawn_subagent_inherits_enabled_mcps(tmp_path: Path):
                 assert child_custom_mcp["enabled"] is True
     finally:
         await engine.dispose()
+
+
+class PersonaSpawnBifrost(SpawnSubagentBifrost):
+    """Names a persona on the spawn, so the allowlist is what decides the outcome."""
+
+    def __init__(self, persona: str):
+        super().__init__()
+        self._persona = persona
+
+    async def chat_completion(self, *args, **kwargs):
+        response = await super().chat_completion(*args, **kwargs)
+        for tool_call in response.tool_calls:
+            if tool_call.name == "spawn_subagent":
+                tool_call.arguments["persona"] = self._persona
+        return response
+
+
+async def _persona_spawn_app(tmp_path: Path, persona: str):
+    database_path = tmp_path / "subagent-allowlist.sqlite3"
+    engine = create_engine(f"sqlite+aiosqlite:///{database_path}")
+    await ensure_schema(engine)
+    repository = Repository(create_session_factory(engine))
+
+    skill_root = tmp_path / "skills"
+    skill_root.mkdir()
+
+    app = create_app(
+        settings=Settings(
+            database_url=f"sqlite+aiosqlite:///{database_path}",
+            SKILL_ROOTS=str(skill_root),
+            ENABLED_PROVIDER_IDS=INTEGRATION_ENABLED_PROVIDER_IDS,
+        ),
+        repository=repository,
+        bifrost_client=PersonaSpawnBifrost(persona),
+        live_event_bus=InMemoryLiveEventBus(),
+        mcp_client=FakeMcp(),
+        skill_registry=SkillRegistry((skill_root,)),
+    )
+    return app, engine
+
+
+async def _run_to_completion(client: httpx.AsyncClient, session_id: str) -> dict:
+    prompt_response = await client.post(
+        f"/sessions/{session_id}/prompts", json={"prompt": "delegate this"}
+    )
+    assert prompt_response.status_code == 202
+    job_id = prompt_response.json()["job"]["id"]
+    for _ in range(120):
+        job_response = await client.get(f"/jobs/{job_id}")
+        if job_response.json()["job"]["status"] in ("completed", "failed"):
+            break
+        await asyncio.sleep(0.1)
+    return job_response.json()["job"]
+
+
+@pytest.mark.asyncio
+async def test_a_disallowed_subagent_persona_is_refused_over_the_api(tmp_path: Path):
+    """The allowlist is enforced by the server, not by the picker that shows it.
+
+    Nothing in this test goes near the dashboard. A session is created over HTTP
+    with an allowlist that excludes `rules-lawyer`, a prompt is submitted over
+    HTTP, and the agent's `spawn_subagent` call names `rules-lawyer` anyway —
+    which is exactly what a scripted client, an MCP caller, or a model that
+    ignored its system prompt would do. No child session is created and the
+    refusal explains the rule.
+    """
+    app, engine = await _persona_spawn_app(tmp_path, "rules-lawyer")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                await client.put(
+                    "/personas/rules-lawyer",
+                    json={"system_prompt": "Answer from the printed rules."},
+                )
+                await client.put(
+                    "/personas/scout", json={"system_prompt": "Read the board."}
+                )
+                session_id = (
+                    await client.post(
+                        "/sessions",
+                        json={"name": "guarded", "allowed_subagents": ["scout"]},
+                    )
+                ).json()["session"]["id"]
+                await client.put(
+                    f"/sessions/{session_id}/model-config",
+                    json=INTEGRATION_MODEL_CONFIG,
+                )
+
+                job = await _run_to_completion(client, session_id)
+
+                event_types = [e["event_type"] for e in job["events"]]
+                assert "subagent_started" not in event_types
+
+                refusal = next(
+                    e
+                    for e in job["events"]
+                    if e["event_type"] == "tool_result"
+                    and e["payload"]["tool_name"] == "spawn_subagent"
+                )
+                text = str(refusal["payload"])
+                assert "rules-lawyer" in text
+                assert "scout" in text
+
+                listed = await client.get("/sessions")
+                assert [s["id"] for s in listed.json()["sessions"]] == [session_id]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_an_allowed_subagent_persona_spawns_over_the_api(tmp_path: Path):
+    """The same call, with the persona allowlisted, goes through.
+
+    Paired with the refusal above so the guard is shown to be selective rather
+    than a blanket "no personas" regression.
+    """
+    app, engine = await _persona_spawn_app(tmp_path, "scout")
+    try:
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                await client.put(
+                    "/personas/scout", json={"system_prompt": "Read the board."}
+                )
+                session_id = (
+                    await client.post(
+                        "/sessions",
+                        json={"name": "open", "allowed_subagents": ["scout"]},
+                    )
+                ).json()["session"]["id"]
+                await client.put(
+                    f"/sessions/{session_id}/model-config",
+                    json=INTEGRATION_MODEL_CONFIG,
+                )
+
+                job = await _run_to_completion(client, session_id)
+
+                started = next(
+                    e for e in job["events"] if e["event_type"] == "subagent_started"
+                )
+                assert started["payload"]["persona"] == "scout"
+    finally:
+        await engine.dispose()

@@ -19,6 +19,8 @@ const draft: SessionDraft = {
   providerOptionsText: '{"foo":"bar"}',
   selectedSkills: ["skill-a", "skill-b"],
   defaultSubagentPersona: "rules-lawyer",
+  sessionPersona: "",
+  allowedSubagents: [],
   sessionMode: "chat",
 };
 

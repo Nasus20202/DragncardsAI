@@ -10,6 +10,7 @@ from agent_orchestrator.schemas.jobs import (
     QuestionChoiceResponse,
     SessionToolResponse,
 )
+from agent_orchestrator.runtime.personas import allowed_subagent_names
 from agent_orchestrator.runtime.player_agents import unfold_reasoning
 from agent_orchestrator.runtime.skills import enabled_skill_assignments
 from agent_orchestrator.schemas.personas import PersonaResponse
@@ -50,6 +51,8 @@ def serialize_session_summary(item) -> SessionSummary:
         mcps=[serialize_mcp_assignment(em) for em in item.enabled_mcps],
         players=[serialize_player_config(config) for config in item.player_configs],
         default_subagent_persona=item.default_subagent_persona,
+        session_persona=item.session_persona,
+        allowed_subagents=sorted(allowed_subagent_names(item)),
         recent_job=None if not recent_jobs else serialize_job(recent_jobs[0]),
     )
 
@@ -252,6 +255,8 @@ def serialize_session_detail(item) -> SessionDetail:
         mcps=summary.mcps,
         players=summary.players,
         default_subagent_persona=summary.default_subagent_persona,
+        session_persona=summary.session_persona,
+        allowed_subagents=summary.allowed_subagents,
         recent_job=summary.recent_job,
         recent_jobs=[serialize_job(job) for job in recent_jobs],
     )
