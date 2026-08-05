@@ -322,7 +322,7 @@ async def test_cancelling_the_job_closes_the_question(
 
     waiting = asyncio.create_task(handler({"question": "Who?", "choices": CHOICES}))
     asked = await await_job_event(repository, job.id, "user_question")
-    cancelled = await repository.request_cancel(job.id)
+    cancelled, _ = await repository.request_cancel(job.id)
     assert cancelled is not None
     assert cancelled.cancellation_requested_at is not None
 

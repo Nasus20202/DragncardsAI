@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlalchemy import func, select, update
 
@@ -11,6 +11,24 @@ from agent_orchestrator.storage.models import (
     JobEvent,
     JobOutput,
 )
+
+
+class AppendedCancellation(NamedTuple):
+    """A durable `cancellation` row this repository appended, and whose job it is on.
+
+    Returned so the caller — which has the live event bus the repository does not —
+    can publish the live copy of that row under the row's own id. The id matters:
+    the SSE stream serves both the live bus and `list_events`, and the client
+    collapses the two copies by id, so a live copy published without it renders the
+    cancellation twice (DRA-34).
+
+    A cancellation is a terminal event, so until it is *delivered* the client's
+    stream stays open. That is why these ids are surfaced rather than left to the
+    stream's own fallback poll to discover.
+    """
+
+    job_id: str
+    event_id: int
 
 
 class JobRepositoryMixin:
@@ -100,11 +118,20 @@ class JobRepositoryMixin:
             result = await session.execute(self._job_query().where(Job.id == job_id))
             return result.scalars().unique().first()
 
-    async def request_cancel(self, job_id: str) -> Job | None:
+    async def request_cancel(
+        self, job_id: str
+    ) -> tuple[Job | None, list[AppendedCancellation]]:
+        """Request cancellation of a job and its active children.
+
+        Returns the job and every durable `cancellation` row this appended — one
+        for the job, one per active child. The caller is expected to publish a
+        live copy of each under the returned id, because a `cancellation` is
+        terminal and an undelivered one leaves that job's SSE stream open.
+        """
         async with self._session_factory() as session, session.begin():
             job = await session.get(Job, job_id)
             if job is None:
-                return None
+                return None, []
             now = utc_now()
             job.cancellation_requested_at = now
             if job.status == "queued":
@@ -137,14 +164,25 @@ class JobRepositoryMixin:
                         .values(status="cancelled", completed_at=now)
                     )
 
-        await self.append_event(job_id, session_id, "cancellation", {"requested": True})
-
+        appended = [
+            AppendedCancellation(
+                job_id,
+                await self.append_event(
+                    job_id, session_id, "cancellation", {"requested": True}
+                ),
+            )
+        ]
         for row in child_rows:
-            await self.append_event(
-                row.id, row.session_id, "cancellation", {"requested": True}
+            appended.append(
+                AppendedCancellation(
+                    row.id,
+                    await self.append_event(
+                        row.id, row.session_id, "cancellation", {"requested": True}
+                    ),
+                )
             )
 
-        return await self.get_job(job_id)
+        return await self.get_job(job_id), appended
 
     async def append_event(
         self,
@@ -252,7 +290,15 @@ class JobRepositoryMixin:
             job.updated_at = now
         return await self.get_job(job_id)
 
-    async def mark_job_cancelled(self, job_id: str, *, reason: str) -> Job | None:
+    async def mark_job_cancelled(self, job_id: str, *, reason: str) -> int | None:
+        """Mark a job cancelled, returning the id of the `cancellation` row appended.
+
+        The id is returned, rather than the job, because the only thing the two
+        callers need from this is something to publish the live copy under. A
+        `cancellation` is terminal, so leaving it to the stream's fallback poll to
+        discover holds that client's stream open for the whole interval. `None`
+        means the job was gone and nothing was appended.
+        """
         async with self._session_factory() as session, session.begin():
             job = await session.get(Job, job_id)
             if job is None:
@@ -264,8 +310,9 @@ class JobRepositoryMixin:
             job.completed_at = now
             job.updated_at = now
             session_id = job.session_id
-        await self.append_event(job_id, session_id, "cancellation", {"reason": reason})
-        return await self.get_job(job_id)
+        return await self.append_event(
+            job_id, session_id, "cancellation", {"reason": reason}
+        )
 
     async def get_job_cancellation_requested(self, job_id: str) -> bool:
         async with self._session_factory() as session:

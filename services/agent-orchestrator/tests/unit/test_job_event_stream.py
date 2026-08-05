@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -48,7 +49,7 @@ async def test_job_event_stream_replays_then_yields_live_events(repository: Repo
     stream_service = JobEventStreamService(
         repository=repository,
         live_event_bus=bus,
-        poll_interval_seconds=0.01,
+        idle_block_seconds=0.01,
     )
     stream = stream_service.stream(job.id, is_disconnected=lambda: _false())
 
@@ -97,7 +98,7 @@ async def test_live_copy_of_a_durable_event_reuses_its_id(repository: Repository
     stream_service = JobEventStreamService(
         repository=repository,
         live_event_bus=bus,
-        poll_interval_seconds=0.01,
+        idle_block_seconds=0.01,
     )
     stream = stream_service.stream(job.id, is_disconnected=lambda: _false())
 
@@ -131,7 +132,7 @@ async def test_live_event_without_a_durable_row_keeps_the_bus_id(
     stream_service = JobEventStreamService(
         repository=repository,
         live_event_bus=bus,
-        poll_interval_seconds=0.01,
+        idle_block_seconds=0.01,
     )
     stream = stream_service.stream(job.id, is_disconnected=lambda: _false())
 
@@ -154,7 +155,7 @@ async def test_job_event_stream_honors_reconnect_cursor(repository: Repository):
     stream_service = JobEventStreamService(
         repository=repository,
         live_event_bus=InMemoryLiveEventBus(),
-        poll_interval_seconds=0.01,
+        idle_block_seconds=0.01,
     )
     frames = []
     async for frame in stream_service.stream(
@@ -178,7 +179,7 @@ async def test_job_event_stream_flushes_terminal_db_events_before_close(
     stream_service = JobEventStreamService(
         repository=repository,
         live_event_bus=InMemoryLiveEventBus(),
-        poll_interval_seconds=0.01,
+        idle_block_seconds=0.01,
     )
     stream = stream_service.stream(job.id, is_disconnected=lambda: _false())
 
@@ -193,6 +194,132 @@ async def test_job_event_stream_flushes_terminal_db_events_before_close(
 
     with pytest.raises(StopAsyncIteration):
         await anext(stream)
+
+
+@pytest.mark.asyncio
+async def test_job_event_stream_closes_without_waiting_an_idle_interval(
+    repository: Repository,
+):
+    """A terminal event from the database must not cost one idle interval.
+
+    The idle interval only exists as a fallback for a job that went terminal
+    without publishing. Once the terminal event has been delivered all that
+    remains is a final database pass, so waiting on the live bus first would make
+    a long fallback interval visible to the user as a hung stream.
+    """
+    session, job, _ = await _prepare_running_job(repository)
+    await repository.append_event(job.id, session.id, "completion", {"text": "done"})
+    await repository.mark_job_completed(job.id, "done")
+
+    stream_service = JobEventStreamService(
+        repository=repository,
+        live_event_bus=InMemoryLiveEventBus(),
+        # Long enough that closing the stream would visibly hang if the loop
+        # waited on the live bus after seeing the terminal event.
+        idle_block_seconds=600.0,
+    )
+
+    frames = []
+    async with asyncio.timeout(5):
+        async for frame in stream_service.stream(
+            job.id, is_disconnected=lambda: _false()
+        ):
+            frames.append(frame)
+
+    # Reaching here at all is the assertion: the generator ran to completion
+    # well inside the timeout instead of blocking on the 600s fallback wait.
+    assert [_payload_from_frame(frame)["event_type"] for frame in frames][-1] == (
+        "completion"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_job_reaches_an_open_stream_without_waiting_the_idle_interval(
+    repository: Repository,
+):
+    """Cancel must land on an open stream at once, not on its next fallback poll.
+
+    This pins the interaction between two changes. DRA-34 removed the
+    `cancellation` publishes because `mark_job_cancelled` appends that row
+    inside the repository, and a second copy under a second id rendered the
+    cancellation twice; it was safe then because the stream re-read the database
+    every 200ms. DRA-37 turned that 200ms into a 15-second fallback interval, at
+    which point a durable terminal row nobody publishes means the user clicks
+    cancel and watches the stream hang.
+
+    So the publish is now mandatory rather than merely nice, and the id it
+    carries is still mandatory. The idle interval here is longer than the test's
+    own timeout, which is what makes this fail rather than merely slow down if
+    someone drops the publish or wires the interval back to the worker tick.
+    """
+    session, job, _ = await _prepare_running_job(repository)
+
+    bus = InMemoryLiveEventBus()
+    stream_service = JobEventStreamService(
+        repository=repository,
+        live_event_bus=bus,
+        idle_block_seconds=600.0,
+    )
+    stream = stream_service.stream(job.id, is_disconnected=lambda: _false())
+
+    # Drain the queued `progress` row so the stream is genuinely idle, i.e.
+    # sitting in the fallback wait, exactly as it is while a job runs.
+    _ = await anext(stream)
+
+    # What the repository does when the worker notices the cancellation flag.
+    durable_event_id = await repository.mark_job_cancelled(job.id, reason="user asked")
+    assert durable_event_id is not None
+    await bus.publish(
+        job.id,
+        "cancellation",
+        {"reason": "user asked"},
+        durable_event_id=durable_event_id,
+    )
+
+    async with asyncio.timeout(5):
+        frame = await anext(stream)
+
+    payload = _payload_from_frame(frame)
+    assert payload["event_type"] == "cancellation"
+    # And it arrives under the durable row's id, so the copy the database pass
+    # yields next collapses into it instead of showing a second cancellation.
+    assert payload["id"] == str(durable_event_id)
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_requesting_cancellation_returns_ids_for_the_job_and_its_children(
+    repository: Repository,
+):
+    """The cancel endpoint can only publish what the repository hands back.
+
+    `request_cancel` appends a terminal `cancellation` for the job *and* for every
+    active child, and each of those jobs may have its own open stream. Returning
+    the ids is what lets the endpoint announce all of them under the ids the
+    durable rows already have.
+    """
+    session = await repository.create_session("demo", {})
+    parent = await repository.enqueue_prompt_job(
+        session.id, prompt="parent", metadata_json={}, max_attempts=1
+    )
+    assert parent is not None
+    await repository.claim_next_job()
+    child = await repository.enqueue_prompt_job(
+        session.id, prompt="child", metadata_json={}, max_attempts=1
+    )
+    assert child is not None
+    await repository.set_parent_job_id(child.id, parent.id)
+    await repository.claim_next_job()  # the child must be active to be propagated to
+
+    cancelled, appended = await repository.request_cancel(parent.id)
+
+    assert cancelled is not None
+    assert [record.job_id for record in appended] == [parent.id, child.id]
+    assert all(record.event_id is not None for record in appended)
+    # Each id names the row that job's own stream will also read from Postgres.
+    for record in appended:
+        events = await repository.list_events(record.job_id, after_id=0)
+        assert record.event_id in {event.id for event in events}
 
 
 async def _false() -> bool:

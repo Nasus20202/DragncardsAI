@@ -136,7 +136,7 @@ async def test_postgres_cancellation_state(postgres_repository: Repository):
     )
     assert job is not None
 
-    cancelled = await postgres_repository.request_cancel(job.id)
+    cancelled, _ = await postgres_repository.request_cancel(job.id)
     assert cancelled is not None
     assert cancelled.status == "cancelled"
     assert cancelled.cancellation_requested_at is not None

@@ -220,6 +220,55 @@ async def test_prompt_run_service_marks_cancellation_before_execution(
 
 
 @pytest.mark.asyncio
+async def test_prompt_run_publishes_the_cancellation_it_persists(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    """A cancelled run must announce itself, under the durable row's id.
+
+    `cancellation` is terminal, so a client streaming this job closes on it. If
+    only the durable row is written, that client waits out the stream's idle
+    fallback interval (15s by default) before finding out — which is what made
+    the old 200ms poll load-bearing. And the id has to be the durable row's, or
+    the polled copy renders a second cancellation (DRA-34).
+    """
+    session = await _prepare_session(repository)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
+    assert job is not None
+    claimed = await repository.claim_next_job()
+    assert claimed is not None
+    await repository.request_cancel(job.id)
+
+    bus = InMemoryLiveEventBus()
+    prompt_run = _make_prompt_run_service(
+        repository,
+        FakeBifrost(responses=[ChatResponse(content="done", tool_calls=[], raw={})]),
+        FakeMcp(),
+        skill_registry,
+        live_event_bus=bus,
+    )
+
+    await prompt_run.run(claimed)
+
+    # Only the run's own cancellation carries a `reason`; the cancel *request*
+    # writes `{"requested": True}`, and that one is the endpoint's to publish.
+    published = [
+        event
+        for event in bus._replay[job.id]
+        if event.event_type == "cancellation" and event.payload_json.get("reason")
+    ]
+    durable = [
+        event
+        for event in await repository.list_events(job.id, after_id=0)
+        if event.event_type == "cancellation" and event.payload_json.get("reason")
+    ]
+    assert len(published) == 1
+    assert len(durable) == 1
+    assert published[0].durable_event_id == str(durable[0].id)
+
+
+@pytest.mark.asyncio
 async def test_prompt_run_service_records_failure(
     repository: Repository, skill_registry: SkillRegistry
 ):

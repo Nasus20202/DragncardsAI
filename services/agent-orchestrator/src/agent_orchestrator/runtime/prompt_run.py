@@ -113,13 +113,22 @@ class PromptRunService:
                 if await self._repository.get_job_cancellation_requested(job.id):
                     logger.info("Job %s cancelled before execution", job.id)
                     job_span.set_attribute("job.status", "cancelled")
-                    # No live publish here: `mark_job_cancelled` already appends
-                    # the `cancellation` event, and the stream's own poll (200 ms
-                    # by default) delivers it. Publishing a second copy of a row
-                    # the repository owns is what showed one cancellation twice —
-                    # and the repository has no bus to hand its event id to.
-                    await self._repository.mark_job_cancelled(
-                        job.id, reason="cancelled before execution"
+                    # `mark_job_cancelled` appends the durable `cancellation` row
+                    # and hands back its id, so the live copy goes out under that
+                    # same id and the client collapses the two instead of showing
+                    # one cancellation twice (DRA-34). The publish is not
+                    # optional: `cancellation` is terminal, so leaving it to the
+                    # stream's fallback poll holds that client's stream open for
+                    # the whole idle interval (DRA-37).
+                    reason = "cancelled before execution"
+                    durable_event_id = await self._repository.mark_job_cancelled(
+                        job.id, reason=reason
+                    )
+                    await self._live_event_bus.publish(
+                        job.id,
+                        "cancellation",
+                        {"reason": reason},
+                        durable_event_id=durable_event_id,
                     )
                     await self._maybe_terminate_child_session(job)
                     return
@@ -295,11 +304,17 @@ class PromptRunService:
                 for _ in range(self._settings.worker_max_tool_rounds):
                     if await self._repository.get_job_cancellation_requested(job.id):
                         logger.info("Job %s cancelled during execution", job.id)
-                        # As above: `mark_job_cancelled` appends the durable
-                        # `cancellation` event, so a live copy of it would only
-                        # reach the browser twice under a second id.
-                        await self._repository.mark_job_cancelled(
-                            job.id, reason="cancelled during execution"
+                        # As above: the durable row's id is what lets the live
+                        # copy collapse into it rather than render twice.
+                        reason = "cancelled during execution"
+                        durable_event_id = await self._repository.mark_job_cancelled(
+                            job.id, reason=reason
+                        )
+                        await self._live_event_bus.publish(
+                            job.id,
+                            "cancellation",
+                            {"reason": reason},
+                            durable_event_id=durable_event_id,
                         )
                         await self._maybe_terminate_child_session(full_job)
                         return
@@ -939,18 +954,25 @@ class PromptRunService:
         server_url: str | None,
         arguments: dict[str, Any],
     ) -> None:
-        await self._repository.append_event(
-            job_id,
-            session_id,
-            "tool_call",
-            {
-                "tool_call_id": tool_call_id,
-                "exposed_tool_name": exposed_tool_name,
-                "tool_name": tool_name,
-                "assignment": assignment,
-                "server_url": server_url,
-                "arguments": arguments,
-            },
+        payload = {
+            "tool_call_id": tool_call_id,
+            "exposed_tool_name": exposed_tool_name,
+            "tool_name": tool_name,
+            "assignment": assignment,
+            "server_url": server_url,
+            "arguments": arguments,
+        }
+        # Published as well as persisted. A tool call is announced *before* the
+        # tool runs, and a slow tool is exactly when the live bus goes quiet, so
+        # a persisted-only row leaves the transcript showing nothing for the
+        # whole call — previously masked by a 200 ms stream poll, and the reason
+        # that poll had to be that fast. Carrying the durable id collapses the
+        # live copy into the polled row instead of rendering both (DRA-34).
+        durable_event_id = await self._repository.append_event(
+            job_id, session_id, "tool_call", payload
+        )
+        await self._live_event_bus.publish(
+            job_id, "tool_call", payload, durable_event_id=durable_event_id
         )
 
     async def append_tool_result_event(
@@ -965,19 +987,23 @@ class PromptRunService:
         server_url: str | None,
         result: dict[str, Any],
     ) -> None:
-        await self._repository.append_event(
-            job_id,
-            session_id,
-            "tool_result",
-            {
-                "tool_call_id": tool_call_id,
-                "exposed_tool_name": exposed_tool_name,
-                "tool_name": tool_name,
-                "assignment": assignment,
-                "server_url": server_url,
-                "is_error": result.get("is_error", False),
-                "result": result,
-            },
+        payload = {
+            "tool_call_id": tool_call_id,
+            "exposed_tool_name": exposed_tool_name,
+            "tool_name": tool_name,
+            "assignment": assignment,
+            "server_url": server_url,
+            "is_error": result.get("is_error", False),
+            "result": result,
+        }
+        # Published for the same reason as the call it answers: the bus is quiet
+        # while a tool runs, so the result would otherwise wait for whatever
+        # wakes the stream next.
+        durable_event_id = await self._repository.append_event(
+            job_id, session_id, "tool_result", payload
+        )
+        await self._live_event_bus.publish(
+            job_id, "tool_result", payload, durable_event_id=durable_event_id
         )
 
     async def complete_job(
@@ -1131,33 +1157,38 @@ class PromptRunService:
             "is_error": True,
             "content": [{"type": "text", "text": message}],
         }
+        call_payload = {
+            "tool_call_id": tool_call_id,
+            "exposed_tool_name": tool_name,
+            "tool_name": tool_name,
+            "assignment": None,
+            "server_url": None,
+            "arguments": {},
+        }
+        result_payload = {
+            "tool_call_id": tool_call_id,
+            "exposed_tool_name": tool_name,
+            "tool_name": tool_name,
+            "assignment": None,
+            "server_url": None,
+            "is_error": True,
+            "result": result,
+        }
         try:
-            await self._repository.append_event(
-                job_id,
-                session_id,
-                "tool_call",
-                {
-                    "tool_call_id": tool_call_id,
-                    "exposed_tool_name": tool_name,
-                    "tool_name": tool_name,
-                    "assignment": None,
-                    "server_url": None,
-                    "arguments": {},
-                },
+            # Persisted and published together, matching the real tool-call path
+            # above, so a rejected call reaches an open transcript as promptly as
+            # an accepted one.
+            call_event_id = await self._repository.append_event(
+                job_id, session_id, "tool_call", call_payload
             )
-            await self._repository.append_event(
-                job_id,
-                session_id,
-                "tool_result",
-                {
-                    "tool_call_id": tool_call_id,
-                    "exposed_tool_name": tool_name,
-                    "tool_name": tool_name,
-                    "assignment": None,
-                    "server_url": None,
-                    "is_error": True,
-                    "result": result,
-                },
+            await self._live_event_bus.publish(
+                job_id, "tool_call", call_payload, durable_event_id=call_event_id
+            )
+            result_event_id = await self._repository.append_event(
+                job_id, session_id, "tool_result", result_payload
+            )
+            await self._live_event_bus.publish(
+                job_id, "tool_result", result_payload, durable_event_id=result_event_id
             )
             messages.append(
                 {

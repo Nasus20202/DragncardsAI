@@ -2,9 +2,16 @@
 
 Every test here pins a failure the reporter actually hit. On the code before this
 change each one fails: the stream test raises `ConnectionResetError` out of the
-generator (which is the `500 in 41s` the browser saw), the publish tests fail the
-job that was mid-response, and the TTL test aborts a publish whose event was
-already in the stream.
+generator (which is the `500 in 41s` the browser saw) and the publish tests fail
+the job that was mid-response.
+
+Section 3 is the exception, and it is DRA-37's doing. DRA-42 guarded a publish
+whose `XADD` had landed and whose follow-up `EXPIRE` then reset, because failing
+that publish discarded an event every subscriber had already seen. DRA-37 folded
+the two commands into one `EVAL`, so a publish no longer has a state in which the
+append has happened and the refresh has not. The guard is gone rather than
+merged, and section 3 now pins the absence of the window instead of the tolerance
+of it.
 """
 
 from __future__ import annotations
@@ -54,7 +61,7 @@ def _make_stream_service(repo: Repository, bus) -> JobEventStreamService:
     return JobEventStreamService(
         repository=repo,
         live_event_bus=bus,
-        poll_interval_seconds=0.01,
+        idle_block_seconds=0.01,
     )
 
 
@@ -111,18 +118,21 @@ class ExplodingLiveEventBus(InMemoryLiveEventBus):
 class FlakyRespConnection:
     """Records commands; fails whichever ones the test names."""
 
-    def __init__(self, *, fail_commands: set[str], xadd_id: str = "1-1"):
+    def __init__(self, *, fail_commands: set[str], entry_id: str = "1-1"):
         self.fail_commands = fail_commands
-        self.xadd_id = xadd_id
+        self.entry_id = entry_id
         self.commands: list[str] = []
+        self.calls: list[tuple[str, ...]] = []
 
     async def execute(self, *parts):
         command = str(parts[0]).upper()
         self.commands.append(command)
+        self.calls.append(tuple(str(part) for part in parts))
         if command in self.fail_commands:
             raise RESET
-        if command == "XADD":
-            return self.xadd_id
+        # `EVAL` of the publish script returns whatever `XADD` returned inside it.
+        if command in {"XADD", "EVAL"}:
+            return self.entry_id
         return 1
 
 
@@ -331,40 +341,56 @@ async def test_the_transcript_survives_a_total_live_bus_outage(
 
 
 # --------------------------------------------------------------------------- #
-# 3. A failing TTL refresh must not undo a successful XADD.
+# 3. A TTL refresh can no longer fail apart from the append it follows.
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
-async def test_expire_failure_after_a_successful_xadd_still_publishes():
-    """The exact frames in the report: `publish` threw on `EXPIRE`, not `XADD`.
+async def test_the_ttl_refresh_cannot_fail_on_its_own_any_more():
+    """DRA-42 tolerated a reset between the append and the refresh. DRA-37 removed the between.
 
-    The event was in the stream and every subscriber would have seen it. Throwing
-    anyway is what aborted the model call.
+    The frames in the report were an `EXPIRE` that reset after its `XADD` had
+    landed, so `publish` reported an error for an event every subscriber had
+    already received, and that error aborted the model call. Both operations now
+    travel as a single `EVAL`, which either runs to completion or does not run:
+    the connection never sees an `EXPIRE` it could fail on its own. A test that
+    names `EXPIRE` as the failing command therefore observes a perfectly ordinary
+    publish, which is the point — the window the guard covered is unreachable, so
+    the guard is deleted rather than kept alongside the script.
     """
     bus = ValkeyLiveEventBus("valkey://localhost:6379")
-    conn = FlakyRespConnection(fail_commands={"EXPIRE"}, xadd_id="7-7")
+    conn = FlakyRespConnection(fail_commands={"EXPIRE"}, entry_id="7-7")
     bus._conn = conn
 
     event = await bus.publish("job-1", "model_output", {"text": "hi"})
 
     assert event is not None
     assert event.id == "7-7"
-    assert conn.commands == ["XADD", "EXPIRE"]
+    assert conn.commands == ["EVAL"]
+    # The refresh still happens; it just happens inside the one command, which is
+    # what makes the partial failure impossible rather than merely tolerated.
+    assert "EXPIRE" in conn.calls[0][1]
+    assert "XADD" in conn.calls[0][1]
 
 
 @pytest.mark.asyncio
-async def test_a_failing_xadd_still_fails_the_publish():
-    """The guard is narrow. Losing the event itself is still an error the bus reports.
+async def test_a_failing_append_still_fails_the_publish():
+    """Losing the event itself is still an error the bus reports.
 
-    Tolerating it is the wrapper's job, one layer out, where the durable row is
-    known to exist.
+    That layering is DRA-42's and DRA-37 does not change it: the bus says
+    truthfully whether the event reached the stream, and `BestEffortLiveEventBus`
+    — which every consumer in the running service is handed — turns that into
+    `None` one layer out, where the durable row is known to have been written.
     """
     bus = ValkeyLiveEventBus("valkey://localhost:6379")
-    bus._conn = FlakyRespConnection(fail_commands={"XADD"})
+    bus._conn = FlakyRespConnection(fail_commands={"EVAL"})
 
     with pytest.raises(ConnectionResetError):
         await bus.publish("job-1", "model_output", {"text": "hi"})
+
+    assert (
+        await BestEffortLiveEventBus(bus).publish("job-1", "model_output", {}) is None
+    )
 
 
 # --------------------------------------------------------------------------- #

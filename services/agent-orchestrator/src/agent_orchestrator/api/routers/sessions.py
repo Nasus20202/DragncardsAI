@@ -205,6 +205,7 @@ async def update_session(
 async def delete_session(
     session_id: str,
     repo: Repository = Depends(get_repository),
+    live_event_bus: LiveEventBus = Depends(get_live_event_bus),
 ) -> None:
     """Permanently remove a session and everything recorded under it.
 
@@ -217,7 +218,19 @@ async def delete_session(
     for status in ("queued", "running"):
         jobs, _ = await repo.list_session_jobs(session_id, status=status, limit=200)
         for job in jobs:
-            await repo.request_cancel(job.id)
+            _, appended = await repo.request_cancel(job.id)
+            # Announce each terminal `cancellation` on the bus for the same
+            # reason the cancel endpoint does: a client still streaming one of
+            # these jobs otherwise waits out the stream's idle interval before
+            # noticing, and here the rows it would eventually have polled are
+            # about to be deleted underneath it.
+            for record in appended:
+                await live_event_bus.publish(
+                    record.job_id,
+                    "cancellation",
+                    {"requested": True},
+                    durable_event_id=record.event_id,
+                )
 
     # A seat's session is a separate session row, so deleting the orchestrating
     # session does not cascade into it. Collect the seats before the delete removes

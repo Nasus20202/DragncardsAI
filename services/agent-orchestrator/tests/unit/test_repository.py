@@ -226,7 +226,7 @@ async def test_job_repository_cancel_and_failure_branches(repository: Repository
     )
     claimed = await repository.claim_next_job()
 
-    cancelled = await repository.request_cancel(job.id)
+    cancelled, _ = await repository.request_cancel(job.id)
     assert cancelled is not None
     assert cancelled.status == "running"
     assert cancelled.cancellation_requested_at is not None
@@ -243,7 +243,7 @@ async def test_job_repository_cancel_and_failure_branches(repository: Repository
     assert failed.status == "failed"
     assert failed.completed_at is not None
 
-    assert await repository.request_cancel("missing") is None
+    assert await repository.request_cancel("missing") == (None, [])
     assert await repository.mark_job_completed("missing", "done") is None
     assert await repository.mark_job_cancelled("missing", reason="missing") is None
 
@@ -344,7 +344,7 @@ async def test_request_cancel_propagates_to_child_jobs(repository: Repository):
     await repository.claim_next_job()  # moves queued_child → running (oldest first)
 
     # Cancel the parent
-    cancelled_parent = await repository.request_cancel(parent_job.id)
+    cancelled_parent, _ = await repository.request_cancel(parent_job.id)
     assert cancelled_parent is not None
     assert cancelled_parent.cancellation_requested_at is not None
 
