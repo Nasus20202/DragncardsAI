@@ -16,6 +16,13 @@ TargetStatus = Literal[
 RequestStatus = Literal["pending", "completed", "partial", "failed", "cancelled"]
 
 MAX_SKILLS = 32
+# Reference files are individually far larger than a SKILL.md (up to ~38.5k chars
+# in the shipped rules skill), so the count ceiling is tighter than MAX_SKILLS.
+# Eight is above any plausible hand-made selection and well below the 21 files of
+# marvel-champions-rules-reference. A total-SIZE budget is enforced separately at
+# resolve time (EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS); this bounds the count so an
+# absurd list is rejected by the schema before anything is read from disk.
+MAX_SKILL_REFERENCES = 8
 # Ceilings on attacker-influenced judge-config fields so a single request can't
 # amplify per-target LLM cost / storage without bound.
 MAX_PROMPT_OVERRIDE = 50_000
@@ -105,6 +112,14 @@ class JudgeConfig(BaseModel):
     prompt_override: str | None = Field(default=None, max_length=MAX_PROMPT_OVERRIDE)
     # Skill NAMES (resolved to skill content under SKILL_ROOTS).
     skills: list[str] | None = Field(default=None, max_length=MAX_SKILLS)
+    # Skill REFERENCE files, each ``"<skill-name>/<relative-path>.md"`` -- the two
+    # coordinates the agent-orchestrator's ``load_skill_reference`` takes, joined.
+    # A reference may be selected WITHOUT its skill's SKILL.md: "give the judge
+    # only the errata" is a legitimate configuration, and charging it the whole
+    # skill to reach one file would be an arbitrary tax.
+    skill_references: list[str] | None = Field(
+        default=None, max_length=MAX_SKILL_REFERENCES
+    )
 
 
 class EvaluationRequestBody(BaseModel):

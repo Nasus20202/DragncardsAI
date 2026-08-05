@@ -22,3 +22,9 @@ class SkillDefinitionResponse(BaseModel):
     path: str
     description: str = ""
     metadata: dict[str, str] = {}
+    # The skill's markdown reference files, by path relative to the skill
+    # directory -- exactly the names `load_skill_reference` accepts, so a
+    # consumer can offer a listed entry and have the selection resolve. Always
+    # present (empty for a skill with none) so nobody has to tell "no references"
+    # apart from "not reported".
+    references: list[str] = []

@@ -21,6 +21,11 @@ export interface JudgeDraft {
   reasoningMaxTokens: string;
   promptOverride: string;
   selectedSkills: string[];
+  /**
+   * `"<skill-name>/<relative-path>.md"` reference files to hand the judge on top
+   * of the selected skills' `SKILL.md`.
+   */
+  selectedSkillReferences: string[];
 }
 
 /**
@@ -36,7 +41,25 @@ export function createDefaultJudgeDraft(config: DashboardConfig): JudgeDraft {
     reasoningMaxTokens: "",
     promptOverride: "",
     selectedSkills: [...config.defaultSkills],
+    selectedSkillReferences: [],
   };
+}
+
+/**
+ * Drop every reference whose owning skill (the segment before the first `/`) is
+ * no longer selected, so deselecting a skill takes its references with it.
+ */
+export function pruneSkillReferences(
+  selectedSkills: string[],
+  selectedSkillReferences: string[]
+): string[] {
+  return selectedSkillReferences.filter((reference) => {
+    const separator = reference.indexOf("/");
+    // An entry with no owning skill is malformed; drop it rather than guess.
+    return (
+      separator > 0 && selectedSkills.includes(reference.slice(0, separator))
+    );
+  });
 }
 
 /**
@@ -120,6 +143,10 @@ export function assembleJudgeConfig(
 
   if (draft.selectedSkills.length > 0) {
     judge.skills = [...draft.selectedSkills];
+  }
+
+  if (draft.selectedSkillReferences.length > 0) {
+    judge.skill_references = [...draft.selectedSkillReferences];
   }
 
   return Object.keys(judge).length > 0 ? judge : undefined;

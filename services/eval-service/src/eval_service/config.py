@@ -204,6 +204,20 @@ class Settings(BaseSettings):
             "eval_judge_max_round_moves", "EVAL_JUDGE_MAX_ROUND_MOVES"
         ),
     )
+    # Total budget, in characters, across the skill REFERENCE files one
+    # evaluation may select. Unlike the caps above this one REFUSES rather than
+    # truncating: a clipped board is still a board, but a clipped rules reference
+    # reads to the judge exactly like a complete one. The default admits the
+    # largest single reference in the shipped rules skill (``resources/errata.md``,
+    # ~38.5k chars) plus a second substantial file, and refuses a whole-corpus
+    # selection (all 21 files are ~257k chars). ``0`` disables the budget.
+    eval_judge_max_skill_reference_chars: int = Field(
+        default=60_000,
+        validation_alias=AliasChoices(
+            "eval_judge_max_skill_reference_chars",
+            "EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS",
+        ),
+    )
 
     # SAFETY BACKSTOPS on the per-move context window, in agent moves either side
     # of the one being graded. They are NOT the mechanism: a move is judged in the
@@ -358,6 +372,19 @@ class Settings(BaseSettings):
     def validate_max_tokens(cls, value: int) -> int:
         if value < 1:
             raise ValueError("eval_judge_max_tokens must be at least 1")
+        return value
+
+    @field_validator("eval_judge_max_skill_reference_chars")
+    @classmethod
+    def validate_max_skill_reference_chars(cls, value: int) -> int:
+        # ``0`` deliberately disables the budget; a NEGATIVE value would disable
+        # it too (the check is ``> 0``) while reading like a tight limit. Refuse
+        # it rather than silently uncapping how much rules content one request
+        # can put in front of the judge.
+        if value < 0:
+            raise ValueError(
+                "eval_judge_max_skill_reference_chars must be >= 0 (0 disables the budget)"
+            )
         return value
 
     @field_validator("eval_judge_max_state_chars")

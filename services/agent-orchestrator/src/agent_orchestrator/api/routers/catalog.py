@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Request
 from agent_orchestrator.api.deps import get_settings, get_skill_registry
 from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostError
-from agent_orchestrator.runtime.skills import SkillRegistry
+from agent_orchestrator.runtime.skills import SkillRegistry, reference_files_under
 from agent_orchestrator.schemas.catalog import (
     ProviderCacheRefreshResponse,
     ProviderResponse,
@@ -133,6 +133,11 @@ async def list_available_skills(
             path=str(definition.path),
             description=definition.description,
             metadata=definition.metadata,
+            # From the definition's PATH, not its name: the name-based lookup
+            # re-scans every skill root, re-reading and re-parsing every
+            # SKILL.md, once per skill -- which would make this endpoint
+            # quadratic in the size of the catalogue.
+            references=reference_files_under(definition.path),
         )
         for definition in registry.list_skills().values()
     ]

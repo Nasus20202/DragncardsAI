@@ -17,7 +17,9 @@ from eval_service.judge.assembly import (
 from eval_service.judge.config import (
     ResolvedJudgeConfig,
     ResolvedReasoning,
+    SkillReferenceError,
     SkillResolver,
+    UnknownSkillError,
     provider_from_model,
 )
 from eval_service.judge.events import is_agent_move
@@ -193,6 +195,14 @@ class Evaluator:
         except BoundaryUndetectedError as exc:
             await self._fail(target_id, f"boundary undetected: {exc}", on_error)
             return True
+        except (UnknownSkillError, SkillReferenceError) as exc:
+            # The request validated this selection, but the worker resolves it
+            # again from disk, possibly in a different process at a later time: a
+            # skill directory can be redeployed out from under a queued target.
+            # Fail THIS target with the reason rather than letting the exception
+            # escape into the drain loop and take the rest of the batch with it.
+            await self._fail(target_id, f"skill resolution failed: {exc}", on_error)
+            return True
         except ValueError as exc:
             await self._fail(target_id, f"assembly error: {exc}", on_error)
             return True
@@ -286,9 +296,16 @@ class Evaluator:
 
         Returns None when the judge keeps failing up to the attempt limit.
         """
-        # Resolve selected skills to markdown (validated already at request time;
-        # re-resolved here so the worker injects the same content).
+        # Resolve selected skills and reference files to markdown (validated
+        # already at request time; re-resolved here so the worker injects the same
+        # content). The budget is re-applied rather than trusted: a target claimed
+        # from Postgres carries a config that was validated against whatever the
+        # skill root held then, and the worker may be a different process.
         skills = self._skill_resolver.load_markdown(config.skills)
+        skill_references = self._skill_resolver.load_references(
+            config.skill_references,
+            max_total_chars=self._settings.eval_judge_max_skill_reference_chars,
+        )
 
         if scope == "move":
             # A move is graded in the context of ITS ROUND: the assembly resolves
@@ -305,6 +322,7 @@ class Evaluator:
                 move,
                 prompt_override=config.prompt_override,
                 skills=skills,
+                skill_references=skill_references,
                 max_state_chars=self._settings.eval_judge_max_state_chars,
                 max_context_reasoning_chars=(
                     self._settings.eval_judge_move_context_reasoning_chars
@@ -326,6 +344,7 @@ class Evaluator:
                 game,
                 prompt_override=config.prompt_override,
                 skills=skills,
+                skill_references=skill_references,
                 max_state_chars=self._settings.eval_judge_max_state_chars,
             )
             # The span is the whole game in SEQS. A game verdict covers every
@@ -343,6 +362,7 @@ class Evaluator:
                 rnd,
                 prompt_override=config.prompt_override,
                 skills=skills,
+                skill_references=skill_references,
                 max_state_chars=self._settings.eval_judge_max_state_chars,
                 max_round_moves=self._settings.eval_judge_max_round_moves,
             )
