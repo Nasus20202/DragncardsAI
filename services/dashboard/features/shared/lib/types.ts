@@ -647,6 +647,19 @@ export interface RestoreRequestBody {
    * tears it down. Used for the "open board at this event" reconstruction.
    */
   ephemeral?: boolean;
+  /**
+   * An existing game-service session to restore *into*, instead of creating a
+   * second room for the same game. Re-pointing an open room at another moment is
+   * a single state load; building a replacement is several DragnCards round trips
+   * plus a channel join and a plugin load.
+   *
+   * The history-service honours it only when a full-state base exists for the
+   * target, because loading that base replaces the room's game document outright.
+   * With no base it creates a fresh session and leaves this one untouched — so a
+   * caller must read the session id back off the response rather than assume the
+   * one it sent was used.
+   */
+  reuse_session_id?: string;
 }
 
 export interface RestoreOutcome {

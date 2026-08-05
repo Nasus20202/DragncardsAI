@@ -499,6 +499,78 @@ async def test_timeline_limit_bounds_are_enforced(client):
     assert (await c.get("/games/g1/timeline?after_seq=-1")).status_code == 422
 
 
+@pytest.mark.asyncio
+async def test_restore_endpoint_reuses_a_supplied_session(client):
+    """DRA-36: the reuse hint has to reach the service, not stop at the schema."""
+    c, game = client
+    await c.post(
+        "/games/g1/events",
+        json=_envelope("g1", "game-service", 0, status="in progress"),
+    )
+    await c.post(
+        "/games/g1/events",
+        json={
+            **_envelope("g1", "game-service", 1, status="in progress"),
+            "event_type": "action",
+            "payload": {
+                "action_path": "draw_card",
+                "action_args": {},
+                "status": "in progress",
+            },
+        },
+    )
+
+    resp = await c.post(
+        "/games/g1/restore",
+        json={
+            "target_seq": 2,
+            "mode": "new",
+            "ephemeral": True,
+            "reuse_session_id": "sess-mine",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["game_session_id"] == "sess-mine"
+    assert body["session_id"] == "sess-mine"
+    # No second room was built, and the base went into the supplied session.
+    assert game.created == []
+    assert [session for session, _ in game.loaded] == ["sess-mine"]
+    # A reuse creates no room, so it names none: the caller already knows it.
+    assert body["room_slug"] is None
+
+
+@pytest.mark.asyncio
+async def test_restore_endpoint_without_reuse_still_creates_a_session(client):
+    c, game = client
+    await c.post(
+        "/games/g1/events",
+        json=_envelope("g1", "game-service", 0, status="in progress"),
+    )
+    await c.post(
+        "/games/g1/events",
+        json={
+            **_envelope("g1", "game-service", 1, status="in progress"),
+            "event_type": "action",
+            "payload": {
+                "action_path": "draw_card",
+                "action_args": {},
+                "status": "in progress",
+            },
+        },
+    )
+
+    resp = await c.post(
+        "/games/g1/restore",
+        json={"target_seq": 2, "mode": "new", "ephemeral": True},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["game_session_id"] == "branch-1"
+    assert game.created_ephemeral == [True]
+
+
 # -- session mode on the read paths -----------------------------------------
 
 

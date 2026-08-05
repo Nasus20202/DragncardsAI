@@ -15,7 +15,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from game_service.dragncards.http_client import create_room, get_auth_token, get_user_id
+from game_service.dragncards.auth_cache import (
+    DragnCardsAuthCache,
+    DragnCardsIdentity,
+)
+from game_service.dragncards.http_client import create_room
 from game_service.catalog.service import load_prebuilt_deck
 from game_service.coordination.history_emitter import (
     HistoryEmitter,
@@ -53,12 +57,19 @@ class SessionManager:
         history_emitter: HistoryEmitter | None = None,
         ephemeral_session_ttl_seconds: float = 1800.0,
         ephemeral_reaper_interval_seconds: float = 60.0,
+        auth_cache: DragnCardsAuthCache | None = None,
     ):
         self._http_url = dragncards_http_url
         self._ws_url = dragncards_ws_url
         self._email = email
         self._password = password
         self._plugin_registry = plugin_registry
+        # An inert cache (no Valkey, or TTL 0) authenticates live on every call,
+        # which is exactly what this manager did before the cache existed — so a
+        # caller that passes nothing keeps the old behaviour.
+        self._auth_cache = auth_cache or DragnCardsAuthCache(
+            dragncards_http_url, email, password, ttl_seconds=0
+        )
         self._session_store = session_store or InMemorySessionStore()
         self._history_emitter = history_emitter or NullHistoryEmitter()
         self._sessions: dict[str, GameSession] = {}
@@ -85,14 +96,68 @@ class SessionManager:
             )
         return plugin_info
 
+    async def _credentials(self) -> DragnCardsIdentity:
+        """Resolve the DragnCards token and user id, reusing a cached pair.
+
+        Every path that bootstraps a room goes through here, so a single cached
+        credential serves session creation, attaching, and restore alike.
+        """
+        return await self._auth_cache.resolve()
+
     async def _connect_room_channel(
-        self, room_slug: str, auth_token: str
+        self,
+        room_slug: str,
+        auth_token: str,
+        *,
+        identity: DragnCardsIdentity | None = None,
     ) -> tuple[PhoenixClient, Any, Any]:
         ws_client = PhoenixClient(self._ws_url, auth_token=auth_token)
         await ws_client.connect()
         channel = await ws_client.join(f"room:{room_slug}")
+        # DragnCards answers a join it will not serve with `room_unavailable`
+        # instead of a state, so when that has already arrived there is no point
+        # spending the full state timeout waiting for something that is not coming.
+        if channel.room_unavailable:
+            await self._on_room_unavailable(room_slug, identity)
+            return ws_client, channel, None
         initial_state = await self._wait_for_initial_state(channel, room_slug)
+        if channel.room_unavailable:
+            await self._on_room_unavailable(room_slug, identity)
         return ws_client, channel, initial_state
+
+    async def _on_room_unavailable(
+        self, room_slug: str, identity: DragnCardsIdentity | None
+    ) -> None:
+        """React to DragnCards declining to serve a joined room's state.
+
+        The room channel is the only place a DragnCards credential is checked on
+        this path — `POST /api/v1/games` is not behind the authenticated pipeline
+        upstream and accepts any token — so a credential the backend has forgotten
+        shows up here and nowhere earlier. The realistic cause is the DragnCards
+        container being recreated: its Pow credential store lives in the container
+        filesystem, so recreating it forgets every issued token while a cached
+        entry here would still look fresh.
+
+        A cached credential is therefore evicted, so the next room bootstrap
+        derives a new one instead of repeating the failure for the rest of the
+        TTL. A credential that was just derived is left alone: evicting it would
+        only re-derive the same thing, and the cause is then something other than
+        the credential (a room with no server state also produces this push).
+
+        This does not fail the caller. A join that yields no state has always
+        produced a session that fetches state on demand, and raising here would
+        strand the DragnCards room that was just created — the channel refuses
+        every push, including the one that closes a room. Making that path fail
+        cleanly is a separate concern from caching the credential.
+        """
+        logger.warning(
+            "DragnCards declined to serve state for room %s on join; "
+            "credential_was_cached=%s",
+            room_slug,
+            bool(identity and identity.cached),
+        )
+        if identity is not None and identity.cached:
+            await self._auth_cache.invalidate()
 
     async def _wait_for_initial_state(self, channel: Any, room_slug: str) -> Any:
         try:
@@ -155,11 +220,9 @@ class SessionManager:
                     f"Cannot restore session {record['session_id']!r}: plugin {plugin_name!r} is not available"
                 )
 
-            auth_token = await get_auth_token(
-                self._http_url, self._email, self._password
-            )
+            identity = await self._credentials()
             ws_client, channel, initial_state = await self._connect_room_channel(
-                record["room_slug"], auth_token
+                record["room_slug"], identity.token, identity=identity
             )
             session = self._build_session(
                 session_id=record["session_id"],
@@ -294,15 +357,12 @@ class SessionManager:
         ):
             plugin_info = self._get_plugin_info(plugin_name)
 
-            auth_token = await get_auth_token(
-                self._http_url, self._email, self._password
-            )
-            user_id = await get_user_id(self._http_url, auth_token)
+            identity = await self._credentials()
 
             room = await create_room(
                 self._http_url,
-                auth_token,
-                user_id=user_id,
+                identity.token,
+                user_id=identity.user_id,
                 plugin_id=plugin_info["id"],
                 plugin_version=plugin_info["version"],
                 plugin_name=plugin_info["name"],
@@ -313,7 +373,7 @@ class SessionManager:
             )
 
             ws_client, channel, initial_state = await self._connect_room_channel(
-                room_slug, auth_token
+                room_slug, identity.token, identity=identity
             )
 
             session_id = str(uuid.uuid4())
@@ -329,7 +389,7 @@ class SessionManager:
                 ephemeral=ephemeral,
             )
             await self._register_session(session)
-            await self._auto_seat(session, user_id)
+            await self._auto_seat(session, identity.user_id)
 
             logger.info("Session %s created (room=%s)", session_id, room_slug)
             return session
@@ -337,10 +397,9 @@ class SessionManager:
     async def attach_session(self, plugin_name: str, room_slug: str) -> GameSession:
         plugin_info = self._get_plugin_info(plugin_name)
 
-        auth_token = await get_auth_token(self._http_url, self._email, self._password)
-        user_id = await get_user_id(self._http_url, auth_token)
+        identity = await self._credentials()
         ws_client, channel, initial_state = await self._connect_room_channel(
-            room_slug, auth_token
+            room_slug, identity.token, identity=identity
         )
 
         session_id = str(uuid.uuid4())
@@ -355,7 +414,7 @@ class SessionManager:
             initial_state=initial_state,
         )
         await self._register_session(session)
-        await self._auto_seat(session, user_id)
+        await self._auto_seat(session, identity.user_id)
 
         logger.info("Session %s attached to existing room %s", session_id, room_slug)
         return session

@@ -16,7 +16,13 @@ import json
 
 import pytest
 
-from game_service.phoenix_client.client import Channel, PhoenixClient, PhxMessage
+from game_service.phoenix_client.client import (
+    ROOM_UNAVAILABLE_EVENT,
+    Channel,
+    PhoenixChannelError,
+    PhoenixClient,
+    PhxMessage,
+)
 
 # ---------------------------------------------------------------------------
 # PhxMessage encode / decode
@@ -233,3 +239,126 @@ def test_channel_handler_exception_does_not_propagate():
     ch.on("ev", bad_handler)
     msg = PhxMessage(join_ref="1", ref=None, topic="room:test", event="ev", payload={})
     ch._handle(msg)  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# Room refusal and join registration (DRA-36)
+# ---------------------------------------------------------------------------
+
+
+def test_channel_records_a_room_unavailable_push_without_a_handler():
+    """The refusal must be observable without anyone having subscribed.
+
+    DragnCards pushes it with the join, so a caller cannot register a handler in
+    time — the receive loop can deliver it before `join()` has returned the
+    Channel at all.
+    """
+    channel = Channel(
+        topic="room:abc", join_ref="1", client=PhoenixClient("ws://x/socket")
+    )
+    assert channel.room_unavailable is False
+
+    channel._handle(
+        PhxMessage(
+            join_ref="1",
+            ref=None,
+            topic="room:abc",
+            event=ROOM_UNAVAILABLE_EVENT,
+            payload={"reason": "missing_server_state"},
+        )
+    )
+
+    assert channel.room_unavailable is True
+
+
+def test_channel_does_not_report_a_refusal_for_an_ordinary_event():
+    channel = Channel(
+        topic="room:abc", join_ref="1", client=PhoenixClient("ws://x/socket")
+    )
+    channel._handle(
+        PhxMessage(
+            join_ref="1",
+            ref=None,
+            topic="room:abc",
+            event="current_state",
+            payload={"game": {}},
+        )
+    )
+    assert channel.room_unavailable is False
+
+
+@pytest.mark.asyncio
+async def test_join_registers_the_channel_before_awaiting_the_reply():
+    """A broadcast arriving with the join reply must not be dropped.
+
+    `_dispatch` discards a message whose topic is not registered, and the receive
+    loop is a separate task — so registering only after the reply loses the
+    room's opening state broadcast and any refusal that replaces it.
+    """
+    client = PhoenixClient("ws://x/socket")
+    seen: list[str] = []
+
+    async def push_and_await(msg, reply_ref, timeout=10.0):
+        # Stand in for the receive loop delivering the room's opening broadcast
+        # in the window between the reply and this coroutine being rescheduled.
+        client._dispatch(
+            PhxMessage(
+                join_ref=msg.join_ref,
+                ref=None,
+                topic=msg.topic,
+                event="current_state",
+                payload={"game": {"marker": "opening"}},
+            )
+        )
+        seen.append("dispatched")
+        return PhxMessage(
+            join_ref=None,
+            ref=reply_ref,
+            topic=msg.topic,
+            event="phx_reply",
+            payload={"status": "ok", "response": {}},
+        )
+
+    client._push_and_await = push_and_await  # type: ignore[method-assign]
+
+    channel = await client.join("room:abc")
+
+    assert seen == ["dispatched"]
+    state = await asyncio.wait_for(channel.wait_for_state_update(timeout=1.0), 2.0)
+    assert state == {"game": {"marker": "opening"}}
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_join_leaves_no_channel_registered():
+    client = PhoenixClient("ws://x/socket")
+
+    async def push_and_await(msg, reply_ref, timeout=10.0):
+        return PhxMessage(
+            join_ref=None,
+            ref=reply_ref,
+            topic=msg.topic,
+            event="phx_reply",
+            payload={"status": "error", "response": {"reason": "unauthorized"}},
+        )
+
+    client._push_and_await = push_and_await  # type: ignore[method-assign]
+
+    with pytest.raises(PhoenixChannelError):
+        await client.join("room:abc")
+
+    assert "room:abc" not in client._channels
+
+
+@pytest.mark.asyncio
+async def test_a_join_that_raises_leaves_no_channel_registered():
+    client = PhoenixClient("ws://x/socket")
+
+    async def push_and_await(msg, reply_ref, timeout=10.0):
+        raise asyncio.TimeoutError
+
+    client._push_and_await = push_and_await  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.TimeoutError):
+        await client.join("room:abc")
+
+    assert "room:abc" not in client._channels

@@ -16,6 +16,18 @@ export interface Reconstruction {
   roomSlug: string | null;
   /** The seq this reconstruction was built from, for the header label. */
   seq: number;
+  /** The game it was built from, so a stale board is never shown for another. */
+  gameId: string;
+}
+
+/**
+ * A failed open, tagged with what was selected at the time, so the message is
+ * shown against that selection only and does not linger over another moment.
+ */
+interface OpenFailure {
+  gameId: string | null;
+  seq: number | null;
+  message: string;
 }
 
 /**
@@ -49,20 +61,45 @@ export interface BoardReconstruction {
  * Teardown deletes the game-service session ONLY (the ephemeral session is
  * non-emitting). It is the FAST PATH — correctness rests on a server-side TTL
  * reaper, so client teardown is best-effort.
+ *
+ * Moving the selection within the same game RETAINS the session rather than
+ * disposing it, so re-opening re-points the room it already owns instead of
+ * building a second one (measured: ~55 ms against ~730 ms). What is dropped is the
+ * rendered board, not the session — a board left on screen while the selection
+ * moved would sit under a header naming a different moment. Everything that
+ * genuinely ends the view — explicit close, a different game, unmount, page
+ * unload — still disposes the session.
  */
 export function useBoardReconstruction(
   gameId: string | null,
   selectedSeq: number | null
 ): BoardReconstruction {
-  const [reconstruction, setReconstruction] = useState<Reconstruction | null>(
-    null
-  );
+  const [built, setBuilt] = useState<Reconstruction | null>(null);
   const [isOpening, setIsOpening] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<OpenFailure | null>(null);
+
+  // What is on screen is DERIVED from the selection rather than cleared by an
+  // effect. A board is shown only while the selection still matches what it was
+  // built from: its header names that moment, so showing it under a different
+  // selection would make the label lie. Deriving it means there is one source of
+  // truth for that fact and no render where the two disagree — an effect that
+  // cleared it would necessarily paint the mismatch once first.
+  const reconstruction =
+    built && built.gameId === gameId && built.seq === selectedSeq
+      ? built
+      : null;
+  const error =
+    failure && failure.gameId === gameId && failure.seq === selectedSeq
+      ? failure.message
+      : null;
 
   // Mirror the live session id so unload handlers and unmount cleanup always
   // observe the current value without re-binding.
   const activeSessionRef = useRef<string | null>(null);
+  // The room the active session owns, remembered so a reuse restore — which
+  // creates no room and therefore reports none — does not have to rediscover it
+  // by listing every live session.
+  const activeRoomSlugRef = useRef<string | null>(null);
 
   const disposeSession = useCallback(async (sessionId: string) => {
     try {
@@ -75,8 +112,9 @@ export function useBoardReconstruction(
   const close = useCallback(() => {
     const sessionId = activeSessionRef.current;
     activeSessionRef.current = null;
-    setReconstruction(null);
-    setError(null);
+    activeRoomSlugRef.current = null;
+    setBuilt(null);
+    setFailure(null);
     if (sessionId) void disposeSession(sessionId);
   }, [disposeSession]);
 
@@ -95,6 +133,7 @@ export function useBoardReconstruction(
       if (sessionId) {
         disposeReconstructionViaBeacon(sessionId);
         activeSessionRef.current = null;
+        activeRoomSlugRef.current = null;
       }
     };
     window.addEventListener("pagehide", handleUnload);
@@ -109,63 +148,71 @@ export function useBoardReconstruction(
       const sessionId = activeSessionRef.current;
       if (sessionId) {
         activeSessionRef.current = null;
+        activeRoomSlugRef.current = null;
         void disposeSession(sessionId);
       }
     };
   }, [disposeSession]);
 
-  // Deselecting, switching moment, or switching game disposes the open
-  // reconstruction (only one live at a time). We don't auto-open the next one.
-  const reconSeq = reconstruction?.seq ?? null;
+  // Only one reconstruction is live at a time, and we never auto-open the next
+  // one. What changed with reuse is what "moving on" costs:
+  //
+  // - A different MOMENT of the same game keeps the session, so re-opening
+  //   re-points the room it already owns instead of building a second one. Nothing
+  //   happens here for that case: the board stops being rendered because it is
+  //   derived from the selection, not because an effect cleared it.
+  // - A different GAME disposes the session, including when nothing is on screen.
+  //   A session built for one game holds that game's plugin and cannot be
+  //   re-pointed at another, so there is nothing to keep — and a retained session
+  //   survives the board being hidden, which makes this the only thing that
+  //   reclaims it.
   const reconGameRef = useRef<string | null>(gameId);
   useEffect(() => {
-    if (!reconstruction) {
-      reconGameRef.current = gameId;
-      return;
-    }
     const gameChanged = reconGameRef.current !== gameId;
-    const seqChanged = selectedSeq !== reconSeq;
-    if (gameChanged || seqChanged) {
-      reconGameRef.current = gameId;
-      close();
-    }
+    reconGameRef.current = gameId;
+    if (gameChanged && activeSessionRef.current) close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameId, selectedSeq, reconSeq]);
+  }, [gameId]);
 
   const open = useCallback(async () => {
     if (!gameId || selectedSeq === null) return;
-    setError(null);
+    setFailure(null);
     setIsOpening(true);
 
-    // Only one reconstruction at a time: dispose the previous before opening.
-    const previous = activeSessionRef.current;
-    activeSessionRef.current = null;
-    setReconstruction(null);
-    if (previous) void disposeSession(previous);
+    // A session retained from a previous moment of this game is offered back for
+    // reuse rather than disposed. The history-service re-points it when it can,
+    // and creates a fresh session when it cannot — so the session id is read back
+    // off the response below rather than assumed.
+    const retained = activeSessionRef.current;
+    const retainedRoomSlug = activeRoomSlugRef.current;
 
     try {
       const outcome = await restoreGame(gameId, {
         target_seq: selectedSeq,
         mode: "new",
         ephemeral: true,
+        ...(retained ? { reuse_session_id: retained } : {}),
       });
       const sessionId = extractSessionId(outcome);
       if (!sessionId) {
         throw new Error("Restore did not return a session id.");
       }
-      activeSessionRef.current = sessionId;
 
-      // The restore response names the room it just created, so the common path
-      // needs no second call. Falling back to the session list keeps an older
-      // history-service (whose response carries no `room_slug`) working, but it
-      // is the slow path in every sense: an extra browser→proxy→service round
-      // trip after the restore already finished, O(all sessions) work to answer a
-      // by-id question, and a race — if the session is reaped in between, `find`
-      // returns undefined and the board silently renders its fallback.
+      // The restore response names the room it created. A reuse creates none, so
+      // it reports none, and the room is the one already recorded for that
+      // session. Listing sessions is the last resort, kept only for a
+      // history-service old enough to report no room at all: it is an extra
+      // browser→proxy→service round trip after the restore already finished,
+      // O(all sessions) work to answer a by-id question, and a race — a session
+      // reaped in between yields no match and the board silently renders its
+      // fallback.
       let roomSlug: string | null =
         typeof outcome.room_slug === "string" && outcome.room_slug
           ? outcome.room_slug
           : null;
+      if (roomSlug === null && sessionId === retained) {
+        roomSlug = retainedRoomSlug;
+      }
       if (roomSlug === null) {
         try {
           const games = await listGames();
@@ -175,16 +222,28 @@ export function useBoardReconstruction(
         }
       }
 
-      setReconstruction({ sessionId, roomSlug, seq: selectedSeq });
+      // Only one reconstruction is live at a time: if the restore built a new
+      // session instead of reusing the retained one, the retained one is now
+      // orphaned and goes.
+      if (retained && retained !== sessionId) {
+        void disposeSession(retained);
+      }
+      activeSessionRef.current = sessionId;
+      activeRoomSlugRef.current = roomSlug;
+
+      setBuilt({ sessionId, roomSlug, seq: selectedSeq, gameId });
     } catch (e) {
-      const orphan = activeSessionRef.current;
-      activeSessionRef.current = null;
-      if (orphan) void disposeSession(orphan);
-      setError(
-        e instanceof Error
-          ? e.message
-          : "Failed to open the board at this event."
-      );
+      // A failed restore leaves the retained session as it was: the
+      // history-service does not delete a session it did not create, so it is
+      // still ours to hold and reuse on the next attempt.
+      setFailure({
+        gameId,
+        seq: selectedSeq,
+        message:
+          e instanceof Error
+            ? e.message
+            : "Failed to open the board at this event.",
+      });
     } finally {
       setIsOpening(false);
     }

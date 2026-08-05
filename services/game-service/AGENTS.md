@@ -30,6 +30,41 @@ game-service/
 - Keep MCP tools and HTTP endpoints consistent in behavior
 - Phoenix Channel messages are defined in DragnCards protocol
 
+## DragnCards credential cache
+
+`dragncards/auth_cache.py` caches the bot's DragnCards session token and numeric
+user id in the session-store Valkey under
+`game-service:dragncards-auth:<sha256(url + NUL + email)[:32]>`, because deriving
+them cost ~305 ms of a ~590 ms `POST /games` and was repeated for every room
+(DRA-36). It follows the agent-orchestrator model cache
+(`integrations/bifrost.py`) — `GET`/`SETEX`, JSON value, namespaced key.
+
+Three things must stay true when touching it:
+
+- **The token is a credential.** It belongs in exactly two places: the JSON value
+  written to Valkey, and the `authorization` header of a DragnCards request. Never
+  a log record, never a span attribute, never an exception message, never a spec or
+  README example. This is why the RESP client's `db.operation.name` attribute
+  records `parts[0]` only — the cache depends on command arguments never reaching a
+  span, so do not widen that.
+- **A Valkey failure degrades, it does not fail.** Every command is wrapped; a
+  miss, a transport error, or a stored value of the wrong shape is reported to the
+  caller as a miss and the credential is derived live. This service opens a fresh
+  TCP connection per command, so a reset is a real possibility, not a hypothetical
+  (DRA-35).
+- **The TTL is chosen against the token's own lifetime, not guessed.** DragnCards
+  issues into `Pow.Store.CredentialsCache`, declared with 30 minutes upstream and
+  not extended on use, so the default `DRAGNCARDS_AUTH_CACHE_TTL_SECONDS=900` is
+  half of it. If you change the default, say what lifetime you checked it against.
+
+The room channel is the only place the credential is actually validated on this
+path — `POST /api/v1/games` is not behind the authenticated pipeline upstream and
+accepts any token — so a forgotten credential surfaces as a `room_unavailable`
+push on join, which evicts a cached entry. `PhoenixClient.join` registers the
+Channel *before* awaiting the join reply for that reason: the receive loop is a
+separate task and would otherwise deliver the room's opening broadcasts to a topic
+`_dispatch` does not yet know, dropping them silently.
+
 ## Browser CORS
 
 `CORS_ALLOW_ORIGINS` is a comma-separated allowlist of browser origins, read in

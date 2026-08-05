@@ -779,3 +779,192 @@ async def test_branch_restore_does_not_swallow_an_orchestrator_404(repository):
 
     # The half-built branch room was rolled back rather than left orphaned.
     assert game.deleted == ["branch-session-1"]
+
+
+# ---------------------------------------------------------------------------
+# Restore into an existing session (DRA-36)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reuse_loads_the_base_into_the_supplied_session(repository):
+    """The saving: no room is built, the caller's open room is re-pointed."""
+    await _seed_recorded_game(repository)
+    await repository.write_snapshot(
+        "g1", 3, {"schema_version": 1, "plugin_name": "marvel-champions", "game": {}}
+    )
+    game = FakeGameService()
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=FakeOrchestrator()
+    )
+
+    result = await service.restore(
+        "g1", target_seq=4, mode="new", ephemeral=True, reuse_session_id="mine"
+    )
+
+    assert game.created == []
+    assert result.game_session_id == "mine"
+    assert [session for session, _ in game.loaded] == ["mine"]
+    assert result.replayed_event_seqs == [4]
+    # No room was created, so none is reported; the caller already knows the room
+    # it handed over.
+    assert result.room_slug is None
+
+
+@pytest.mark.asyncio
+async def test_reuse_ends_in_the_same_state_as_a_fresh_session(repository):
+    """A reused session must carry nothing over from the moment it last held.
+
+    Both paths reach the target the same way: load the same full-state base, then
+    replay the same forward range. That is what makes the reuse safe, so it is
+    asserted directly rather than inferred.
+    """
+    await _seed_recorded_game(repository)
+    await repository.write_snapshot(
+        "g1", 3, {"schema_version": 1, "plugin_name": "marvel-champions", "game": {}}
+    )
+
+    fresh_game = FakeGameService()
+    fresh = await RestoreService(
+        repository=repository, game_service=fresh_game, orchestrator=FakeOrchestrator()
+    ).restore("g1", target_seq=4, mode="new", ephemeral=True)
+
+    reused_game = FakeGameService()
+    # The session already holds an earlier moment of this game.
+    await RestoreService(
+        repository=repository, game_service=reused_game, orchestrator=FakeOrchestrator()
+    ).restore("g1", target_seq=3, mode="new", ephemeral=True, reuse_session_id="mine")
+    reused_game.loaded.clear()
+    reused_game.replayed.clear()
+    reused = await RestoreService(
+        repository=repository, game_service=reused_game, orchestrator=FakeOrchestrator()
+    ).restore("g1", target_seq=4, mode="new", ephemeral=True, reuse_session_id="mine")
+
+    assert reused.snapshot_at_seq == fresh.snapshot_at_seq
+    assert reused.replayed_event_seqs == fresh.replayed_event_seqs
+    # Same base document, same forward actions — differing only in which session
+    # they were applied to.
+    assert [doc for _, doc in reused_game.loaded] == [
+        doc for _, doc in fresh_game.loaded
+    ]
+    assert [action for _, action in reused_game.replayed] == [
+        action for _, action in fresh_game.replayed
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reuse_is_declined_when_no_full_state_base_exists(repository):
+    """Without a base, replay starts from seq 1 onto whatever is already there.
+
+    In a fresh session that is a new game; in a reused one it is the previous
+    view. The gate excludes the path rather than reasoning about which replays
+    happen to be total.
+    """
+    await _seed_recorded_game(repository)
+    # The only snapshot sits AFTER the target, so no base precedes it — but the
+    # plugin name is still discoverable, so a fresh branch can be created.
+    await repository.write_snapshot(
+        "g1", 4, {"schema_version": 1, "plugin_name": "marvel-champions", "game": {}}
+    )
+    game = FakeGameService()
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=FakeOrchestrator()
+    )
+
+    result = await service.restore(
+        "g1", target_seq=3, mode="new", ephemeral=True, reuse_session_id="mine"
+    )
+
+    assert game.created == ["marvel-champions"]
+    assert result.game_session_id == "branch-session-1"
+    # The supplied session was neither loaded into nor deleted.
+    assert [session for session, _ in game.loaded] == []
+    assert "mine" not in game.deleted
+
+
+@pytest.mark.asyncio
+async def test_reuse_is_ignored_for_an_in_place_restore(repository):
+    await _seed_recorded_game(repository)
+    await repository.write_snapshot(
+        "g1", 3, {"schema_version": 1, "plugin_name": "marvel-champions", "game": {}}
+    )
+    game = FakeGameService()
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=FakeOrchestrator()
+    )
+
+    result = await service.restore(
+        "g1", target_seq=4, mode="in_place", reuse_session_id="mine"
+    )
+
+    assert result.game_session_id == "g1"
+    assert [session for session, _ in game.loaded] == ["g1"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_reuse_restore_does_not_delete_the_supplied_session(repository):
+    """The caller owns a supplied session, so rollback must not reclaim it."""
+    await _seed_recorded_game(repository)
+    await repository.write_snapshot(
+        "g1", 3, {"schema_version": 1, "plugin_name": "marvel-champions", "game": {}}
+    )
+    game = FakeGameService()
+    game.replay_error = RuntimeError("replay blew up")
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=FakeOrchestrator()
+    )
+
+    with pytest.raises(RestoreError):
+        await service.restore(
+            "g1", target_seq=4, mode="new", ephemeral=True, reuse_session_id="mine"
+        )
+
+    assert game.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_a_plugin_mismatch_on_the_supplied_session_is_a_client_error(repository):
+    """game-service rejects a snapshot whose plugin differs; report it as 4xx."""
+    await _seed_recorded_game(repository)
+    await repository.write_snapshot(
+        "g1", 3, {"schema_version": 1, "plugin_name": "marvel-champions", "game": {}}
+    )
+    game = FakeGameService()
+    game.load_error = _http_error(400)
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=FakeOrchestrator()
+    )
+
+    with pytest.raises(RestoreError):
+        await service.restore(
+            "g1", target_seq=4, mode="new", ephemeral=True, reuse_session_id="mine"
+        )
+
+    assert game.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_reuse_is_declined_for_a_kept_branch_restore(repository):
+    """Reuse is for throwaway reconstructions, not for a branch meant to be kept.
+
+    It overwrites a session the caller names rather than one the restore created,
+    so without this gate the field would be a way to replace an unrelated live
+    session's board with a different game's.
+    """
+    await _seed_recorded_game(repository)
+    await repository.write_snapshot(
+        "g1", 3, {"schema_version": 1, "plugin_name": "marvel-champions", "game": {}}
+    )
+    game = FakeGameService()
+    service = RestoreService(
+        repository=repository, game_service=game, orchestrator=FakeOrchestrator()
+    )
+
+    result = await service.restore(
+        "g1", target_seq=4, mode="new", ephemeral=False, reuse_session_id="mine"
+    )
+
+    assert game.created == ["marvel-champions"]
+    assert result.game_session_id == "branch-session-1"
+    assert [session for session, _ in game.loaded] == ["branch-session-1"]
+    assert "mine" not in game.deleted

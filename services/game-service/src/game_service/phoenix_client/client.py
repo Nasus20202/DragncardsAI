@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 # Phoenix sentinel values
 _NULL = None  # join_ref / ref when not applicable
 
+# DragnCards pushes this on a joined room channel instead of a state broadcast
+# when it will not serve the room's state to this socket — the room has no server
+# state, or the socket presented a token the backend no longer recognises. It is
+# the only place a DragnCards credential is actually checked on the room path:
+# `POST /api/v1/games` is not behind the authenticated pipeline upstream and
+# accepts any token, so a room can be created with a credential the socket will
+# then be refused for.
+ROOM_UNAVAILABLE_EVENT = "room_unavailable"
+
 
 @dataclass
 class PhxMessage:
@@ -129,9 +138,20 @@ class PhoenixClient:
     # ------------------------------------------------------------------
 
     async def join(self, topic: str, payload: Any = None) -> "Channel":
-        """Join a Phoenix channel topic and return a Channel handle."""
+        """Join a Phoenix channel topic and return a Channel handle.
+
+        The Channel is registered before the join reply is awaited. DragnCards
+        pushes the room's opening broadcasts (``current_state``, or
+        ``room_unavailable`` when it declines to serve one) immediately after
+        replying, and the receive loop runs as its own task — so a channel
+        registered only after the reply resumed this coroutine can miss them
+        entirely, and ``_dispatch`` drops a message whose topic it does not yet
+        know without a trace.
+        """
         join_ref = self._next_ref()
         ref = self._next_ref()
+        channel = Channel(topic=topic, join_ref=join_ref, client=self)
+        self._channels[topic] = channel
         msg = PhxMessage(
             join_ref=join_ref,
             ref=ref,
@@ -139,11 +159,14 @@ class PhoenixClient:
             event="phx_join",
             payload=payload or {},
         )
-        reply = await self._push_and_await(msg, reply_ref=ref)
+        try:
+            reply = await self._push_and_await(msg, reply_ref=ref)
+        except BaseException:
+            self._channels.pop(topic, None)
+            raise
         if reply.payload.get("status") != "ok":
+            self._channels.pop(topic, None)
             raise PhoenixChannelError(f"Failed to join {topic!r}: {reply.payload}")
-        channel = Channel(topic=topic, join_ref=join_ref, client=self)
-        self._channels[topic] = channel
         logger.debug("Joined channel %s", topic)
         return channel
 
@@ -289,6 +312,18 @@ class Channel:
     client: PhoenixClient
     _handlers: dict[str, list] = field(default_factory=dict, init=False)
     _state_queue: asyncio.Queue = field(default_factory=asyncio.Queue, init=False)
+    _room_unavailable: bool = field(default=False, init=False)
+
+    @property
+    def room_unavailable(self) -> bool:
+        """Whether DragnCards declined to serve this room's state.
+
+        Recorded unconditionally in :meth:`_handle` rather than through
+        :meth:`on`, because the push arrives with the join and a caller cannot
+        register a handler before it: the receive loop is a separate task, so it
+        can deliver the event before ``join()`` has even returned the Channel.
+        """
+        return self._room_unavailable
 
     async def push(self, event: str, payload: Any, timeout: float = 10.0) -> Any:
         """Push an event on this channel and await the reply payload."""
@@ -313,6 +348,8 @@ class Channel:
 
     def _handle(self, msg: PhxMessage) -> None:
         """Dispatch an incoming broadcast to registered handlers."""
+        if msg.event == ROOM_UNAVAILABLE_EVENT:
+            self._room_unavailable = True
         handlers = self._handlers.get(msg.event, [])
         for h in handlers:
             try:
