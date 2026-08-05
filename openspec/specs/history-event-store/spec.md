@@ -141,6 +141,14 @@ Specifically, agent-orchestrator answers `404` to a `mode="in place"` context re
 
 The restore result SHALL name the DragnCards room holding the restored state whenever the restore created one. A branch restore's entire product is a new game room, and a room the caller cannot address is indistinguishable from a restore that never happened; the room slug is returned by game-service on the same response that assigns the session id, so naming it costs nothing and removes both an extra round trip and a race against the ephemeral reaper.
 
+A `mode="new"` restore SHALL accept an optional existing game-service session to restore into, and SHALL honour it ONLY when the restore is `ephemeral` AND a full-state base at or before the target exists. Building a room is several sequential round trips to DragnCards plus a channel join and a plugin load, measured at ~590 ms of a ~728 ms restore, whereas loading a full-state base into an already-open room was measured at ~55 ms; a caller viewing a second moment of the same game already holds a room that can be re-pointed instead of replaced.
+
+The base requirement is the safety gate, not an optimisation detail. Loading a full-state base issues the DragnCards `set_game` action, which replaces the room's game document outright rather than merging into it, so the loaded document is the entire resulting state and nothing from the previous contents survives. A restore with no base has no such guarantee: it replays forward from `seq` 1 onto whatever the session already holds, which in a reused session is the previous view. The service SHALL therefore create a fresh session whenever no base exists, even when a session to reuse was supplied.
+
+The `ephemeral` condition is what keeps the field aimed at the flow it exists for. Reuse overwrites a session the caller names rather than one the restore created, and an ephemeral reconstruction is by definition a throwaway the caller built in order to look at it. A kept branch restore's whole product is the room it creates, so it SHALL always create one; without this condition the field would be a way to replace an unrelated live session's board with a different game's.
+
+A supplied session SHALL NOT be deleted by the restore's rollback when a restore fails, because the restore did not create it and the caller still owns it. A session whose plugin does not match the game being restored SHALL cause the restore to fail with a client error rather than be loaded into.
+
 #### Scenario: Restore from the nearest full-state base then replay forward
 - **WHEN** a client requests a restore of a `game_id` to a target `seq`
 - **THEN** the history-service SHALL select the densest full-state base at or before the target `seq` — a periodic snapshot or a `game_state` event, whichever is more recent — load it into a game-service session, and replay the game-mutating events between that base and the target `seq` in ascending `seq` order
@@ -152,6 +160,30 @@ The restore result SHALL name the DragnCards room holding the restored state whe
 #### Scenario: Restore into a new branchable session
 - **WHEN** a client requests a restore with the target mode "new session"
 - **THEN** the history-service SHALL create a new game-service session and orchestrator session for the restored moment, SHALL leave the original game's events and any live session unmodified, and SHALL report the new session's `room_slug` so the caller can open the game that was created
+
+#### Scenario: Restore into a supplied existing session
+- **WHEN** a client requests an `ephemeral` `mode="new"` restore naming an existing game-service session to restore into, and a full-state base at or before the target exists
+- **THEN** the history-service SHALL load that base into the named session and replay forward into it, SHALL NOT create a game-service session or a DragnCards room, and SHALL report the restore against the named session
+
+#### Scenario: A reused session ends in exactly the target state
+- **WHEN** a session that already holds one moment of a game is restored to a different moment of that game
+- **THEN** the resulting game state SHALL be identical to the state produced by restoring that same moment into a freshly created session, carrying nothing over from the moment it previously held
+
+#### Scenario: A supplied session is ignored when no full-state base exists
+- **WHEN** a client requests an `ephemeral` `mode="new"` restore naming an existing session, but no snapshot and no usable `game_state` event exists at or before the target `seq`
+- **THEN** the history-service SHALL create a fresh session and replay into that instead, and SHALL leave the named session untouched
+
+#### Scenario: A supplied session is ignored for a kept branch restore
+- **WHEN** a client requests a non-`ephemeral` `mode="new"` restore naming an existing session
+- **THEN** the history-service SHALL create a fresh session and restore into that, and SHALL leave the named session untouched
+
+#### Scenario: A supplied session is not deleted when the restore fails
+- **WHEN** an `ephemeral` `mode="new"` restore into a supplied existing session fails part-way through
+- **THEN** the history-service SHALL report the failure and SHALL NOT delete the supplied session, because the caller owns it
+
+#### Scenario: A supplied session for the wrong plugin is rejected
+- **WHEN** a client requests a restore into an existing session whose plugin differs from the plugin recorded for the game
+- **THEN** the history-service SHALL fail the restore with a client error and SHALL NOT leave the named session holding a partially loaded state
 
 #### Scenario: Restore in place over the live session
 - **WHEN** a client requests a restore with the target mode "in place"
