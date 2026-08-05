@@ -224,3 +224,29 @@ files, so a newly added infra service is covered automatically. The app services
 defined in `docker-compose.yaml` itself and are left untouched, so you can run them from
 source with `make run` on top of Dockerised infrastructure. `infra-down` stops containers
 without removing them; use `make down` to remove them.
+
+### Node dependencies and build-script approvals
+
+The two Node projects — `services/dashboard` and `services/smoketest` — are separate pnpm
+projects, each with its own `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
+There is no root workspace, so install from the service directory:
+
+```bash
+cd services/dashboard && pnpm install --frozen-lockfile
+cd services/smoketest && pnpm install --frozen-lockfile
+```
+
+pnpm refuses to run a dependency's install (build) script unless that package is named in
+the `allowBuilds` map in the project's `pnpm-workspace.yaml`. Those approvals are checked
+in, so a fresh clone installs exactly what CI and the Docker images install, without anyone
+running `pnpm approve-builds` and without an interactive prompt. Never approve builds
+interactively — that writes per-machine state that nobody else gets.
+
+Both projects also set `strictDepBuilds: true`, so an unapproved build script **fails the
+install** rather than warning and carrying on. If a dependency bump introduces one, the
+install stops with `ERR_PNPM_IGNORED_BUILDS` naming the package. Treat that as a review
+step, not a formality: an entry set to `true` lets that third-party package execute code on
+every install, on every developer machine and in CI. Check what the script actually does,
+then either add it as `true` with a comment saying which artifact it produces, or set it to
+`false` if it builds nothing — several popular packages use install scripts only for
+telemetry or funding banners, and those are denied here on purpose.

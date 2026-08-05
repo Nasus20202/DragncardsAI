@@ -1,1 +1,6 @@
 minimumReleaseAge: 0
+# No dependency in this project ships an install script, so there is no
+# `allowBuilds` map. Keep an unapproved build script a hard install failure so
+# that a future dependency which adds one has to be reviewed and allowlisted
+# explicitly rather than being skipped with a warning.
+strictDepBuilds: true

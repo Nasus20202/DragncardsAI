@@ -1,3 +1,12 @@
+# Which dependencies may run install (build) scripts. pnpm blocks every
+# dependency build script unless it is named here, so this list is a
+# supply-chain boundary: each `true` grants a third-party package the right to
+# execute arbitrary code during `pnpm install`. Add an entry only after
+# checking what the script actually does.
+#
+# Regenerate the candidate set by emptying this map and running
+# `pnpm install --frozen-lockfile`; pnpm then reports every package that wants
+# a build script. Do not copy entries between projects.
 allowBuilds:
   "@openuidev/lang-core": true
   "@scarf/scarf": true
@@ -9,3 +18,8 @@ allowBuilds:
   tree-sitter-json: true
   unrs-resolver: true
 minimumReleaseAge: 0
+# Keep an unapproved build script a hard install failure. This is the pnpm 11
+# default, but pinning it here stops a machine-level pnpm config from
+# downgrading it to a warning, which would let a fresh install link a native
+# package without its binary and fail much later.
+strictDepBuilds: true
