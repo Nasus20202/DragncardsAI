@@ -1,4 +1,4 @@
-# Batch state — `features/bug-batch-20260727`
+# Batch state — `dump/claude-playground`
 
 Resume point for this batch. If a session was cut off by a usage limit, **read this file first**,
 then `git log --oneline` on the integration branch. Nothing in this batch exists only in a chat log.
@@ -8,37 +8,61 @@ Committing locally is what makes the work durable — do not rely on pushing to 
 
 ## Where things are
 
-Integration branch: **`features/bug-batch-20260727`**, pushed to `origin` at **`ccb0fb9`**.
+Integration branch: **`dump/claude-playground`**, pushed to `origin`. It was **renamed** from
+`features/bug-batch-20260727` on 2026-08-05, locally and on the remote; the old name exists nowhere
+any more and must not be recreated — not by a push, not by a reference in this file.
 All batch work merges here as **one squash commit per issue**, subject ending ` (DRA-<n>)`.
 
-**All 19 batch issues are merged and closed. No feature branches or worktrees remain** — only
-`wt-integration` is left. Two local branches, `features/history-harden` and
+**All 19 first-batch issues are merged and closed**, and so is the second batch. Later batches are
+still in flight. As of 08-05 the live worktrees beside `wt-integration` are `wt-dra33`, `wt-dra36`,
+`wt-dra37`, `wt-dra38`, `wt-dra41` and `wt-dra44`, each on its own `stanislaw/*` branch; `wt-dra30`
+was removed when DRA-30 merged. Two local branches, `features/history-harden` and
 `features/history-play-style-browser`, are from 2026-06-29 and are **the owner's, not this batch's**;
 do not delete them.
 
-Done: DRA-5, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19 (partial — see below), 20, 21, 22, 23, 24,
-25, 27, 29. Still open: **DRA-6** (umbrella, closes when its children do), **DRA-12** (proposal
-written, awaiting the owner's decision), **DRA-30** (new — DRA-19's deferred remainder).
+Done: DRA-5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 21, 22, 23, 24, 25, 27, 29.
+Still open: **DRA-6** (umbrella, closes when its children do), and the pair below, which are one
+issue's worth of state split across two tickets —
+
+- **DRA-19** — was `Done`, **reopened by the owner** and now `In Progress`: *"move back to in
+  progress, not finished."* Its OpenSpec change stays active until they say otherwise.
+- **DRA-30** — DRA-19's deferred remainder. **Code merged at `1516be4`**, but the issue stays
+  `In Progress` because the only change carrying its requested changes is dra-19's, which cannot be
+  archived. See its entry under the third batch.
 
 Every new worktree needs `git submodule update --init --recursive` before an agent is given it.
 
-**Remote hygiene.** `origin` carries only `main`, `features/bug-batch-20260727`, and the
-`renovate/*` branches (open PRs #306, #307, #230 — the bot's, never delete). Do not push feature
-branches.
+**Remote hygiene.** `origin` carries only `main`, `dump/claude-playground`, and the `renovate/*`
+branches (the bot's, never delete — only `renovate/openuidev-lang-core-0.x` remains as of 08-05,
+the others having merged or closed). Do not push feature branches.
 
 **No pull request is open, and none may be opened without the owner asking in that moment.** PR #305
 was closed earlier; it reopens with `gh pr reopen 305` only on an explicit request.
 
-## Two OpenSpec changes are deliberately still active
+## One OpenSpec change is deliberately still active
 
-`openspec/changes/` should contain exactly these two plus `archive/`:
+`openspec/changes/` should contain exactly this one plus `archive/`. `dra-12-context-management` is
+no longer among them — it archived on 07-29 as `2026-07-29-dra-12-context-management`.
 
-- **`dra-19-agents-orchestration`** — the specification is complete, but sections 5–7 and tasks
-  8.4–8.8/8.10 are unchecked because the seat guard, player-to-player messaging and the
-  illegal-action findings store were not built. **DRA-30** implements them against this spec. Do not
-  archive it until they are done, and do not re-specify.
-- **`dra-12-context-management`** — proposal only, zero source files touched. Awaiting the owner's
-  choice between (A), (A)+(C), or all three. (A4), the auto-compaction guard, is safe alone.
+- **`dra-19-agents-orchestration`** — **the reason it is held open has changed, so do not archive it
+  on the strength of its tick-marks.** Every one of its 52 tasks is now checked: DRA-30 built
+  sections 5–7 and tasks 8.4–8.8/8.10 (the seat guard, player-to-player messaging, the
+  illegal-action findings store, the seat roster), which is what the earlier version of this note
+  said to wait for. It is held open now because **the owner reopened Linear DRA-19**, which sits in
+  **In Progress** with a comment reading, in full: *"move back to in progress, not finished."*
+  Archiving is what writes a change's spec deltas into `openspec/specs/`, so archiving this one
+  would record as shipped a feature the owner is on record calling unfinished. Their judgement
+  overrides our tick-marks. Leave it active and do not touch its tasks until they decide.
+
+  One agent (this one) did archive it before that comment was known, and reverted the archive
+  commit; if `openspec/specs/` ever shows the dra-19 deltas applied while the change is still in
+  `openspec/changes/`, that is the fingerprint of the same mistake being made again.
+
+  The standing rule that came out of this is now in `AGENTS.md` under Working Preferences: **an
+  issue closes only after the OpenSpec change carrying its requested changes is archived.** The
+  owner stated it as *"MAKE SURE TO CLOSE TASKS LIKE DRA-19 ONLY WHEN THE CHANGE WHICH INCLUDES
+  REQUESTED CHANGES IS CLOSED."* It cuts both ways here: it is also why **DRA-30 cannot be closed**
+  — see its entry below.
 
 ## Decisions not derivable from the code
 
@@ -87,16 +111,23 @@ was closed earlier; it reopens with `gh pr reopen 305` only on an explicit reque
 - `EVAL_JUDGE_OPENROUTER_API_KEY` is unset in `services/bifrost/.env`, so any judge-latency figure is
   a projection, not a measurement.
 
-## Check baselines on the integration tip (DRA-35, DRA-34 and DRA-42 merged and archived)
+## Check baselines on the integration tip (DRA-35, DRA-34, DRA-42 and now DRA-30 merged)
+
+Measured on `86101f8`, the post-DRA-30 tip.
 
 - `./scripts/lint.sh` — clean.
-- Unit: game-service **384**, agent-orchestrator **503**, history-service **177**,
-  eval-service **258**, shared **38**, dashboard **614** (74 files).
+- Unit: game-service **384**, agent-orchestrator **599**, history-service **193**,
+  eval-service **291**, shared **38**, dashboard **631** (76 files).
   (Against `98192f3`: DRA-35 added 2 to history-service and 2 to shared; DRA-34 added 3 to
-  agent-orchestrator and 5 to the dashboard; DRA-42 added 13 to agent-orchestrator.)
+  agent-orchestrator and 5 to the dashboard; DRA-42 added 13 to agent-orchestrator. **DRA-30 added
+  96 to agent-orchestrator, 16 to history-service, 33 to eval-service and 17 to the dashboard**,
+  and none to game-service or shared.)
 - Integration: agent-orchestrator **29** (DRA-42 added 1), history-service **8**, eval-service **13**,
-  game-service **63**.
-- `openspec validate --all` — 16 passed, 1 failed (the pre-existing one above).
+  game-service **63**. DRA-30 added none.
+- `openspec validate --all` — 16 passed, 1 failed **(17 items)**, the failure being the pre-existing
+  one above. The item count matters: `dra-19-agents-orchestration` is one of the 16 passing items
+  *because it is still an active change*. If it is ever archived the totals become 15 passed, 1
+  failed, 16 items — a drop of one passing item is the archive, not a regression.
 - `pnpm typecheck` in `services/dashboard` — clean.
 - Placeholder grep over all of `openspec/specs/` — clean.
 - Every commit signed: `git log --format="%h %G? %s"` shows no `N` except Nasus's own `a8390a8`
@@ -153,8 +184,9 @@ local branches `features/history-harden` and `features/history-play-style-browse
   that neither action *said* what it did.
 - **DRA-6** auto-closed when DRA-12, its last open child, went Done.
 
-Open: **DRA-30** (seat guard — spec already written, change still active), **DRA-32** (proxy/Swagger
-auth — needs the owner's auth-model decision), **DRA-33** ((B), design already written).
+Open as of that batch: **DRA-30** (seat guard — since merged, still open, see the third batch),
+**DRA-32** (proxy/Swagger auth — needs the owner's auth-model decision), **DRA-33** ((B), design
+already written).
 
 **Not filed, deliberately — recorded here and in DRA-28's comment so it is not lost.** The
 board-at-time click is still slow and the root cause is *not* payload size: `POST /games` fans out to
@@ -200,10 +232,25 @@ wait for the others.**
   **It touched none of `play-transcript.tsx`, `play-session-events.ts` or `STREAM_EVENT_TYPES`** — so
   the conflict expected with DRA-30 did not materialise, and DRA-30 now rebases onto its orchestrator
   changes instead.
-- **DRA-30** — `wt-dra30`, seat guard / messaging / findings store, implementing sections 5–7 of the
-  still-active `dra-19-agents-orchestration` spec. Runs with four sub-agents in that one worktree.
-  Migration `0012`. Expect `play-transcript.tsx`, `play-session-events.ts` and `STREAM_EVENT_TYPES`
-  to conflict with DRA-34 — resolve as unions, not by picking a side.
+- **DRA-30** — **MERGED at `1516be4`. Worktree and branch gone. NOT archived and NOT closed —
+  deliberately.** Seat guard / player-to-player messaging / illegal-action findings store / seat
+  roster, implementing sections 5–7 and tasks 8.4–8.8/8.10 of `dra-19-agents-orchestration`.
+  Migration `0012`. The conflict with DRA-34 predicted here never materialised (DRA-34 touched none
+  of those three files) and the squash auto-merged clean.
+
+  **DRA-30 has no OpenSpec change directory of its own, and this is correct, not an omission.** Its
+  requested changes are specified by `dra-19-agents-orchestration`, which was written in full up
+  front and deliberately left active for DRA-30 to implement against — this file said "do not
+  re-specify", and the agent did not. Confirmed exhaustively: no path matching `dra-?30` or
+  `seat-guard` exists under `openspec/` on any ref, and `openspec list` shows only dra-19.
+  So there is **no change to archive for DRA-30 except dra-19 itself**, and dra-19 must not be
+  archived while the owner has it reopened. By the rule above, DRA-30 therefore **stays In Progress
+  until the owner resolves DRA-19**; closing it would be exactly the false record the rule exists to
+  prevent. When dra-19 is finally archived it closes DRA-19 and DRA-30 together — one change
+  carrying two issues.
+
+  Related commit: `86101f8` writes the close-only-after-archive rule into `AGENTS.md`. Note
+  `CLAUDE.md` is a **symlink** to `AGENTS.md`, so it needs no separate edit and must not get one.
 - **DRA-36** — `wt-dra36`, Valkey-backed DragnCards token cache (the follow-up recorded below).
   **Owns nothing in `resp.py`** — that file is DRA-35's for this batch.
 - **DRA-37** (Low, filed 07-29 16:29) — `wt-dra37`, "copious amounts of Valkey calls": an
