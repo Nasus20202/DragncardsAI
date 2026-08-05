@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from game_service.dragncards.auth_cache import DragnCardsIdentity
 from game_service.logic.exceptions import SessionError
 from game_service.logic.session import GameSession
 from game_service.logic.session_manager import SessionManager
@@ -228,18 +229,36 @@ async def test_own_user_id_is_asked_of_dragncards_not_inferred_from_the_room():
     session.get_state = AsyncMock(return_value=_state(player1=99, player2=None))
     session.claim_seat = AsyncMock()
 
-    async def fail(*args, **kwargs):
-        raise RuntimeError("no DragnCards here")
+    # The id comes from the shared credential cache, so denying that is the only
+    # way left to learn it; the occupied seat must not become the fallback.
+    manager._auth_cache.resolve = AsyncMock(
+        side_effect=RuntimeError("no DragnCards here")
+    )
 
-    import game_service.logic.session_manager as sm
-
-    original = sm.get_auth_token
-    sm.get_auth_token = fail
-    try:
-        claimed = await manager.claim_seats(session, num_players=2)
-    finally:
-        sm.get_auth_token = original
+    claimed = await manager.claim_seats(session, num_players=2)
 
     # 99 is the human in player1; it must not have been reused as our identity.
     assert claimed == []
     session.claim_seat.assert_not_awaited()
+
+
+async def test_seats_are_claimed_for_the_cached_credentials_user_id():
+    """Pins the seam to the shared auth cache.
+
+    Every other test here stubs `_own_user_id`, so nothing else would notice if
+    the way this service learns its own id changed underneath seat claiming.
+    """
+    manager = _make_manager()
+    session = _make_session()
+    session.get_state = AsyncMock(return_value=_state(player1=None, player2=None))
+    session.claim_seat = AsyncMock()
+
+    manager._auth_cache.resolve = AsyncMock(
+        return_value=DragnCardsIdentity(token="tok", user_id=7, cached=True)
+    )
+
+    assert await manager.claim_seats(session, num_players=2) == ["player1", "player2"]
+    assert [call.kwargs["user_id"] for call in session.claim_seat.await_args_list] == [
+        7,
+        7,
+    ]
