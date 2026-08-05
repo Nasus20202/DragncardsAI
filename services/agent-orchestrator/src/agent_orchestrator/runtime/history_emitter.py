@@ -39,6 +39,22 @@ ILLEGAL_ACTION_STATUS_RESOLVED = "resolved"
 SESSION_GAME_ID_KEY = "game_id"
 SESSION_RESTORED_CONTEXT_KEY = "restored_conversation_context"
 
+
+def restored_conversation_context(session: Any) -> list[dict[str, Any]]:
+    """The conversation a restore attached to this session, or an empty list.
+
+    It is prepended to every request the session ever sends, it is whatever the
+    restoring caller supplied, and compaction never touches it — so anything
+    estimating what a turn costs has to count it. Shared with the context
+    estimate for exactly that reason.
+    """
+    metadata = getattr(session, "metadata_json", None) or {}
+    context = metadata.get(SESSION_RESTORED_CONTEXT_KEY)
+    if isinstance(context, list) and context:
+        return context
+    return []
+
+
 # game-service MCP tools that observe state without mutating the game.
 # Everything else exposed by the game-service MCP is treated as game-mutating
 # and therefore worth emitting as an agent move/decision event.

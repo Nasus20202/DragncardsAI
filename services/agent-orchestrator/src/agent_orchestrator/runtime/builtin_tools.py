@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Iterable
 
 from agent_orchestrator.repositories.questions import (
     QUESTION_STATUS_ANSWERED,
@@ -74,20 +74,32 @@ class BuiltinToolRegistry:
         return self._tools.get(name)
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                },
-            }
-            for tool in self._tools.values()
-        ]
+        return builtin_tools_as_openai(self._tools.values())
 
     def list_definitions(self) -> list[BuiltinToolDefinition]:
         return list(self._tools.values())
+
+
+def builtin_tools_as_openai(
+    definitions: Iterable[BuiltinToolDefinition],
+) -> list[dict[str, Any]]:
+    """Render built-in tool definitions the way the model is offered them.
+
+    Shared with the context estimate, which has to cost the same payload the
+    worker sends without holding the worker's registry: a second copy of this
+    shape is a second chance for the two token figures to disagree.
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            },
+        }
+        for tool in definitions
+    ]
 
 
 def _text_result(text: str, *, is_error: bool = False) -> dict[str, Any]:

@@ -6,16 +6,19 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from agent_orchestrator.api.deps import (
     get_bifrost_client,
+    get_live_event_bus,
     get_mcp_tool_catalog,
     get_repository,
     get_settings,
     get_skill_registry,
     require_session,
 )
+from agent_orchestrator.api.tool_catalog import resolve_session_request_tools
 from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.runtime.compaction import perform_compaction
+from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.schemas.context import (
     CompactSessionRequest,
@@ -39,6 +42,36 @@ async def _resolve_context_window(
     return settings.context_window_size
 
 
+async def _context_metadata(
+    *,
+    session: AgentSession,
+    context_window_size: int,
+    repo: Repository,
+    skill_registry: SkillRegistry,
+    mcp_tool_catalog: McpToolCatalog,
+    live_event_bus: LiveEventBus,
+) -> ContextMetadataResponse:
+    """Both endpoints answer with this, so both count the same tools.
+
+    The tool list is resolved here rather than inside the repository because
+    building the built-in definitions needs the live event bus, which only the
+    API layer holds.
+    """
+    metadata = await repo.get_context_metadata(
+        session.id,
+        context_window_size,
+        skill_registry=skill_registry,
+        request_tools=await resolve_session_request_tools(
+            mcp_tool_catalog=mcp_tool_catalog,
+            skill_registry=skill_registry,
+            repository=repo,
+            live_event_bus=live_event_bus,
+            session=session,
+        ),
+    )
+    return ContextMetadataResponse(**metadata)
+
+
 @router.post("/sessions/{session_id}/compact", operation_id="compact_session")
 async def compact_session(
     session_id: str,
@@ -48,6 +81,7 @@ async def compact_session(
     bifrost_client: BifrostClient = Depends(get_bifrost_client),
     skill_registry: SkillRegistry = Depends(get_skill_registry),
     mcp_tool_catalog: McpToolCatalog = Depends(get_mcp_tool_catalog),
+    live_event_bus: LiveEventBus = Depends(get_live_event_bus),
     settings: Settings = Depends(get_settings),
 ) -> ContextMetadataResponse:
     """Trigger manual compaction for a session.
@@ -94,13 +128,14 @@ async def compact_session(
     except BifrostError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    metadata = await repo.get_context_metadata(
-        session_id,
-        context_window_size,
+    return await _context_metadata(
+        session=session,
+        context_window_size=context_window_size,
+        repo=repo,
         skill_registry=skill_registry,
         mcp_tool_catalog=mcp_tool_catalog,
+        live_event_bus=live_event_bus,
     )
-    return ContextMetadataResponse(**metadata)
 
 
 @router.get("/sessions/{session_id}/context", operation_id="get_session_context")
@@ -111,16 +146,18 @@ async def get_context_metadata(
     bifrost_client: BifrostClient = Depends(get_bifrost_client),
     skill_registry: SkillRegistry = Depends(get_skill_registry),
     mcp_tool_catalog: McpToolCatalog = Depends(get_mcp_tool_catalog),
+    live_event_bus: LiveEventBus = Depends(get_live_event_bus),
     settings: Settings = Depends(get_settings),
 ) -> ContextMetadataResponse:
     """Return current context health metadata for a session."""
     context_window_size = await _resolve_context_window(
         session, settings, bifrost_client
     )
-    metadata = await repo.get_context_metadata(
-        session_id,
-        context_window_size,
+    return await _context_metadata(
+        session=session,
+        context_window_size=context_window_size,
+        repo=repo,
         skill_registry=skill_registry,
         mcp_tool_catalog=mcp_tool_catalog,
+        live_event_bus=live_event_bus,
     )
-    return ContextMetadataResponse(**metadata)

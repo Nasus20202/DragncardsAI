@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_orchestrator.api.tool_catalog import build_preview_builtin_tools
 from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient, ChatResponse
 from agent_orchestrator.integrations.mcp.client import (
@@ -9,9 +10,12 @@ from agent_orchestrator.integrations.mcp.client import (
     StreamableHttpMcpClient,
 )
 from agent_orchestrator.runtime.app import create_app
+from agent_orchestrator.runtime.builtin_tools import builtin_tools_as_openai
+from agent_orchestrator.runtime.player_agents import resolve_seat_identity
+from agent_orchestrator.runtime.session_modes import is_orchestrated
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.memory import build_message_history
-from agent_orchestrator.runtime.skills import SkillRegistry
+from agent_orchestrator.runtime.skills import SkillRegistry, enabled_skill_assignments
 from agent_orchestrator.runtime.system_prompts import build_system_prompt
 from agent_orchestrator.runtime.tokens import (
     estimate_tokens_for_messages,
@@ -103,44 +107,72 @@ async def build_context_test_app(tmp_path: Path, bifrost_client=None):
     return app, engine, repository
 
 
-async def expected_request_tokens(app, session, replay_messages):
-    system_prompt = build_system_prompt(
-        app.state.skill_registry, session.enabled_skills
+async def expected_system_prompt(app, session) -> str:
+    """The system prompt a top-level job on this session would be sent.
+
+    The persona catalogue is part of it, so the endpoint's figure has to
+    include it too — the worker always builds the prompt with the catalogue in
+    place.
+    """
+    return build_system_prompt(
+        app.state.skill_registry,
+        enabled_skill_assignments(session.enabled_skills),
+        personas=await app.state.repository.list_personas(),
     )
-    listed_tool_definitions = await app.state.mcp_tool_catalog.list_session_tools(
+
+
+async def expected_request_tools(app, session) -> list[dict]:
+    """Every tool definition the model is offered, built-in ones included.
+
+    Composed here rather than by calling `resolve_session_request_tools`, which
+    is the function under test: sharing that would put the same call on both
+    sides of the assertion and no wrong tool set could fail it. The two halves
+    are assembled from the primitives instead, so dropping either one from the
+    estimate turns these tests red.
+    """
+    builtin = build_preview_builtin_tools(
+        skill_registry=app.state.skill_registry,
+        repository=app.state.repository,
+        live_event_bus=app.state.live_event_bus,
+        session_id=session.id,
+        skill_assignments=enabled_skill_assignments(session.enabled_skills),
+        is_master_job=True,
+        player_configs=list(getattr(session, "player_configs", []) or []),
+        seat_identity=await resolve_seat_identity(
+            session, load_session=app.state.repository.get_session
+        ),
+        session_orchestrated=is_orchestrated(session),
+    )
+    mcp = await app.state.mcp_tool_catalog.list_session_tools(
         session.enabled_mcps,
         await app.state.repository.list_mcp_registries(),
         ignore_failures=True,
     )
-    tool_definitions = app.state.mcp_tool_catalog.as_openai_tools(
-        listed_tool_definitions
-    )
-    return (
-        estimate_tokens_for_messages([{"role": "system", "content": system_prompt}])
-        + estimate_tokens_for_messages(replay_messages)
-        + estimate_tokens_for_tools(tool_definitions)
-    )
+    return builtin_tools_as_openai(
+        builtin
+    ) + app.state.mcp_tool_catalog.as_openai_tools(mcp)
 
 
 async def expected_token_breakdown(app, session, replay_messages):
-    system_prompt = build_system_prompt(
-        app.state.skill_registry, session.enabled_skills
-    )
-    listed_tool_definitions = await app.state.mcp_tool_catalog.list_session_tools(
-        session.enabled_mcps,
-        await app.state.repository.list_mcp_registries(),
-        ignore_failures=True,
-    )
-    tool_definitions = app.state.mcp_tool_catalog.as_openai_tools(
-        listed_tool_definitions
-    )
+    """The breakdown, assembled and summed independently of the estimator.
+
+    Every component is composed here from primitives rather than from the
+    functions under test, so a component dropped from the endpoint's estimate
+    fails these tests instead of being mirrored by them.
+    """
+    system_prompt = await expected_system_prompt(app, session)
     return {
         "system_prompt": estimate_tokens_for_messages(
             [{"role": "system", "content": system_prompt}]
         ),
         "replay": estimate_tokens_for_messages(replay_messages),
-        "tools": estimate_tokens_for_tools(tool_definitions),
+        "tools": estimate_tokens_for_tools(await expected_request_tools(app, session)),
     }
+
+
+async def expected_request_tokens(app, session, replay_messages):
+    breakdown = await expected_token_breakdown(app, session, replay_messages)
+    return breakdown["system_prompt"] + breakdown["replay"] + breakdown["tools"]
 
 
 async def make_session_with_model(repo: Repository) -> str:

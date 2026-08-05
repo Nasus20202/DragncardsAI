@@ -149,7 +149,11 @@ async def test_get_context_metadata_uses_replay_window_not_full_history(tmp_path
         body = response.json()
         assert body["tokens_used"] == expected_tokens
         assert body["token_breakdown"] == expected_breakdown
-        assert body["tokens_used"] < 2000
+        # A loose ceiling, present so that replaying the full history instead of
+        # the configured window would be caught. It sits above 2000 because the
+        # estimate now costs the built-in tool definitions as well as the MCP
+        # ones — the model is offered both.
+        assert body["tokens_used"] < 4000
     finally:
         await engine.dispose()
 

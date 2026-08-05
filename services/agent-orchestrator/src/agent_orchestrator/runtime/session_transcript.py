@@ -5,16 +5,17 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
+from agent_orchestrator.runtime.context_estimate import estimate_request
+from agent_orchestrator.runtime.history_emitter import restored_conversation_context
+from agent_orchestrator.runtime.personas import (
+    allowed_subagent_personas,
+    persona_prompt_from_snapshot,
+    session_persona_snapshot,
+)
 from agent_orchestrator.runtime.skills import SkillRegistry, enabled_skill_assignments
 from agent_orchestrator.runtime.system_prompts import build_system_prompt
-from agent_orchestrator.runtime.tokens import (
-    estimate_tokens_for_messages,
-    estimate_tokens_for_tools,
-)
 
 if TYPE_CHECKING:
-    from agent_orchestrator.storage.models import AgentSession, CompactionRecord
     from agent_orchestrator.storage.repository import Repository
 
 logger = logging.getLogger(__name__)
@@ -149,56 +150,69 @@ class SessionTranscriptService:
         context_window_size: int,
         *,
         skill_registry: SkillRegistry,
-        mcp_tool_catalog: McpToolCatalog,
+        request_tools: list[dict[str, Any]],
     ) -> TranscriptContextMetadata:
+        """Report how full this session's context is.
+
+        The arithmetic lives in `estimate_request`, which the auto-compaction
+        trigger also calls, so the number reported here and the number the
+        trigger fires on are produced by one function over the same components.
+        The one component this side cannot have is the current turn's user
+        message: there is no current turn when a session is merely being looked
+        at, which is why `estimate_request` is given no user message here.
+
+        `request_tools` is resolved by the caller — the endpoint has the live
+        event bus that building the built-in definitions needs, and this module
+        cannot import the API layer without a cycle.
+        """
         compaction = await self._repository.get_latest_compaction_record(session_id)
         compaction_count = await self._repository.count_compaction_records(session_id)
 
         session_obj = await self._repository.get_session_context_snapshot(session_id)
         multi_turn_memory = session_obj.multi_turn_memory if session_obj else True
 
-        system_prompt_tokens = 0
-        replay_tokens = 0
-        tools_tokens = 0
+        system_prompt = ""
+        replay_messages: list[dict[str, Any]] = []
         if session_obj is not None:
             system_prompt = build_system_prompt(
-                skill_registry, enabled_skill_assignments(session_obj.enabled_skills)
+                skill_registry,
+                enabled_skill_assignments(session_obj.enabled_skills),
+                # Built exactly the way `PromptRunService` builds it for a
+                # top-level job, because parity is the point of this estimate.
+                # The catalogue is the session's allowlist rather than every
+                # persona on record -- the worker only names the ones the spawn
+                # guard would accept -- and the session's own persona prompt is
+                # part of the system message it sends.
+                personas=allowed_subagent_personas(session_obj),
+                persona_prompt=persona_prompt_from_snapshot(
+                    session_persona_snapshot(session_obj)
+                ),
             )
-            system_prompt_tokens = estimate_tokens_for_messages(
-                [{"role": "system", "content": system_prompt}]
-            )
-            all_registries = await self._repository.list_mcp_registries()
-            tool_definitions = await mcp_tool_catalog.list_session_tools(
-                session_obj.enabled_mcps,
-                all_registries,
-                ignore_failures=True,
-            )
-            tools_tokens = estimate_tokens_for_tools(
-                mcp_tool_catalog.as_openai_tools(tool_definitions)
-            )
+            # A restored conversation is prepended to every request the session
+            # sends, whether or not multi-turn memory is on, and compaction
+            # never rewrites it. It belongs to the replay component: it is
+            # replayed prior messages, just ones that arrived by restore.
+            replay_messages = list(restored_conversation_context(session_obj))
+            if multi_turn_memory:
+                replay_messages += await self.build_message_history(
+                    session_id, current_job_id=""
+                )
 
-        if multi_turn_memory and session_obj is not None:
-            replay_messages = await self.build_message_history(
-                session_id, current_job_id=""
-            )
-            replay_tokens = estimate_tokens_for_messages(replay_messages)
-
-        tokens_used = system_prompt_tokens + replay_tokens + tools_tokens
-        usage_ratio = (
-            tokens_used / context_window_size if context_window_size > 0 else 0.0
-        )
-        return TranscriptContextMetadata(
-            tokens_used=tokens_used,
+        estimate = estimate_request(
+            system_prompt=system_prompt,
+            tools=request_tools if session_obj is not None else [],
+            replay_messages=replay_messages,
             context_window_size=context_window_size,
-            usage_ratio=round(min(usage_ratio, 1.0), 6),
+        )
+
+        return TranscriptContextMetadata(
+            tokens_used=estimate.total,
+            context_window_size=estimate.context_window_size,
+            usage_ratio=estimate.reported_usage_ratio,
             compaction_count=compaction_count,
             last_compacted_at=compaction.created_at if compaction else None,
             multi_turn_memory=multi_turn_memory,
-            token_breakdown={
-                "system_prompt": system_prompt_tokens,
-                "replay": replay_tokens,
-                "tools": tools_tokens,
-            },
+            token_breakdown=estimate.as_breakdown(),
         )
 
 
