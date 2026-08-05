@@ -348,4 +348,85 @@ describe("PlayWorkspace configuration", () => {
       "1"
     );
   });
+
+  it("reports a save the server did not apply instead of reporting success", async () => {
+    // An orchestrator predating the two settings answers the PATCH successfully
+    // with a session carrying neither field, so the settings are silently lost.
+    // Reported here rather than left to look like a save that worked.
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /choose personas/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /save configuration/i })
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("status-text")).toHaveTextContent(
+        "Save incomplete"
+      )
+    );
+    expect(screen.getByTestId("error-text")).toHaveTextContent(
+      "The server did not apply the session persona or the allowed subagents."
+    );
+  });
+
+  it("reports a save the server did apply as saved", async () => {
+    api.getSession.mockResolvedValue({
+      ...sessionDetail,
+      session_persona: "tryhard",
+      allowed_subagents: ["kawaii-girl"],
+    });
+
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /choose personas/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /save configuration/i })
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("status-text")).toHaveTextContent(
+        "Configuration saved"
+      )
+    );
+    expect(screen.getByTestId("error-text")).toHaveTextContent("");
+  });
+
+  it("keeps showing what the server stored after an incomplete save", async () => {
+    // The panel must not go on showing the setting the user asked for once the
+    // server is known not to hold it: that would misreport the session in the
+    // other direction. The message says the save did not stick; the controls say
+    // what is actually stored.
+    renderPlayWorkspace();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("selected-session-name")).toHaveTextContent(
+        "Existing session"
+      )
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /choose personas/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /save configuration/i })
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("status-text")).toHaveTextContent(
+        "Save incomplete"
+      )
+    );
+    expect(screen.getByTestId("draft-allowed-subagents")).toHaveTextContent("");
+  });
 });

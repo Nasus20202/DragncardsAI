@@ -307,6 +307,60 @@ export function buildDraftFromSession(
   };
 }
 
+/**
+ * The message to show when the orchestrator did not store what a session write
+ * asked it to store, or `null` when everything asked for is in place.
+ *
+ * A write is only as good as what the server ends up holding, and the dashboard
+ * already re-reads the session afterwards — so it holds both halves and can
+ * simply compare them. Without the comparison a discarded setting is reported as
+ * a successful save, which on an allowlist governing what the agent may spawn
+ * leaves the user believing they narrowed something they did not.
+ *
+ * **A field missing from the response counts as not applied, never as cleared.**
+ * An orchestrator predating a setting answers `200 OK` and omits the field, which
+ * is byte-for-byte what "cleared" looks like; conflating the two is precisely how
+ * a discarded write passes for a successful one. Nothing here reads a version
+ * number: this tests whether the setting took effect, so it covers a refusal that
+ * has nothing to do with version skew just as well.
+ *
+ * Only the session persona and the subagent allowlist are compared. They are the
+ * settings whose absence from a response is indistinguishable from an empty
+ * value; the rest of the panel's fields are echoed by every orchestrator that
+ * ever accepted them, or fail loudly on their own.
+ */
+export function unappliedSessionSettings(
+  requested: Pick<SessionDraft, "sessionPersona" | "allowedSubagents">,
+  saved: Pick<SessionDetail, "session_persona" | "allowed_subagents">
+): string | null {
+  const unapplied: string[] = [];
+
+  if ((requested.sessionPersona || "") !== (saved.session_persona ?? "")) {
+    unapplied.push("the session persona");
+  }
+
+  // Compared as sets: the orchestrator reports the allowlist sorted, and an
+  // ordering difference is not a lost setting.
+  const savedAllowed = new Set(saved.allowed_subagents ?? []);
+  const requestedAllowed = new Set(requested.allowedSubagents);
+  if (
+    savedAllowed.size !== requestedAllowed.size ||
+    [...requestedAllowed].some((name) => !savedAllowed.has(name))
+  ) {
+    unapplied.push("the allowed subagents");
+  }
+
+  if (unapplied.length === 0) {
+    return null;
+  }
+
+  return (
+    `The server did not apply ${unapplied.join(" or ")}. The ` +
+    "agent-orchestrator is most likely older than this dashboard — rebuild and " +
+    "restart it so both are on the same version."
+  );
+}
+
 export function parseJsonObject(
   text: string,
   label: string
