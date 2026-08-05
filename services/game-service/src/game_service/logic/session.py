@@ -35,6 +35,11 @@ from game_service.logic.exceptions import (
     StateUnavailableError,
 )
 from game_service.logic.room import PhoenixRoom
+from game_service.logic.seats import (
+    SEAT_IDS,
+    normalise_seat_id,
+    seat_held_by,
+)
 from game_service.logic.snapshots import GameStateSnapshot, SNAPSHOT_SCHEMA_VERSION
 from game_service.phoenix_client.client import (
     Channel,
@@ -310,13 +315,28 @@ class GameSession:
                 exc,
             )
 
-    async def load_prebuilt_deck(self, deck_id: str, timeout: float = 15.0) -> Any:
+    async def load_prebuilt_deck(
+        self,
+        deck_id: str,
+        timeout: float = 15.0,
+        player_n: str = SEAT_IDS[0],
+    ) -> Any:
+        """Load a prebuilt deck on behalf of ``player_n``.
+
+        The seat is load-bearing, not a label. A Marvel Champions hero deck
+        declares its cards against the templated groups ``playerNDeck`` and
+        ``playerNNemesisSet``, and DragnCards substitutes the ``N`` from
+        ``$PLAYER_N`` — which comes from the ``player_ui`` this action carries.
+        Loading with the wrong seat puts that hero's cards in another seat's
+        groups rather than merely mislabelling the load.
+        """
+        player_n = normalise_seat_id(player_n)
         # Clear any previous action error before executing (mirrors execute_action).
         self._action_error = None
         load_action = RawAction(
             action_list=["LOAD_CARDS", deck_id],
             description=f"Loaded prebuilt deck {deck_id}",
-            player_n="player1",
+            player_n=player_n,
         )
         payload = translate_action(load_action)
         try:
@@ -420,8 +440,70 @@ class GameSession:
             logger.error("reset_game: session_id=%s timed out", self.session_id)
             raise SessionError("Timed out waiting for state after reset") from exc
 
-    async def set_seat(self, player_index: int, user_id: int) -> None:
-        await self.room.set_seat(player_index=player_index, user_id=user_id)
+    async def set_seat(self, player_id: str, user_id: int) -> None:
+        """Push a seat assignment without waiting to see whether it took.
+
+        ``player_id`` is a DragnCards seat id (``player1``..``player4``) because
+        upstream uses this value directly as a key of the room's seat map.
+
+        Prefer :meth:`claim_seat` when the answer matters: this method cannot
+        report failure, since the ``set_seat`` channel event is written to the
+        socket without a reply being awaited.
+        """
+        await self.room.set_seat(
+            player_id=normalise_seat_id(player_id), user_id=user_id
+        )
+
+    async def claim_seat(
+        self,
+        player_id: str,
+        user_id: int,
+        timeout: float = 5.0,
+        poll_interval: float = 0.25,
+    ) -> None:
+        """Seat ``user_id`` at ``player_id`` and confirm it from room state.
+
+        The ``set_seat`` event carries no usable acknowledgement — the upstream
+        handler swallows a failed sit-down into an error flag on the game — so
+        the room's own state is the only authority on whether a seat was taken.
+        Raises :class:`SessionError` if the seat has not taken within ``timeout``.
+        """
+        player_id = normalise_seat_id(player_id)
+        with tracer.start_as_current_span(
+            "game_session.claim_seat",
+            attributes={"game.seat.id": player_id},
+        ):
+            await self.set_seat(player_id=player_id, user_id=user_id)
+
+            deadline = time.monotonic() + timeout
+            while True:
+                # Occupancy changes arrive as a broadcast, so the cached state is
+                # not necessarily the state that reflects the push.
+                try:
+                    state = await self._request_fresh_state(timeout=timeout)
+                except (PhoenixChannelError, asyncio.TimeoutError) as exc:
+                    # A room that will not answer cannot confirm a seat. Report
+                    # it as a failed claim rather than letting a transport error
+                    # surface as an unhandled fault.
+                    raise SessionError(
+                        f"Could not confirm seat {player_id}: {exc}"
+                    ) from exc
+                if seat_held_by(state, player_id, user_id):
+                    logger.info(
+                        "claim_seat: session_id=%s seat=%s user_id=%s claimed",
+                        self.session_id,
+                        player_id,
+                        user_id,
+                    )
+                    return
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(poll_interval)
+
+            raise SessionError(
+                f"Seat {player_id} did not become held by user {user_id} "
+                f"within {timeout}s"
+            )
 
     async def set_spectator(self, user_id: int, spectating: bool) -> None:
         await self.room.set_spectator(user_id=user_id, spectating=spectating)

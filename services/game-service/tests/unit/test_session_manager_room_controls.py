@@ -39,11 +39,11 @@ async def test_reset_game_reload_plugin_pushes_reset_and_reload():
 async def test_set_seat_sends_message():
     session = make_session()
     session.room.send_room_event = AsyncMock()
-    await session.set_seat(player_index=0, user_id=42)
+    await session.set_seat(player_id="player2", user_id=42)
     session.room.send_room_event.assert_awaited_once()
     call = session.room.send_room_event.await_args
     assert call.args[0] == "set_seat"
-    assert call.args[1]["player_i"] == 0
+    assert call.args[1]["player_i"] == "player2"
     assert call.args[1]["new_user_id"] == 42
     assert "timestamp" in call.args[1]
 

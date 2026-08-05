@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
-from game_service.api.enums import LayoutId, PlayerN
+from game_service.api.enums import LayoutId, PlayerN, SeatId
 
 from game_service.logic.actions import GameAction
 from game_service.logic.snapshots import GameStateSnapshot
@@ -226,7 +226,13 @@ class ResetGameRequest(BaseModel):
 
 
 class SetSeatRequest(BaseModel):
-    player_index: int = Field(description="Zero-based player seat index")
+    player_id: SeatId = Field(
+        description=(
+            "DragnCards seat id, 'player1' to 'player4'. Not an index: DragnCards "
+            "uses this value directly as a key of the room's seat map, so a number "
+            "writes an entry that no seat lookup ever finds."
+        )
+    )
     user_id: int = Field(description="DragnCards user ID to assign to the seat")
 
 

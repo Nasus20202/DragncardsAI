@@ -121,12 +121,14 @@ with more than one live session attached returns 409, and the UUID must be used
 to disambiguate.
 
 - `POST /games`
-  Create a new game session for a plugin. The requesting user is seated in the
-  first available player slot.
+  Create a new game session for a plugin. This service is seated in the first
+  available player slot; the remaining seats a multi-player game needs are
+  claimed when the player count is set. See
+  [Seats are slots, not identities](#seats-are-slots-not-identities).
 
 - `POST /games/attach`
-  Attach to an existing DragnCards room. The requesting user is seated in the
-  first available player slot.
+  Attach to an existing DragnCards room. This service is seated in the first
+  available player slot, as above.
 
 - `GET /games`
   List active sessions managed by this service.
@@ -174,6 +176,42 @@ Common action types include:
 - `load_cards`
 - `unload_cards`
 - `raw`
+
+## Seats are slots, not identities
+
+A DragnCards seat is a key of one map held in the room's server process, not an
+account. **The seat an action acts as is taken verbatim from the action's own
+payload** — `options.player_ui.playerN`, which this service sends as `player_n`
+— and is never checked against the user the websocket authenticated as. The
+authenticated user selects that user's language, attributes a saved replay, and
+routes a targeted GUI update; it does not decide, restrict, or authorise the
+seat an action acts as.
+
+Three consequences worth knowing before touching the action layer:
+
+- **One credential drives every seat.** A two-, three- or four-player game needs
+  no second DragnCards account, no second websocket and no second token. It is
+  one connection sending a different `player_n`.
+- **`player_n` is the only thing that selects a seat, and omitting it is a hard
+  failure, not a default.** An action whose DragnLang touches `$PLAYER_N` and
+  whose payload carries no `player_ui` fails with
+  `Variable $PLAYER_N is undefined`. It matters most where it is least obvious:
+  a hero's prebuilt deck declares its cards against the templated groups
+  `playerNDeck` and `playerNNemesisSet`, so loading a second hero without naming
+  its seat puts that hero's cards in the first seat's groups.
+- **Occupancy still matters — for the game log.** Plugin automation reads a
+  seat's alias out of the room's seat map, and Marvel Champions suppresses a
+  seat's draw line entirely when that alias is absent. An unoccupied seat's
+  moves are therefore *missing* from the log that history-service records and
+  eval-service judges, not merely anonymous. Setting the player count claims the
+  seats that count implies, which is what keeps the log complete.
+
+`POST /games/{session_id}/seat` names a seat by its DragnCards seat id —
+`player1` to `player4` — because upstream uses that value directly as a key of
+the seat map. A number is refused: it would write an entry that no seat lookup
+ever finds. Because the `set_seat` channel event carries no usable
+acknowledgement, the endpoint confirms the assignment by re-reading room state
+and reports a failure rather than returning success on the strength of the push.
 
 ### Room Control
 

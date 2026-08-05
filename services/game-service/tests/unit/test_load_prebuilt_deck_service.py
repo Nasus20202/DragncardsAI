@@ -44,8 +44,27 @@ async def test_session_manager_load_prebuilt_deck_calls_session():
     session = mock_session()
     manager = _make_manager(session)
     result = await manager.load_prebuilt_deck(SESSION_ID, "set-001")
-    session.load_prebuilt_deck.assert_awaited_once_with("Spider-Verse (Hero)")
+    session.load_prebuilt_deck.assert_awaited_once_with(
+        "Spider-Verse (Hero)", player_n="player1"
+    )
     assert result is None or result == session.load_prebuilt_deck.return_value
+
+
+@pytest.mark.asyncio
+async def test_session_manager_load_prebuilt_deck_passes_the_seat_through():
+    session = mock_session()
+    manager = _make_manager(session)
+    await manager.load_prebuilt_deck(SESSION_ID, "set-001", player_n="player3")
+    session.load_prebuilt_deck.assert_awaited_once_with(
+        "Spider-Verse (Hero)", player_n="player3"
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_manager_load_prebuilt_deck_rejects_a_non_seat():
+    manager = _make_manager()
+    with pytest.raises(ValueError):
+        await manager.load_prebuilt_deck(SESSION_ID, "set-001", player_n="shared")
 
 
 @pytest.mark.asyncio

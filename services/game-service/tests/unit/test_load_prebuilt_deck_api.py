@@ -27,7 +27,45 @@ async def test_load_prebuilt_deck_200():
     body = response.json()
     assert body["session_id"] == SESSION_ID
     assert body["success"] is True
-    manager.load_prebuilt_deck.assert_awaited_once_with(SESSION_ID, "set-001")
+    manager.load_prebuilt_deck.assert_awaited_once_with(
+        SESSION_ID, "set-001", player_n="player1"
+    )
+
+
+async def test_load_prebuilt_deck_loads_into_a_named_seat():
+    """The seat is what puts a hero's cards in the right groups.
+
+    A hero deck declares its cards against `playerNDeck`/`playerNNemesisSet`, and
+    DragnCards substitutes the N from $PLAYER_N. Without this parameter a second
+    hero lands in the first seat's groups.
+    """
+    session = mock_session()
+    manager = mock_manager(session)
+    manager.load_prebuilt_deck = AsyncMock(return_value={"game": {}})
+    async with make_client(manager) as client:
+        response = await client.post(
+            f"/games/{SESSION_ID}/load-prebuilt-deck",
+            params={"deck_id": "set-001", "player_n": "player2"},
+        )
+
+    assert response.status_code == 200
+    manager.load_prebuilt_deck.assert_awaited_once_with(
+        SESSION_ID, "set-001", player_n="player2"
+    )
+
+
+async def test_load_prebuilt_deck_rejects_an_unknown_seat():
+    session = mock_session()
+    manager = mock_manager(session)
+    manager.load_prebuilt_deck = AsyncMock(return_value={"game": {}})
+    async with make_client(manager) as client:
+        response = await client.post(
+            f"/games/{SESSION_ID}/load-prebuilt-deck",
+            params={"deck_id": "set-001", "player_n": "shared"},
+        )
+
+    assert response.status_code == 422
+    manager.load_prebuilt_deck.assert_not_awaited()
 
 
 async def test_load_prebuilt_deck_not_found():

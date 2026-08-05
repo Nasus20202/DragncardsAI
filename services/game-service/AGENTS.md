@@ -118,6 +118,31 @@ surfaces exist for is documented in the root
 - Sessions can attach to existing rooms via `POST /games/attach`
 - Each session maintains a Phoenix Channel connection
 
+### Seats
+
+A seat is a **slot**, not an identity. `player1`..`player4` are keys of one map in
+the room's server process, and the seat an action acts as comes from the action's
+own `player_n` (`options.player_ui.playerN` on the wire) — never from the user the
+websocket authenticated as. So one credential drives all four seats and a
+multi-player game needs no second DragnCards account.
+
+Two rules follow, and both have bitten:
+
+- An action whose DragnLang touches `$PLAYER_N` and carries no `player_n` fails
+  with `Variable $PLAYER_N is undefined`. There is no default seat at the
+  DragnCards end. Prebuilt hero decks load into `playerNDeck` /
+  `playerNNemesisSet`, so a deck load without the right seat silently fills the
+  wrong seat's groups.
+- Seat *occupancy* is what names a seat in the game log, and Marvel Champions
+  omits a seat's draw line altogether when the seat has no alias. An unclaimed
+  seat is missing from the recorded game, not just unnamed — so seats are claimed
+  to match the player count. Anything reducing when seats are claimed has to
+  account for that.
+
+`set_seat` addresses a seat by its seat id string, never by an index; an index
+writes a map key no seat lookup will find. `logic/seats.py` owns this vocabulary —
+use it rather than re-deriving seat handling at a call site.
+
 ### Actions
 
 Common action types executed via `POST /games/{session_id}/actions`:

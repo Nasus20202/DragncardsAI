@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from game_service.logic.session_manager import BadGameStateError, SessionLockedError
+from game_service.logic.session_manager import (
+    BadGameStateError,
+    SessionError,
+    SessionLockedError,
+)
 
 from .game_room_state_test_support import (
     SESSION_ID,
@@ -52,17 +56,57 @@ async def test_set_seat_204():
     async with make_client(mock_manager(session)) as client:
         response = await client.post(
             f"/games/{SESSION_ID}/seat",
-            json={"player_index": 0, "user_id": 42},
+            json={"player_id": "player2", "user_id": 42},
         )
     assert response.status_code == 204
-    session.set_seat.assert_awaited_once_with(player_index=0, user_id=42)
+    # Claimed, not merely pushed: the endpoint must confirm the seat took.
+    session.claim_seat.assert_awaited_once_with(player_id="player2", user_id=42)
+
+
+async def test_set_seat_rejects_a_numeric_index():
+    """A number names no seat.
+
+    DragnCards uses this value directly as a key of the room's seat map, so an
+    index silently writes an entry no seat lookup ever finds. It has to be
+    refused at the edge rather than accepted and dropped on the floor.
+    """
+    session = mock_session()
+    async with make_client(mock_manager(session)) as client:
+        response = await client.post(
+            f"/games/{SESSION_ID}/seat",
+            json={"player_index": 0, "user_id": 42},
+        )
+    assert response.status_code == 422
+    session.claim_seat.assert_not_awaited()
+
+
+async def test_set_seat_rejects_an_unknown_seat():
+    session = mock_session()
+    async with make_client(mock_manager(session)) as client:
+        response = await client.post(
+            f"/games/{SESSION_ID}/seat",
+            json={"player_id": "player5", "user_id": 42},
+        )
+    assert response.status_code == 422
+    session.claim_seat.assert_not_awaited()
+
+
+async def test_set_seat_reports_a_claim_that_never_takes():
+    session = mock_session()
+    session.claim_seat = AsyncMock(side_effect=SessionError("seat did not take"))
+    async with make_client(mock_manager(session)) as client:
+        response = await client.post(
+            f"/games/{SESSION_ID}/seat",
+            json={"player_id": "player2", "user_id": 42},
+        )
+    assert response.status_code >= 400
 
 
 async def test_set_seat_not_found():
     async with make_client() as client:
         response = await client.post(
             f"/games/{UNKNOWN_ID}/seat",
-            json={"player_index": 0, "user_id": 42},
+            json={"player_id": "player1", "user_id": 42},
         )
     assert response.status_code == 404
 
@@ -135,6 +179,34 @@ async def test_set_player_count_200():
     session.set_player_count.assert_awaited_once_with(
         num_players=2, layout_id="standard2Player"
     )
+
+
+async def test_set_player_count_claims_the_seats_it_implies():
+    """Occupancy has to follow the count, or seats 2+ vanish from the game log."""
+    session = mock_session()
+    manager = mock_manager(session)
+    async with make_client(manager) as client:
+        response = await client.post(
+            f"/games/{SESSION_ID}/player-count",
+            json={"num_players": 2},
+        )
+
+    assert response.status_code == 200
+    manager.claim_seats.assert_awaited_once_with(session, 2)
+
+
+async def test_set_player_count_survives_a_seat_that_will_not_take():
+    """Claiming is best-effort; a game must still be settable to two players."""
+    session = mock_session()
+    manager = mock_manager(session)
+    manager.claim_seats = AsyncMock(return_value=[])
+    async with make_client(manager) as client:
+        response = await client.post(
+            f"/games/{SESSION_ID}/player-count",
+            json={"num_players": 2},
+        )
+
+    assert response.status_code == 200
 
 
 async def test_set_player_count_not_found():
