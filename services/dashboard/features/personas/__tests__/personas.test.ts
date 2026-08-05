@@ -8,6 +8,7 @@ import {
   createEmptyPersonaDraft,
   describePersona,
   describePersonaDraftProblem,
+  describePersonaDraftProblems,
   formatAllowedTools,
   parseAllowedTools,
 } from "@/features/personas/lib/personas";
@@ -159,6 +160,56 @@ describe("describePersonaDraftProblem", () => {
         draft({ systemPrompt: "x".repeat(MAX_PERSONA_PROMPT_CHARS) })
       )
     ).toBeNull();
+  });
+});
+
+describe("describePersonaDraftProblems", () => {
+  it("reports no problem for a draft that can be saved", () => {
+    expect(describePersonaDraftProblems(draft())).toEqual({
+      name: null,
+      systemPrompt: null,
+    });
+  });
+
+  it("attributes a missing name to the name field", () => {
+    const problems = describePersonaDraftProblems(draft({ name: "  " }));
+
+    expect(problems.name).toMatch(/needs a name/i);
+    expect(problems.systemPrompt).toBeNull();
+  });
+
+  it("attributes a malformed name to the name field", () => {
+    const problems = describePersonaDraftProblems(
+      draft({ name: "Rules Lawyer" })
+    );
+
+    expect(problems.name).toMatch(/lowercase/i);
+    expect(problems.systemPrompt).toBeNull();
+  });
+
+  it("attributes a missing prompt to the system prompt field", () => {
+    const problems = describePersonaDraftProblems(draft({ systemPrompt: " " }));
+
+    expect(problems.name).toBeNull();
+    expect(problems.systemPrompt).toMatch(/system prompt/i);
+  });
+
+  it("attributes an over-limit prompt to the system prompt field", () => {
+    const problems = describePersonaDraftProblems(
+      draft({ systemPrompt: "x".repeat(MAX_PERSONA_PROMPT_CHARS + 1) })
+    );
+
+    expect(problems.name).toBeNull();
+    expect(problems.systemPrompt).toContain(String(MAX_PERSONA_PROMPT_CHARS));
+  });
+
+  it("states both problems rather than hiding the second behind the first", () => {
+    const problems = describePersonaDraftProblems(
+      draft({ name: "Rules Lawyer", systemPrompt: "" })
+    );
+
+    expect(problems.name).toMatch(/lowercase/i);
+    expect(problems.systemPrompt).toMatch(/system prompt/i);
   });
 });
 

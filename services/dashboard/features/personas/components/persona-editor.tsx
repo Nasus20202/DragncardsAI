@@ -18,6 +18,7 @@ import {
   createEmptyPersonaDraft,
   describePersona,
   describePersonaDraftProblem,
+  describePersonaDraftProblems,
   formatAllowedTools,
   parseAllowedTools,
 } from "@/features/personas/lib/personas";
@@ -54,6 +55,15 @@ export function PersonaEditor() {
   const [editingName, setEditingName] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
+  /**
+   * Whether the user has edited this draft, and whether a press of Save was
+   * refused for it. Together they gate the validation messages: until one of
+   * them holds, a fresh "New persona" form is not presented as already wrong,
+   * and the summary beside the Save button appears only for a press that did
+   * nothing, which is the moment the user needs telling why.
+   */
+  const [isDraftEdited, setIsDraftEdited] = useState(false);
+  const [wasSaveRefused, setWasSaveRefused] = useState(false);
   const [statusText, setStatusText] = useState("");
   const [errorText, setErrorText] = useState<string | null>(null);
 
@@ -107,6 +117,7 @@ export function PersonaEditor() {
 
   function set<K extends keyof PersonaDraft>(key: K, value: PersonaDraft[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
+    setIsDraftEdited(true);
   }
 
   function startNew() {
@@ -114,6 +125,8 @@ export function PersonaEditor() {
     setEditingName(null);
     setStatusText("");
     setErrorText(null);
+    setIsDraftEdited(false);
+    setWasSaveRefused(false);
   }
 
   function startEditing(persona: PersonaResponse) {
@@ -121,14 +134,21 @@ export function PersonaEditor() {
     setEditingName(persona.name);
     setStatusText("");
     setErrorText(null);
+    setIsDraftEdited(false);
+    setWasSaveRefused(false);
   }
 
   async function save() {
     const problem = describePersonaDraftProblem(draft);
     if (problem !== null) {
-      setErrorText(problem);
+      // The button is deliberately pressable with an invalid draft, so this is
+      // the guard that keeps one from reaching the orchestrator. The reason is
+      // stated at the offending field and beside the button; `errorText` is
+      // left for what the orchestrator says about a request we did make.
+      setWasSaveRefused(true);
       return;
     }
+    setWasSaveRefused(false);
     setIsBusy(true);
     setErrorText(null);
     setStatusText("Saving persona...");
@@ -194,8 +214,19 @@ export function PersonaEditor() {
   }));
 
   const promptLength = draft.systemPrompt.length;
-  const promptOverLimit = promptLength > MAX_PERSONA_PROMPT_CHARS;
-  const problem = describePersonaDraftProblem(draft);
+  // Every problem is attributable to a field, so each is stated at its own
+  // control. The same reason is repeated beside the Save button after a
+  // refused press, because the fields are a scroll away from it on this form
+  // and a press that appears to do nothing has to explain itself where it
+  // happened.
+  const problems = describePersonaDraftProblems(draft);
+  const shownProblems =
+    isDraftEdited || wasSaveRefused
+      ? problems
+      : { name: null, systemPrompt: null };
+  const refusedSaveReason = wasSaveRefused
+    ? describePersonaDraftProblem(draft)
+    : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
@@ -296,6 +327,7 @@ export function PersonaEditor() {
           placeholder="e.g. rules-lawyer"
           value={draft.name}
           disabled={editingName !== null}
+          error={shownProblems.name ?? undefined}
           inputTestId="persona-name-input"
           onChange={(v) => set("name", v)}
         />
@@ -321,20 +353,12 @@ export function PersonaEditor() {
           id="persona-prompt"
           label="System prompt"
           description={`${promptLength} / ${MAX_PERSONA_PROMPT_CHARS} characters`}
+          error={shownProblems.systemPrompt ?? undefined}
           rows={10}
           value={draft.systemPrompt}
           inputTestId="persona-prompt-input"
           onChange={(v) => set("systemPrompt", v)}
         />
-        {promptOverLimit && (
-          <p
-            className="text-xs text-danger"
-            data-testid="persona-prompt-over-limit"
-          >
-            The system prompt is over the {MAX_PERSONA_PROMPT_CHARS} character
-            limit and cannot be saved.
-          </p>
-        )}
 
         <Separator />
 
@@ -428,10 +452,23 @@ export function PersonaEditor() {
           />
         )}
 
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-3">
+          {refusedSaveReason !== null && (
+            <p
+              className="text-xs text-danger"
+              id="persona-save-problem"
+              role="alert"
+              data-testid="persona-save-problem"
+            >
+              {refusedSaveReason}
+            </p>
+          )}
           <Button
             aria-label="Save persona"
-            isDisabled={isBusy || problem !== null}
+            aria-describedby={
+              refusedSaveReason !== null ? "persona-save-problem" : undefined
+            }
+            isDisabled={isBusy}
             variant="primary"
             onPress={() => void save()}
           >

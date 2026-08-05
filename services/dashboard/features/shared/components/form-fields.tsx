@@ -37,6 +37,33 @@ export interface FieldItem {
   disabled?: boolean;
 }
 
+/**
+ * The red line a field shows when its current value cannot be accepted, and the
+ * `aria-*` wiring that carries the same fact to assistive technology so the
+ * problem is not conveyed by colour alone. Rendered only when there is one.
+ */
+function FieldError({ id, error }: { id: string; error?: string }) {
+  if (!error) {
+    return null;
+  }
+  return (
+    <p className="text-xs text-danger" id={fieldErrorId(id)} role="alert">
+      {error}
+    </p>
+  );
+}
+
+function fieldErrorId(id: string): string {
+  return `${id}-error`;
+}
+
+/** The `aria-*` props a control carries while it has a problem to report. */
+function fieldErrorProps(id: string, error?: string) {
+  return error
+    ? { "aria-invalid": true, "aria-describedby": fieldErrorId(id) }
+    : {};
+}
+
 /** Small-caps caption above a field. */
 export function FieldLabel({
   id,
@@ -60,6 +87,7 @@ export function TextInputField({
   label,
   ariaLabel,
   description,
+  error,
   placeholder,
   value,
   disabled,
@@ -72,6 +100,8 @@ export function TextInputField({
   ariaLabel?: string;
   /** One line under the label, for a field whose effect the label cannot state. */
   description?: string;
+  /** Why the current value cannot be accepted. Shown under the control. */
+  error?: string;
   placeholder?: string;
   value: string;
   disabled?: boolean;
@@ -92,9 +122,11 @@ export function TextInputField({
           data-testid={inputTestId}
           placeholder={placeholder}
           value={value}
+          {...fieldErrorProps(id, error)}
           onChange={(e) => onChange(e.target.value)}
         />
       </TextField>
+      <FieldError id={id} error={error} />
     </div>
   );
 }
@@ -104,6 +136,7 @@ export function TextareaField({
   label,
   ariaLabel,
   description,
+  error,
   placeholder,
   rows,
   value,
@@ -116,6 +149,8 @@ export function TextareaField({
   /** Accessible name, when it needs to differ from the visible label. */
   ariaLabel?: string;
   description?: string;
+  /** Why the current value cannot be accepted. Shown under the control. */
+  error?: string;
   placeholder?: string;
   rows: number;
   value: string;
@@ -139,9 +174,11 @@ export function TextareaField({
           rows={rows}
           value={value}
           className="font-mono text-xs"
+          {...fieldErrorProps(id, error)}
           onChange={(e) => onChange(e.target.value)}
         />
       </TextField>
+      <FieldError id={id} error={error} />
     </div>
   );
 }
