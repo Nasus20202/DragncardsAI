@@ -82,9 +82,9 @@
 
 ## 10. Verification
 
-- [ ] 10.1 Run `./scripts/lint.sh --fix`
-- [ ] 10.2 Run `./scripts/test.sh unit` and confirm every suite is at or above its baseline
-- [ ] 10.3 Run `./scripts/test.sh integration` against the running infrastructure
-- [ ] 10.4 Run `~/.local/share/pnpm/openspec validate --all` and confirm the only failure is the pre-existing `spec/typed-game-actions` one
-- [ ] 10.5 Drive the real worker path end to end through the service's own API with a fake provider returning a truncated response, and confirm the job completes with both segments and a `turn_continued` event
-- [ ] 10.6 Render the resulting transcript in the dashboard and confirm the continuation marker is visible between the two output blocks
+- [x] 10.1 Run `./scripts/lint.sh --fix`
+- [x] 10.2 Run `./scripts/test.sh unit` and confirm every suite is at or above its baseline — agent-orchestrator 691, dashboard 682, game-service 476, eval-service 340, history-service 202, shared 38
+- [x] 10.3 Run `./scripts/test.sh integration` against the running infrastructure — game-service 66, agent-orchestrator 31, eval-service 17, history-service 8
+- [x] 10.4 Run `~/.local/share/pnpm/openspec validate --all` and confirm the only failure is the pre-existing `spec/typed-game-actions` one
+- [ ] 10.5 Drive the real worker path end to end through the service's own API with a fake provider returning a truncated response, and confirm the job completes with both segments and a `turn_continued` event — **not performed.** The whole worker path is exercised against a `FakeBifrost` in `tests/unit/test_truncated_turn_continuation.py`, including the cancel, cap, kill-switch and context-budget paths, but nothing drove it through the running service's HTTP API
+- [ ] 10.6 Render the resulting transcript in the dashboard and confirm the continuation marker is visible between the two output blocks — **not performed.** Covered only by `features/play/__tests__/play-transcript.test.ts`
