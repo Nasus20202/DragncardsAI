@@ -204,15 +204,43 @@ class Settings(BaseSettings):
             "eval_judge_max_round_moves", "EVAL_JUDGE_MAX_ROUND_MOVES"
         ),
     )
-    # Total budget, in characters, across the skill REFERENCE files one
-    # evaluation may select. Unlike the caps above this one REFUSES rather than
-    # truncating: a clipped board is still a board, but a clipped rules reference
-    # reads to the judge exactly like a complete one. The default admits the
-    # largest single reference in the shipped rules skill (``resources/errata.md``,
-    # ~38.5k chars) plus a second substantial file, and refuses a whole-corpus
-    # selection (all 21 files are ~257k chars). ``0`` disables the budget.
+    # The judge model's context window, in tokens. This is what BOUNDS a skill
+    # reference selection: the judge is single-shot with no tool loop, so every
+    # selected byte is in the prompt, and a prompt over the window does not
+    # degrade -- it is a provider error. Mirrors the agent-orchestrator's
+    # ``CONTEXT_WINDOW_SIZE`` default. Set it to the window your judge model
+    # actually has; that is the ONLY knob that RAISES how much reference content
+    # one evaluation may carry (see eval_service.judge.reference_budget).
+    #
+    # Deliberately not read live from Bifrost's ``/v1/models``: eval-service's
+    # judge client has no models listing, ``resolve_judge_config`` is sync, and a
+    # gateway lookup in the request-REJECTION path fails a selection whenever the
+    # gateway is down. See the DRA-54 design document.
+    eval_judge_context_window_tokens: int = Field(
+        default=128_000,
+        validation_alias=AliasChoices(
+            "eval_judge_context_window_tokens",
+            "EVAL_JUDGE_CONTEXT_WINDOW_TOKENS",
+        ),
+    )
+    # OPTIONAL extra cap, in characters, across the skill REFERENCE files one
+    # evaluation may select. It only ever LOWERS the window-derived budget:
+    #
+    #   0   -- no cap beyond the window (the default)
+    #   > 0 -- effective budget is min(derived, this)
+    #   < 0 -- refused
+    #
+    # ``0`` used to mean "no budget at all". It cannot: the window bounds the
+    # selection whether the setting acknowledges it or not, so that option only
+    # ever chose WHERE the failure surfaced -- a clean 400 before enqueue, or a
+    # provider error per target inside the worker. Raise
+    # ``EVAL_JUDGE_CONTEXT_WINDOW_TOKENS`` instead.
+    #
+    # Unlike the truncating caps above, this one REFUSES: a clipped board is
+    # still a board, but a clipped rules reference reads to the judge exactly
+    # like a complete one.
     eval_judge_max_skill_reference_chars: int = Field(
-        default=60_000,
+        default=0,
         validation_alias=AliasChoices(
             "eval_judge_max_skill_reference_chars",
             "EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS",
@@ -247,12 +275,28 @@ class Settings(BaseSettings):
             "eval_judge_move_context_after", "EVAL_JUDGE_MOVE_CONTEXT_AFTER"
         ),
     )
-    # Per-neighbour reasoning cap, so one verbose neighbour cannot bloat a prompt.
+    # Per-move reasoning cap, so one verbose move cannot bloat a prompt. Applies
+    # to a move prompt's neighbours AND to a round roll-up's move list -- the
+    # same field either way, and the reference budget reserves against this cap,
+    # so both have to honour it.
     eval_judge_move_context_reasoning_chars: int = Field(
         default=400,
         validation_alias=AliasChoices(
             "eval_judge_move_context_reasoning_chars",
             "EVAL_JUDGE_MOVE_CONTEXT_REASONING_CHARS",
+        ),
+    )
+    # Per-child rationale cap in a ROLL-UP prompt (a round's move verdicts, a
+    # game's round verdicts). The rubric asks for "a short rationale paragraph",
+    # so 600 chars is generous for one; the cap exists because the number of
+    # children is not limited by the recording side, which made this the second
+    # unbounded term in a roll-up prompt. Their COUNT is capped at
+    # ``eval_judge_max_round_moves``, the same ceiling the move list uses.
+    eval_judge_max_child_rationale_chars: int = Field(
+        default=600,
+        validation_alias=AliasChoices(
+            "eval_judge_max_child_rationale_chars",
+            "EVAL_JUDGE_MAX_CHILD_RATIONALE_CHARS",
         ),
     )
 
@@ -377,14 +421,22 @@ class Settings(BaseSettings):
     @field_validator("eval_judge_max_skill_reference_chars")
     @classmethod
     def validate_max_skill_reference_chars(cls, value: int) -> int:
-        # ``0`` deliberately disables the budget; a NEGATIVE value would disable
-        # it too (the check is ``> 0``) while reading like a tight limit. Refuse
-        # it rather than silently uncapping how much rules content one request
-        # can put in front of the judge.
+        # ``0`` deliberately means "no cap beyond the context window"; a NEGATIVE
+        # value would read the same way (the check is ``> 0``) while reading like
+        # a tight limit. Refuse it rather than silently ignoring an operator who
+        # meant to restrict the selection.
         if value < 0:
             raise ValueError(
-                "eval_judge_max_skill_reference_chars must be >= 0 (0 disables the budget)"
+                "eval_judge_max_skill_reference_chars must be >= 0 "
+                "(0 = no cap beyond the context window)"
             )
+        return value
+
+    @field_validator("eval_judge_context_window_tokens")
+    @classmethod
+    def validate_context_window_tokens(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("eval_judge_context_window_tokens must be at least 1")
         return value
 
     @field_validator("eval_judge_max_state_chars")

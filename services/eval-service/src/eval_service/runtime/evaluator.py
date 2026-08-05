@@ -23,6 +23,7 @@ from eval_service.judge.config import (
     provider_from_model,
 )
 from eval_service.judge.events import is_agent_move
+from eval_service.judge.reference_budget import reference_budget
 from eval_service.judge.parse import VerdictParseError, parse_verdict
 from eval_service.judge.prompt import (
     build_game_messages,
@@ -304,7 +305,12 @@ class Evaluator:
         skills = self._skill_resolver.load_markdown(config.skills)
         skill_references = self._skill_resolver.load_references(
             config.skill_references,
-            max_total_chars=self._settings.eval_judge_max_skill_reference_chars,
+            budget=reference_budget(
+                self._settings,
+                skill_chars=sum(len(content) for _, content in skills),
+                skill_count=len(skills),
+                prompt_override_chars=len(config.prompt_override or ""),
+            ),
         )
 
         if scope == "move":
@@ -346,6 +352,10 @@ class Evaluator:
                 skills=skills,
                 skill_references=skill_references,
                 max_state_chars=self._settings.eval_judge_max_state_chars,
+                max_round_moves=self._settings.eval_judge_max_round_moves,
+                max_child_rationale_chars=(
+                    self._settings.eval_judge_max_child_rationale_chars
+                ),
             )
             # The span is the whole game in SEQS. A game verdict covers every
             # round, so there is no single round of play to name it by.
@@ -365,6 +375,12 @@ class Evaluator:
                 skill_references=skill_references,
                 max_state_chars=self._settings.eval_judge_max_state_chars,
                 max_round_moves=self._settings.eval_judge_max_round_moves,
+                max_context_reasoning_chars=(
+                    self._settings.eval_judge_move_context_reasoning_chars
+                ),
+                max_child_rationale_chars=(
+                    self._settings.eval_judge_max_child_rationale_chars
+                ),
             )
             # Two different things, both recorded: the SEQ span the verdict covers,
             # and the round of PLAY it is. The span is what correlates the verdict

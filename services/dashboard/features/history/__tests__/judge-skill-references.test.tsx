@@ -63,16 +63,18 @@ function draft(overrides: Partial<JudgeDraft> = {}): JudgeDraft {
 function PanelHarness({
   initial,
   onDraft,
+  skills = SKILLS,
 }: {
   initial: JudgeDraft;
   onDraft?: (next: JudgeDraft) => void;
+  skills?: SkillDefinitionResponse[];
 }) {
   const [draftState, setDraftState] = useState<JudgeDraft>(initial);
   return (
     <JudgeConfigPanel
       draft={draftState}
       providers={PROVIDERS}
-      skills={SKILLS}
+      skills={skills}
       onChange={(next) => {
         setDraftState(next);
         onDraft?.(next);
@@ -188,43 +190,209 @@ describe("judge skill references", () => {
   });
 });
 
-describe("reference selection cap", () => {
-  it("stops at the server's limit and keeps selected rows togglable", async () => {
-    const many: SkillDefinitionResponse[] = [
-      {
-        name: "rules",
-        path: "/s/rules",
-        description: "",
-        metadata: {},
-        references: Array.from({ length: 12 }, (_, i) => `r${i}.md`),
-      },
-    ];
+/** One skill shipping twelve reference files -- more than the old cap of 8. */
+const MANY: SkillDefinitionResponse[] = [
+  {
+    name: "rules",
+    path: "/s/rules",
+    description: "",
+    metadata: {},
+    references: Array.from({ length: 12 }, (_, i) => `r${i}.md`),
+  },
+];
+
+/** Two skills with references, for asserting that group actions stay scoped. */
+const TWO_GROUPS: SkillDefinitionResponse[] = [
+  {
+    name: "rules",
+    path: "/s/rules",
+    description: "",
+    metadata: {},
+    references: ["a.md", "b.md"],
+  },
+  {
+    name: "tactics",
+    path: "/s/tactics",
+    description: "",
+    metadata: {},
+    references: ["x.md", "y.md"],
+  },
+];
+
+describe("reference selection has no count limit", () => {
+  it("lets a ninth reference be selected and disables no row by count", async () => {
+    const user = userEvent.setup();
+    const drafts: JudgeDraft[] = [];
     const selected = Array.from({ length: 8 }, (_, i) => `rules/r${i}.md`);
 
     render(
-      <JudgeConfigPanel
-        draft={draft({
+      <PanelHarness
+        initial={draft({
           selectedSkills: ["rules"],
           selectedSkillReferences: selected,
         })}
+        onDraft={(next) => drafts.push(next)}
+        skills={MANY}
+      />
+    );
+
+    // The counter reports the catalogue size, not a cap.
+    expect(screen.getByText("8/12")).toBeInTheDocument();
+
+    // No row is disabled while eight are already picked.
+    for (let i = 0; i < 12; i += 1) {
+      expect(
+        within(
+          screen.getByTestId(`judge-skill-reference-rules/r${i}.md`)
+        ).getByRole("switch")
+      ).not.toBeDisabled();
+    }
+
+    await flipSwitch(user, "judge-skill-reference-rules/r8.md");
+
+    const latest = drafts[drafts.length - 1];
+    expect(latest.selectedSkillReferences).toHaveLength(9);
+    expect(latest.selectedSkillReferences).toContain("rules/r8.md");
+    expect(assembleJudgeConfig(latest)?.skill_references).toHaveLength(9);
+    expect(screen.getByText("9/12")).toBeInTheDocument();
+  });
+
+  it("selects every reference of every selected skill from the header", async () => {
+    const user = userEvent.setup();
+    const drafts: JudgeDraft[] = [];
+    render(
+      <PanelHarness
+        initial={draft({ selectedSkills: ["rules", "tactics"] })}
+        onDraft={(next) => drafts.push(next)}
+        skills={TWO_GROUPS}
+      />
+    );
+
+    await user.click(screen.getByTestId("judge-skill-references-select-all"));
+
+    expect(drafts[drafts.length - 1].selectedSkillReferences).toEqual([
+      "rules/a.md",
+      "rules/b.md",
+      "tactics/x.md",
+      "tactics/y.md",
+    ]);
+    expect(screen.getByText("4/4")).toBeInTheDocument();
+    // Nothing left to select, so the control retires itself.
+    expect(
+      screen.getByTestId("judge-skill-references-select-all")
+    ).toBeDisabled();
+  });
+
+  it("empties the selection from the header's clear all", async () => {
+    const user = userEvent.setup();
+    const drafts: JudgeDraft[] = [];
+    render(
+      <PanelHarness
+        initial={draft({
+          selectedSkills: ["rules", "tactics"],
+          selectedSkillReferences: ["rules/a.md", "tactics/y.md"],
+        })}
+        onDraft={(next) => drafts.push(next)}
+        skills={TWO_GROUPS}
+      />
+    );
+
+    await user.click(screen.getByTestId("judge-skill-references-clear-all"));
+
+    expect(drafts[drafts.length - 1].selectedSkillReferences).toEqual([]);
+    expect(screen.getByText("0/4")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("judge-skill-references-clear-all")
+    ).toBeDisabled();
+  });
+
+  it("keeps a group's All and None scoped to that group", async () => {
+    const user = userEvent.setup();
+    const drafts: JudgeDraft[] = [];
+    render(
+      <PanelHarness
+        initial={draft({
+          selectedSkills: ["rules", "tactics"],
+          selectedSkillReferences: ["tactics/y.md"],
+        })}
+        onDraft={(next) => drafts.push(next)}
+        skills={TWO_GROUPS}
+      />
+    );
+
+    await user.click(
+      screen.getByTestId("judge-skill-references-group-all-rules")
+    );
+
+    // The other group's selection survives untouched.
+    expect(drafts[drafts.length - 1].selectedSkillReferences).toEqual([
+      "tactics/y.md",
+      "rules/a.md",
+      "rules/b.md",
+    ]);
+
+    await user.click(
+      screen.getByTestId("judge-skill-references-group-none-rules")
+    );
+
+    expect(drafts[drafts.length - 1].selectedSkillReferences).toEqual([
+      "tactics/y.md",
+    ]);
+  });
+
+  it("adds only the missing entries when selecting all over a partial selection", async () => {
+    const user = userEvent.setup();
+    const drafts: JudgeDraft[] = [];
+    render(
+      <PanelHarness
+        initial={draft({
+          selectedSkills: ["rules", "tactics"],
+          selectedSkillReferences: ["tactics/x.md", "rules/b.md"],
+        })}
+        onDraft={(next) => drafts.push(next)}
+        skills={TWO_GROUPS}
+      />
+    );
+
+    await user.click(screen.getByTestId("judge-skill-references-select-all"));
+
+    const next = drafts[drafts.length - 1].selectedSkillReferences;
+    // No duplicates, and the pre-existing entries keep their order at the front.
+    expect(next).toEqual([
+      "tactics/x.md",
+      "rules/b.md",
+      "rules/a.md",
+      "tactics/y.md",
+    ]);
+    expect(new Set(next).size).toBe(next.length);
+  });
+
+  it("disables every bulk control while an evaluation is in flight", () => {
+    render(
+      <JudgeConfigPanel
+        draft={draft({
+          selectedSkills: ["rules", "tactics"],
+          selectedSkillReferences: ["rules/a.md"],
+        })}
         providers={PROVIDERS}
-        skills={many}
+        skills={TWO_GROUPS}
+        disabled
         onChange={vi.fn()}
       />
     );
 
-    expect(screen.getByText("8/8")).toBeInTheDocument();
-    // An unselected row past the limit is disabled...
+    for (const testId of [
+      "judge-skill-references-select-all",
+      "judge-skill-references-clear-all",
+      "judge-skill-references-group-all-rules",
+      "judge-skill-references-group-none-rules",
+    ]) {
+      expect(screen.getByTestId(testId)).toBeDisabled();
+    }
     expect(
-      within(screen.getByTestId("judge-skill-reference-rules/r8.md")).getByRole(
+      within(screen.getByTestId("judge-skill-reference-rules/a.md")).getByRole(
         "switch"
       )
     ).toBeDisabled();
-    // ...while an already-selected one stays live, so a choice can be swapped.
-    expect(
-      within(screen.getByTestId("judge-skill-reference-rules/r0.md")).getByRole(
-        "switch"
-      )
-    ).not.toBeDisabled();
   });
 });

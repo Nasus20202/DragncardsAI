@@ -45,9 +45,11 @@ evaluate (and reports readiness `degraded`) until it is set. See `.env.example`.
 | `EVAL_JUDGE_MAX_ROUND_MOVES` | `100` | Cap on per-move blocks listed in a round prompt |
 | `EVAL_JUDGE_MOVE_CONTEXT_BEFORE` | `100` | Backstop on the earlier-in-round moves attached to a move prompt (the window is the round, not this number) |
 | `EVAL_JUDGE_MOVE_CONTEXT_AFTER` | `100` | Backstop on the later-in-round moves attached (`0` removes hindsight) |
-| `EVAL_JUDGE_MOVE_CONTEXT_REASONING_CHARS` | `400` | Per-context-move reasoning cap |
+| `EVAL_JUDGE_MOVE_CONTEXT_REASONING_CHARS` | `400` | Per-move reasoning cap, in a move prompt's neighbour block and a round roll-up's move list alike |
+| `EVAL_JUDGE_MAX_CHILD_RATIONALE_CHARS` | `600` | Per-child rationale cap in a roll-up prompt; their count is capped at `EVAL_JUDGE_MAX_ROUND_MOVES` |
 | `SKILL_ROOTS` | repo `skills/` (`/app/skills` in the image) | `;`/`,`-separated roots searched for selected skills, by name — the same directory the agent-orchestrator discovers from |
-| `EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS` | `60000` | Total budget across a request's selected skill **reference files**. Unlike the caps above this one **refuses** (400) rather than truncating; `0` disables it. See [Rules skills and their references](#rules-skills-and-their-references) |
+| `EVAL_JUDGE_CONTEXT_WINDOW_TOKENS` | `128000` | The judge model's context window. This is what **bounds** a skill-reference selection, and the only setting that **raises** that bound. See [Rules skills and their references](#rules-skills-and-their-references) |
+| `EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS` | `0` | Optional **extra** cap across a request's selected skill **reference files**. `0` = no cap beyond the context window; a positive value only ever *lowers* the derived budget, never raises it. Unlike the caps above this one **refuses** (400) rather than truncating |
 | `EVAL_SKIP_NON_STRATEGIC_MOVES` | `true` | Skip actions that carry no strategic decision |
 | `EVAL_NON_STRATEGIC_ACTIONS` | _(built-in taxonomy)_ | Replaces the skip list; anything unlisted is evaluated |
 | `EVAL_CORS_ALLOW_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001` | Comma-separated CORS allowlist (dashboard reaches the service via a server-side proxy, so a strict list is safe) |
@@ -167,16 +169,71 @@ identifies what the judge saw while the config fully determines the prompt.
 **Why references are selected rather than inlined wholesale.** `SKILL.md` is
 affordable — `marvel-champions-rules-reference` is 18,306 characters against a
 move prompt's ~41,500 of rubric and projected state. Its 21 reference files are
-256,568 characters, **14x its own `SKILL.md`**, and cannot go in a prompt
-wholesale under any policy. Hence an explicit selection, bounded two ways:
-`MAX_SKILL_REFERENCES` (8) rejects an absurd list at the schema (422), and
-`EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS` rejects an over-budget one when the
-request is resolved (400), before any target is enqueued.
+256,568 characters, **14x its own `SKILL.md`**. The judge is single-shot with no
+tool loop, so every selected byte is in the prompt on every graded target; the
+selection is explicit so the operator, not the model, decides what that costs.
+
+### The reference budget is what the context window leaves
+
+There is **no bound on how many references may be selected.** A count measures
+nothing here — the rules skill's files span a 20x size range — so the only bound
+is the total SIZE, and it is derived rather than fixed:
+
+```
+budget = EVAL_JUDGE_CONTEXT_WINDOW_TOKENS x 4 chars/token   # ~512,000 at the default
+       - EVAL_JUDGE_MAX_TOKENS x 4                          # the completion has to fit
+       - the WORST of the three scope reserves               # see below
+       - 12,000                                             # rubric, labels, the graded move
+       - len(prompt override)
+       - the SKILL.md files this request selects
+```
+
+The scope reserve is a **max, not a sum** — one judge config serves all three
+prompt shapes, and they hold different things, so adding them would reserve for a
+prompt that cannot exist:
+
+| scope | state | move context | roll-up context |
+| --- | --- | --- | --- |
+| move | 2 x `MAX_STATE_CHARS` | (`BEFORE` + `AFTER`) x (`REASONING_CHARS` + 400) | — |
+| round | 1 x `MAX_STATE_CHARS` | `MAX_ROUND_MOVES` x (`REASONING_CHARS` + 400) | `MAX_ROUND_MOVES` x (`MAX_CHILD_RATIONALE_CHARS` + 200) |
+| game | 1 x `MAX_STATE_CHARS` | — | `MAX_ROUND_MOVES` x (`MAX_CHILD_RATIONALE_CHARS` + 200) |
+
+At the defaults the move prompt binds, and the budget is **295,904 characters** —
+4.9x the 60,000 it replaced, and enough for all 21
+`marvel-champions-rules-reference` files (256,568) alongside their `SKILL.md`
+(18,306). Selecting *every* reference of *every* skill (313,317 across 28 files,
+plus 91,355 of `SKILL.md`) does **not** fit a 128k window and is refused; raise
+`EVAL_JUDGE_CONTEXT_WINDOW_TOKENS` if your judge model has the room.
+
+Character counts are measured from `skills/`; **token figures are projections at
+~4 chars/token, never measured** — no judge call is possible without
+`EVAL_JUDGE_OPENROUTER_API_KEY`.
+
+For the reserve to be a real ceiling the prompt has to honour it, so a round
+roll-up now clips each move's `reasoning` at
+`EVAL_JUDGE_MOVE_CONTEXT_REASONING_CHARS` (as a move prompt's neighbour block
+already did) and bounds its child verdicts by both count
+(`EVAL_JUDGE_MAX_ROUND_MOVES`) and rationale length
+(`EVAL_JUDGE_MAX_CHILD_RATIONALE_CHARS`). A move's `arguments` stay unclipped —
+legality is judged on them — and are covered by the per-line projection instead.
+
+To fit more: raise `EVAL_JUDGE_CONTEXT_WINDOW_TOKENS` to your judge model's real
+window, or lower `EVAL_JUDGE_MOVE_CONTEXT_BEFORE`/`_AFTER` (the largest reserve
+term by far, and a *backstop* on a pathological round rather than the mechanism —
+a real round is 6-10 moves, not 200). `EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS` only
+ever *lowers* the budget; it cannot raise it above what the window admits,
+because doing so never worked — it bought a provider error later instead of a 400
+now. `MAX_SKILL_REFERENCES` (1,000) remains on the schema purely to reject an
+absurd request body before anything is read from disk.
 
 **References are never truncated.** State is clipped to fit a prompt because a
 clipped board is still a board; a clipped rules reference reads to the judge
-exactly like a complete one. Over budget is a refusal naming the measured size,
-not a silent trim.
+exactly like a complete one. Over budget is a 400, raised in
+`resolve_judge_config` before any target is enqueued, and it states the measured
+total, the budget, the overage, every reserve term, and the settings that would
+change them — the skills catalogue reports reference *names* only, so the
+dashboard cannot warn before the request is made and the refusal is where the
+user learns why.
 
 **Reference paths are confined to their own skill.** A selection is
 caller-supplied, so `judge/skill_resources.py` refuses an absolute path, any `..`

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 from eval_service.schemas.verdict import Scope, VerdictPayload
 
@@ -16,13 +21,20 @@ TargetStatus = Literal[
 RequestStatus = Literal["pending", "completed", "partial", "failed", "cancelled"]
 
 MAX_SKILLS = 32
-# Reference files are individually far larger than a SKILL.md (up to ~38.5k chars
-# in the shipped rules skill), so the count ceiling is tighter than MAX_SKILLS.
-# Eight is above any plausible hand-made selection and well below the 21 files of
-# marvel-champions-rules-reference. A total-SIZE budget is enforced separately at
-# resolve time (EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS); this bounds the count so an
-# absurd list is rejected by the schema before anything is read from disk.
-MAX_SKILL_REFERENCES = 8
+# NOT a selection policy. A count measures nothing here: the shipped rules skill
+# spans a 20x size range across its files (~38.5k chars down to under 2k), so any
+# count bound refuses selections it should allow and admits ones it should refuse.
+# The real bound is the SIZE budget derived from the judge model's context window
+# at resolve time (eval_service.judge.reference_budget).
+#
+# What this ceiling is for is rejecting an absurd request BODY before anything is
+# read from disk -- 100k selection strings would be 100k parses and file reads
+# before the budget could trip. It sits at MAX_SELECTION_LIST's scale for exactly
+# that reason, and is unreachable by any selection over the 28 reference files
+# that ship: "select all" is 28.
+MAX_SKILL_REFERENCES = 1_000
+# Per-ENTRY ceiling: "<skill-name>/<relative-path>.md". Generous for a real path.
+MAX_SKILL_REFERENCE_LENGTH = 512
 # Ceilings on attacker-influenced judge-config fields so a single request can't
 # amplify per-target LLM cost / storage without bound.
 MAX_PROMPT_OVERRIDE = 50_000
@@ -117,9 +129,13 @@ class JudgeConfig(BaseModel):
     # A reference may be selected WITHOUT its skill's SKILL.md: "give the judge
     # only the errata" is a legitimate configuration, and charging it the whole
     # skill to reach one file would be an arbitrary tax.
-    skill_references: list[str] | None = Field(
-        default=None, max_length=MAX_SKILL_REFERENCES
-    )
+    # Per-ENTRY length too, not only the list length: a reference path is a skill
+    # name plus a relative path, so a few hundred characters is generous, and the
+    # list ceiling is now 1,000 rather than 8.
+    skill_references: (
+        list[Annotated[str, StringConstraints(max_length=MAX_SKILL_REFERENCE_LENGTH)]]
+        | None
+    ) = Field(default=None, max_length=MAX_SKILL_REFERENCES)
 
 
 class EvaluationRequestBody(BaseModel):

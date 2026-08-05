@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from eval_service.config import Settings, provider_from_model
+from eval_service.judge.reference_budget import ReferenceBudget, reference_budget
 from eval_service.judge.skill_resources import (
     SKILL_FILE,
     LoadedReference,
@@ -19,6 +20,7 @@ from eval_service.schemas.api import JudgeConfig
 # provider check) but is part of this module's judge-config surface.
 __all__ = [
     "LoadedReference",
+    "ReferenceBudget",
     "ResolvedJudgeConfig",
     "ResolvedReasoning",
     "SkillDefinition",
@@ -179,14 +181,20 @@ class SkillResolver:
         return out
 
     def load_references(
-        self, selections: tuple[str, ...], *, max_total_chars: int
+        self, selections: tuple[str, ...], *, budget: ReferenceBudget
     ) -> list[LoadedReference]:
         """Resolve ``<skill>/<path>.md`` selections to their content, in order.
 
         Raises :class:`UnknownSkillError` when a selection names a skill that
         does not exist, :class:`SkillReferenceError` when a reference cannot be
         resolved inside its skill, and :class:`SkillReferenceBudgetError` when
-        the selection's combined size exceeds ``max_total_chars``.
+        the selection's combined size exceeds ``budget``.
+
+        The budget is what is left of the judge model's context window once the
+        rest of the prompt is reserved (see
+        :mod:`eval_service.judge.reference_budget`); there is no bound on the
+        NUMBER of references, because a count measures nothing -- the shipped
+        rules skill spans a 20x size range across its files.
 
         The budget REFUSES rather than clipping. Game state is truncated to fit a
         prompt because a clipped board is still a board; a clipped rules
@@ -212,12 +220,8 @@ class SkillResolver:
         for selection in parsed:
             content = load_reference_content(available[selection.skill].path, selection)
             total += len(content)
-            if max_total_chars > 0 and total > max_total_chars:
-                raise SkillReferenceBudgetError(
-                    f"selected skill references total at least {total} characters, "
-                    f"over the {max_total_chars} character limit; select fewer "
-                    "references (they are never truncated)"
-                )
+            if budget.exceeded_by(total):
+                raise SkillReferenceBudgetError(budget.refusal(total))
             out.append(
                 LoadedReference(
                     skill=selection.skill,
@@ -264,14 +268,21 @@ def resolve_judge_config(
 
     prompt_override = requested.prompt_override or None
     skills = tuple(requested.skills or ())
-    # Eagerly validate skill names (raises UnknownSkillError on failure).
-    skill_resolver.load_markdown(skills)
+    # Eagerly validate skill names (raises UnknownSkillError on failure). The
+    # CONTENT is kept, not discarded: selected SKILL.md files share the prompt
+    # with the references, so their size is charged to the reference budget.
+    loaded_skills = skill_resolver.load_markdown(skills)
 
     # Same, for reference selections: resolving them here is what turns a bad
     # path into a 400 instead of a batch of targets that each fail at judge time.
     loaded = skill_resolver.load_references(
         tuple(requested.skill_references or ()),
-        max_total_chars=settings.eval_judge_max_skill_reference_chars,
+        budget=reference_budget(
+            settings,
+            skill_chars=sum(len(content) for _, content in loaded_skills),
+            skill_count=len(loaded_skills),
+            prompt_override_chars=len(prompt_override or ""),
+        ),
     )
     # Keep the CANONICAL selection, not the caller's string. Parsing strips outer
     # whitespace, so ``"rules/a.md"`` and ``"rules/a.md "`` read the same file and
