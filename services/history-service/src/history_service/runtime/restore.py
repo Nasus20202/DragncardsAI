@@ -465,6 +465,25 @@ class RestoreService:
                 "there was no agent conversation to rebuild."
             )
         conversation_context = _extract_conversation_context(agent_event)
+        if not conversation_context:
+            # The orchestrator accepts an empty conversation and reports success,
+            # so passing one through would claim the agent context was rebuilt
+            # when nothing was. A recording can honestly carry none: a history
+            # imported from a `minimal` bundle has the prompt material omitted by
+            # design, and the header says so. Report that rather than restoring a
+            # conversation the model never had.
+            logger.info(
+                "Agent event seq=%s for game=%s carries no captured "
+                "conversation; skipping context restore",
+                agent_event.seq,
+                game_id,
+            )
+            return None, (
+                "The agent decision recorded at this moment carries no captured "
+                "conversation, so there was nothing to rebuild. A history "
+                "imported from a 'minimal' bundle has its prompt material "
+                "omitted by design."
+            )
         try:
             response = await self._orchestrator.restore_session(
                 game_id=game_session_id,

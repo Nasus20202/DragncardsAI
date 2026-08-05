@@ -2,6 +2,7 @@ import { readJson } from "@/features/history/lib/http";
 import {
   HistoryDeleteResponse,
   HistoryEvent,
+  HistoryExportMode,
   HistoryGame,
   HistoryImportResult,
   HistorySnapshot,
@@ -195,25 +196,59 @@ export async function listHistorySnapshots(
  * a `Content-Disposition: attachment` filename — so this is navigated to (or
  * given to an anchor) rather than fetched and buffered, keeping a bundle that
  * can run to tens of megabytes out of the tab's memory.
+ *
+ * The mode is always sent, including the `full` default, so the request says
+ * which of the two bundles it wants instead of relying on the server's choice of
+ * default staying what it is today.
  */
-export function historyExportUrl(gameId: string): string {
-  return `/api/proxy/history/games/${encodeURIComponent(gameId)}/export`;
+export function historyExportUrl(
+  gameId: string,
+  mode: HistoryExportMode = "full"
+): string {
+  const query = new URLSearchParams({ mode }).toString();
+  return `/api/proxy/history/games/${encodeURIComponent(gameId)}/export?${query}`;
+}
+
+/**
+ * The filename the export endpoint puts in its `Content-Disposition` header,
+ * mirroring the history-service's own `bundle_filename`. An anchor's `download`
+ * attribute overrides the header for a same-origin response, so the two have to
+ * agree or the same game downloads under two different names depending on how it
+ * was fetched. The mode is part of the name so exporting a game both ways does
+ * not silently overwrite one file with the other.
+ */
+export function historyExportFilename(
+  gameId: string,
+  mode: HistoryExportMode = "full"
+): string {
+  return `dragncards-history-${gameId}-${mode}.ndjson`;
 }
 
 /**
  * Import an NDJSON history bundle. Calls `POST /api/proxy/history/import`,
- * streaming the picked file as the request body. `gameId` chooses the target
- * game; omitting it lands the history under the `game_id` recorded in the
- * bundle. Rejects with the service's own message (which names the offending
- * line) when the bundle is malformed, oversized, or the target already exists.
+ * streaming the picked file as the request body.
+ *
+ * Three targets, in the order the service resolves them: `gameId` names one
+ * outright; `asNew` asks the service to mint a fresh uuid4, which is the only
+ * target that cannot collide with an existing game; and passing neither lands
+ * the history under the `game_id` recorded in the bundle's own header. Asking
+ * for both a named target and a new one is a 400 — they are two answers to one
+ * question — so callers offer them as a single choice.
+ *
+ * Rejects with the service's own message (which names the offending line) when
+ * the bundle is malformed or oversized, and with its 409 when the chosen target
+ * already has recorded history.
  */
 export async function importHistoryBundle(
   file: File,
-  options?: { gameId?: string }
+  options?: { gameId?: string; asNew?: boolean }
 ): Promise<HistoryImportResult> {
   const params = new URLSearchParams();
   if (options?.gameId) {
     params.set("game_id", options.gameId);
+  }
+  if (options?.asNew) {
+    params.set("as_new", "true");
   }
   const query = params.toString();
   const response = await fetch(

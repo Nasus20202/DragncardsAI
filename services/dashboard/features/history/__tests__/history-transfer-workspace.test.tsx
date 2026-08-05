@@ -14,8 +14,10 @@ vi.mock("@/features/history/lib/history-api", () => ({
   listAllHistoryEvents: async () => ({ events: [], truncated: false }),
   listHistorySnapshots: async () => [],
   listHistoryGames: (...args: unknown[]) => listHistoryGames(...args),
-  historyExportUrl: (gameId: string) =>
-    `/api/proxy/history/games/${gameId}/export`,
+  historyExportUrl: (gameId: string, mode = "full") =>
+    `/api/proxy/history/games/${gameId}/export?mode=${mode}`,
+  historyExportFilename: (gameId: string, mode = "full") =>
+    `dragncards-history-${gameId}-${mode}.ndjson`,
   importHistoryBundle: (...args: unknown[]) => importHistoryBundle(...args),
   restoreGame: vi.fn(),
   deleteHistoryGame: vi.fn(),
@@ -50,6 +52,20 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/**
+ * Pick a bundle and confirm the target dialog it opens, which is what actually
+ * issues the import. The default target — an id the service mints — is left
+ * alone here; which target a choice sends is covered in `history-transfer`.
+ */
+async function importBundle() {
+  fireEvent.change(screen.getByTestId("history-import-input"), {
+    target: {
+      files: [new File(['{"kind":"header"}\n'], "g.ndjson")],
+    },
+  });
+  fireEvent.click(await screen.findByTestId("history-import-confirm"));
+}
+
 describe("history workspace export/import wiring", () => {
   it("offers both controls in the header once a game is selected", async () => {
     listHistoryGames.mockResolvedValue(GAMES);
@@ -69,19 +85,17 @@ describe("history workspace export/import wiring", () => {
       source_game_id: "demo-001",
       imported_events: 4,
       imported_snapshots: 1,
+      mode: "full",
+      source_id_references: 0,
     });
     render(<HistoryWorkspace initialGameId={null} />);
 
     await screen.findByTestId("history-import");
-    fireEvent.change(screen.getByTestId("history-import-input"), {
-      target: {
-        files: [new File(['{"kind":"header"}\n'], "g.ndjson")],
-      },
-    });
+    await importBundle();
 
     const notice = await screen.findByTestId("history-transfer-notice");
     expect(notice).toHaveTextContent(
-      "Imported 4 events and 1 snapshots into demo-001."
+      "Imported 4 events and 1 snapshots into demo-001 from a full bundle."
     );
     expect(notice).toHaveAttribute("role", "status");
   });
@@ -94,11 +108,7 @@ describe("history workspace export/import wiring", () => {
     render(<HistoryWorkspace initialGameId="demo-001" />);
 
     await screen.findByTestId("history-import");
-    fireEvent.change(screen.getByTestId("history-import-input"), {
-      target: {
-        files: [new File(["nonsense\n"], "g.ndjson")],
-      },
-    });
+    await importBundle();
 
     await waitFor(() => {
       const notice = screen.getByTestId("history-transfer-notice");
