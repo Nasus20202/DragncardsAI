@@ -306,6 +306,29 @@ def _reconstruct_job_replay_items(
             current_round_id = order
             continue
 
+        if event.event_type == "turn_continued":
+            # Two adjacent assistant segments with nothing between them read as
+            # one answer the model chose to write in two parts. Say plainly that
+            # the service resumed the turn, so a later turn is not left to guess
+            # why its own earlier output stops mid-sentence. This needs its own
+            # branch because the loop below ignores types it does not know.
+            flush_current_round()
+            conversation_messages.append(
+                _ConversationMessage(
+                    order=order,
+                    message={
+                        "role": "assistant",
+                        "content": (
+                            "[The previous message was cut off by the provider's "
+                            "output token limit. The turn was continued "
+                            "automatically and the text below carries on from it.]"
+                        ),
+                    },
+                )
+            )
+            order += 1
+            continue
+
         if event.event_type == "tool_call":
             if current_round_content is None:
                 current_round_content = ""

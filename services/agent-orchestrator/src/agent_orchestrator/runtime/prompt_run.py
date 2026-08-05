@@ -58,14 +58,25 @@ from agent_orchestrator.runtime.system_prompts import (
 from agent_orchestrator.runtime.tokens import (
     count_tokens_for_text,
     estimate_tokens_for_messages,
+    estimate_tokens_for_tools,
     extract_tokens_from_response,
 )
+from agent_orchestrator.runtime.truncation import is_output_truncated
 from agent_orchestrator.storage.models import Job
 from agent_orchestrator.storage.repository import Repository
 from agent_orchestrator.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
 tracer = get_tracer(__name__)
+
+# Sent as a `user` message, because that is the position the manual "continue"
+# occupied — this feature automates that message and nothing else.
+TURN_CONTINUATION_INSTRUCTION = (
+    "Your previous message was cut off by the provider's output token limit "
+    "before you finished. Continue exactly where you left off. Do not repeat "
+    "what you already wrote, do not restart, and do not acknowledge this "
+    "message; simply carry on."
+)
 
 
 class InvalidToolInvocationError(RuntimeError):
@@ -312,6 +323,14 @@ class PromptRunService:
                 )
 
                 accumulated_job_tokens = 0
+                # A turn the provider truncates is resumed rather than reported
+                # as finished, so the answer arrives in segments. These hold the
+                # segments and count consecutive truncations; both reset the
+                # moment a round produces tool calls, because work happening is
+                # evidence the model is not stuck being truncated.
+                continued_segments: list[str] = []
+                continuations = 0
+                context_window_size: int | None = None
                 reasoning_enabled = self.reasoning_enabled(
                     model_config.gateway_options, model_config.provider_options
                 )
@@ -479,14 +498,46 @@ class PromptRunService:
                     accumulated_job_tokens += round_tokens
 
                     if not response.tool_calls:
+                        # "No tool calls" used to mean both "the model answered"
+                        # and "the model stopped for some other reason". A
+                        # response cut off at the provider's output cap has
+                        # exactly this shape, so completing here reported a
+                        # truncated turn as a finished one (DRA-45).
+                        if is_output_truncated(response.finish_reason):
+                            context_window_size = (
+                                context_window_size
+                                if context_window_size is not None
+                                else await self._resolve_context_window(model_config)
+                            )
+                            if await self._continue_truncated_turn(
+                                job_id=job.id,
+                                session_id=session.id,
+                                messages=messages,
+                                response=response,
+                                tools=tools,
+                                continuations=continuations,
+                                context_window_size=context_window_size,
+                            ):
+                                continued_segments.append(response.content)
+                                continuations += 1
+                                continue
+
                         logger.info(
                             "Job %s completed without further tool calls", job.id
                         )
                         job_span.set_attribute("job.status", "completed")
                         await self.complete_job(
-                            full_job, response.content, accumulated_job_tokens
+                            full_job,
+                            "".join([*continued_segments, response.content]),
+                            accumulated_job_tokens,
                         )
                         return
+
+                    # Work happened, so any earlier truncation was not the model
+                    # being stuck. The segments belong to the tool-call round's
+                    # assistant message from here on, not to the final answer.
+                    continued_segments.clear()
+                    continuations = 0
 
                     assistant_message: dict[str, Any] = {
                         "role": "assistant",
@@ -1036,6 +1087,120 @@ class PromptRunService:
         await self._repository.update_job_tokens_used(job.id, accumulated_job_tokens)
         await self._repository.mark_job_completed(job.id, content)
         await self._maybe_terminate_child_session(job)
+
+    async def _resolve_context_window(self, model_config: Any) -> int:
+        """The model's context window, or the configured default if unknown.
+
+        Fetched only when a truncation actually happens, so the ordinary path
+        never pays for a guard it does not reach, and cached by the caller for
+        the life of the turn.
+        """
+        context_length: int | None = None
+        try:
+            context_length = await self._bifrost_client.get_model_context_length(
+                model_config.provider_id, model_config.model_name
+            )
+        except Exception as exc:
+            # A gateway that cannot answer must not be the reason a turn dies.
+            # The configured default is the same fallback auto-compaction uses.
+            logger.warning(
+                "Could not resolve the context window for %s (%s); using the default",
+                model_config.model_name,
+                exc,
+            )
+        return context_length or self._settings.context_window_size
+
+    async def _continue_truncated_turn(
+        self,
+        *,
+        job_id: str,
+        session_id: str,
+        messages: list[dict[str, Any]],
+        response: Any,
+        tools: list[dict[str, Any]],
+        continuations: int,
+        context_window_size: int,
+    ) -> bool:
+        """Extend `messages` so the turn can resume, or refuse and say so.
+
+        Returns True only when the turn should take another round. Every refusal
+        path falls through to the caller's existing completion branch, so the
+        worst this can do is behave exactly as it did before it existed.
+        """
+        max_continuations = self._settings.auto_continue_max_continuations
+        if not self._settings.auto_continue_truncated_turns:
+            logger.info(
+                "Job %s stopped at the provider's output cap (%s); automatic "
+                "continuation is disabled, so the turn is completed as it stands",
+                job_id,
+                response.finish_reason,
+            )
+            return False
+
+        if continuations >= max_continuations:
+            logger.warning(
+                "Job %s truncated again (%s) after %s automatic continuation(s); "
+                "the per-turn cap is reached, so the turn is completed as it stands",
+                job_id,
+                response.finish_reason,
+                continuations,
+            )
+            return False
+
+        # The request the continuation would actually send, measured after the
+        # messages it would add. Growing a request that is already at the budget
+        # only buys another truncation, at the price of another paid call.
+        candidate = [*messages]
+        if response.content:
+            candidate.append({"role": "assistant", "content": response.content})
+        candidate.append({"role": "user", "content": TURN_CONTINUATION_INSTRUCTION})
+        estimate = estimate_tokens_for_messages(candidate) + estimate_tokens_for_tools(
+            tools
+        )
+        budget = int(context_window_size * self._settings.context_compaction_threshold)
+        if estimate >= budget:
+            # Compaction cannot help: it rewrites persisted history and has no
+            # effect on a message list already assembled for the turn in flight.
+            logger.warning(
+                "Job %s truncated (%s) but a continuation would send about %s tokens "
+                "against a budget of %s; completing the turn instead",
+                job_id,
+                response.finish_reason,
+                estimate,
+                budget,
+            )
+            return False
+
+        # An assistant message with empty content is rejected by some providers,
+        # and a reasoning model can spend its whole output budget thinking and
+        # return none. There is simply nothing to carry forward in that case.
+        if response.content:
+            messages.append({"role": "assistant", "content": response.content})
+        messages.append({"role": "user", "content": TURN_CONTINUATION_INSTRUCTION})
+
+        logger.info(
+            "Job %s stopped at the provider's output cap (%s); continuing the turn "
+            "automatically (%s of %s)",
+            job_id,
+            response.finish_reason,
+            continuations + 1,
+            max_continuations,
+        )
+        payload = {
+            "reason": "output_token_limit",
+            "finish_reason": response.finish_reason,
+            "continuation": continuations + 1,
+            "max_continuations": max_continuations,
+        }
+        # Persisted and published under the durable row's id, so the live copy
+        # collapses into it rather than rendering a second marker (DRA-34).
+        durable_event_id = await self._repository.append_event(
+            job_id, session_id, "turn_continued", payload
+        )
+        await self._live_event_bus.publish(
+            job_id, "turn_continued", payload, durable_event_id=durable_event_id
+        )
+        return True
 
     async def maybe_auto_compact(
         self,

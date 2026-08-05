@@ -737,6 +737,10 @@ Event types include:
 - `illegal_action_finding` — the orchestrator recorded, or resolved, a finding that a seat's action
   broke the rules. Carries the `finding_id`, the `player_id` it concerns, the `violation`, the
   `required_undo`, and a `status` of `open` or `resolved`. Orchestrated mode only
+- `turn_continued` — the provider cut the model off at its output token limit and the service
+  resumed the turn automatically instead of reporting it finished. Carries the `reason`
+  (`output_token_limit`), the raw provider `finish_reason`, the 1-based `continuation`, and the
+  configured `max_continuations`
 - `completion`
 - `failure`
 - `cancellation`
@@ -826,6 +830,37 @@ Automatic compaction exists to keep a job inside its context window, so its own 
 that job: the worker logs it, emits `compaction_failed`, and the turn continues on the history it
 already has. A manual compaction does report its failure — 502 when the summarizing call fails, 422
 when there is nothing to summarize — because the caller asked for it directly.
+
+### Turns Truncated At The Output Cap
+
+A response with no tool calls used to end a job whatever the reason the model stopped, so a turn the
+provider cut off at its output token limit was recorded as a turn the model finished — the symptom
+being an agent that stops mid-thought and needs a manual "continue".
+
+The gateway client now carries the provider's stop reason on every response, streamed or not. When a
+response has no tool calls **and** a stop reason meaning the output cap was reached — `length`,
+`max_tokens`, `MAX_TOKENS`, `max_output_tokens`, `max_completion_tokens`, matched
+case-insensitively — the worker appends the partial content and a continuation instruction to the
+in-flight messages and takes another round, recording a `turn_continued` event so the seam is
+visible. Every other stop reason, including an unrecognised one and none at all, completes the turn
+as before: a model that chose to stop is never pushed onward.
+
+The loop is bounded four ways. The per-turn cap is `AUTO_CONTINUE_MAX_CONTINUATIONS`, counted over
+*consecutive* truncations and reset by any round that produced tool calls. Continuations consume
+rounds of `WORKER_MAX_TOOL_ROUNDS`, so they cannot outlive the round budget. A continuation whose
+request would reach `CONTEXT_COMPACTION_THRESHOLD` of the context window is refused, because growing
+a request that is already full only buys another truncation. And `AUTO_CONTINUE_TRUNCATED_TURNS=false`
+turns the behaviour off entirely, restoring the previous behaviour exactly.
+
+```bash
+AUTO_CONTINUE_TRUNCATED_TURNS=true   # the kill switch
+AUTO_CONTINUE_MAX_CONTINUATIONS=3    # per turn, consecutive truncations only; must be >= 1
+```
+
+A cancellation requested during a continuation chain is honoured at the next round boundary, the
+same latency as a cancel during a tool call. A turn that was continued and then finished reaches
+`completed`, because it did finish; the `turn_continued` events are what record that the service
+helped.
 
 ## MCP Surface
 

@@ -17,6 +17,13 @@ export type AggEvent =
    */
   | { kind: "compaction_failed"; event: JobEventResponse }
   /**
+   * The provider cut the model off at its output token limit and the service
+   * resumed the turn by itself. Its own row because the alternative — two
+   * output blocks with nothing between them — reads as one answer the model
+   * chose to write in two parts, which is not what happened.
+   */
+  | { kind: "turn_continued"; event: JobEventResponse }
+  /**
    * One tool invocation: the call, and its result once it has arrived. The two
    * events are paired by `tool_call_id` rather than shown as two separate cards,
    * because a tool's name, its arguments and its answer are one thing to read —
@@ -100,6 +107,8 @@ export const STREAM_EVENT_TYPES = [
   "user_question_closed",
   "seat_scope_violation",
   "illegal_action_finding",
+  // Deliberately not in TERMINAL_EVENT_TYPES: a continued turn is still running.
+  "turn_continued",
 ] as const;
 
 function sameEventPayload(
@@ -588,6 +597,7 @@ export function aggregateEvents(
       case "failure":
       case "cancellation":
       case "compaction_failed":
+      case "turn_continued":
       case "compaction":
         flushReasoning();
         flushModel();
