@@ -125,25 +125,56 @@ export function assemblePersonaRequest(draft: PersonaDraft): PersonaRequest {
 }
 
 /**
+ * Why each validated field of a draft cannot be saved, `null` per field when it
+ * can. Reported per field rather than as one first-problem string so the editor
+ * can state a problem next to the control that causes it, and so a draft with
+ * two problems states both instead of hiding the second behind the first.
+ */
+export interface PersonaDraftProblems {
+  name: string | null;
+  systemPrompt: string | null;
+}
+
+/** The order `describePersonaDraftProblem` reports a draft's problems in. */
+const PROBLEM_ORDER: (keyof PersonaDraftProblems)[] = ["name", "systemPrompt"];
+
+export function describePersonaDraftProblems(
+  draft: PersonaDraft
+): PersonaDraftProblems {
+  const name = draft.name.trim();
+  let nameProblem: string | null = null;
+  if (!name) {
+    nameProblem = "A persona needs a name.";
+  } else if (!PERSONA_NAME_PATTERN.test(name)) {
+    nameProblem =
+      "A persona name must be lowercase letters, digits and hyphens, starting with a letter or digit.";
+  }
+
+  let systemPromptProblem: string | null = null;
+  if (!draft.systemPrompt.trim()) {
+    systemPromptProblem =
+      "A persona needs a system prompt — that is what makes it a persona.";
+  } else if (draft.systemPrompt.length > MAX_PERSONA_PROMPT_CHARS) {
+    systemPromptProblem = `The system prompt is ${draft.systemPrompt.length} characters, over the ${MAX_PERSONA_PROMPT_CHARS} limit.`;
+  }
+
+  return { name: nameProblem, systemPrompt: systemPromptProblem };
+}
+
+/**
  * Why this draft cannot be saved, or `null` when it can. Checked in the browser
  * so the orchestrator's bounds are visible before the request, not only in the
- * error it returns.
+ * error it returns. Derived from the per-field problems so there is one place
+ * that decides what makes a draft invalid.
  */
 export function describePersonaDraftProblem(
   draft: PersonaDraft
 ): string | null {
-  const name = draft.name.trim();
-  if (!name) {
-    return "A persona needs a name.";
-  }
-  if (!PERSONA_NAME_PATTERN.test(name)) {
-    return "A persona name must be lowercase letters, digits and hyphens, starting with a letter or digit.";
-  }
-  if (!draft.systemPrompt.trim()) {
-    return "A persona needs a system prompt — that is what makes it a persona.";
-  }
-  if (draft.systemPrompt.length > MAX_PERSONA_PROMPT_CHARS) {
-    return `The system prompt is ${draft.systemPrompt.length} characters, over the ${MAX_PERSONA_PROMPT_CHARS} limit.`;
+  const problems = describePersonaDraftProblems(draft);
+  for (const field of PROBLEM_ORDER) {
+    if (problems[field] !== null) {
+      return problems[field];
+    }
   }
   return null;
 }
