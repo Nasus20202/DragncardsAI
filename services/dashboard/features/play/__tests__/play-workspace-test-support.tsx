@@ -271,6 +271,9 @@ vi.mock("@/features/play/components/play-config-panel", () => ({
       <div data-testid="draft-gateway-options">{draft.gatewayOptionsText}</div>
       <div data-testid="draft-message-limit">{draft.recentMessageLimit}</div>
       <div data-testid="draft-session-mode">{draft.sessionMode}</div>
+      <div data-testid="draft-allowed-subagents">
+        {draft.allowedSubagents.join(",")}
+      </div>
       <div data-testid="mode-locked">{String(Boolean(isModeLocked))}</div>
       <div data-testid="provider-count">{providers.length}</div>
       <div data-testid="skill-count">{skills.length}</div>
@@ -303,6 +306,18 @@ vi.mock("@/features/play/components/play-config-panel", () => ({
         onClick={() => onDraftChange({ ...draft, sessionMode: "orchestrated" })}
       >
         Choose orchestrated mode
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          onDraftChange({
+            ...draft,
+            sessionPersona: "tryhard",
+            allowedSubagents: [...draft.allowedSubagents, "kawaii-girl"],
+          })
+        }
+      >
+        Choose personas
       </button>
       <button type="button" onClick={onSave}>
         Save configuration

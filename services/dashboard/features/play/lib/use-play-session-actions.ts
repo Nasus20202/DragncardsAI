@@ -24,6 +24,7 @@ import {
   isSelectableSession,
   parseJsonObject,
   parseOptionalPositiveInteger,
+  unappliedSessionSettings,
 } from "@/features/play/lib/session-draft";
 import {
   ContextMetadata,
@@ -152,6 +153,12 @@ export function usePlaySessionActions({
 
       await refreshSessions(false);
       persistSelectedSessionId(created.id);
+      // Deliberately not compared the way a save is. Selecting the session just
+      // created starts the session loader, which reports "Ready" and clears the
+      // error area the moment it lands, so a message set here is one the user
+      // never gets to read. The loader also re-seeds the panel from the created
+      // session, so a setting the server dropped is shown as dropped rather than
+      // misreported — and the first save then says so.
       setStatusText("Session created");
     } catch (error) {
       setErrorText(
@@ -248,6 +255,14 @@ export function usePlaySessionActions({
       ]);
       const hydratedSession = { ...refreshed, mcps };
       setSelectedSession(hydratedSession);
+      // Compared before the draft is re-seeded, because re-seeding is what
+      // erases the evidence: the draft below holds what the server has, and
+      // `draft` still holds what the user asked for.
+      const discarded = unappliedSessionSettings(draft, hydratedSession);
+      // The draft is still seeded from the server. Showing a setting the server
+      // does not hold would misreport the session in the other direction — the
+      // panel shows what is stored, and the message says it is not what was
+      // asked for.
       const savedDraft = buildDraftFromSession(config, hydratedSession);
       setDraft(savedDraft);
       writeLastUsedDraft(savedDraft);
@@ -258,7 +273,12 @@ export function usePlaySessionActions({
       await refreshSessions();
       await loadAllJobs(selectedSession.id);
       void refreshContextMetadata(selectedSession.id);
-      setStatusText("Configuration saved");
+      if (discarded === null) {
+        setStatusText("Configuration saved");
+      } else {
+        setErrorText(discarded);
+        setStatusText("Save incomplete");
+      }
     } catch (error) {
       setErrorText(
         error instanceof Error ? error.message : "Failed to save session"
