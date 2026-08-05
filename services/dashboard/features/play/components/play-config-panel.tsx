@@ -20,6 +20,7 @@ import {
 import { isWorking } from "@/features/play/lib/session-draft";
 import { McpSection } from "@/features/play/components/mcp-section";
 import { PersonaPicker } from "@/features/personas/components/persona-picker";
+import { SubagentAllowlist } from "@/features/personas/components/subagent-allowlist";
 import { SeatRoster } from "@/features/play/components/seat-roster";
 import { SessionModePicker } from "@/features/play/components/session-mode-picker";
 
@@ -284,7 +285,46 @@ export function PlayConfigPanel({
             <Separator />
 
             <PersonaPicker
+              id="cfg-session-persona"
+              label="Session persona"
+              noneLabel="No persona"
+              triggerTestId="session-persona-trigger"
+              value={draft.sessionPersona}
+              onChange={(v) => set("sessionPersona", v)}
+            />
+
+            <Separator />
+
+            <SubagentAllowlist
+              selected={draft.allowedSubagents}
+              onChange={(next) =>
+                onDraftChange({
+                  ...draft,
+                  allowedSubagents: next,
+                  // Revoking the persona this session defaults to has to take the
+                  // default with it. The orchestrator refuses the pair otherwise,
+                  // and rightly: a default nothing may spawn turns every plain
+                  // spawn into a refusal.
+                  defaultSubagentPersona: next.includes(
+                    draft.defaultSubagentPersona
+                  )
+                    ? draft.defaultSubagentPersona
+                    : "",
+                })
+              }
+            />
+
+            <Separator />
+
+            {/*
+              Offered from the allowlist only: a default the session may not
+              spawn is a setting whose one effect is a refusal, so the picker
+              cannot produce it. Un-ticking the persona that is the current
+              default clears the default with it, for the same reason.
+            */}
+            <PersonaPicker
               value={draft.defaultSubagentPersona}
+              restrictTo={draft.allowedSubagents}
               onChange={(v) => set("defaultSubagentPersona", v)}
             />
 

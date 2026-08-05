@@ -74,6 +74,16 @@ function parseDraft(raw: unknown): SessionDraft | null {
       typeof candidate.defaultSubagentPersona === "string"
         ? candidate.defaultSubagentPersona
         : "",
+    sessionPersona:
+      typeof candidate.sessionPersona === "string"
+        ? candidate.sessionPersona
+        : "",
+    // A stored draft that predates the allowlist carries none, and the absent
+    // case is the closed one: carrying "unknown" forward as "everything allowed"
+    // would be the exact inversion this control exists to avoid.
+    allowedSubagents: isStringArray(candidate.allowedSubagents)
+      ? [...candidate.allowedSubagents]
+      : [],
     // Likewise tolerated: a draft written before session modes existed — or one
     // carrying a mode this build does not know — falls back to the default.
     sessionMode:

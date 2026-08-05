@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from agent_orchestrator.storage.models import (
     AgentSession,
     Job,
+    SessionAllowedSubagent,
     SessionEnabledMcp,
     SessionEnabledSkill,
 )
@@ -30,6 +31,12 @@ class RepositoryBase:
             ),
             selectinload(AgentSession.enabled_mcps).selectinload(SessionEnabledMcp.mcp),
             selectinload(AgentSession.player_configs),
+            # The subagent allowlist is loaded with the session because the spawn
+            # guard runs inside a tool call and must not need a second round trip
+            # to decide a refusal.
+            selectinload(AgentSession.allowed_subagents).selectinload(
+                SessionAllowedSubagent.persona
+            ),
             selectinload(AgentSession.jobs).selectinload(Job.events),
         )
 
@@ -41,4 +48,7 @@ class RepositoryBase:
             selectinload(Job.session).selectinload(AgentSession.enabled_skills),
             selectinload(Job.session).selectinload(AgentSession.enabled_mcps),
             selectinload(Job.session).selectinload(AgentSession.player_configs),
+            selectinload(Job.session)
+            .selectinload(AgentSession.allowed_subagents)
+            .selectinload(SessionAllowedSubagent.persona),
         )

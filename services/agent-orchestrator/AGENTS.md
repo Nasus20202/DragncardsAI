@@ -63,6 +63,34 @@ Personas are deployment-global, user-authored agent configurations stored in `ag
 - A persona prompt is user-authored text: concatenate it into the message body and never use it as a
   format string or interpolate it anywhere text becomes code. Never store credentials on a persona.
 
+**A session may also run as a persona itself** (`agent_sessions.session_persona`), and only two
+fields apply: the system prompt and `allowed_tools`. The provider, model, options and skills stay the
+session's own, because those have visible controls on that same session and a persona overwriting the
+rows those controls write would make them misreport what the agent runs with. A spawned child has no
+competing control, which is why a child materialises the whole persona and a session does not. The
+snapshot is written when the NAME is set, into the same `agent_persona` metadata key a child uses, so
+the capture rule holds at both levels; the router owns that key and refuses to take it from a client,
+which is what stops a `PATCH /sessions` metadata write forging or dropping it.
+
+**`session_allowed_subagents` is which personas a session's agent may spawn, and it is enforced, not
+displayed.** Three rules:
+
+- **An empty allowlist means NO persona may be spawned.** Never widen it to "all" — that makes the
+  emptiest-looking state the most permissive one and leaves no way to express "none". Spawning with
+  no persona at all still works and is not governed by the allowlist.
+- **The check lives at dispatch**, in `_resolve_spawn_persona`, above the persona lookup, so it
+  covers a model naming a persona, the session's `default_subagent_persona` falling through to it,
+  and any HTTP or MCP caller driving a prompt. Filtering the system-prompt catalogue is presentation;
+  do not move the check there or into the dashboard.
+- **Configuration must not contradict it.** A `default_subagent_persona` outside the allowlist is a
+  400, and revoking a persona that is still the default is a 400 unless the same request clears the
+  default. Both are validated against the state the request produces, before either is written.
+
+Neither `session_persona` nor the allowlist is frozen after the first job, unlike `session_mode`.
+Nothing durable is keyed to either, so a change orphans nothing — and a security control that cannot
+be revoked mid-game is not a security control. Seat personas are operator-configured in the roster
+and are not agent-nameable, so they are deliberately outside this allowlist.
+
 ### Session Modes and Player Seats
 
 A session's `session_mode` is `chat` (the default, the original single-agent flow) or

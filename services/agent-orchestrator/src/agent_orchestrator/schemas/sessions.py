@@ -27,6 +27,35 @@ CONVERSATION_CONTEXT_ROLES = frozenset({"system", "user", "assistant", "tool"})
 # rather than a row that no code path knows how to interpret.
 SessionMode = Literal[SESSION_MODE_CHAT, SESSION_MODE_ORCHESTRATED]
 
+# Stated once and attached to the request and response fields alike, because it
+# reaches three audiences that would otherwise each guess: the OpenAPI schema, the
+# MCP tool generated from it, and whoever reads the model in this file.
+SESSION_PERSONA_DESCRIPTION = (
+    "The persona this session's own agent runs as, or null for none. Its "
+    "instructions are added to the session's system prompt and its tool "
+    "allowlist narrows the session's tools. It deliberately does NOT change the "
+    "session's provider, model, options or skills: those have their own controls "
+    "on the same session, and a persona overwriting them would make those "
+    "controls misreport what the agent runs with. Resolved and snapshotted when "
+    "it is set, so editing or deleting the persona afterwards does not change a "
+    "session that already adopted it. Editable for the life of the session."
+)
+
+# A session's allowlist is a selection from a deployment-global catalogue an
+# operator maintains by hand. Bounded so one request cannot write an unbounded
+# number of rows, at a limit no realistic catalogue reaches.
+MAX_ALLOWED_SUBAGENTS = 128
+
+# Attached to every place the allowlist is reported, because the one thing a
+# reader must not have to infer is what the empty case means.
+ALLOWED_SUBAGENTS_DESCRIPTION = (
+    "The personas this session's agent may start a subagent from, enforced "
+    "server-side when `spawn_subagent` runs. AN EMPTY LIST MEANS NO PERSONA MAY "
+    "BE SPAWNED — it is never read as 'all personas'. A session that should be "
+    "able to spawn every persona lists every persona. Spawning a subagent with "
+    "no persona at all, which copies this session's configuration, is unaffected."
+)
+
 
 class SessionCreateRequest(BaseModel):
     name: str | None = None
@@ -39,6 +68,14 @@ class SessionCreateRequest(BaseModel):
     # The persona this session's subagents are started from when the agent names
     # none. ``None`` keeps the pre-persona behaviour.
     default_subagent_persona: str | None = Field(default=None, max_length=64)
+    session_persona: str | None = Field(
+        default=None, max_length=64, description=SESSION_PERSONA_DESCRIPTION
+    )
+    allowed_subagents: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_ALLOWED_SUBAGENTS,
+        description=ALLOWED_SUBAGENTS_DESCRIPTION,
+    )
 
 
 class SessionUpdateRequest(BaseModel):
@@ -51,6 +88,18 @@ class SessionUpdateRequest(BaseModel):
     context_recent_tool_exchange_limit: int | None = Field(default=None, ge=0)
     # Sent as ``null`` to clear the default; omitted to leave it unchanged.
     default_subagent_persona: str | None = Field(default=None, max_length=64)
+    # Sent as ``null`` to drop the session's persona; omitted to leave it
+    # unchanged. Editable for the life of the session — see the description.
+    session_persona: str | None = Field(
+        default=None, max_length=64, description=SESSION_PERSONA_DESCRIPTION
+    )
+    # Sent to replace the whole allowlist in one write; omitted to leave it
+    # unchanged. `[]` is a real value and means "allow no persona".
+    allowed_subagents: list[str] | None = Field(
+        default=None,
+        max_length=MAX_ALLOWED_SUBAGENTS,
+        description=ALLOWED_SUBAGENTS_DESCRIPTION,
+    )
 
 
 class ModelConfigRequest(BaseModel):
@@ -62,6 +111,35 @@ class ModelConfigRequest(BaseModel):
 
 class SkillAssignmentRequest(BaseModel):
     skill_name: str
+
+
+class SubagentAllowanceRequest(BaseModel):
+    """Add one persona to a session's subagent allowlist."""
+
+    persona: str = Field(min_length=1, max_length=64)
+
+
+class SubagentAllowanceEnabledRequest(BaseModel):
+    enabled: bool
+
+
+class SubagentAllowanceResponse(BaseModel):
+    """One persona of the deployment catalogue, and whether this session allows it.
+
+    Every persona is reported with its own ``allowed`` flag rather than only the
+    permitted ones being listed. That is deliberate: a response that returned just
+    an allowlist would make a reader interpret the empty array, and interpreting
+    it is exactly the mistake this control exists to prevent.
+    """
+
+    name: str
+    display_name: str | None = None
+    description: str | None = None
+    allowed: bool
+
+
+class SubagentAllowanceListResponse(BaseModel):
+    subagents: list[SubagentAllowanceResponse]
 
 
 class McpRegistryRequest(BaseModel):
@@ -137,6 +215,12 @@ class SessionSummary(BaseModel):
     # The persona subagents spawned from this session are started from when the
     # agent names none. ``None`` keeps the pre-persona behaviour.
     default_subagent_persona: str | None = None
+    session_persona: str | None = Field(
+        default=None, description=SESSION_PERSONA_DESCRIPTION
+    )
+    allowed_subagents: list[str] = Field(
+        default_factory=list, description=ALLOWED_SUBAGENTS_DESCRIPTION
+    )
     recent_job: JobSummary | None = None
 
 

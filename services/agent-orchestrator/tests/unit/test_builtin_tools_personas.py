@@ -80,6 +80,18 @@ async def _write_persona(repository: Repository, name: str, **overrides):
     return await repository.upsert_persona(name, **fields)
 
 
+async def _allow(repository: Repository, session, *names: str) -> None:
+    """Put the named personas on the session's subagent allowlist.
+
+    Every spawn that names a persona needs this now. An empty allowlist means NO
+    persona may be spawned — never "all of them" — so a session that has not opted
+    a persona in refuses it, which is what
+    `test_a_persona_off_the_allowlist_is_refused` asserts directly.
+    """
+    for name in names:
+        assert await repository.set_subagent_allowed(session.id, name, True) is not None
+
+
 def _handler(repository, bus, session, job, skill_roots, schedule=None):
     return make_spawn_subagent_handler(
         repository=repository,
@@ -131,6 +143,7 @@ async def test_named_persona_configures_the_child(
         skills=["demo-skill"],
         allowed_tools=["game_service_next_step"],
     )
+    await _allow(repository, session, "rules-lawyer")
 
     result = await _handler(repository, live_event_bus, session, job, skill_roots)(
         {"prompt": "check a rule", "persona": "rules-lawyer"}
@@ -182,6 +195,7 @@ async def test_session_default_persona_applies_when_none_is_named(
 ):
     await _write_persona(repository, "house-style", model_name="default-model")
     session, job = await _parent(repository, default_subagent_persona="house-style")
+    await _allow(repository, session, "house-style")
 
     await _handler(repository, live_event_bus, session, job, skill_roots)(
         {"prompt": "go"}
@@ -200,6 +214,7 @@ async def test_a_named_persona_beats_the_session_default(
     await _write_persona(repository, "house-style", model_name="default-model")
     await _write_persona(repository, "rules-lawyer", model_name="named-model")
     session, job = await _parent(repository, default_subagent_persona="house-style")
+    await _allow(repository, session, "house-style", "rules-lawyer")
 
     await _handler(repository, live_event_bus, session, job, skill_roots)(
         {"prompt": "go", "persona": "rules-lawyer"}
@@ -217,6 +232,7 @@ async def test_an_unknown_persona_fails_the_spawn_and_creates_nothing(
 ):
     await _write_persona(repository, "rules-lawyer")
     session, job = await _parent(repository)
+    await _allow(repository, session, "rules-lawyer")
 
     result = await _handler(repository, live_event_bus, session, job, skill_roots)(
         {"prompt": "go", "persona": "no-such-persona"}
@@ -229,6 +245,100 @@ async def test_an_unknown_persona_fails_the_spawn_and_creates_nothing(
 
     events = await repository.list_events(job.id)
     assert [e for e in events if e.event_type == "subagent_started"] == []
+    assert await _session_count(repository) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_persona_off_the_allowlist_is_refused(
+    repository: Repository, live_event_bus: InMemoryLiveEventBus, skill_roots: Path
+):
+    """The allowlist is enforcement, not a picker filter.
+
+    This is the test the server-side refusal exists for. Nothing here goes through
+    the dashboard: a caller drives `spawn_subagent` directly with a persona the
+    session does not allow, exactly as a model or a scripted HTTP client would, and
+    the spawn is refused before any child row is written. Without the check in
+    `_resolve_spawn_persona` this test fails on `is_error`, on the message, and on
+    the session count — the child gets created and runs as the persona.
+    """
+    await _write_persona(repository, "rules-lawyer", model_name="persona-model")
+    await _write_persona(repository, "house-style", model_name="other-model")
+    session, job = await _parent(repository)
+    await _allow(repository, session, "house-style")
+
+    result = await _handler(repository, live_event_bus, session, job, skill_roots)(
+        {"prompt": "go", "persona": "rules-lawyer"}
+    )
+
+    assert result["is_error"] is True
+    text = result["content"][0]["text"]
+    assert "rules-lawyer" in text
+    # The refusal names what IS permitted, so the model can correct itself.
+    assert "house-style" in text
+
+    events = await repository.list_events(job.id)
+    assert [e for e in events if e.event_type == "subagent_started"] == []
+    assert await _session_count(repository) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_empty_allowlist_permits_no_persona_at_all(
+    repository: Repository, live_event_bus: InMemoryLiveEventBus, skill_roots: Path
+):
+    """Empty means none. It is never read as "every persona"."""
+    await _write_persona(repository, "rules-lawyer")
+    session, job = await _parent(repository)
+
+    result = await _handler(repository, live_event_bus, session, job, skill_roots)(
+        {"prompt": "go", "persona": "rules-lawyer"}
+    )
+
+    assert result["is_error"] is True
+    assert "does not permit" in result["content"][0]["text"]
+    assert await _session_count(repository) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_disallowed_session_default_is_refused_too(
+    repository: Repository, live_event_bus: InMemoryLiveEventBus, skill_roots: Path
+):
+    """A configuration field must not be a way around the allowlist.
+
+    The default is what a bare `spawn_subagent` becomes, so if the guard only
+    covered the argument the model types, revoking a persona would leave every
+    plain spawn still running as it.
+    """
+    await _write_persona(repository, "house-style", model_name="default-model")
+    session, job = await _parent(repository, default_subagent_persona="house-style")
+
+    result = await _handler(repository, live_event_bus, session, job, skill_roots)(
+        {"prompt": "go"}
+    )
+
+    assert result["is_error"] is True
+    assert "house-style" in result["content"][0]["text"]
+    assert await _session_count(repository) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_allowance_switched_off_stops_permitting_the_persona(
+    repository: Repository, live_event_bus: InMemoryLiveEventBus, skill_roots: Path
+):
+    """`enabled` is a soft toggle, so every consumer has to read the flag.
+
+    A row left behind with `enabled=False` must not keep permitting the persona;
+    that is the same trap `enabled_skill_assignments` exists to close for skills.
+    """
+    await _write_persona(repository, "rules-lawyer")
+    session, job = await _parent(repository)
+    await _allow(repository, session, "rules-lawyer")
+    await repository.set_subagent_allowed(session.id, "rules-lawyer", False)
+
+    result = await _handler(repository, live_event_bus, session, job, skill_roots)(
+        {"prompt": "go", "persona": "rules-lawyer"}
+    )
+
+    assert result["is_error"] is True
     assert await _session_count(repository) == 1
 
 
@@ -246,6 +356,7 @@ async def test_a_persona_naming_a_vanished_skill_fails_the_spawn(
         metadata_json={},
     )
     await _write_persona(repository, "nostalgic", skills=["retired-skill"])
+    await _allow(repository, session, "nostalgic")
 
     # The skill is removed from disk after the persona was written and accepted.
     for path in sorted((skill_roots / "retired-skill").iterdir()):
@@ -285,6 +396,7 @@ async def test_editing_a_persona_does_not_change_an_already_started_child(
         skills=["demo-skill"],
         allowed_tools=["game_service_next_step"],
     )
+    await _allow(repository, session, "rules-lawyer")
 
     await _handler(repository, live_event_bus, session, job, skill_roots)(
         {"prompt": "go", "persona": "rules-lawyer"}
@@ -323,6 +435,7 @@ async def test_deleting_a_persona_does_not_change_a_queued_child(
         system_prompt="captured",
         model_name="captured-model",
     )
+    await _allow(repository, session, "rules-lawyer")
 
     await _handler(repository, live_event_bus, session, job, skill_roots)(
         {"prompt": "go", "persona": "rules-lawyer"}

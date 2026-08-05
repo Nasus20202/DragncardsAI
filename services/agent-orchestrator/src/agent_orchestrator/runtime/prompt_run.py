@@ -27,6 +27,7 @@ from agent_orchestrator.runtime.history_emitter import (
 )
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.personas import (
+    allowed_subagent_personas,
     narrow_tool_definitions,
     persona_allowed_tools_from_snapshot,
     persona_prompt_from_snapshot,
@@ -181,7 +182,8 @@ class PromptRunService:
                 is_subagent = job.parent_job_id is not None
                 active_skills = enabled_skill_assignments(session.enabled_skills)
                 # The persona snapshot was captured onto this session when the
-                # child was spawned. It is read here, never the persona table, so
+                # child was spawned, or when this session adopted a persona of its
+                # own. Either way it is read here, never the persona table, so
                 # editing or deleting the persona cannot change a run in flight.
                 persona_snapshot = session_persona_snapshot(session)
                 if is_subagent:
@@ -194,7 +196,10 @@ class PromptRunService:
                     system_prompt = build_system_prompt(
                         self._skill_registry,
                         active_skills,
-                        personas=await self._repository.list_personas(),
+                        # Only the personas this session allowlists, so the model
+                        # is never told about a name the spawn guard would refuse.
+                        personas=allowed_subagent_personas(session),
+                        persona_prompt=persona_prompt_from_snapshot(persona_snapshot),
                     )
                 all_registries = await self._repository.list_mcp_registries()
                 tool_definitions = await self._mcp_tool_catalog.list_session_tools(

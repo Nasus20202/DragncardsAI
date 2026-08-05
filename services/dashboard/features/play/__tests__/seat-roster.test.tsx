@@ -31,6 +31,8 @@ const draft: SessionDraft = {
   providerOptionsText: "{}",
   selectedSkills: [],
   defaultSubagentPersona: "",
+  sessionPersona: "",
+  allowedSubagents: [],
   sessionMode: "orchestrated",
 };
 

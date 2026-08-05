@@ -89,6 +89,14 @@ class AgentSession(Base):
     default_subagent_persona: Mapped[str | None] = mapped_column(
         String(64), nullable=True
     )
+    # The persona THIS session's own agent runs as. ``None`` is the original
+    # behaviour: the session's agent has no persona of its own. A column rather
+    # than a metadata key for the same reason ``session_mode`` is — it gates
+    # behaviour, and metadata is client-writable through ``PATCH /sessions``. The
+    # resolved snapshot lives under the ``agent_persona`` metadata key, written by
+    # the API when the name is set, so a session's persona is captured once and a
+    # later edit to the persona cannot change what this session already became.
+    session_persona: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime(), default=utc_now, onupdate=utc_now
@@ -108,6 +116,11 @@ class AgentSession(Base):
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="SessionPlayerConfig.player_id",
+    )
+    allowed_subagents: Mapped[list[SessionAllowedSubagent]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="SessionAllowedSubagent.persona_name",
     )
     jobs: Mapped[list[Job]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
@@ -237,6 +250,43 @@ class AgentPersona(Base):
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime(), default=utc_now, onupdate=utc_now
     )
+
+
+class SessionAllowedSubagent(Base):
+    """One persona this session's agent is permitted to start a subagent from.
+
+    Shaped like :class:`SessionEnabledSkill` on purpose: the deployment-global
+    catalogue is ``agent_personas``, this table records the per-session selection
+    from it, and ``enabled`` is a soft toggle so turning an entry off keeps the row
+    rather than losing the fact that it was once considered.
+
+    **An empty allowlist means no persona may be spawned.** It is never read as
+    "every persona": a control whose emptiest state is its most permissive one
+    cannot be reasoned about, and it would leave no way to express "none". A
+    session that should be able to spawn every persona lists every persona.
+    """
+
+    __tablename__ = "session_allowed_subagents"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id", "persona_name", name="uq_session_subagent_allowed"
+        ),
+    )
+
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    persona_name: Mapped[str] = mapped_column(
+        ForeignKey("agent_personas.name"), primary_key=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime(), default=utc_now, onupdate=utc_now
+    )
+
+    session: Mapped[AgentSession] = relationship(back_populates="allowed_subagents")
+    persona: Mapped[AgentPersona] = relationship()
 
 
 class McpRegistry(Base):

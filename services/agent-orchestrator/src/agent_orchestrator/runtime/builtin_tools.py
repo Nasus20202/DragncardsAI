@@ -18,7 +18,9 @@ from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.personas import (
     SESSION_PERSONA_KEY,
     ResolvedPersona,
+    allowed_subagent_names,
     resolve_persona,
+    subagent_refusal_message,
 )
 from agent_orchestrator.runtime.player_agents import (
     SESSION_ORCHESTRATOR_ID_KEY,
@@ -658,6 +660,16 @@ async def _resolve_spawn_persona(
     none at all. Returning ``(None, None)`` means no persona applies and the child
     should inherit the parent exactly as it did before personas existed.
 
+    **This is where the subagent allowlist is enforced.** It sits above the
+    persona lookup rather than in the dashboard, so a persona missing from the
+    session's allowlist is refused however the spawn was reached — by a model
+    naming it, by the session's own default, or by a direct HTTP or MCP caller
+    driving a prompt. The check is on the NAME before the row is read, so a
+    disallowed persona is not even loaded, and it applies to the session's default
+    for the same reason it applies to a named one: the default is what a bare
+    ``spawn_subagent`` becomes, and a control that a configuration field could
+    walk around would not be a control.
+
     A persona's own named skills are re-validated here, at the moment the child is
     started, because the skill catalogue mirrors the filesystem and is re-synced
     at every boot — a skill can stop existing between writing a persona and using
@@ -672,6 +684,18 @@ async def _resolve_spawn_persona(
     if not name:
         return None, None
 
+    allowed = allowed_subagent_names(parent_session)
+    if name not in allowed:
+        return None, _text_result(
+            subagent_refusal_message(name, allowed),
+            is_error=True,
+        )
+
+    # Reachable even though the allowlist above only holds names that resolved
+    # when they were added: the allowlist read from the loaded session and the
+    # persona row are separate reads, so a persona deleted between them is gone by
+    # the time it is fetched. Failing the spawn by name is the right end to that
+    # race — the alternative is starting a child from nothing.
     persona = await repository.get_persona(name)
     if persona is None:
         available = [item.name for item in await repository.list_personas()]
@@ -1991,7 +2015,10 @@ def build_builtin_registry(
                     "Optionally pass `persona` to start the child from a configured persona, which "
                     "gives it that persona's instructions, skills, and (possibly narrower) tool "
                     "access instead of a copy of yours. Omit `persona` to give the child your own "
-                    "configuration. Only the personas listed in your system prompt exist."
+                    "configuration. The personas listed in your system prompt are the "
+                    "only ones this session permits, and the server refuses any other "
+                    "name; when no personas are listed, none are permitted and every "
+                    "spawn must omit `persona`."
                 ),
                 parameters={
                     "type": "object",
@@ -2004,8 +2031,9 @@ def build_builtin_registry(
                             "type": "string",
                             "description": (
                                 "Optional. The name of a configured persona to start "
-                                "the child from, as listed in your system prompt. "
-                                "Omit to give the child your own configuration."
+                                "the child from, which must be one of those listed in "
+                                "your system prompt. Omit to give the child your own "
+                                "configuration."
                             ),
                         },
                     },

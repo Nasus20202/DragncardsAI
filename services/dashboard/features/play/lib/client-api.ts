@@ -138,6 +138,12 @@ export async function createSession(
     context_recent_message_limit?: number | null;
     context_recent_tool_exchange_limit?: number | null;
     default_subagent_persona?: string | null;
+    session_persona?: string | null;
+    /**
+     * The whole allowlist, applied atomically with the default it constrains.
+     * Omitting it, or sending `[]`, allows no subagent persona at all.
+     */
+    allowed_subagents?: string[];
     session_mode?: SessionMode;
   }
 ): Promise<SessionDetail> {
@@ -158,6 +164,14 @@ export async function updateSession(
     context_recent_message_limit?: number | null;
     context_recent_tool_exchange_limit?: number | null;
     default_subagent_persona?: string | null;
+    session_persona?: string | null;
+    /**
+     * Replaces the whole allowlist in one write. Sent together with
+     * `default_subagent_persona` so a save that revokes a persona and clears the
+     * default it was is accepted — the orchestrator validates the two against the
+     * state the request produces, not the state already stored.
+     */
+    allowed_subagents?: string[];
     session_mode?: SessionMode;
   }
 ): Promise<SessionDetail> {

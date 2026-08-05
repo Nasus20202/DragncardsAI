@@ -27,6 +27,8 @@ const storedDraft: Omit<SessionDraft, "name"> & { name: string } = {
   providerOptionsText: "{}",
   selectedSkills: ["skill-b"],
   defaultSubagentPersona: "",
+  sessionPersona: "",
+  allowedSubagents: [],
   sessionMode: "chat",
 };
 

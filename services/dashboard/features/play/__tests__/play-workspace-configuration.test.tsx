@@ -60,6 +60,8 @@ describe("PlayWorkspace configuration", () => {
         context_recent_message_limit: null,
         context_recent_tool_exchange_limit: null,
         default_subagent_persona: null,
+        session_persona: null,
+        allowed_subagents: [],
         session_mode: "chat",
       })
     );

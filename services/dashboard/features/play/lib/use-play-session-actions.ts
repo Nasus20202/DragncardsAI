@@ -119,6 +119,12 @@ export function usePlaySessionActions({
           "Recent tool exchange limit"
         ),
         default_subagent_persona: nextDraft.defaultSubagentPersona || null,
+        session_persona: nextDraft.sessionPersona || null,
+        // Sent with the create, not after it, because the orchestrator validates
+        // the default against the allowlist in the same request. A session that
+        // existed for a moment with a default it was not yet allowed to use would
+        // be refused for a state neither side wanted.
+        allowed_subagents: nextDraft.allowedSubagents,
         session_mode: nextDraft.sessionMode,
       });
       const gatewayOptions = applyReasoningToGatewayOptions(
@@ -200,6 +206,12 @@ export function usePlaySessionActions({
           "Recent tool exchange limit"
         ),
         default_subagent_persona: draft.defaultSubagentPersona || null,
+        session_persona: draft.sessionPersona || null,
+        // The whole allowlist goes in the same PATCH as the default it
+        // constrains, so revoking a persona and clearing the default it was are
+        // one accepted change rather than two, the second of which repairs the
+        // first.
+        allowed_subagents: draft.allowedSubagents,
         // The orchestrator rejects a mode change once the session has run a
         // job, so the field is sent only when the user actually moved it.
         // Saving an unrelated setting on a started session must not 409.

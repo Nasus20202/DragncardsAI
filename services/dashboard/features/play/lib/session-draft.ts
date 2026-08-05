@@ -140,6 +140,12 @@ export function createDefaultDraft(config: DashboardConfig): SessionDraft {
     providerOptionsText: safeJsonStringify({}),
     selectedSkills: config.defaultSkills,
     defaultSubagentPersona: "",
+    sessionPersona: "",
+    // A new session allows no subagent persona. Deny-by-default is the only
+    // starting point under which the empty control means what it shows: if a
+    // fresh session allowed everything, ticking the first persona would silently
+    // be a restriction rather than a grant.
+    allowedSubagents: [],
     sessionMode: "chat",
   };
 }
@@ -258,6 +264,7 @@ export function createNewSessionDraft(
     name: UNNAMED_SESSION,
     reasoning: { ...lastUsed.reasoning },
     selectedSkills: [...lastUsed.selectedSkills],
+    allowedSubagents: [...(lastUsed.allowedSubagents ?? [])],
   };
 
   return withUsableProviderModel(config, carried, providers);
@@ -292,6 +299,10 @@ export function buildDraftFromSession(
     ),
     selectedSkills: session.skills.map((skill) => skill.skill_name),
     defaultSubagentPersona: session.default_subagent_persona ?? "",
+    sessionPersona: session.session_persona ?? "",
+    // A response that predates the field carries no allowlist, and an absent
+    // allowlist is an empty one — the same thing the orchestrator means by it.
+    allowedSubagents: session.allowed_subagents ?? [],
     sessionMode: session.session_mode ?? "chat",
   };
 }

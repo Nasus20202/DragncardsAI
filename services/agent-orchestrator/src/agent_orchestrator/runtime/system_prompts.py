@@ -192,6 +192,11 @@ def _persona_catalogue_section(personas: list[Any]) -> str | None:
     Names and descriptions only. A persona's own prompt is the CHILD's
     instruction, so inlining it here would spend the parent's context on every
     persona that exists for no benefit.
+
+    The list handed in is the session's ALLOWLIST, not the deployment catalogue,
+    so a model is only told about personas it may actually use. That is
+    presentation: the refusal at spawn time is the enforcement, because a model
+    can name a persona this section never mentioned.
     """
     entries: list[str] = []
     for persona in personas:
@@ -203,10 +208,11 @@ def _persona_catalogue_section(personas: list[Any]) -> str | None:
         return None
     return (
         "## Personas\n\n"
-        "These personas are configured for this deployment. Pass one by name as "
-        "the `persona` argument to `spawn_subagent` when its description matches "
-        "the task you are delegating. Omit the argument to give the child your "
-        "own configuration.\n\n" + "\n".join(entries)
+        "These are the personas this session permits, and the only names the "
+        "server accepts. Pass one by name as the `persona` argument to "
+        "`spawn_subagent` when its description matches the task you are "
+        "delegating. Omit the argument to give the child your own "
+        "configuration.\n\n" + "\n".join(entries)
     )
 
 
@@ -231,8 +237,20 @@ def build_system_prompt(
     assignments: list[Any],
     *,
     personas: list[Any] | None = None,
+    persona_prompt: str | None = None,
 ) -> str:
+    """The system prompt for a top-level job.
+
+    ``persona_prompt`` is this session's OWN persona, when it has adopted one —
+    the same section a subagent gets, in the same position, because a persona
+    means the same thing at either level: extra instructions that the rules above
+    still override. ``personas`` is the separate catalogue of personas this
+    session may DELEGATE to.
+    """
     parts = list(BASE_SYSTEM_PROMPT_PARTS)
+    persona_section = _persona_section(persona_prompt)
+    if persona_section is not None:
+        parts.append(persona_section)
     catalogue = _persona_catalogue_section(personas or [])
     if catalogue is not None:
         parts.append(catalogue)

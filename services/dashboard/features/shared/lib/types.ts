@@ -199,6 +199,20 @@ export interface SessionSummary {
    */
   default_subagent_persona?: string | null;
   /**
+   * The persona this session's OWN agent runs as. `null` means none. It adds the
+   * persona's instructions to the session's system prompt and narrows the
+   * session's tools; it does not change the provider, model or skills, which
+   * have their own controls.
+   */
+  session_persona?: string | null;
+  /**
+   * The personas this session's agent may start a subagent from. **An empty
+   * array means no persona may be spawned** — it is never read as "all
+   * personas". Optional only so a response from an orchestrator that predates
+   * the field still typechecks.
+   */
+  allowed_subagents?: string[];
+  /**
    * How this session is driven. Optional so a response from an orchestrator
    * that predates the field still typechecks; a missing value means `"chat"`.
    */
@@ -226,6 +240,18 @@ export interface PersonaResponse {
   provider_options: Record<string, JsonValue>;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * One persona of the deployment catalogue, and whether a session allows its
+ * agent to spawn a subagent from it. Returned per persona rather than as a bare
+ * allowlist so no caller has to interpret an empty array.
+ */
+export interface SubagentAllowanceResponse {
+  name: string;
+  display_name: string | null;
+  description: string | null;
+  allowed: boolean;
 }
 
 /** Request body for `PUT /personas/{name}`. */
@@ -340,6 +366,12 @@ export interface SessionDraft {
   selectedSkills: string[];
   /** Persona name, or `""` for "no persona" — subagents copy the session. */
   defaultSubagentPersona: string;
+  /** The persona the session's own agent runs as, or `""` for none. */
+  sessionPersona: string;
+  /**
+   * The personas this session may spawn a subagent from. **Empty means none.**
+   */
+  allowedSubagents: string[];
   /** How the session is driven; `"chat"` is the default single-agent flow. */
   sessionMode: SessionMode;
 }
