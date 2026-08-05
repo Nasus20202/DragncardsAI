@@ -13,7 +13,10 @@ COPY external/dragncards/frontend/ /app/
 # Pre-generate tailwind.compiled.css so webpack doesn't fail on first start
 # (start:docker runs postcss and webpack in parallel; webpack resolves the
 # import before postcss can write the file if we don't do this first)
-RUN npm install --legacy-peer-deps && \
+
+# We need to remove the merge conflict markers from package-lock.json before running npm ci, otherwise it will fail.
+RUN sed -i '/^>>>>>>>/d' package-lock.json && \
+    npm ci --legacy-peer-deps && \
     npx postcss src/css/tailwind.src.css -o src/css/tailwind.compiled.css
 
 # Copy entrypoint
