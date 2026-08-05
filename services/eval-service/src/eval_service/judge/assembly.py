@@ -4,6 +4,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from eval_service.judge.actions import non_strategic_reason
+from eval_service.judge.events import (
+    ILLEGAL_ACTION_STATUS_OPEN,
+    ILLEGAL_ACTION_STATUS_RESOLVED,
+    SESSION_MODE_CHAT,
+    is_agent_move,
+    is_illegal_action_finding,
+    session_mode_of,
+    span_session_mode,
+)
 from eval_service.judge.rounds import neighbour_events, round_span_containing
 from eval_service.schemas.history import StoredEvent
 
@@ -47,6 +56,30 @@ class MoveInput:
     # over the whole timeline.
     round_number: int | None = None
     round_span: tuple[int, int] | None = None
+    # The orchestration mode this move was played in. ``chat`` for every move
+    # recorded before the mode existed, so a projection of an old game is the
+    # projection it always was.
+    session_mode: str = SESSION_MODE_CHAT
+
+
+@dataclass
+class IllegalActionFinding:
+    """An orchestrator-recorded finding that a seat's action broke the rules.
+
+    Evidence, not a verdict. The orchestrator decides legality from game state,
+    so a finding is a fact about the round rather than a judgement of how well it
+    was played — the judge weighs it alongside everything else in the projection.
+    """
+
+    seq: int
+    player: str | None
+    violation: str
+    status: str
+    resolution_note: str | None = None
+
+    @property
+    def is_resolved(self) -> bool:
+        return self.status == ILLEGAL_ACTION_STATUS_RESOLVED
 
 
 @dataclass
@@ -69,6 +102,12 @@ class RoundInput:
     player: str | None = None
     # Already-graded child (move) verdicts for this player, as judge context.
     child_verdicts: list["ChildVerdict"] = field(default_factory=list)
+    # The orchestration mode the round was played in (see ``MoveInput``).
+    session_mode: str = SESSION_MODE_CHAT
+    # Illegal-action findings the orchestrator recorded inside this round, so the
+    # judge is handed a violation that was already established rather than having
+    # to re-derive one from the move list.
+    illegal_actions: list["IllegalActionFinding"] = field(default_factory=list)
 
 
 @dataclass
@@ -83,6 +122,8 @@ class GameInput:
     closing_state: dict[str, Any] | None = None
     # Already-graded child (round) verdicts for this player, as judge context.
     child_verdicts: list["ChildVerdict"] = field(default_factory=list)
+    # The orchestration mode the game was played in (see ``MoveInput``).
+    session_mode: str = SESSION_MODE_CHAT
 
 
 @dataclass
@@ -181,9 +222,10 @@ def assemble_move_input(
     target = _find_event(events, target_seq)
     if target is None:
         raise ValueError(f"no event at seq {target_seq}")
-    if target.actor != "agent":
+    if not is_agent_move(target):
         raise ValueError(
-            f"seq {target_seq} is actor {target.actor!r}, expected an agent move"
+            f"seq {target_seq} is actor {target.actor!r} event type "
+            f"{target.event_type!r}, expected an agent move"
         )
 
     payload = target.payload
@@ -207,6 +249,7 @@ def assemble_move_input(
         ),
         round_number=boundary[0] if boundary else None,
         round_span=span,
+        session_mode=session_mode_of(target),
     )
 
 
@@ -326,7 +369,7 @@ def assemble_round_input(
     moves: list[MoveInput] = []
     omitted = 0
     for event in events:
-        if event.actor == "agent" and from_seq <= event.seq <= to_seq:
+        if is_agent_move(event) and from_seq <= event.seq <= to_seq:
             if player is not None and _move_player(events, event.seq) != player:
                 continue
             if non_strategic_reason(event.payload.get("intended_action"), skip_actions):
@@ -364,6 +407,12 @@ def assemble_round_input(
         player=player,
         child_verdicts=child_verdicts,
         omitted_non_strategic=omitted,
+        session_mode=span_session_mode(events, from_seq, to_seq),
+        # Every seat's findings, not just the scored player's: a round roll-up is
+        # graded against the board the round produced, and the board was moved by
+        # whatever every seat did to it. A violation by another seat is part of
+        # why the position looks the way it does.
+        illegal_actions=collect_illegal_actions(events, from_seq, to_seq),
     )
 
 
@@ -398,6 +447,7 @@ def assemble_game_input(
         player=player,
         closing_state=closing_state,
         child_verdicts=child_verdicts,
+        session_mode=span_session_mode(events, from_seq, closing_seq),
     )
 
 
@@ -454,6 +504,62 @@ def collect_child_verdicts(
             )
         )
     out.sort(key=lambda c: c.target_seq)
+    return out
+
+
+def collect_illegal_actions(
+    events: list[StoredEvent], from_seq: int, to_seq: int
+) -> list[IllegalActionFinding]:
+    """Gather the orchestrator's illegal-action findings inside ``[from_seq, to_seq]``.
+
+    Read from recorded history like everything else the judge is given, so a
+    finding reaches the judge exactly when the orchestrator wrote one and nothing
+    is inferred on its behalf.
+
+    A finding with no ``violation`` text is dropped: an unnamed violation tells the
+    judge only that *something* was wrong, which invites it to go looking for a
+    fault to match — the opposite of handing over established evidence. An
+    unrecognised ``status`` is normalised to ``open``, the conservative reading:
+    treating an unfamiliar state as resolved would quietly retire a finding that
+    may still stand.
+
+    The seat is read from ``player`` or ``player_id``. ``player`` is the key the
+    rest of the store uses for a seat (an agent move's seat, a verdict's player) and
+    is therefore the canonical one, but the orchestrator names the same field
+    ``player_id`` on its own job-event payload; accepting both means a finding is
+    never silently unattributed because the producer used its internal name. A
+    finding with neither is still shown — the violation is the evidence, and losing
+    the whole finding over a missing seat would be the worse trade.
+    """
+    out: list[IllegalActionFinding] = []
+    for event in events:
+        if not is_illegal_action_finding(event):
+            continue
+        if not (from_seq <= event.seq <= to_seq):
+            continue
+        payload = event.payload
+        violation = payload.get("violation")
+        if not isinstance(violation, str) or not violation.strip():
+            continue
+        player = payload.get("player") or payload.get("player_id")
+        status = payload.get("status")
+        note = payload.get("resolution_note")
+        out.append(
+            IllegalActionFinding(
+                seq=event.seq,
+                player=player if isinstance(player, str) and player else None,
+                violation=violation.strip(),
+                status=(
+                    ILLEGAL_ACTION_STATUS_RESOLVED
+                    if status == ILLEGAL_ACTION_STATUS_RESOLVED
+                    else ILLEGAL_ACTION_STATUS_OPEN
+                ),
+                resolution_note=(
+                    note.strip() if isinstance(note, str) and note.strip() else None
+                ),
+            )
+        )
+    out.sort(key=lambda finding: finding.seq)
     return out
 
 

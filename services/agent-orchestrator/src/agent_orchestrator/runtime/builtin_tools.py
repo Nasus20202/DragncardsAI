@@ -25,6 +25,8 @@ from agent_orchestrator.runtime.player_agents import (
     SESSION_PLAYER_ID_KEY,
     SESSION_PLAYER_NAME_KEY,
     ResolvedPlayerAgentConfig,
+    SeatIdentity,
+    is_valid_player_id,
     resolve_player_agent_config,
     resolve_roster,
     session_player_id,
@@ -1438,6 +1440,426 @@ async def _announce_question_closed(
         )
 
 
+# A message from one seat to another is read by a model, so its cost is context
+# in somebody else's turn. Bounding it keeps one chatty seat from crowding out a
+# teammate's own board summary, and the limit is generous enough for the longest
+# realistic table talk ("I am holding Ricochet for the next minion, do not thwart
+# below 3 threat").
+MAX_PLAYER_MESSAGE_LENGTH = 2000
+
+# The violation and the undo are both read by the seat every turn until the
+# finding is resolved, so the same reasoning applies to them.
+MAX_ILLEGAL_ACTION_TEXT_LENGTH = 2000
+
+ILLEGAL_ACTION_FINDING_EVENT = "illegal_action_finding"
+
+
+def _finding_event_payload(finding: Any) -> dict[str, Any]:
+    """The `illegal_action_finding` payload, for both opening and resolving.
+
+    One event type covers both transitions and ``status`` distinguishes them, so
+    a reader following a job's timeline sees a finding's whole life in one place
+    without having to correlate two event types by id.
+    """
+    return {
+        "finding_id": finding.id,
+        "player_id": finding.player_id,
+        "violation": finding.violation,
+        "required_undo": finding.required_undo,
+        "status": finding.status,
+        "round_number": finding.round_number,
+        "resolution_note": finding.resolution_note,
+    }
+
+
+async def _announce_illegal_action_finding(
+    *,
+    repository: Repository,
+    live_event_bus: LiveEventBus,
+    session_id: str,
+    job_id: str,
+    finding: Any,
+    history_emitter: Any | None = None,
+    game_id: str | None = None,
+) -> None:
+    """Record a finding on the orchestrating job's timeline, live and durably.
+
+    Three destinations, and they answer three different questions:
+
+    - the appended `job_events` row is what a transcript reopened tomorrow reads;
+    - the live copy is what the dashboard renders while the game is being played.
+      It carries the durable row's id (DRA-34), because the SSE stream both polls
+      `list_events` and forwards the bus: a live copy published under an id of its
+      own arrives as a second event the browser cannot deduplicate, and the
+      finding renders twice. The payload published is the same object persisted,
+      so a reload never shows less than the live stream did;
+    - the history envelope is what eval-service's judge is handed as recorded
+      evidence, instead of having to re-derive a rules violation from the move
+      list. It is emitted only when the orchestrating session has a `game_id`,
+      since a history timeline is keyed by game.
+
+    Every destination is best-effort and independently guarded. A finding that
+    could not be announced is still stored, and the orchestrator still carries it
+    to the seat — announcing is how the finding becomes *visible*, not how it
+    becomes *real*.
+    """
+    payload = _finding_event_payload(finding)
+    try:
+        durable_event_id = await repository.append_event(
+            job_id, session_id, ILLEGAL_ACTION_FINDING_EVENT, payload
+        )
+        await live_event_bus.publish(
+            job_id,
+            ILLEGAL_ACTION_FINDING_EVENT,
+            payload,
+            durable_event_id=durable_event_id,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to record illegal-action finding %s on job %s",
+            getattr(finding, "id", "?"),
+            job_id,
+        )
+    if history_emitter is None or not game_id:
+        return
+    # `emit_illegal_action` is itself best-effort and swallows its own failures;
+    # the guard here is only for a run with no history bus or no game attached.
+    await history_emitter.emit_illegal_action(
+        game_id=game_id,
+        player=finding.player_id,
+        violation=finding.violation,
+        required_undo=finding.required_undo,
+        status=finding.status,
+        resolution_note=finding.resolution_note,
+        round_number=finding.round_number,
+    )
+
+
+def _validate_bounded_text(
+    arguments: dict[str, Any], name: str, limit: int
+) -> tuple[str | None, str]:
+    """Read one required, length-bounded string argument.
+
+    Returns ``(error, value)``. Rejections name the offending argument, because a
+    malformed call is the model's mistake to correct rather than a failure of the
+    run.
+    """
+    raw = arguments.get(name)
+    if not isinstance(raw, str) or not raw.strip():
+        return f"{name} must be a non-empty string.", ""
+    if len(raw) > limit:
+        return f"{name} must be at most {limit} characters.", ""
+    return None, raw.strip()
+
+
+def make_send_player_message_handler(
+    repository: Repository,
+    seat_identity: SeatIdentity,
+) -> BuiltinHandler:
+    """Return a send_player_message handler bound to the calling seat.
+
+    The sender is ``seat_identity.player_id`` and is never read from the
+    arguments, so a body claiming to come from another seat changes nothing about
+    what is stored. The recipient must be a configured seat of this seat's own
+    orchestrating session, which is the whole of the addressing rule: there is no
+    recipient value that reaches the orchestrator, because the orchestrator is not
+    a seat and a lookup against the seat roster cannot return it.
+    """
+
+    async def handle(arguments: dict[str, Any]) -> dict[str, Any]:
+        recipient = arguments.get("recipient_player_id")
+        if not isinstance(recipient, str) or not recipient.strip():
+            return _text_result(
+                "recipient_player_id must be a non-empty string.", is_error=True
+            )
+        recipient = recipient.strip()
+
+        body_error, body = _validate_bounded_text(
+            arguments, "body", MAX_PLAYER_MESSAGE_LENGTH
+        )
+        if body_error is not None:
+            return _text_result(body_error, is_error=True)
+
+        if recipient == seat_identity.player_id:
+            return _text_result(
+                "You cannot send a message to yourself. Use your report to record "
+                "what you decided and why.",
+                is_error=True,
+            )
+        if not is_valid_player_id(recipient):
+            return _text_result(
+                f"'{recipient}' is not a player seat. Messages can only be sent to "
+                "another seat at this table, never to the game orchestrator.",
+                is_error=True,
+            )
+
+        orchestrator_session_id = seat_identity.orchestrator_session_id
+        if (
+            await repository.get_player_config(orchestrator_session_id, recipient)
+            is None
+        ):
+            configured = [
+                config.player_id
+                for config in await repository.list_player_configs(
+                    orchestrator_session_id
+                )
+                if config.player_id != seat_identity.player_id
+            ]
+            known = ", ".join(configured) if configured else "none"
+            return _text_result(
+                f"'{recipient}' is not a seat at this table. Seats you can message: "
+                f"{known}.",
+                is_error=True,
+            )
+
+        message = await repository.send_player_message(
+            orchestrator_session_id,
+            sender_player_id=seat_identity.player_id,
+            recipient_player_id=recipient,
+            body=body,
+        )
+        if message is None:
+            return _text_result(
+                "The table this seat belongs to could not be found, so the message "
+                "was not sent.",
+                is_error=True,
+            )
+        return _text_result(
+            json.dumps(
+                {
+                    "message_id": message.id,
+                    "from_player_id": message.sender_player_id,
+                    "to_player_id": message.recipient_player_id,
+                    "delivery": (
+                        "Queued. It reaches that seat at the start of its next "
+                        "turn — seats only exist while they are playing, so there "
+                        "is nothing to interrupt."
+                    ),
+                }
+            )
+        )
+
+    return handle
+
+
+def make_report_illegal_action_handler(
+    repository: Repository,
+    live_event_bus: LiveEventBus,
+    session_id: str,
+    job_id: str,
+    job: Any,
+    history_emitter: Any | None = None,
+    game_id: str | None = None,
+) -> BuiltinHandler:
+    """Return a report_illegal_action handler bound to the orchestrating job.
+
+    The seat named must be a configured seat of this session, so a finding always
+    has somebody to carry it. Nothing here decides legality: the caller has
+    already read game state and reached that conclusion, and this only records it.
+    """
+
+    async def handle(arguments: dict[str, Any]) -> dict[str, Any]:
+        if not is_master_job(job):
+            return _text_result(
+                "report_illegal_action may only be called from the orchestrating "
+                "(top-level) job.",
+                is_error=True,
+            )
+
+        player_id = arguments.get("player_id")
+        if not isinstance(player_id, str) or not player_id.strip():
+            return _text_result("player_id must be a non-empty string.", is_error=True)
+        player_id = player_id.strip()
+
+        violation_error, violation = _validate_bounded_text(
+            arguments, "violation", MAX_ILLEGAL_ACTION_TEXT_LENGTH
+        )
+        if violation_error is not None:
+            return _text_result(violation_error, is_error=True)
+        undo_error, required_undo = _validate_bounded_text(
+            arguments, "required_undo", MAX_ILLEGAL_ACTION_TEXT_LENGTH
+        )
+        if undo_error is not None:
+            return _text_result(undo_error, is_error=True)
+
+        # ``bool`` is a subclass of ``int``, so it has to be rejected explicitly
+        # or ``round_number: true`` would be stored as round 1.
+        round_number = arguments.get("round_number")
+        if round_number is not None and (
+            isinstance(round_number, bool) or not isinstance(round_number, int)
+        ):
+            return _text_result(
+                "round_number must be a whole number when given, or omitted when "
+                "the round is not known.",
+                is_error=True,
+            )
+
+        if await repository.get_player_config(session_id, player_id) is None:
+            configured = [
+                config.player_id
+                for config in await repository.list_player_configs(session_id)
+            ]
+            known = ", ".join(configured) if configured else "none"
+            return _text_result(
+                f"No player agent is configured for '{player_id}'. Configured "
+                f"seats: {known}.",
+                is_error=True,
+            )
+
+        finding = await repository.open_illegal_action(
+            session_id,
+            player_id=player_id,
+            violation=violation,
+            required_undo=required_undo,
+            round_number=round_number,
+        )
+        if finding is None:
+            return _text_result(
+                "This session could not be found, so the finding was not recorded.",
+                is_error=True,
+            )
+        await _announce_illegal_action_finding(
+            repository=repository,
+            live_event_bus=live_event_bus,
+            session_id=session_id,
+            job_id=job_id,
+            finding=finding,
+            history_emitter=history_emitter,
+            game_id=game_id,
+        )
+        return _text_result(
+            json.dumps(
+                {
+                    "finding_id": finding.id,
+                    "player_id": finding.player_id,
+                    "status": finding.status,
+                    "next_step": (
+                        "The seat is told about this on every turn until you "
+                        "resolve it. Resolve it only after you have read game "
+                        "state and seen the undo — the seat saying it undid the "
+                        "action is not verification."
+                    ),
+                }
+            )
+        )
+
+    return handle
+
+
+def make_resolve_illegal_action_handler(
+    repository: Repository,
+    live_event_bus: LiveEventBus,
+    session_id: str,
+    job_id: str,
+    job: Any,
+    history_emitter: Any | None = None,
+    game_id: str | None = None,
+) -> BuiltinHandler:
+    """Return a resolve_illegal_action handler bound to the orchestrating job.
+
+    A finding belonging to another table cannot be resolved from here: the id is
+    checked against this session before the transition is attempted. The
+    transition itself is conditional on the finding still being open, so a second
+    resolve is reported as the no-op it is rather than overwriting the note the
+    first one recorded.
+    """
+
+    async def handle(arguments: dict[str, Any]) -> dict[str, Any]:
+        if not is_master_job(job):
+            return _text_result(
+                "resolve_illegal_action may only be called from the orchestrating "
+                "(top-level) job.",
+                is_error=True,
+            )
+
+        finding_id = arguments.get("finding_id")
+        if not isinstance(finding_id, str) or not finding_id.strip():
+            return _text_result("finding_id must be a non-empty string.", is_error=True)
+        finding_id = finding_id.strip()
+
+        note_error, resolution_note = _validate_bounded_text(
+            arguments, "resolution_note", MAX_ILLEGAL_ACTION_TEXT_LENGTH
+        )
+        if note_error is not None:
+            return _text_result(note_error, is_error=True)
+
+        existing = await repository.get_illegal_action(finding_id)
+        if existing is None or existing.session_id != session_id:
+            return _text_result(
+                f"No finding '{finding_id}' was recorded for this game.",
+                is_error=True,
+            )
+
+        resolved = await repository.resolve_illegal_action(
+            finding_id, resolution_note=resolution_note
+        )
+        if resolved is None:
+            return _text_result(
+                f"Finding '{finding_id}' was already resolved, so nothing changed. "
+                f"Its recorded resolution is: {existing.resolution_note or 'none'}.",
+                is_error=True,
+            )
+        await _announce_illegal_action_finding(
+            repository=repository,
+            live_event_bus=live_event_bus,
+            session_id=session_id,
+            job_id=job_id,
+            finding=resolved,
+            history_emitter=history_emitter,
+            game_id=game_id,
+        )
+        return _text_result(
+            json.dumps(
+                {
+                    "finding_id": resolved.id,
+                    "player_id": resolved.player_id,
+                    "status": resolved.status,
+                    "resolution_note": resolved.resolution_note,
+                }
+            )
+        )
+
+    return handle
+
+
+def make_list_own_illegal_actions_handler(
+    repository: Repository,
+    seat_identity: SeatIdentity,
+) -> BuiltinHandler:
+    """Return a read-only view of the open findings against the calling seat.
+
+    Scoped to ``seat_identity.player_id``, so a seat cannot read what was found
+    against a teammate. There is deliberately no companion tool that resolves
+    one: resolution is a judgement about game state, and it belongs to the party
+    that reads game state authoritatively rather than to the party whose action
+    is in question.
+    """
+
+    async def handle(arguments: dict[str, Any]) -> dict[str, Any]:
+        del arguments
+        findings = await repository.list_open_illegal_actions(
+            seat_identity.orchestrator_session_id, seat_identity.player_id
+        )
+        return _text_result(
+            json.dumps(
+                {
+                    "player_id": seat_identity.player_id,
+                    "open_findings": [
+                        {
+                            "finding_id": finding.id,
+                            "round_number": finding.round_number,
+                            "violation": finding.violation,
+                            "required_undo": finding.required_undo,
+                        }
+                        for finding in findings
+                    ],
+                }
+            )
+        )
+
+    return handle
+
+
 def build_builtin_registry(
     skill_registry: SkillRegistry,
     repository: Repository,
@@ -1448,6 +1870,10 @@ def build_builtin_registry(
     job: Any,
     schedule_child_fn: Callable[[str], Any] | None = None,
     player_configs: list[Any] | None = None,
+    seat_identity: SeatIdentity | None = None,
+    session_orchestrated: bool = False,
+    history_emitter: Any | None = None,
+    game_id: str | None = None,
     subagent_wait_timeout_seconds: float = DEFAULT_SUBAGENT_WAIT_TIMEOUT_SECONDS,
     subagent_wait_poll_interval_seconds: float = (
         DEFAULT_SUBAGENT_WAIT_POLL_INTERVAL_SECONDS
@@ -1471,6 +1897,23 @@ def build_builtin_registry(
     registered only when a roster exists, so sessions that are not running an
     orchestrated game never see tools they cannot use. The roster is passed in
     already loaded so registry construction stays synchronous.
+
+    seat_identity: the seat this job plays, when it is a player of an
+    *orchestrated* game, and ``None`` otherwise. Resolved by the caller from
+    session metadata no player-facing tool can write, and passed in already
+    resolved so registry construction stays synchronous. It is what gates the
+    seat-only tools; a chat session's player child resolves to ``None`` and so
+    sees exactly the tools it saw before orchestrated mode existed.
+
+    session_orchestrated: whether *this* job's own session is in orchestrated
+    mode, which for a top-level job means it is the orchestrating agent. It gates
+    the orchestrator-only tools that make no sense in the chat flow.
+
+    history_emitter / game_id: the durable-timeline bus and the game this session
+    is attached to, used to record an illegal-action finding as history evidence
+    for the judge. Both may be absent — a run with history disabled, or a session
+    with no game yet — and a finding is then recorded on the job only. It is never
+    a reason to refuse the tool: the finding's job is to reach the seat.
     """
     registry = BuiltinToolRegistry()
 
@@ -1769,5 +2212,177 @@ def build_builtin_registry(
                     ),
                 )
             )
+
+        # Findings belong to the party that reads game state authoritatively, so
+        # they are gated on being the orchestrating job of an orchestrated
+        # session. A chat session's top-level job is also a master job, which is
+        # why ``session_orchestrated`` is checked as well: without it every
+        # existing chat agent would grow two tools about a table it is not
+        # running.
+        if session_orchestrated:
+            registry.register(
+                BuiltinToolDefinition(
+                    name="report_illegal_action",
+                    description=(
+                        "Record that one seat's action broke the rules, after you "
+                        "have read game state and confirmed it. The seat is told "
+                        "about the finding at the start of every turn it takes, "
+                        "until you resolve it, and it performs the undo with its "
+                        "own tools — you never undo a player's action for them. "
+                        "State the violation and the undo concretely enough for "
+                        "the seat to act on without asking: which card, which "
+                        "group, how many tokens. Legality is decided from game "
+                        "state, never from what a seat told you."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "player_id": {
+                                "type": "string",
+                                "description": (
+                                    "The seat whose action broke the rules, for "
+                                    "example player2. Must be a configured seat."
+                                ),
+                            },
+                            "violation": {
+                                "type": "string",
+                                "description": (
+                                    "What rule was broken, and by which action."
+                                ),
+                            },
+                            "required_undo": {
+                                "type": "string",
+                                "description": (
+                                    "Exactly what the seat must undo to put the "
+                                    "board back in a legal state."
+                                ),
+                            },
+                            "round_number": {
+                                "type": "integer",
+                                "description": (
+                                    "The round of play the violation happened in. "
+                                    "Omit it if you do not know."
+                                ),
+                            },
+                        },
+                        "required": ["player_id", "violation", "required_undo"],
+                    },
+                    handler=make_report_illegal_action_handler(
+                        repository=repository,
+                        live_event_bus=live_event_bus,
+                        session_id=session_id,
+                        job_id=job_id,
+                        job=job,
+                        history_emitter=history_emitter,
+                        game_id=game_id,
+                    ),
+                )
+            )
+
+            registry.register(
+                BuiltinToolDefinition(
+                    name="resolve_illegal_action",
+                    description=(
+                        "Close an illegal-action finding once you have VERIFIED "
+                        "the undo against game state. Read the board with your own "
+                        "tools and see that the required undo has happened. A "
+                        "seat's report that it undid the action is not "
+                        "verification — it is a claim to check. Resolving without "
+                        "checking is how an illegal board state becomes the "
+                        "official one. A finding that is already resolved cannot "
+                        "be resolved again."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "finding_id": {
+                                "type": "string",
+                                "description": (
+                                    "The finding_id returned by "
+                                    "report_illegal_action."
+                                ),
+                            },
+                            "resolution_note": {
+                                "type": "string",
+                                "description": (
+                                    "What you read in game state that confirmed "
+                                    "the undo."
+                                ),
+                            },
+                        },
+                        "required": ["finding_id", "resolution_note"],
+                    },
+                    handler=make_resolve_illegal_action_handler(
+                        repository=repository,
+                        live_event_bus=live_event_bus,
+                        session_id=session_id,
+                        job_id=job_id,
+                        job=job,
+                        history_emitter=history_emitter,
+                        game_id=game_id,
+                    ),
+                )
+            )
+
+    # Seat-only tools. ``seat_identity`` is ``None`` for the orchestrating job and
+    # for every job of a `chat` session — including a chat-mode player child,
+    # which carries a ``player_id`` tag but holds no seat — so neither ever sees
+    # these, and the chat flow is exactly what it was before orchestrated mode.
+    if seat_identity is not None:
+        registry.register(
+            BuiltinToolDefinition(
+                name="send_player_message",
+                description=(
+                    "Send a short message to another hero's player at this table. "
+                    "Use it to coordinate: what you are holding, what you intend "
+                    "to do next turn, what you need somebody else to handle. It "
+                    "reaches that seat at the start of its next turn, so it is "
+                    "table talk rather than a conversation you can wait on. You "
+                    "cannot message the game orchestrator — report to it by "
+                    "finishing your turn and saying what you did."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "recipient_player_id": {
+                            "type": "string",
+                            "description": (
+                                "The seat to message, for example player2. Must be "
+                                "another seat at this table, not your own."
+                            ),
+                        },
+                        "body": {
+                            "type": "string",
+                            "description": "What to tell that player, in plain text.",
+                        },
+                    },
+                    "required": ["recipient_player_id", "body"],
+                },
+                handler=make_send_player_message_handler(
+                    repository=repository,
+                    seat_identity=seat_identity,
+                ),
+            )
+        )
+
+        registry.register(
+            BuiltinToolDefinition(
+                name="list_my_illegal_actions",
+                description=(
+                    "List the open illegal-action findings recorded against your "
+                    "own seat, with the undo each one requires. Read-only: you "
+                    "perform the undo with your ordinary game tools, and only the "
+                    "game orchestrator can close a finding, after it has verified "
+                    "the undo against game state. Your open findings are also "
+                    "included at the start of every turn, so this is for "
+                    "re-reading them mid-turn."
+                ),
+                parameters={"type": "object", "properties": {}},
+                handler=make_list_own_illegal_actions_handler(
+                    repository=repository,
+                    seat_identity=seat_identity,
+                ),
+            )
+        )
 
     return registry

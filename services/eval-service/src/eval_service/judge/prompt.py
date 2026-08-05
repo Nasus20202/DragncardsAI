@@ -6,10 +6,12 @@ from typing import Any
 from eval_service.judge.assembly import (
     ChildVerdict,
     GameInput,
+    IllegalActionFinding,
     MoveInput,
     NeighbourMove,
     RoundInput,
 )
+from eval_service.judge.events import SESSION_MODE_ORCHESTRATED
 from eval_service.judge.rounds import round_label
 from eval_service.judge.state_view import canonical_json, render_state
 
@@ -49,6 +51,32 @@ Respond with ONLY a single JSON object, no prose around it, of the form:
 "tempo_efficiency": int, "threat_resource": int}, "overall_score": int, \
 "rationale": str, "flags": [str, ...]}
 """
+
+
+ORCHESTRATED_MODE_NOTE = """\
+This play was recorded in ORCHESTRATED mode: each player seat was played by a \
+SEPARATE agent, holding its own conversation context and its own persona. No seat \
+could see another seat's reasoning or private deliberation — only the shared board \
+and whatever the coordinating agent chose to pass along. Do NOT penalise a seat \
+for failing to account for information it could not have seen, and do not read \
+imperfect coordination between seats as a mistake by either one.
+
+"""
+
+
+def _mode_note(session_mode: str) -> str:
+    """The orchestration-mode framing for a projection, empty in chat mode.
+
+    Empty rather than "this was chat mode" on purpose: a chat projection has to
+    read EXACTLY as it read before orchestrated mode existed, byte for byte, or
+    verdicts recorded before this change stop being comparable with verdicts
+    recorded after it. Every mode-dependent addition in this module is gated the
+    same way, and ``tests/unit/test_judge_session_mode.py`` pins the chat prompts
+    against literal expected strings so the guarantee cannot quietly lapse.
+    """
+    if session_mode != SESSION_MODE_ORCHESTRATED:
+        return ""
+    return ORCHESTRATED_MODE_NOTE
 
 
 def _json(value: Any) -> str:
@@ -95,6 +123,7 @@ def build_move_messages(
 ) -> list[dict[str, str]]:
     """Build a fresh, self-contained judge prompt for a single move."""
     user = (
+        f"{_mode_note(move.session_mode)}"
         f"Evaluate this single agent move (seq {move.target_seq}){_round_scope(move)}.\n"
         "The move is one action of that round's play; grade it as its step of "
         "that play, not as a play in its own right.\n\n"
@@ -210,9 +239,11 @@ def build_round_messages(
         f"Moves taken this round{who}" if rnd.player else "Moves taken this round"
     )
     user = (
+        f"{_mode_note(rnd.session_mode)}"
         f"Evaluate this whole round{who} ({round_label(rnd.round_number)}, "
         f"seqs {rnd.from_seq}-{rnd.to_seq}) as a unit.\n\n"
         f"{_child_context_block(rnd.child_verdicts, 'move')}"
+        f"{_illegal_action_block(rnd.illegal_actions, rnd.player)}"
         f"{moves_label}:\n{moves_text}\n\n"
         f"Game state at round close:\n{_state_json(rnd.closing_state, max_state_chars, label='closing')}\n"
     )
@@ -236,6 +267,7 @@ def build_game_messages(
     """
     who = f" for {game.player}" if game.player else ""
     user = (
+        f"{_mode_note(game.session_mode)}"
         f"Evaluate this whole game{who} (seqs {game.from_seq}-{game.to_seq}) as a "
         f"unit, judging how well this player played across the whole game.\n\n"
         f"{_child_context_block(game.child_verdicts, 'round')}"
@@ -245,6 +277,50 @@ def build_game_messages(
         {"role": "system", "content": _system_content(prompt_override, skills)},
         {"role": "user", "content": user},
     ]
+
+
+def _illegal_action_block(
+    findings: list[IllegalActionFinding], player: str | None
+) -> str:
+    """Render the round's recorded illegal-action findings as evidence.
+
+    Two things this block has to get right.
+
+    **It is evidence, not a verdict**, and the text says so. The orchestrator
+    decided legality from game state, which is a stronger source than anything the
+    judge can reconstruct from a move list — but a recorded violation is one input
+    to a round's score, not the score. Presenting it as a finding to weigh keeps a
+    round with one corrected slip from collapsing to a zero, and equally keeps the
+    judge from having to guess at a violation the orchestrator already established.
+
+    **A resolved finding reads differently from an open one.** Resolved findings
+    stay on the timeline because "the seat undid it" is itself part of the record,
+    so each entry states which it is, and a resolution note is shown when one was
+    recorded.
+    """
+    if not findings:
+        return ""
+    lines = [
+        "Illegal-action findings the orchestrator recorded for this round. This is "
+        "EVIDENCE, not a verdict: legality was decided from the recorded game "
+        "state, and you weigh a finding alongside everything else here rather "
+        "than letting it settle the score by itself."
+    ]
+    for finding in findings:
+        seat = finding.player or "an unnamed seat"
+        if finding.is_resolved:
+            state = "RESOLVED"
+            if finding.resolution_note:
+                state += f" — {finding.resolution_note}"
+        else:
+            state = "OPEN, not undone"
+        lines.append(f"- seq {finding.seq}, {seat}: {finding.violation} [{state}]")
+    if player:
+        lines.append(
+            f"A finding naming a seat other than {player} explains the position "
+            f"this round produced; it is not {player}'s play to answer for."
+        )
+    return "\n".join(lines) + "\n\n"
 
 
 def _child_context_block(children: list[ChildVerdict], noun: str) -> str:

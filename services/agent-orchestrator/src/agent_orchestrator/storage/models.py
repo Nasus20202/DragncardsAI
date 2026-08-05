@@ -386,6 +386,76 @@ class JobQuestion(Base):
     )
 
 
+class PlayerMessage(Base):
+    """One message a player seat sent to another seat at the same table.
+
+    ``session_id`` is the *orchestrating* session, not the sending seat's own
+    session. A seat's session is a separate ``agent_sessions`` row, so the only
+    identifier a sender and a recipient share is the orchestrating session they
+    are both seats of — which is also what makes "a configured seat of the same
+    table" a lookup against ``session_player_configs`` rather than a guess.
+
+    ``delivered_at`` is ``None`` until the message reaches its recipient.
+    Delivery is pull, at the start of the recipient's next invocation: a player
+    agent exists only while it is running a job, so there is nothing to push to
+    between rounds, and holding a message in process memory is forbidden.
+    """
+
+    __tablename__ = "player_messages"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.id", ondelete="CASCADE")
+    )
+    sender_player_id: Mapped[str] = mapped_column(String(16))
+    recipient_player_id: Mapped[str] = mapped_column(String(16))
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
+    delivered_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+
+
+class PlayerIllegalAction(Base):
+    """A finding that one seat's action broke the rules, and its resolution.
+
+    ``session_id`` is the orchestrating session, for the same reason it is on
+    ``PlayerMessage``: the finding is opened by the orchestrating agent and read
+    by a seat whose own session is a different row.
+
+    ``status`` is ``open`` or ``resolved``. Only the orchestrating job may
+    resolve one, and only after verifying the undo against game state — a seat's
+    claim to have undone something is data to check, never the check itself. The
+    transition out of ``open`` is applied conditionally on this column, so a
+    double resolve is a no-op rather than a second resolution.
+
+    ``round_number`` is nullable because a violation can be noticed without it
+    being clear which round of play it belongs to.
+    """
+
+    __tablename__ = "player_illegal_actions"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.id", ondelete="CASCADE")
+    )
+    player_id: Mapped[str] = mapped_column(String(16))
+    round_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    violation: Mapped[str] = mapped_column(Text)
+    required_undo: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(16), default="open", server_default="open"
+    )
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime(), default=utc_now, onupdate=utc_now
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+
+
 class CompactionRecord(Base):
     __tablename__ = "compaction_records"
 

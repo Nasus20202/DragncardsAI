@@ -9,6 +9,10 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 from uuid import uuid4
 
+from agent_orchestrator.runtime.session_modes import (
+    SESSION_MODE_CHAT,
+    SESSION_MODE_ORCHESTRATED,
+)
 from agent_orchestrator.storage.valkey import RespConnection
 from agent_orchestrator.telemetry import get_tracer
 
@@ -18,6 +22,18 @@ tracer = get_tracer(__name__)
 ENVELOPE_VERSION = 1
 HISTORY_ACTOR_AGENT = "agent"
 HISTORY_ACTOR_USER = "user"
+
+# An illegal-action finding is recorded as an *agent* event rather than under a
+# new actor: ``actor`` is a fixed ``Literal`` in the history-service envelope
+# (``agent``/``game-service``/``evaluator``/``user``), so a new actor would be a
+# schema change every consumer has to learn. The event type is what distinguishes
+# it, and eval-service's ``is_agent_move`` predicate is what keeps it from being
+# graded as a move.
+HISTORY_EVENT_TYPE_ILLEGAL_ACTION = "illegal_action"
+
+# Resolution states an illegal-action finding can be recorded in.
+ILLEGAL_ACTION_STATUS_OPEN = "open"
+ILLEGAL_ACTION_STATUS_RESOLVED = "resolved"
 
 # Keys used inside AgentSession.metadata_json to carry history-related state.
 SESSION_GAME_ID_KEY = "game_id"
@@ -54,6 +70,37 @@ _GAME_ID_SOURCE_TOOLS = frozenset(
 def build_idempotency_key(game_id: str, actor: str, producer_offset: int | str) -> str:
     raw = f"{game_id}|{actor}|{producer_offset}".encode()
     return hashlib.sha256(raw).hexdigest()
+
+
+def stamp_session_mode(payload: dict[str, Any], session_mode: str) -> None:
+    """Record the emitting session's mode on an outgoing payload.
+
+    **The key is omitted for ``chat``, not written as ``"chat"``.** The two
+    options were weighed and this one was chosen deliberately:
+
+    - There is then exactly ONE reader rule — *absent means chat* — and it covers
+      both a session running in chat mode today and every event recorded before
+      the mode existed. Writing ``"chat"`` explicitly would leave two shapes that
+      mean the same thing, and a reader would still need the absent-key default
+      for the historical rows, so nothing is actually simplified.
+    - A chat event's stored payload stays byte-identical to what it was before
+      orchestrated mode existed, so no consumer, export bundle, or recorded
+      fixture shifts underneath this change. That is the "the addition changes no
+      stored meaning" guarantee, kept at the level of the bytes rather than
+      asserted about them.
+    - It is also the more queryable of the two, contrary to first impressions.
+      The question worth asking of the store is "which events came from
+      orchestrated play", and ``payload ->> 'session_mode' = 'orchestrated'``
+      answers it under either scheme. The complement,
+      ``payload ->> 'session_mode' IS DISTINCT FROM 'orchestrated'``, correctly
+      includes the pre-mode rows — whereas an ``= 'chat'`` predicate against an
+      always-written key would silently miss every one of them.
+
+    It also matches the ``player`` key immediately below, which is likewise
+    absent rather than null when it does not apply.
+    """
+    if session_mode != SESSION_MODE_CHAT:
+        payload["session_mode"] = session_mode
 
 
 def is_game_mutating_tool(assignment: str | None, tool_name: str) -> bool:
@@ -240,6 +287,7 @@ class HistoryEventEmitter:
         conversation_context: list[dict[str, Any]],
         event_type: str = "agent_move",
         player: str | None = None,
+        session_mode: str = SESSION_MODE_CHAT,
     ) -> dict[str, Any] | None:
         """Build and publish an agent move/decision envelope. Best-effort."""
         if not self._enabled:
@@ -258,6 +306,7 @@ class HistoryEventEmitter:
                     producer_offset=producer_offset,
                     event_type=event_type,
                     player=player,
+                    session_mode=session_mode,
                 )
                 await self._bus.publish(envelope)
             return envelope
@@ -274,6 +323,7 @@ class HistoryEventEmitter:
         *,
         game_id: str,
         prompt: str,
+        session_mode: str = SESSION_MODE_CHAT,
     ) -> dict[str, Any] | None:
         """Build and publish a ``user_prompt`` envelope. Best-effort.
 
@@ -281,6 +331,11 @@ class HistoryEventEmitter:
         timeline can show what the user asked for, inline with the moves it
         produced. Uses the same game_id + producer-offset envelope mechanism as
         :meth:`emit_agent_move`.
+
+        The mode travels on this event too: a prompt given to an orchestrated
+        session is as much a part of that timeline as the moves it caused, and a
+        consumer reading a span should not have to reach for a neighbouring move
+        to learn which kind of play it is looking at.
         """
         if not self._enabled:
             return None
@@ -293,6 +348,7 @@ class HistoryEventEmitter:
                     game_id=game_id,
                     prompt=prompt,
                     producer_offset=producer_offset,
+                    session_mode=session_mode,
                 )
                 await self._bus.publish(envelope)
             return envelope
@@ -315,17 +371,24 @@ class HistoryEventEmitter:
         producer_offset: int | str,
         event_type: str = "agent_move",
         player: str | None = None,
+        session_mode: str = SESSION_MODE_CHAT,
     ) -> dict[str, Any]:
         # ``player`` names the seat that made this move in a multi-player
         # orchestrated game. It is omitted entirely for moves that belong to no
         # seat (the orchestrator's own phase and villain automation) so
         # downstream consumers can tell "seat unknown" from "no seat".
+        #
+        # The mode and the seat are independent, and the combination is what makes
+        # the orchestrator's own bookkeeping legible: an orchestrated event with
+        # no ``player`` is the coordinating agent acting for the table, which is a
+        # different thing from a seat's play and must not be attributed to one.
         payload: dict[str, Any] = {
             "intended_action": intended_action,
             "reasoning": reasoning,
             "arguments": arguments,
             "conversation_context": conversation_context,
         }
+        stamp_session_mode(payload, session_mode)
         if player:
             payload["player"] = player
         return {
@@ -348,17 +411,114 @@ class HistoryEventEmitter:
         game_id: str,
         prompt: str,
         producer_offset: int | str,
+        session_mode: str = SESSION_MODE_CHAT,
     ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"prompt": prompt}
+        stamp_session_mode(payload, session_mode)
         return {
             "envelope_version": ENVELOPE_VERSION,
             "event_id": str(uuid4()),
             "game_id": game_id,
             "actor": HISTORY_ACTOR_USER,
             "event_type": "user_prompt",
-            "payload": {"prompt": prompt},
+            "payload": payload,
             "occurred_at": datetime.now(timezone.utc).isoformat(),
             "idempotency_key": build_idempotency_key(
                 game_id, HISTORY_ACTOR_USER, producer_offset
+            ),
+            "producer_offset": producer_offset,
+        }
+
+    async def emit_illegal_action(
+        self,
+        *,
+        game_id: str,
+        player: str,
+        violation: str,
+        required_undo: str,
+        status: str = ILLEGAL_ACTION_STATUS_OPEN,
+        resolution_note: str | None = None,
+        round_number: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Build and publish an ``illegal_action`` finding envelope. Best-effort.
+
+        A finding is the orchestrator's own record that a seat's action broke the
+        rules, written into the durable timeline so the judge is given it as
+        recorded evidence instead of having to re-derive a violation from the move
+        list. It is emitted whether it is still ``open`` or already ``resolved``,
+        because "the seat undid it" is itself part of the record.
+
+        It rides on the ``agent`` actor (see
+        :data:`HISTORY_EVENT_TYPE_ILLEGAL_ACTION`) and carries no
+        ``conversation_context``: a finding is a decision the orchestrator made
+        about game state, not a turn of a conversation, and nothing downstream
+        grades it as a move.
+        """
+        if not self._enabled:
+            return None
+        try:
+            # Assign the offset and publish under one lock so concurrent
+            # emissions reach the stream in offset order (see class docstring).
+            async with self._publish_lock:
+                producer_offset = await self._bus.next_producer_offset(game_id)
+                envelope = self.build_illegal_action_envelope(
+                    game_id=game_id,
+                    player=player,
+                    violation=violation,
+                    required_undo=required_undo,
+                    status=status,
+                    resolution_note=resolution_note,
+                    round_number=round_number,
+                    producer_offset=producer_offset,
+                )
+                await self._bus.publish(envelope)
+            return envelope
+        except Exception:
+            logger.warning(
+                "Failed to emit illegal_action history event for game %s (continuing)",
+                game_id,
+                exc_info=True,
+            )
+            return None
+
+    @staticmethod
+    def build_illegal_action_envelope(
+        *,
+        game_id: str,
+        player: str,
+        violation: str,
+        required_undo: str,
+        producer_offset: int | str,
+        status: str = ILLEGAL_ACTION_STATUS_OPEN,
+        resolution_note: str | None = None,
+        round_number: int | None = None,
+    ) -> dict[str, Any]:
+        # A finding always names a seat — an action with no seat has no seat to
+        # hold responsible — so ``player`` is required here rather than optional as
+        # it is on a move. The mode is always ``orchestrated`` for the same reason:
+        # only an orchestrated session has seats and a coordinator to judge them,
+        # so the mode is stated rather than taken as an argument.
+        payload: dict[str, Any] = {
+            "player": player,
+            "violation": violation,
+            "required_undo": required_undo,
+            "status": status,
+            "session_mode": SESSION_MODE_ORCHESTRATED,
+        }
+        if resolution_note is not None:
+            payload["resolution_note"] = resolution_note
+        if round_number is not None:
+            payload["round_number"] = round_number
+        return {
+            "envelope_version": ENVELOPE_VERSION,
+            "event_id": str(uuid4()),
+            "game_id": game_id,
+            "actor": HISTORY_ACTOR_AGENT,
+            "event_type": HISTORY_EVENT_TYPE_ILLEGAL_ACTION,
+            "payload": payload,
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "idempotency_key": build_idempotency_key(
+                game_id, HISTORY_ACTOR_AGENT, producer_offset
             ),
             "producer_offset": producer_offset,
         }

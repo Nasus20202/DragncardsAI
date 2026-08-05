@@ -225,6 +225,22 @@ tracked separately as DRA-32.
 
 The history-service assigns `seq` (gap-free per game, from 1) and `recorded_at`.
 
+### Session mode on a recorded event
+
+`payload` is stored and returned verbatim. An event from an agent session may carry
+an optional `session_mode` key naming the orchestration mode that session ran in
+(`orchestrated`). It is **absent** on a chat-mode event and on every event recorded
+before the mode existed, so those two are the same shape and there is exactly one
+rule for reading them: absent means `chat`.
+
+Both event read paths — `GET /games/{game_id}/events` and `GET /games/{game_id}/timeline` —
+therefore project the resolved mode as a top-level `session_mode` field, defaulting
+to `chat`, so a consumer can tell an orchestrated timeline from a chat one without
+digging into the payload. In particular it must not be inferred from the presence of
+a seat identifier: an orchestrated event with no `player` is the coordinating
+agent's own bookkeeping, not a chat event. An orchestrated seat's move carries both
+the mode and its `player`; the coordinator's own events carry the mode and no seat.
+
 ## History bundles (export / import)
 
 A bundle is **NDJSON**: one self-contained JSON object per line, keys sorted, in

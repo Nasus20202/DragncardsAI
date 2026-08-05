@@ -248,6 +248,17 @@ export interface PlayerConfigResponse {
   model_name: string | null;
   reasoning: { effort?: string; max_tokens?: number } | null;
   skills: string[] | null;
+  /**
+   * The persona this seat's agent is started from, or `null` when it names
+   * none. Optional so a response from an orchestrator that predates the field
+   * still typechecks.
+   */
+  persona?: string | null;
+  /**
+   * The seat's own persistent agent session, `null` until the seat is first
+   * prompted. Reading that session is how a user reads the seat's context.
+   */
+  agent_session_id?: string | null;
   gateway_options: Record<string, JsonValue>;
   provider_options: Record<string, JsonValue>;
   created_at: string;
@@ -260,6 +271,8 @@ export interface PlayerConfigRequest {
   provider_id?: string;
   model_name?: string;
   reasoning?: { enabled: boolean; effort?: string; max_tokens?: number };
+  /** Persona name; the orchestrator rejects one it does not know. */
+  persona?: string;
   skills?: string[];
   gateway_options?: Record<string, JsonValue>;
   provider_options?: Record<string, JsonValue>;

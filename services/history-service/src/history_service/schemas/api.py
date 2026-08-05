@@ -5,10 +5,29 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from history_service.schemas.envelope import StoredEvent, StoredSnapshot
+from history_service.schemas.envelope import (
+    SESSION_MODE_CHAT,
+    StoredEvent,
+    StoredSnapshot,
+    session_mode_of,
+)
 
 
 class EventResponse(BaseModel):
+    """A stored event as a reader receives it.
+
+    ``session_mode`` is the one field here that is not a stored column: it is the
+    orchestration mode the producing agent session ran in, projected out of the
+    payload by :func:`~history_service.schemas.envelope.session_mode_of` so a
+    consumer can tell an orchestrated timeline from a chat one directly. It is
+    surfaced as a field rather than left for the consumer to dig out of
+    ``payload`` because the payload only carries the key when the mode is
+    orchestrated, and a consumer should neither have to know that nor be tempted
+    to read the absence of a seat identifier as evidence of chat mode — which
+    would misclassify the orchestrating agent's own seatless events. Reads
+    ``chat`` for every event recorded before the mode existed.
+    """
+
     event_id: str
     game_id: str
     seq: int
@@ -20,10 +39,14 @@ class EventResponse(BaseModel):
     recorded_at: datetime
     idempotency_key: str
     producer_offset: int | str | None = None
+    session_mode: str = SESSION_MODE_CHAT
 
     @classmethod
     def from_stored(cls, event: StoredEvent) -> "EventResponse":
-        return cls(**event.model_dump())
+        return cls(
+            **event.model_dump(),
+            session_mode=session_mode_of(event.payload),
+        )
 
 
 class EventListResponse(BaseModel):

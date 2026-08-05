@@ -16,6 +16,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.types import Text
 
 from history_service.schemas.envelope import (
+    AGENT_EVENT_TYPES_WITHOUT_CONTEXT,
     EventEnvelope,
     StoredEvent,
     StoredSnapshot,
@@ -83,6 +84,11 @@ IMPORT_INSERT_CHUNK = 100
 #: few hundred events of either is tens of megabytes, so a listing that carries
 #: them cannot be fast no matter how it is indexed. Both stay reachable per
 #: event through ``GET /games/{game_id}/events``.
+#:
+#: Only unbounded fields belong here. ``session_mode`` in particular must stay,
+#: because a timeline listing is how a consumer reads a whole game at once and
+#: pruning the mode would leave it having to fetch an event's full payload just to
+#: learn which kind of play it is looking at.
 TIMELINE_OMITTED_PAYLOAD_KEYS = ("state", "conversation_context")
 
 #: The two scalars kept out of the omitted ``state``: they are what the round and
@@ -418,12 +424,21 @@ class Repository:
     async def get_latest_agent_event_at_or_before(
         self, game_id: str, target_seq: int
     ) -> StoredEvent | None:
+        """The latest agent event that could carry a conversation to rebuild.
+
+        Agent event types known to carry no ``conversation_context`` are excluded
+        (:data:`AGENT_EVENT_TYPES_WITHOUT_CONTEXT`). Selecting one would hand the
+        restore an event with nothing in it, and the restore would rebuild an empty
+        conversation without reporting a problem — so the filter belongs in the
+        query rather than in a caller that would have to know to look.
+        """
         async with self._session_factory() as session:
             result = await session.execute(
                 select(EventRow)
                 .where(
                     EventRow.game_id == game_id,
                     EventRow.actor == "agent",
+                    EventRow.event_type.notin_(AGENT_EVENT_TYPES_WITHOUT_CONTEXT),
                     EventRow.seq <= target_seq,
                 )
                 .order_by(EventRow.seq.desc())

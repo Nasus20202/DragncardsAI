@@ -33,6 +33,23 @@ stable `idempotency_key`; the history-service assigns the gap-free per-game
 on `(game_id, idempotency_key)`. Unknown envelope fields are tolerated for forward
 compatibility.
 
+**`actor` is a fixed `Literal`**, so a producer's new concern arrives as a new
+`event_type` under an existing actor rather than as a new actor. That is why the
+agent-orchestrator's `illegal_action` findings ride on `actor: "agent"` alongside its
+`agent_move` events — and why a consumer must never read `actor == "agent"` as "this
+is a move".
+
+**`session_mode` is projected on read, not stored as a column.** A payload carries
+the key only when the mode is `orchestrated`; a chat-mode event and every event
+predating the mode omit it, so their stored bytes are identical and one rule covers
+both. `schemas.envelope.session_mode_of` is the only place that resolves the `chat`
+default and `EventResponse` the only place that surfaces it, so do not scatter
+`payload.get("session_mode", "chat")` at call sites — and do not infer the mode from
+whether a `player` key is present, since an orchestrated event with no seat is the
+coordinating agent's own bookkeeping. Only unbounded fields belong in
+`TIMELINE_OMITTED_PAYLOAD_KEYS`: pruning `session_mode` would cost the timeline read
+the one field that lets it classify a whole game at once.
+
 ### Ordering and idempotency
 
 `seq` is assigned authoritatively under a per-game advisory lock with

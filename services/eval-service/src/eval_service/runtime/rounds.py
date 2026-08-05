@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from eval_service.integrations.history import HistoryClient
 from eval_service.judge.assembly import detect_round_boundaries
+from eval_service.judge.events import is_agent_move
 from eval_service.judge.rounds import round_label
 from eval_service.runtime.players import players_in_span
 from eval_service.schemas.api import RoundListResponse, RoundSummary
@@ -46,7 +47,7 @@ def _summarize(
     events: list[StoredEvent], round_of_play: int, from_seq: int, to_seq: int
 ) -> RoundSummary:
     move_seqs = [
-        e.seq for e in events if e.actor == "agent" and from_seq <= e.seq <= to_seq
+        e.seq for e in events if is_agent_move(e) and from_seq <= e.seq <= to_seq
     ]
     return RoundSummary(
         round_number=round_of_play,

@@ -14,6 +14,8 @@ from agent_orchestrator.storage.models import (
     JobOutput,
     JobQuestion,
     McpRegistry,
+    PlayerIllegalAction,
+    PlayerMessage,
     SessionEnabledMcp,
     SessionModelConfig,
     SessionEnabledSkill,
@@ -329,6 +331,20 @@ class SessionRepositoryMixin:
             await session.execute(
                 delete(SessionPlayerConfig).where(
                     SessionPlayerConfig.session_id == session_id
+                )
+            )
+            # The player channel and the findings hang off the ORCHESTRATING
+            # session, so deleting a table takes both with it. They are swept
+            # explicitly for the same reason every other dependent row is: the
+            # declared cascade is not enforced on SQLite without the
+            # per-connection pragma, so relying on it would leave the test suites
+            # passing while real rows survived their session.
+            await session.execute(
+                delete(PlayerMessage).where(PlayerMessage.session_id == session_id)
+            )
+            await session.execute(
+                delete(PlayerIllegalAction).where(
+                    PlayerIllegalAction.session_id == session_id
                 )
             )
             await session.execute(

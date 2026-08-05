@@ -14,8 +14,20 @@ from agent_orchestrator.storage.repository import Repository
 
 
 @pytest.fixture
-async def repository():
-    engine = create_engine("sqlite+aiosqlite:///:memory:")
+async def repository(tmp_path: Path):
+    """A per-test database that tolerates the detached child monitors.
+
+    Deliberately file-backed rather than ``:memory:``. SQLAlchemy serves a
+    memory SQLite URL from a StaticPool — one connection shared by every session
+    — and these tests spawn detached `monitor-child-*` tasks that keep querying
+    the repository after the call that started them returns. Two sessions
+    interleaving on one connection means one task's transaction boundary can
+    discard another's uncommitted INSERT, which surfaced as a rare
+    `create_session` returning a row it had just written as `None`. A file gives
+    each session its own connection and lets SQLite's own locking order the
+    writers, so the race cannot express itself.
+    """
+    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'orchestrator.db'}")
     await ensure_schema(engine)
     repo = Repository(create_session_factory(engine))
     try:

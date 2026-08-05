@@ -86,7 +86,7 @@ def test_explicit_player_hint_on_arguments_wins():
             game_id="g",
             seq=2,
             actor="agent",
-            event_type="move",
+            event_type="agent_move",
             payload={
                 "intended_action": "play",
                 "reasoning": "r",

@@ -343,6 +343,49 @@ that seat's row, tagged with the seat id and the session's `game_id`, so every m
 is attributed to it without inference. Pair it with the standard `wait_for_subagent`. The
 `marvel-champions-orchestrator` skill is the playbook for driving this.
 
+#### Seats talk to each other, not to the orchestrator
+
+A seat job of an orchestrated session gains a `send_player_message` built-in taking a
+`recipient_player_id` and a `body`. The recipient must be another configured seat of the same
+orchestrating session; the sender is the caller's own seat identity, read from its session metadata
+and never from the arguments, so a body claiming to be from another seat changes nothing. There is no
+recipient value that reaches the orchestrator — it is not a seat, so the roster lookup cannot return
+it. A seat reports to the orchestrator by finishing its turn, which is the whole of that direction.
+
+Messages are rows in `player_messages` (migration `0012`), keyed on the **orchestrating** session
+because that is the only id the sender and the recipient share. Delivery is **pull**: at the start of
+a seat's next invocation its undelivered messages are marked delivered and framed as untrusted data
+attributed to the sending seat, in the same `<<<PLAYER_OUTPUT>>>` block a `player_report` uses,
+inside a user-role message ahead of the seat's own prompt. Marking is conditional, so two concurrent
+invocations of one seat cannot both deliver the same message. Pull rather than push because a player
+agent exists only while it is running a job: a message reaches a seat when that seat next plays,
+which is the latency a table of humans has.
+
+#### Illegal actions are reported, undone by the seat, and closed only by verification
+
+The orchestrating job of an orchestrated session gains `report_illegal_action` (seat, `violation`,
+`required_undo`, optional `round_number`) and `resolve_illegal_action` (`finding_id`,
+`resolution_note`). Both record an `illegal_action_finding` job event, durably and on the live bus,
+with `status` distinguishing the two.
+
+Findings are rows in `player_illegal_actions` (migration `0012`). Every **open** finding against a
+seat is carried into **every** invocation of that seat, framed the same way a message is, until it is
+resolved — so a seat cannot outlast a violation by ignoring one turn. The seat performs the undo with
+its own game tools and can re-read its findings with the read-only `list_my_illegal_actions`; it has
+no tool that closes one. Resolution is conditional on the finding still being open, so a second
+resolve is a no-op rather than a second resolution.
+
+That asymmetry is the point: legality is decided from game state, and a seat's claim to have undone
+something is a claim to verify, never the verification. `resolve_illegal_action` says so in its own
+description, because the party reading it is a model.
+
+A finding also reaches the durable timeline: `HistoryEventEmitter.emit_illegal_action` publishes it as
+an `illegal_action` history event (`actor: "agent"`, carrying the seat, the violation, the required
+undo, the `open`/`resolved` status and any resolution note). It is a new *event type* rather than a new
+actor because history-service pins `actor` to a fixed set — which is also why eval-service identifies a
+move by event type and not by the actor alone, so a finding is never graded as a play. The eval-service
+judge is then given the round's findings as recorded evidence to weigh, not as a verdict.
+
 ### Agent Personas
 
 A **persona** is a reusable, user-authored bundle of the three things that make one agent behave
@@ -596,6 +639,12 @@ Event types include:
 - `user_question` — the agent asked the user something, with the offered choices
 - `user_question_answered` — the answer that was recorded
 - `user_question_closed` — the question stopped awaiting an answer (`timeout` or `cancelled`)
+- `seat_scope_violation` — a player seat's tool call named another seat's cards and was refused
+  before the tool ran. Carries the caller's `player_id`, the `foreign_player_id` it reached for, the
+  `tool_name`, and the `argument`/`value` that named it. Orchestrated mode only
+- `illegal_action_finding` — the orchestrator recorded, or resolved, a finding that a seat's action
+  broke the rules. Carries the `finding_id`, the `player_id` it concerns, the `violation`, the
+  `required_undo`, and a `status` of `open` or `resolved`. Orchestrated mode only
 - `completion`
 - `failure`
 - `cancellation`

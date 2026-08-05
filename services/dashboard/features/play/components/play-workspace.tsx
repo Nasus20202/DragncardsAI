@@ -233,9 +233,14 @@ export function PlayWorkspace() {
         isOpen={isSettingsOpen}
         mcps={selectedSession?.mcps ?? []}
         modelOptions={modelOptions}
+        players={selectedSession?.players ?? []}
         providers={uniqueProviders}
+        sessionId={selectedSession?.id ?? null}
         skills={skills}
         onClose={() => setSettingsOpenOverride(false)}
+        // A seat is a session, so its context is the transcript this workspace
+        // already renders: selecting the seat's session shows it.
+        onOpenSeatContext={selectSession}
         onDraftChange={setDraft}
         onSave={saveConfiguration}
         onTerminate={terminatePlaySession}

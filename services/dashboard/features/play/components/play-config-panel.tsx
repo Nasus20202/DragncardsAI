@@ -4,6 +4,7 @@ import { Button, Separator } from "@heroui/react";
 import {
   McpAssignmentResponse,
   McpRegistryResponse,
+  PlayerConfigResponse,
   ProviderResponse,
   SessionDraft,
   SkillDefinitionResponse,
@@ -19,6 +20,7 @@ import {
 import { isWorking } from "@/features/play/lib/session-draft";
 import { McpSection } from "@/features/play/components/mcp-section";
 import { PersonaPicker } from "@/features/personas/components/persona-picker";
+import { SeatRoster } from "@/features/play/components/seat-roster";
 import { SessionModePicker } from "@/features/play/components/session-mode-picker";
 
 /** Shown in place of the mode picker's own description once the mode is fixed. */
@@ -124,6 +126,12 @@ interface Props {
    * a mode change. Computed by the workspace, which holds the session.
    */
   isModeLocked?: boolean;
+  /** The selected session's id, or `null` before it has been created. */
+  sessionId?: string | null;
+  /** The selected session's configured seats; only orchestrated sessions have any. */
+  players?: PlayerConfigResponse[];
+  /** Opens a seat's own session, whose transcript is that seat's context. */
+  onOpenSeatContext?: (seatSessionId: string) => void;
   onDraftChange: (next: SessionDraft) => void;
   onClose: () => void;
   onSave: () => void;
@@ -143,6 +151,9 @@ export function PlayConfigPanel({
   canSave,
   isOpen,
   isModeLocked = false,
+  sessionId = null,
+  players = [],
+  onOpenSeatContext,
   onDraftChange,
   onClose,
   onSave,
@@ -249,6 +260,26 @@ export function PlayConfigPanel({
               disabled={isModeLocked}
               disabledReason={MODE_LOCKED_REASON}
             />
+
+            {/*
+              A chat session has no seats, so the roster is shown only for an
+              orchestrated one. Remounted per session so a saved seat can never
+              be shown under a different session's roster.
+            */}
+            {draft.sessionMode === "orchestrated" && (
+              <>
+                <Separator />
+
+                <SeatRoster
+                  key={sessionId ?? "unsaved"}
+                  sessionId={sessionId}
+                  players={players}
+                  modelOptions={modelOptions}
+                  sessionModelName={draft.modelName}
+                  onOpenSeatContext={onOpenSeatContext}
+                />
+              </>
+            )}
 
             <Separator />
 

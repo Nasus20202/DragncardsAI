@@ -83,45 +83,45 @@ them and it has to exist before any of them can be reached.
 
 ## 5. The seat guard
 
-- [ ] 5.1 Add `runtime/seat_guard.py` with a pure function from
+- [x] 5.1 Add `runtime/seat_guard.py` with a pure function from
       (caller seat, tool name, arguments) to a violation or `None`, recognising a
       seat identifier value, a `player<N><Group>` group id, and an explicit
       player-identifying argument.
-- [ ] 5.2 Leave non-seat-owned groups unrestricted, and document why in the module.
-- [ ] 5.3 Apply the guard in the tool-dispatch path for jobs whose session is a
+- [x] 5.2 Leave non-seat-owned groups unrestricted, and document why in the module.
+- [x] 5.3 Apply the guard in the tool-dispatch path for jobs whose session is a
       seat, before the tool is invoked.
-- [ ] 5.4 Return an error result naming the argument and the foreign seat, and record
+- [x] 5.4 Return an error result naming the argument and the foreign seat, and record
       a `seat_scope_violation` event on the job.
-- [ ] 5.5 Register `seat_scope_violation` in the dashboard's `STREAM_EVENT_TYPES`.
-- [ ] 5.6 Unit tests: a foreign group refused, an own group allowed, a shared group
+- [x] 5.5 Register `seat_scope_violation` in the dashboard's `STREAM_EVENT_TYPES`.
+- [x] 5.6 Unit tests: a foreign group refused, an own group allowed, a shared group
       allowed, an explicit foreign seat argument refused, and the orchestrator not
       being guarded.
 
 ## 6. Player-to-player messaging
 
-- [ ] 6.1 Add the `player_messages` table to migration `0012` in both dialects, with
+- [x] 6.1 Add the `player_messages` table to migration `0012` in both dialects, with
       sender, recipient, orchestrating session, body, and delivery timestamps.
-- [ ] 6.2 Add a `PlayerChannelRepositoryMixin` with send, list-undelivered, and a
+- [x] 6.2 Add a `PlayerChannelRepositoryMixin` with send, list-undelivered, and a
       conditional mark-delivered.
-- [ ] 6.3 Add the `send_player_message` built-in, registered only for a seat job of an
+- [x] 6.3 Add the `send_player_message` built-in, registered only for a seat job of an
       orchestrated session, refusing a recipient that is not a configured seat of the
       same orchestrating session and refusing the sender itself.
-- [ ] 6.4 Deliver undelivered messages at the start of a seat's invocation, wrapped as
+- [x] 6.4 Deliver undelivered messages at the start of a seat's invocation, wrapped as
       data attributed to the sending seat, and mark them delivered.
-- [ ] 6.5 Unit tests: a message stored, the tool absent for the orchestrator and in
+- [x] 6.5 Unit tests: a message stored, the tool absent for the orchestrator and in
       chat mode, an unconfigured recipient refused, and delivery happening exactly
       once.
 
 ## 7. Illegal-action findings
 
-- [ ] 7.1 Add the `player_illegal_actions` table to migration `0012` in both dialects.
-- [ ] 7.2 Add repository methods to open, list-open-for-seat, and conditionally resolve
+- [x] 7.1 Add the `player_illegal_actions` table to migration `0012` in both dialects.
+- [x] 7.2 Add repository methods to open, list-open-for-seat, and conditionally resolve
       a finding.
-- [ ] 7.3 Add `report_illegal_action` and `resolve_illegal_action` built-ins gated to
+- [x] 7.3 Add `report_illegal_action` and `resolve_illegal_action` built-ins gated to
       the orchestrating job, and a read-only view of its own findings for a seat.
-- [ ] 7.4 Carry every open finding into each invocation of the seat it concerns, as
+- [x] 7.4 Carry every open finding into each invocation of the seat it concerns, as
       data naming the violation and the required undo.
-- [ ] 7.5 Unit tests: opening a finding, an open finding appearing in two consecutive
+- [x] 7.5 Unit tests: opening a finding, an open finding appearing in two consecutive
       invocations, a seat's attempt to resolve refused, and a resolved finding no
       longer appearing.
 
@@ -134,33 +134,46 @@ them and it has to exist before any of them can be reached.
       disabled with a reason on a session that has run a job.
 - [x] 8.3 Dashboard unit tests: the default, the value sent on create, the disabled
       state, and an older stored draft loading.
-- [ ] 8.4 Add the seat roster with per-seat persona and model editing.
-- [ ] 8.5 Link each prompted seat to its own session transcript, and show "no context
+- [x] 8.4 Add the seat roster with per-seat persona and model editing.
+- [x] 8.5 Link each prompted seat to its own session transcript, and show "no context
       yet" for a seat that has not played.
-- [ ] 8.6 Render the seat-scope refusal and the illegal-action finding in the
+- [x] 8.6 Render the seat-scope refusal and the illegal-action finding in the
       transcript.
-- [ ] 8.7 Carry the session mode and the seat id on emitted history events, and read
+- [x] 8.7 Carry the session mode and the seat id on emitted history events, and read
       the mode back in the history projection.
-- [ ] 8.8 State the mode in eval-service's judge projection and include the round's
+- [x] 8.8 State the mode in eval-service's judge projection and include the round's
       illegal-action findings as evidence.
 - [x] 8.9 Update `services/agent-orchestrator/README.md` (session mode, the seat
       lifecycle) and `services/agent-orchestrator/AGENTS.md` (a Session Modes and
       Player Seats section stating the trust-boundary rules a future change must
       not break).
-- [ ] 8.10 Update the root `README.md` with the mode choice at session creation.
+- [x] 8.10 Update the root `README.md` with the mode choice at session creation.
 
-## Deferred, and why
+## Delivery, in two passes
 
-Sections 5 through 7, and tasks 8.4 through 8.8 and 8.10, are specified here in full
-and are **not** implemented by the first pass of this change. The reason is scope
-rather than uncertainty: the mode flag, the stateful seat, and the report envelope are
-the load-bearing parts — the first is what every other behaviour is gated on, the
-second is the part the issue calls out as missing, and the third is the part of the
-trust boundary that is wrong to leave half-built. The seat guard, the messaging
-channel, and the findings store each need their own migration, tool registration, and
-test surface, and shipping any of them partially would mean a boundary that looks
-enforced and is not — which is worse than one that is honestly absent.
+Sections 1 through 4 and tasks 8.1 through 8.3 and 8.9 were the first pass (DRA-19).
+They are the load-bearing parts: the mode flag every other behaviour is gated on, the
+stateful seat the issue calls out as missing, and the report envelope — the half of the
+trust boundary it would have been wrong to leave partly built.
 
-Nothing deferred here is blocked by anything: each remaining section is additive
-behind the mode flag, and the specs above state the required behaviour precisely
-enough to implement without re-deciding anything.
+Sections 5 through 7 and tasks 8.4 through 8.8 and 8.10 were the second pass (DRA-30),
+and every one of them is now implemented and tested. The staging was scope rather than
+uncertainty, and the reason for staging it that way was that a seat guard, a messaging
+channel, or a findings store shipped partially would be a boundary that looks enforced
+and is not — worse than one honestly absent. Each landed whole instead:
+
+- **The seat guard** is a pure function over a tool call's arguments, applied above the
+  builtin/MCP dispatch split so no tool of either kind can be reached around it. What it
+  covers and what it cannot is enumerated in `runtime/seat_guard.py`'s own docstring
+  rather than left to be discovered: it is a deny-list over recognised seat-shaped
+  values, not a whole-game authorization model, and ownership expressed as an opaque card
+  id is outside it.
+- **The channel and the findings store** share migration `0012`, and both tables hang off
+  the orchestrating session — the only id a sender and a recipient have in common. A
+  message from another seat and a finding are both delivered as untrusted data through the
+  same fenced envelope a player report uses.
+- **The judge's evidence** is a history `illegal_action` event, which required eval-service
+  to stop treating every `actor == "agent"` row as a move; `judge/events.py::is_agent_move`
+  is now the single predicate, applied at all nine call sites.
+
+Nothing in the change is deferred, and nothing in it is partial.

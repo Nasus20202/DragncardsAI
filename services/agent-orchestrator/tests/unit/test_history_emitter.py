@@ -543,3 +543,95 @@ async def test_no_emission_when_emitter_disabled(repository, skill_registry):
 
     await service.run(claimed)
     assert bus.events == []
+
+
+# --- Session mode threaded through prompt_run ------------------------------
+
+
+async def _prepare_orchestrated_session(repo: Repository):
+    """A session in orchestrated mode, otherwise identical to ``_prepare_session``."""
+    session = await repo.create_session("demo", {}, session_mode="orchestrated")
+    await repo.set_model_config(
+        session.id,
+        provider_id="openai",
+        model_name="gpt-4o-mini",
+        gateway_options={},
+        provider_options={},
+    )
+    await repo.add_mcp_registry(
+        name="game-service",
+        transport="streamable-http",
+        server_url="http://localhost:4001/mcp",
+        headers_json={},
+    )
+    await repo.enable_mcp_for_session(session.id, "game-service", enabled=True)
+    return session
+
+
+async def _run_one_move(repository, skill_registry, session, emitter):
+    """Drive one prompt that plays a single game-mutating move."""
+    await repository.enqueue_prompt_job(
+        session.id, prompt="advance the step", metadata_json={}, max_attempts=1
+    )
+    claimed = await repository.claim_next_job()
+    service = _make_service(
+        repository,
+        FakeBifrost(
+            responses=[
+                ChatResponse(
+                    content="Advancing.",
+                    tool_calls=[
+                        ToolCall(id="t1", name="game-service_next_step", arguments={})
+                    ],
+                    raw={},
+                ),
+                ChatResponse(content="done", tool_calls=[], raw={}),
+            ]
+        ),
+        GameServiceFakeMcp(),
+        skill_registry,
+        emitter,
+    )
+    await service.run(claimed)
+
+
+@pytest.mark.asyncio
+async def test_an_orchestrated_sessions_events_state_the_mode(
+    repository, skill_registry
+):
+    """The mode reaches the wire, not just the envelope builder.
+
+    Both events a turn produces are checked: the ``user_prompt`` that triggered it
+    and the ``agent_move`` it produced. A prompt given to an orchestrated session
+    is as much part of that timeline as the move it caused.
+    """
+    session = await _prepare_orchestrated_session(repository)
+    await repository.update_session(session.id, metadata_json={"game_id": GAME_ID})
+    bus = InMemoryHistoryEventBus()
+
+    await _run_one_move(
+        repository, skill_registry, session, HistoryEventEmitter(bus=bus, enabled=True)
+    )
+
+    by_type = {e["event_type"]: e for e in bus.events}
+    assert by_type["user_prompt"]["payload"]["session_mode"] == "orchestrated"
+    assert by_type["agent_move"]["payload"]["session_mode"] == "orchestrated"
+    # The orchestrating session holds no seat of its own, so its move names none —
+    # and the mode is still readable without that seat.
+    assert "player" not in by_type["agent_move"]["payload"]
+
+
+@pytest.mark.asyncio
+async def test_a_chat_sessions_events_carry_no_mode_key(repository, skill_registry):
+    """The default path is byte-for-byte what it was before the mode existed."""
+    session = await _prepare_session(repository)
+    await repository.update_session(session.id, metadata_json={"game_id": GAME_ID})
+    bus = InMemoryHistoryEventBus()
+
+    await _run_one_move(
+        repository, skill_registry, session, HistoryEventEmitter(bus=bus, enabled=True)
+    )
+
+    assert {e["event_type"] for e in bus.events} == {"user_prompt", "agent_move"}
+    for envelope in bus.events:
+        assert "session_mode" not in envelope["payload"]

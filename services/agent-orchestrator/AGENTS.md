@@ -39,7 +39,7 @@ Sessions are persistent agent configurations:
 Jobs are prompt executions:
 - Created via `POST /sessions/{id}/prompts`
 - Stream events via `GET /jobs/{id}/events/stream`
-- Events include: `progress`, `reasoning`, `model_output`, `tool_call`, `tool_result`, `skill_loaded`, `compaction`, `compaction_failed`, `subagent_started`, `subagent_completed`, `subagent_failed`, `user_question`, `user_question_answered`, `user_question_closed`, `completion`, `failure`, `cancellation`
+- Events include: `progress`, `reasoning`, `model_output`, `tool_call`, `tool_result`, `skill_loaded`, `compaction`, `compaction_failed`, `subagent_started`, `subagent_completed`, `subagent_failed`, `user_question`, `user_question_answered`, `user_question_closed`, `illegal_action_finding`, `completion`, `failure`, `cancellation`
 - Only `completion`, `failure`, and `cancellation` are terminal and close the SSE stream
 - A new event type needs no migration (`job_events.event_type` is a free string), but it **must** be
   added to the dashboard's `STREAM_EVENT_TYPES`, because the browser registers one named `EventSource`
@@ -94,6 +94,29 @@ player agent is still a memoryless child terminated with its job.
 - **A seat may act only with its own cards, enforced server-side.** Ownership is
   checked against the seat recorded on the child session, which no tool available to a
   player can write. Never rely on the prompt telling a seat to stay in its lane.
+
+The two out-of-band channels a seat has are built on those rules rather than beside
+them. `send_player_message` (seat jobs only, addressed to another configured seat of
+the same orchestrating session) and the open findings from `report_illegal_action`
+(orchestrating job only) are both delivered by `PromptRunService._collect_seat_inbox`
+as **one user-role message ahead of the seat's own prompt**, each entry fenced by the
+same `_fence_untrusted_text` helper `wrap_player_report` uses. Do not move any of it
+into a system prompt, do not add a second copy of the delimiter strip, and do not give
+a seat a way to resolve a finding — resolution is a judgement about game state and
+belongs to the party that reads game state authoritatively.
+
+**Emitted history events state the mode.** `history_emitter.stamp_session_mode` puts
+`session_mode` on an agent move and on a `user_prompt`, and **omits the key entirely
+for `chat`** — so a chat payload stays byte-identical to what it was before the mode
+existed, and one reader rule ("absent means chat") covers both that and every event
+recorded before the mode existed. The mode and the seat are independent: an
+orchestrated event with **no** `player` is the orchestrator's own bookkeeping, which
+is exactly what keeps it distinguishable from a seat's play, so never derive one from
+the other. A finding goes out through `HistoryEventEmitter.emit_illegal_action` as
+event type `illegal_action` under `actor: "agent"`, because history-service pins
+`actor` to a fixed `Literal` and a new producer concern therefore arrives as a new
+event type — never as a new actor. eval-service relies on that distinction to keep a
+finding from being graded as a move.
 
 ### Two MCP directions
 

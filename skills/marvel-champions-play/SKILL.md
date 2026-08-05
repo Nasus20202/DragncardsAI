@@ -45,6 +45,19 @@ report what you did.
 
 You *may* read the whole board, including other players' zones. Reading is always safe.
 
+In an **orchestrated** game the card-ownership row of that table is enforced by the
+server, not merely asked of you: a tool call whose arguments name another seat's
+`playerN*` group, or name another seat outright, is refused **before the tool runs**,
+and the attempt is recorded on your job. You get back an error naming which argument
+reached for which seat, so you can correct yourself and continue. The table still
+stands, because knowing your scope up front plays better than discovering it through
+refusals — but it is guidance layered over enforcement, not the enforcement itself.
+
+Shared and villain-side groups are deliberately *not* seat-scoped: attacking the
+villain and thwarting a scheme are your own turn's legal business. The rows above that
+tell you to leave the villain's decks and the table-wide phase automation alone are
+rules of play, and you are trusted to keep them.
+
 ---
 
 ## The turn loop
