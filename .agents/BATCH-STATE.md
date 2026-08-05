@@ -13,10 +13,26 @@ Integration branch: **`dump/claude-playground`**, pushed to `origin`. It was **r
 any more and must not be recreated — not by a push, not by a reference in this file.
 All batch work merges here as **one squash commit per issue**, subject ending ` (DRA-<n>)`.
 
+**Rebased onto `origin/main` on 2026-08-05 and force-pushed with lease.** New base `64b236e`;
+pre-rebase tip was **`3825b96`**, post-rebase tip **`93d8f1c`** (plus this commit). A local recovery
+ref `refs/backup/pre-rebase-20260805` points at the pre-rebase tip — keep it until the branch is
+merged. The rebase was far smaller than its 124-commit upstream drift suggested, because `main` had
+**already absorbed 19 of our commits**: git skipped them as previously applied, leaving only **7** to
+replay — the three merges of this session and their archives. One conflict, in
+`services/dashboard/next-env.d.ts`, a Next.js *generated* file where upstream's newer Next emits an
+extra `root-params.d.ts` import; upstream's version was taken and it regenerates on build either way.
+`external/dragncards-mc-plugin` also moved and was re-synced with
+`git submodule update --init --recursive`, and `pnpm install` picked up upstream's dependency bumps.
+
+**Any branch cut before the rebase needs re-pointing.** `wt-dra33`, `wt-dra38`, `wt-dra41`,
+`wt-dra44` and `wt-dra47` were branched off pre-rebase commits (`86101f8`, `3982539` and their
+descendants), and those commits no longer exist on this branch. They were deliberately not touched —
+re-point them before merging any of them.
+
 **All 19 first-batch issues are merged and closed**, and so is the second batch. Later batches are
-still in flight. As of 08-05 the live worktrees beside `wt-integration` are `wt-dra33`, `wt-dra36`,
-`wt-dra37`, `wt-dra38`, `wt-dra41` and `wt-dra44`, each on its own `stanislaw/*` branch; `wt-dra30`
-was removed when DRA-30 merged. Two local branches, `features/history-harden` and
+still in flight. As of 08-05 the live worktrees beside `wt-integration` are `wt-dra33`, `wt-dra38`,
+`wt-dra41`, `wt-dra44` and `wt-dra47`, each on its own `stanislaw/*` branch; `wt-dra30`, `wt-dra36`
+and `wt-dra37` were removed as their issues merged. Two local branches, `features/history-harden` and
 `features/history-play-style-browser`, are from 2026-06-29 and are **the owner's, not this batch's**;
 do not delete them.
 
@@ -26,7 +42,7 @@ issue's worth of state split across two tickets —
 
 - **DRA-19** — was `Done`, **reopened by the owner** and now `In Progress`: *"move back to in
   progress, not finished."* Its OpenSpec change stays active until they say otherwise.
-- **DRA-30** — DRA-19's deferred remainder. **Code merged at `1516be4`**, but the issue stays
+- **DRA-30** — DRA-19's deferred remainder. **Code merged at `bac411d`**, but the issue stays
   `In Progress` because the only change carrying its requested changes is dra-19's, which cannot be
   archived. See its entry under the third batch.
 
@@ -111,19 +127,20 @@ no longer among them — it archived on 07-29 as `2026-07-29-dra-12-context-mana
 - `EVAL_JUDGE_OPENROUTER_API_KEY` is unset in `services/bifrost/.env`, so any judge-latency figure is
   a projection, not a measurement.
 
-## Check baselines on the integration tip (DRA-35, DRA-34, DRA-42 and now DRA-30 merged)
+## Check baselines on the integration tip (DRA-30, DRA-36 and DRA-37 merged, rebased on `main`)
 
-Measured on `86101f8`, the post-DRA-30 tip.
+Measured on `93d8f1c`, the post-rebase tip.
 
 - `./scripts/lint.sh` — clean.
-- Unit: game-service **384**, agent-orchestrator **599**, history-service **193**,
-  eval-service **291**, shared **38**, dashboard **631** (76 files).
-  (Against `98192f3`: DRA-35 added 2 to history-service and 2 to shared; DRA-34 added 3 to
-  agent-orchestrator and 5 to the dashboard; DRA-42 added 13 to agent-orchestrator. **DRA-30 added
-  96 to agent-orchestrator, 16 to history-service, 33 to eval-service and 17 to the dashboard**,
-  and none to game-service or shared.)
-- Integration: agent-orchestrator **29** (DRA-42 added 1), history-service **8**, eval-service **13**,
-  game-service **63**. DRA-30 added none.
+- Unit: game-service **423**, agent-orchestrator **609**, history-service **202**,
+  eval-service **291**, shared **38**, dashboard **637** (77 files).
+  (Deltas this session, each measured rather than predicted: **DRA-30** added 96 to
+  agent-orchestrator, 16 to history-service, 33 to eval-service and 17 to the dashboard, and none to
+  game-service or shared. **DRA-36** added 35 to game-service, 9 to history-service and 6 to the
+  dashboard. **DRA-37** added 10 to agent-orchestrator. The **rebase** added 4 to game-service —
+  upstream's own work, not ours.)
+- Integration: agent-orchestrator **29**, history-service **8**, eval-service **13**,
+  game-service **66** (DRA-36 added 3; DRA-30 and DRA-37 added none).
 - `openspec validate --all` — 16 passed, 1 failed **(17 items)**, the failure being the pre-existing
   one above. The item count matters: `dra-19-agents-orchestration` is one of the 16 passing items
   *because it is still an active change*. If it is ever archived the totals become 15 passed, 1
@@ -232,7 +249,7 @@ wait for the others.**
   **It touched none of `play-transcript.tsx`, `play-session-events.ts` or `STREAM_EVENT_TYPES`** — so
   the conflict expected with DRA-30 did not materialise, and DRA-30 now rebases onto its orchestrator
   changes instead.
-- **DRA-30** — **MERGED at `1516be4`. Worktree and branch gone. NOT archived and NOT closed —
+- **DRA-30** — **MERGED at `bac411d`** (pre-rebase `1516be4`). Worktree and branch gone. NOT archived and NOT closed —
   deliberately.** Seat guard / player-to-player messaging / illegal-action findings store / seat
   roster, implementing sections 5–7 and tasks 8.4–8.8/8.10 of `dra-19-agents-orchestration`.
   Migration `0012`. The conflict with DRA-34 predicted here never materialised (DRA-34 touched none
@@ -249,16 +266,49 @@ wait for the others.**
   prevent. When dra-19 is finally archived it closes DRA-19 and DRA-30 together — one change
   carrying two issues.
 
-  Related commit: `86101f8` writes the close-only-after-archive rule into `AGENTS.md`. Note
+  Related commit: `42e41a6` (pre-rebase `86101f8`) writes the close-only-after-archive rule into `AGENTS.md`. Note
   `CLAUDE.md` is a **symlink** to `AGENTS.md`, so it needs no separate edit and must not get one.
-- **DRA-36** — `wt-dra36`, Valkey-backed DragnCards token cache (the follow-up recorded below).
-  **Owns nothing in `resp.py`** — that file is DRA-35's for this batch.
-- **DRA-37** (Low, filed 07-29 16:29) — `wt-dra37`, "copious amounts of Valkey calls": an
-  agent-orchestrator trace with 6K+ spans. Scoped to **call-site** reduction only; `resp.py` is
-  DRA-35's, so transport-level pooling/pipelining is to be written up in `design.md` and handed back
-  for sequencing rather than implemented. The agent must first separate too many commands *issued*
-  from too many spans *emitted* per command — DRA-23 opens a `valkey.execute` span for every command,
-  so the trace may be cardinality, not waste.
+- **DRA-36** — **MERGED at `e12ea20`, archived at `b70d0d0`, closed.** (Pre-rebase: `3982539` /
+  `289acd1`.) Valkey-backed DragnCards credential cache plus ephemeral room reuse. Board-at-a-moment
+  **769 ms → 452 ms**; a second moment of the same game **467 ms → 75 ms**; DragnCards round trips
+  per room **3.00 → 1.67**. One union conflict with DRA-30 in `history-service/tests/unit/test_api.py`
+  — both sets of appended tests kept.
+  Two findings worth keeping: **`POST /api/v1/games` is unauthenticated upstream** (201 for a garbage
+  token, so the channel join is the real validation point, which made the original stale-credential
+  recovery path dead code — vendored code we do not own, reported not fixed); and
+  **`PhoenixClient.join` was silently dropping a room's opening broadcasts** because the channel was
+  registered *after* the join reply while the receive loop runs as a separate task. Latent, and
+  independent of the cache.
+  Two caveats deliberately not tidied away: an **early `game`-document hash mismatch that was never
+  root-caused** and did not reproduce across 21 controlled comparisons — the reuse safety argument
+  rests on `set_game` being a total replacement plus those 21, *not* on having explained the outlier;
+  and **no visual board screenshot**, because `dragncards-frontend` has a pre-existing build failure
+  (`Module not found: 'process/browser' in react-draggable`) that shows a compile-error overlay.
+- **DRA-37** (Low, filed 07-29 16:29) — **MERGED at `ad7ca17`, archived at `93d8f1c`, closed.**
+  (Pre-rebase: `771e141` / `3825b96`.) Idle Valkey command volume cut ~**75×**: measured **40,442
+  commands against 40,454 connections** — one TCP connect per command, confirmed empirically — with
+  only ~1% of commands doing any work. Also fixed a measured **14,144 ms cancel hang** (72 ms with
+  the cancellation publish, 14,144 ms without) and started publishing **`tool_call`/`tool_result`**,
+  which no path had ever published, so a slow tool used to leave the transcript blank for its whole
+  duration.
+  **It repaired a false statement DRA-42 had put in the durable spec.** The requirement that a
+  degraded stream's retry delay "SHALL be capped below the interval a healthy stream blocks for so
+  that degrading never increases latency" was untrue of the code it shipped against: a healthy stream
+  blocked for `worker_poll_interval_seconds` = 0.2 s against a 5 s degraded cap, i.e. degrading was
+  up to **25× slower** than healthy. Raising the idle block to 15 s is what makes it true; no
+  constant was fudged and the requirement text is untouched. Verified post-archive:
+  `job_event_stream_idle_block_seconds` = **15.0**, `LIVE_BUS_DEGRADED_MAX_SECONDS` = **5.0**.
+  It also **retargeted** two of DRA-42's tests rather than deleting them — the `EXPIRE`-after-`XADD`
+  test now pins `conn.commands == ["EVAL"]` and that both commands live inside the script body
+  (pinning the *absence* of the failure window rather than tolerance of it), and the failing-`XADD`
+  test now targets `EVAL` and asserts `BestEffortLiveEventBus` is what converts the raise into `None`.
+  **Both are correct — do not revert them to their DRA-42 forms.**
+  **Three things it handed back rather than fixing, to be filed:** (1) **history-service ingest is
+  78.6% of all Valkey commands** — three commands per idle cycle, only one of which blocks, and by
+  volume a bigger issue than what DRA-37 fixed; (2) **one Play page opens 11–12 concurrent streams**
+  for a 10-subagent fan-out, an orphaned subagent holds its stream open indefinitely, and reconnects
+  replay from `after=0` because the endpoint ignores `Last-Event-ID`; (3) **connection pooling in
+  `resp.py`**, still deferred with DRA-35's measurements.
 - Two dashboard items also in flight: suppressing the redundant `ask_user` tool card, and question
   card visuals.
 
