@@ -1322,3 +1322,190 @@ async def test_get_model_context_length_uses_cache():
     assert call_count == 1
     assert length1 == 16000
     assert length2 == 16000
+
+
+# ---------------------------------------------------------------------------
+# Stop reason capture
+# ---------------------------------------------------------------------------
+
+
+def _sse(*chunks: str) -> str:
+    return "\n\n".join([*chunks, "data: [DONE]"])
+
+
+@pytest.mark.asyncio
+async def test_streaming_captures_the_finish_reason_from_the_final_chunk():
+    """The chunk carrying it has an empty delta, so it used to contribute nothing."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=_sse(
+                'data: {"choices":[{"delta":{"content":"cut off"},"finish_reason":null}]}',
+                'data: {"choices":[{"delta":{},"finish_reason":"length"}]}',
+            ),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    client = await _build_client(handler)
+    try:
+        response = await client.chat_completion(
+            "openai", "gpt-4o-mini", [], None, {}, {}, on_delta=lambda delta: None
+        )
+    finally:
+        await client.aclose()
+
+    assert response.finish_reason == "length"
+    assert response.content == "cut off"
+
+
+@pytest.mark.asyncio
+async def test_streaming_reports_no_finish_reason_when_the_provider_sends_none():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=_sse('data: {"choices":[{"delta":{"content":"hi"}}]}'),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    client = await _build_client(handler)
+    try:
+        response = await client.chat_completion(
+            "openai", "gpt-4o-mini", [], None, {}, {}, on_delta=lambda delta: None
+        )
+    finally:
+        await client.aclose()
+
+    assert response.finish_reason is None
+
+
+@pytest.mark.asyncio
+async def test_streaming_keeps_the_last_non_null_finish_reason():
+    """Some providers report per-choice reasons before the terminating chunk."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=_sse(
+                'data: {"choices":[{"delta":{"content":"a"},"finish_reason":"stop"}]}',
+                'data: {"choices":[{"delta":{},"finish_reason":"length"}]}',
+            ),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    client = await _build_client(handler)
+    try:
+        response = await client.chat_completion(
+            "openai", "gpt-4o-mini", [], None, {}, {}, on_delta=lambda delta: None
+        )
+    finally:
+        await client.aclose()
+
+    assert response.finish_reason == "length"
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_captures_the_finish_reason_beside_the_message():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": "done"}, "finish_reason": "stop"},
+                ]
+            },
+            request=request,
+        )
+
+    client = await _build_client(handler)
+    try:
+        response = await client.chat_completion(
+            "openai", "gpt-4o-mini", [], None, {}, {}
+        )
+    finally:
+        await client.aclose()
+
+    assert response.finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_a_vendor_stop_reason_is_not_lost():
+    """OpenRouter passes the upstream value through; Anthropic spells it differently."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": "cut off"},
+                        "native_finish_reason": "MAX_TOKENS",
+                    },
+                ]
+            },
+            request=request,
+        )
+
+    client = await _build_client(handler)
+    try:
+        response = await client.chat_completion(
+            "openai", "gpt-4o-mini", [], None, {}, {}
+        )
+    finally:
+        await client.aclose()
+
+    assert response.finish_reason == "MAX_TOKENS"
+
+
+@pytest.mark.asyncio
+async def test_an_anthropic_shaped_stop_reason_is_read():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "stop_reason": "max_tokens",
+                "choices": [{"message": {"content": "cut off"}}],
+            },
+            request=request,
+        )
+
+    client = await _build_client(handler)
+    try:
+        response = await client.chat_completion(
+            "openai", "gpt-4o-mini", [], None, {}, {}
+        )
+    finally:
+        await client.aclose()
+
+    assert response.finish_reason == "max_tokens"
+
+
+@pytest.mark.asyncio
+async def test_a_normalised_finish_reason_wins_over_a_vendor_one():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": "done"},
+                        "finish_reason": "length",
+                        "native_finish_reason": "STOP",
+                    },
+                ]
+            },
+            request=request,
+        )
+
+    client = await _build_client(handler)
+    try:
+        response = await client.chat_completion(
+            "openai", "gpt-4o-mini", [], None, {}, {}
+        )
+    finally:
+        await client.aclose()
+
+    assert response.finish_reason == "length"

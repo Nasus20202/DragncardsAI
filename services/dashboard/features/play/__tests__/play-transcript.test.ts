@@ -3,7 +3,11 @@ import { render, screen } from "@testing-library/react";
 import { createElement } from "react";
 
 import { PlayTranscript } from "@/features/play/components/play-transcript";
-import { STREAM_EVENT_TYPES } from "@/features/play/lib/play-session-events";
+import {
+  aggregateEvents,
+  STREAM_EVENT_TYPES,
+  TERMINAL_EVENT_TYPES,
+} from "@/features/play/lib/play-session-events";
 import { JobDetail, SessionDetail } from "@/features/shared/lib/types";
 
 const selectedSession = {
@@ -143,5 +147,87 @@ describe("PlayTranscript", () => {
     // The turn's own answer is still shown: the job completed.
     expect(screen.getByText("Villain attacks for 3.")).toBeDefined();
     expect(screen.queryByText("Error")).toBeNull();
+  });
+
+  it("subscribes to turn_continued on the SSE stream", () => {
+    // Without this the marker only ever appears after a reconnect replays it.
+    expect(STREAM_EVENT_TYPES).toContain("turn_continued");
+  });
+
+  it("does not treat a continued turn as a terminal event", () => {
+    // The turn is still running: closing the stream on it would strand every
+    // client watching the rest of the answer.
+    expect(TERMINAL_EVENT_TYPES.has("turn_continued")).toBe(false);
+  });
+
+  it("passes turn_continued through aggregation rather than as a tool call", () => {
+    // The aggregator's fallback branch renders an unknown type as a pending
+    // tool card that never completes, which is wrong rather than merely blank.
+    const aggregated = aggregateEvents(
+      [
+        {
+          id: "1",
+          event_type: "turn_continued",
+          payload: { reason: "output_token_limit", finish_reason: "length" },
+          created_at: "2026-05-11T00:00:01Z",
+        },
+      ],
+      false
+    );
+
+    expect(aggregated).toHaveLength(1);
+    expect(aggregated[0].kind).toBe("turn_continued");
+  });
+
+  it("renders a seam between the partial output and the output that continued it", () => {
+    HTMLElement.prototype.scrollIntoView = () => {};
+
+    const job = makeJob([
+      {
+        id: "1",
+        event_type: "model_output",
+        payload: { text: "First I will check the" },
+        created_at: "2026-05-11T00:00:01Z",
+      },
+      {
+        id: "2",
+        event_type: "turn_continued",
+        payload: {
+          reason: "output_token_limit",
+          finish_reason: "length",
+          continuation: 1,
+          max_continuations: 3,
+        },
+        created_at: "2026-05-11T00:00:02Z",
+      },
+      {
+        id: "3",
+        event_type: "model_output",
+        payload: { text: " board state." },
+        created_at: "2026-05-11T00:00:03Z",
+      },
+    ]);
+
+    render(
+      createElement(PlayTranscript, {
+        jobs: [job],
+        streamingJobId: null,
+        selectedSession,
+        streamState: "idle",
+        statusText: "Ready",
+        isBusy: false,
+        errorText: null,
+        onOpenSettings: () => {},
+        settingsOpen: false,
+      })
+    );
+
+    const seam = screen.getByTestId("play-turn-continued");
+    expect(seam.textContent).toContain("turn continued automatically");
+    expect(seam.textContent).toContain("length");
+    expect(seam.textContent).toContain("continuation 1 of 3");
+    // Both halves of the answer survive around it.
+    expect(screen.getByText(/First I will check the/)).toBeDefined();
+    expect(screen.getByText(/board state\./)).toBeDefined();
   });
 });

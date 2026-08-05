@@ -72,6 +72,38 @@ class ChatResponse:
     raw: dict[str, Any]
     reasoning: str = ""
     reasoning_details: list[ReasoningDetail] = field(default_factory=list)
+    # Why the model stopped, as the provider reported it. `raw` has two shapes —
+    # a list of streamed chunks, or the whole response document — so a caller
+    # that dug this out itself would end up handling only one of them, which is
+    # how `extract_tokens_from_response` came to read only the non-streamed one.
+    # Normalising here keeps every consumer shape-blind. `None` means the
+    # provider said nothing, which is never treated as evidence of anything.
+    finish_reason: str | None = None
+
+
+def _stop_reason_from_choice(choice: Any) -> str | None:
+    """Read why the model stopped out of one choice, whatever dialect it speaks.
+
+    Priority matters. `finish_reason` is the OpenAI-compatible field and the one
+    Bifrost's `/openai/chat/completions` endpoint emits, so a normalised value
+    always wins. `native_finish_reason` is OpenRouter's passthrough of the
+    upstream provider's own spelling of the same thing, and OpenRouter is a
+    configured provider here. `stop_reason` is the Anthropic spelling, which a
+    gateway proxying an Anthropic response without full normalisation leaks.
+    """
+    if not isinstance(choice, dict):
+        return None
+    message = choice.get("message")
+    candidates = [
+        choice.get("finish_reason"),
+        choice.get("native_finish_reason"),
+        choice.get("stop_reason"),
+        message.get("stop_reason") if isinstance(message, dict) else None,
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    return None
 
 
 @dataclass(frozen=True)
@@ -474,6 +506,7 @@ class BifrostClient:
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         raw_chunks: list[dict[str, Any]] = []
+        finish_reason: str | None = None
 
         try:
             async with self._http_client.stream(
@@ -491,6 +524,17 @@ class BifrostClient:
                         break
                     chunk = json.loads(raw_event)
                     raw_chunks.append(chunk)
+                    # The chunk that carries the stop reason has an empty delta,
+                    # so it would otherwise contribute nothing. Last non-null
+                    # wins: providers differ over whether they send it on the
+                    # final chunk or alongside the last content.
+                    chunk_choices = (
+                        chunk.get("choices") or [] if isinstance(chunk, dict) else []
+                    )
+                    if chunk_choices:
+                        chunk_finish_reason = _stop_reason_from_choice(chunk_choices[0])
+                        if chunk_finish_reason is not None:
+                            finish_reason = chunk_finish_reason
                     delta = self._extract_delta(chunk)
                     content = self._normalize_content(delta.get("content"))
                     reasoning = self._normalize_content(delta.get("reasoning"))
@@ -541,15 +585,26 @@ class BifrostClient:
             raw={"chunks": raw_chunks},
             reasoning="".join(reasoning_parts),
             reasoning_details=self._finalize_reasoning_details(reasoning_buffers),
+            finish_reason=finish_reason,
         )
 
     def _parse_chat_response(self, data: dict[str, Any]) -> ChatResponse:
         try:
-            message = data["choices"][0]["message"]
+            choice = data["choices"][0]
+            message = choice["message"]
         except (KeyError, IndexError, TypeError) as exc:
             raise BifrostError(
                 "invalid_response", "Bifrost returned an invalid response"
             ) from exc
+
+        # `finish_reason` is a sibling of `message` inside the same choice, so
+        # reading only `message` — as this parser used to — discards it. A
+        # top-level `stop_reason` is the Anthropic document shape leaking whole.
+        finish_reason = _stop_reason_from_choice(choice)
+        if finish_reason is None:
+            top_level = data.get("stop_reason")
+            if isinstance(top_level, str) and top_level.strip():
+                finish_reason = top_level
 
         reasoning_details = self._parse_reasoning_details(
             message.get("reasoning_details") or []
@@ -565,6 +620,7 @@ class BifrostClient:
             raw=data,
             reasoning=reasoning,
             reasoning_details=reasoning_details,
+            finish_reason=finish_reason,
         )
 
     def _parse_tool_calls(self, payload: list[Any]) -> list[ToolCall]:

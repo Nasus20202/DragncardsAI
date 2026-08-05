@@ -81,6 +81,26 @@ class Settings(BaseSettings):
         ),
     )
     worker_max_tool_rounds: int = 64
+    # Automatic continuation of a turn the provider truncated at its output cap.
+    # It is a loop that spends money against a paid provider without being asked,
+    # so it gets both a cap and a kill switch. They are separate settings on
+    # purpose: folding the switch into "cap = 0 means off" makes a deliberately
+    # disabled deployment indistinguishable from a misconfigured one.
+    auto_continue_truncated_turns: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "auto_continue_truncated_turns", "AUTO_CONTINUE_TRUNCATED_TURNS"
+        ),
+    )
+    # Three, against the shape of the reported problem: the symptom is a turn
+    # that needed one manual nudge, so this covers it with headroom while capping
+    # the worst case at three extra paid calls rather than the round budget's 64.
+    auto_continue_max_continuations: int = Field(
+        default=3,
+        validation_alias=AliasChoices(
+            "auto_continue_max_continuations", "AUTO_CONTINUE_MAX_CONTINUATIONS"
+        ),
+    )
     default_job_max_attempts: int = 2
     subagent_wait_timeout_seconds: float = 600.0
     subagent_wait_poll_interval_seconds: float = 5.0
@@ -225,6 +245,19 @@ class Settings(BaseSettings):
     def validate_tool_rounds(cls, value: int) -> int:
         if value < 1:
             raise ValueError("worker_max_tool_rounds must be at least 1")
+        return value
+
+    @field_validator("auto_continue_max_continuations")
+    @classmethod
+    def validate_auto_continue_max_continuations(cls, value: int) -> int:
+        # Zero would be a third way of expressing "disabled", competing with the
+        # switch that already means it. Refuse it rather than silently accept a
+        # setting whose author meant something else.
+        if value < 1:
+            raise ValueError(
+                "auto_continue_max_continuations must be at least 1; "
+                "set AUTO_CONTINUE_TRUNCATED_TURNS=false to disable the behaviour"
+            )
         return value
 
     @field_validator("default_job_max_attempts")

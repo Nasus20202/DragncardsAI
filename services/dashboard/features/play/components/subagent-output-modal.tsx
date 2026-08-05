@@ -5,28 +5,12 @@ import { JobEventResponse } from "@/features/shared/lib/types";
 import { getJobEvents } from "@/features/play/lib/client-api";
 import {
   aggregateEvents,
+  STREAM_EVENT_TYPES,
+  TERMINAL_EVENT_TYPES,
   upsertStreamEvent,
 } from "@/features/play/lib/play-session-events";
 import { redactSecrets } from "@/features/play/lib/tool-call-presentation";
 import { AggEventRow } from "@/features/play/components/play-transcript";
-
-const TERMINAL_TYPES = new Set(["completion", "failure", "cancellation"]);
-
-const ALL_EVENT_TYPES = [
-  "progress",
-  "reasoning",
-  "model_output",
-  "compaction",
-  "tool_call",
-  "tool_result",
-  "completion",
-  "failure",
-  "cancellation",
-  "skill_loaded",
-  "subagent_started",
-  "subagent_completed",
-  "subagent_failed",
-];
 
 export function SubagentOutputModal({
   childJobId,
@@ -61,7 +45,7 @@ export function SubagentOutputModal({
       try {
         const parsed: JobEventResponse = JSON.parse(ev.data);
         setEvents((prev) => upsertStreamEvent(prev, parsed));
-        if (TERMINAL_TYPES.has(parsed.event_type)) {
+        if (TERMINAL_EVENT_TYPES.has(parsed.event_type)) {
           setDone(true);
           source.close();
         }
@@ -70,8 +54,10 @@ export function SubagentOutputModal({
       }
     };
 
-    // Named listeners only — no source.onmessage to avoid duplicates
-    for (const t of ALL_EVENT_TYPES) {
+    // Named listeners only — no source.onmessage to avoid duplicates. This
+    // reuses the Play transcript's list rather than keeping a second copy: the
+    // copy that used to live here had fallen four event types behind it.
+    for (const t of STREAM_EVENT_TYPES) {
       source.addEventListener(t, handler as EventListener);
     }
 

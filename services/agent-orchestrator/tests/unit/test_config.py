@@ -97,3 +97,24 @@ def test_root_compose_allows_game_service_mcp_url_override():
         agent_orchestrator["environment"]["GAME_SERVICE_MCP_URL"]
         == "${GAME_SERVICE_MCP_URL:-http://game-service:8000/mcp}"
     )
+
+
+def test_automatic_continuation_defaults_are_on_and_bounded():
+    settings = Settings()
+    assert settings.auto_continue_truncated_turns is True
+    assert settings.auto_continue_max_continuations == 3
+
+
+def test_a_continuation_cap_below_one_is_rejected():
+    """Zero would be a second way to spell "disabled", competing with the switch."""
+    with pytest.raises(ValueError):
+        Settings(AUTO_CONTINUE_MAX_CONTINUATIONS=0)
+    with pytest.raises(ValueError):
+        Settings(AUTO_CONTINUE_MAX_CONTINUATIONS=-1)
+
+
+def test_automatic_continuation_can_be_switched_off_by_environment():
+    assert (
+        Settings(AUTO_CONTINUE_TRUNCATED_TURNS=False).auto_continue_truncated_turns
+        is False
+    )

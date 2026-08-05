@@ -282,6 +282,43 @@ export function AggEventRow({
           </span>
         </div>
       );
+    case "turn_continued": {
+      // A seam, not a failure: the answer above and the answer below came from
+      // two paid calls, and the reader is entitled to know that rather than
+      // read them as one uninterrupted response.
+      const payload = agg.event.payload as Record<string, unknown>;
+      const finishReason =
+        typeof payload.finish_reason === "string"
+          ? payload.finish_reason
+          : null;
+      const attempt =
+        typeof payload.continuation === "number" ? payload.continuation : null;
+      const maxAttempts =
+        typeof payload.max_continuations === "number"
+          ? payload.max_continuations
+          : null;
+      const detail = [
+        finishReason ? `provider reported "${finishReason}"` : null,
+        attempt && maxAttempts
+          ? `continuation ${attempt} of ${maxAttempts}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      return (
+        <div
+          className="flex items-center gap-2 py-1 text-xs text-default-500"
+          data-testid="play-turn-continued"
+        >
+          <span className="h-px flex-1 bg-default-200" aria-hidden="true" />
+          <span className="shrink-0">
+            Output limit reached — turn continued automatically
+            {detail ? ` (${detail})` : ""}
+          </span>
+          <span className="h-px flex-1 bg-default-200" aria-hidden="true" />
+        </div>
+      );
+    }
     case "skill_loaded":
       return (
         <CollapsibleEventBlock
