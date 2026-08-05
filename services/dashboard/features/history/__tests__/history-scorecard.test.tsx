@@ -3,7 +3,14 @@ import { render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 import { HistoryScorecard } from "@/features/history/components/history-scorecard";
+import { scoreColors } from "@/features/history/lib/score-colors";
 import { HistoryEvent } from "@/features/shared/lib/types";
+
+/** The background colour of the score chip showing `label` (e.g. "7.4/10"). */
+function chipBackground(label: string): string | undefined {
+  const chip = screen.getByText(label).closest("[data-slot='chip']");
+  return (chip as HTMLElement | null)?.style.backgroundColor;
+}
 
 function evaluator(
   seq: number,
@@ -153,5 +160,82 @@ describe("HistoryScorecard", () => {
     expect(
       screen.getByTestId("history-scorecard-version-notice")
     ).toHaveTextContent("1 verdict ");
+  });
+
+  it("colours each cell from its own average rather than always green", () => {
+    const events: HistoryEvent[] = [
+      evaluator(1, {
+        scope: "move",
+        target_seq: 1,
+        player: "player1",
+        overall_score: 2,
+      }),
+      evaluator(2, {
+        scope: "move",
+        target_seq: 2,
+        player: "player2",
+        overall_score: 9,
+      }),
+    ];
+    render(<HistoryScorecard events={events} onClose={vi.fn()} />);
+
+    const low = chipBackground("2/10");
+    const high = chipBackground("9/10");
+    expect(low).not.toBe(high);
+    // Each cell carries the ramp colour for its own average.
+    expect(low).toBe(scoreColors(2)?.background);
+    expect(high).toBe(scoreColors(9)?.background);
+  });
+
+  it("distinguishes averages a tenth of a point apart", () => {
+    // The scorecard shows a mean, so a banded colour scale would collapse these
+    // two players onto one colour.
+    const scores = (player: string, values: number[], offset: number) =>
+      values.map((value, index) =>
+        evaluator(offset + index, {
+          scope: "move",
+          target_seq: offset + index,
+          player,
+          overall_score: value,
+        })
+      );
+    render(
+      <HistoryScorecard
+        events={[
+          // 37 / 5 = 7.4
+          ...scores("player1", [8, 7, 7, 7, 8], 1),
+          // 38 / 5 = 7.6
+          ...scores("player2", [8, 8, 7, 7, 8], 6),
+        ]}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(chipBackground("7.4/10")).not.toBe(chipBackground("7.6/10"));
+  });
+
+  it("shows a dash rather than a coloured chip when a level has no verdict", () => {
+    render(
+      <HistoryScorecard
+        events={[
+          evaluator(1, {
+            scope: "move",
+            target_seq: 1,
+            player: "player1",
+            overall_score: 5,
+          }),
+        ]}
+        onClose={vi.fn()}
+      />
+    );
+
+    const cells = within(
+      screen.getByTestId("history-scorecard-player-player1")
+    ).getAllByRole("cell");
+    // Round and game have no verdict: an em-dash, and no chip to colour.
+    expect(cells[2]).toHaveTextContent("—");
+    expect(cells[2].querySelector("[data-slot='chip']")).toBeNull();
+    expect(cells[3]).toHaveTextContent("—");
+    expect(cells[3].querySelector("[data-slot='chip']")).toBeNull();
   });
 });

@@ -7,10 +7,19 @@ import {
   ExpandSignal,
   HistoryTranscript,
 } from "@/features/history/components/history-transcript";
+import { scoreColors } from "@/features/history/lib/score-colors";
 import { HistoryEvent } from "@/features/shared/lib/types";
 
 // jsdom does not implement scrollIntoView; the scroll-lock auto-follow uses it.
 HTMLElement.prototype.scrollIntoView = vi.fn();
+
+/** The background colour of the score chip inside (or at) `element`. */
+function background(element: HTMLElement): string | undefined {
+  const chip = element.matches("[data-slot='chip']")
+    ? element
+    : element.querySelector("[data-slot='chip']");
+  return (chip as HTMLElement | null)?.style.backgroundColor;
+}
 
 const board: BoardActions = {
   gameId: "g1",
@@ -583,6 +592,90 @@ describe("HistoryTranscript", () => {
     expect(screen.getByTestId("history-round-round-1")).toBeInTheDocument();
     expect(
       screen.queryByTestId("history-round-end-round-1")
+    ).not.toBeInTheDocument();
+  });
+
+  it("colours a score chip from the score rather than always green", () => {
+    const verdict = (seq: number, targetSeq: number, score: number) =>
+      ({
+        seq,
+        event_id: `v${seq}`,
+        game_id: "g1",
+        actor: "evaluator",
+        event_type: "move_evaluation",
+        payload: { scope: "move", target_seq: targetSeq, overall_score: score },
+        occurred_at: "2026-06-24T10:02:00Z",
+        recorded_at: "2026-06-24T10:02:01Z",
+      }) satisfies HistoryEvent;
+    const secondMove: HistoryEvent = {
+      ...AGENT_EVENT,
+      seq: 2,
+      event_id: "a2",
+    };
+    renderTranscript([
+      AGENT_EVENT,
+      secondMove,
+      verdict(3, 1, 2),
+      verdict(4, 2, 9),
+    ]);
+
+    // Each move's indicator carries the ramp colour of the score it summarises.
+    const low = background(
+      screen.getByTestId("history-event-eval-indicator-1")
+    );
+    const high = background(
+      screen.getByTestId("history-event-eval-indicator-2")
+    );
+    expect(low).toBe(scoreColors(2)?.background);
+    expect(high).toBe(scoreColors(9)?.background);
+    expect(low).not.toBe(high);
+
+    // The verdict chip in the sub-tree uses the same mapping, so one score is
+    // never shown in two colours.
+    fireEvent.click(screen.getByTestId("history-evals-toggle-1"));
+    expect(background(screen.getByTestId("history-eval-score-3"))).toBe(low);
+  });
+
+  it("pairs the score's text colour with its background", () => {
+    const verdict: HistoryEvent = {
+      seq: 3,
+      event_id: "v3",
+      game_id: "g1",
+      actor: "evaluator",
+      event_type: "move_evaluation",
+      payload: { scope: "move", target_seq: 1, overall_score: 5 },
+      occurred_at: "2026-06-24T10:02:00Z",
+      recorded_at: "2026-06-24T10:02:01Z",
+    };
+    renderTranscript([AGENT_EVENT, verdict]);
+
+    const chip = screen
+      .getByTestId("history-event-eval-indicator-1")
+      .querySelector("[data-slot='chip']") as HTMLElement;
+    expect(chip.style.backgroundColor).toBe(scoreColors(5)?.background);
+    expect(chip.style.color).toBe(scoreColors(5)?.foreground);
+  });
+
+  it("leaves a verdict with no overall score uncoloured", () => {
+    const verdict: HistoryEvent = {
+      seq: 3,
+      event_id: "v3",
+      game_id: "g1",
+      actor: "evaluator",
+      event_type: "move_evaluation",
+      payload: { scope: "move", target_seq: 1, rationale: "No number" },
+      occurred_at: "2026-06-24T10:02:00Z",
+      recorded_at: "2026-06-24T10:02:01Z",
+    };
+    renderTranscript([AGENT_EVENT, verdict]);
+
+    // No score means no chip at all — never a chip in the colour of a top score.
+    expect(
+      screen.queryByTestId("history-event-eval-indicator-1")
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("history-evals-toggle-1"));
+    expect(
+      screen.queryByTestId("history-eval-score-3")
     ).not.toBeInTheDocument();
   });
 });

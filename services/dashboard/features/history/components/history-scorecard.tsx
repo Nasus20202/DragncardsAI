@@ -3,6 +3,7 @@
 import { Alert, Button, Chip } from "@heroui/react";
 import { useMemo } from "react";
 
+import { ScoreChip } from "@/features/history/components/score-chip";
 import { RightDrawer } from "@/features/shared/components/right-drawer";
 import { HistoryEvent } from "@/features/shared/lib/types";
 import {
@@ -14,7 +15,9 @@ import {
 /**
  * One level's cell on the scorecard: the average overall score (with the count
  * of underlying verdicts) for a player at the move/round/game level, or a dash
- * when that player has no verdict at that level yet.
+ * when that player has no verdict at that level yet. The chip's colour comes
+ * from the average itself, so a weak player's row reads red and a strong one's
+ * green without the numbers being compared.
  */
 function ScoreCell({ level }: { level: PlayerLevelScores }) {
   const average = formatScore(level.average);
@@ -23,9 +26,7 @@ function ScoreCell({ level }: { level: PlayerLevelScores }) {
   }
   return (
     <span className="flex items-center gap-1.5">
-      <Chip size="sm" variant="primary" color="success">
-        {average}
-      </Chip>
+      <ScoreChip value={level.average} />
       {level.scores.length > 1 && (
         <span className="text-xs text-default-400">
           avg of {level.scores.length}
