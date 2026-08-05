@@ -49,6 +49,43 @@ never applies to. Requests with no `Origin` are unaffected by this setting.
 for methods that require a preflight; it does not stop a non-browser client, which
 simply omits `Origin`. Requiring a credential is tracked separately as DRA-32.
 
+## DragnCards Credential Cache
+
+Bootstrapping a room needs the bot's DragnCards session token and its numeric user
+id. Deriving them costs two HTTP round trips — `POST /api/v1/session` at ~240 ms,
+because it verifies a password hash, and `GET /api/v1/profile` at ~65 ms — which
+together were over half the ~590 ms cost of `POST /games`, repeated per room.
+
+Both values are cached in the session-store Valkey (`VALKEY_URL`) under
+`game-service:dragncards-auth:<digest>`, where the digest covers the DragnCards URL
+and `BOT_EMAIL` so that repointing the service or changing the account misses
+rather than reusing a credential minted elsewhere.
+
+`DRAGNCARDS_AUTH_CACHE_TTL_SECONDS` controls how long an entry is reused; the
+default is `900`. DragnCards issues the token into `Pow.Store.CredentialsCache`,
+which the pinned upstream declares with a 30-minute TTL and does not extend on use,
+so the default is half that lifetime: an entry read at the last instant before it
+expires still carries ~15 minutes of validity. Set it to `0` to disable the cache
+and authenticate once per room.
+
+Two properties this cache has to keep:
+
+- **A Valkey failure is slower, never broken.** A miss, an unreachable instance, a
+  connection reset mid-command, or a stored value of the wrong shape is reported as
+  a cache miss; the service authenticates live and the room is created normally.
+- **The token never leaves the cache value.** It appears only in the JSON stored in
+  Valkey and in the `authorization` header of a DragnCards request — never in a log
+  record, a span attribute, or an error message. Cache diagnostics name the key and
+  the command only.
+
+The room channel is the only place a DragnCards credential is actually checked on
+this path: `POST /api/v1/games` is not behind the authenticated pipeline upstream
+and accepts any token. A join the backend will not serve answers with
+`room_unavailable` instead of a state, and when the credential used came from the
+cache the entry is evicted so the next room derives a fresh one — the realistic
+cause is the DragnCards container being recreated, which forgets every issued token
+while a cached entry still looks fresh.
+
 ## What This Service Is For
 
 Use `game-service` when you need to:

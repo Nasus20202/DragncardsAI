@@ -8,7 +8,11 @@ Run with:
 """
 
 import asyncio
+import hashlib
+import json
 import os
+from collections import Counter
+from urllib.parse import urlparse
 
 import pytest
 
@@ -103,3 +107,124 @@ async def test_invalid_plugin_raises(manager):
 
     with pytest.raises(SessionError, match="not found"):
         await manager.create_session("nonexistent-plugin")
+
+
+@pytest.mark.asyncio
+async def test_credential_cache_serves_two_rooms_with_one_authentication(manager):
+    """DRA-36: a cached credential is reused against the real DragnCards backend.
+
+    Counted at the wire by wrapping httpx, because the point of the cache is the
+    round trips it removes, not an internal flag.
+    """
+    import httpx
+
+    from game_service.coordination.session_store import _RespConnection
+    from game_service.dragncards.auth_cache import DragnCardsAuthCache
+
+    valkey_url = os.environ.get("VALKEY_URL", "redis://localhost:6380/0")
+    parsed = urlparse(valkey_url)
+    cache = DragnCardsAuthCache(
+        DRAGNCARDS_HTTP_URL,
+        DEV_USER_EMAIL,
+        DEV_USER_PASSWORD,
+        valkey=_RespConnection(parsed.hostname or "localhost", parsed.port or 6379),
+        ttl_seconds=900,
+    )
+    await cache.invalidate()
+    manager._auth_cache = cache
+
+    counts: Counter[str] = Counter()
+    original_send = httpx.AsyncClient.send
+
+    async def counting_send(self, request, **kwargs):
+        counts[request.url.path] += 1
+        return await original_send(self, request, **kwargs)
+
+    httpx.AsyncClient.send = counting_send
+    created: list[str] = []
+    try:
+        for _ in range(2):
+            session = await manager.create_session("marvel-champions", ephemeral=True)
+            created.append(session.session_id)
+    finally:
+        httpx.AsyncClient.send = original_send
+        for session_id in created:
+            try:
+                await manager.delete_session(session_id)
+            except Exception:
+                pass
+        await cache.invalidate()
+
+    assert counts["/api/v1/games"] == 2, "both rooms must actually be created"
+    assert counts["/api/v1/session"] == 1, "the second room must not re-authenticate"
+    assert counts["/api/v1/profile"] == 1, "the user id must be cached with the token"
+
+
+@pytest.mark.asyncio
+async def test_a_valkey_outage_still_creates_a_room(manager):
+    """DRA-36: the cache degrades to a live authentication, it never fails.
+
+    Pointed at a port with nothing listening, which is the outage the shared RESP
+    client actually produces (a refused connection per command).
+    """
+    from game_service.coordination.session_store import _RespConnection
+    from game_service.dragncards.auth_cache import DragnCardsAuthCache
+
+    manager._auth_cache = DragnCardsAuthCache(
+        DRAGNCARDS_HTTP_URL,
+        DEV_USER_EMAIL,
+        DEV_USER_PASSWORD,
+        valkey=_RespConnection("127.0.0.1", 6399),
+        ttl_seconds=900,
+    )
+
+    session = await manager.create_session("marvel-champions", ephemeral=True)
+    try:
+        assert session.room_slug
+        state = await session.get_state()
+        assert isinstance(state, dict) and "game" in state
+    finally:
+        await manager.delete_session(session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_reloading_a_room_leaves_no_trace_of_its_previous_state(manager):
+    """DRA-36: the guarantee ephemeral-room reuse rests on.
+
+    DragnCards implements the `set_game` action as a whole-document replacement
+    (`GameUI.resolve_action_type/4` returns `options["game"]`), so a room that has
+    held another state must end up byte-for-byte identical to a fresh one. Asserted
+    against the real backend, because it is upstream behaviour this repository does
+    not control: if a future DragnCards merged instead of replaced, reuse would
+    silently start showing stale boards and only this test would notice.
+    """
+    reused = await manager.create_session("marvel-champions", ephemeral=True)
+    fresh = await manager.create_session("marvel-champions", ephemeral=True)
+    try:
+        # Two genuinely different board states to move between.
+        first = await reused.export_state()
+        await reused.set_player_count(2)
+        second = await reused.export_state()
+        assert _digest(first.game) != _digest(
+            second.game
+        ), "the two states must differ, or this test proves nothing"
+
+        # The reused room walks second -> first; the fresh room goes straight to it.
+        await reused.load_state(first)
+        await fresh.load_state(first)
+
+        reused_after = await reused.export_state()
+        fresh_after = await fresh.export_state()
+        assert _digest(reused_after.game) == _digest(fresh_after.game)
+    finally:
+        for session in (reused, fresh):
+            try:
+                await manager.delete_session(session.session_id)
+            except Exception:
+                pass
+
+
+def _digest(document: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()

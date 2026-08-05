@@ -320,3 +320,289 @@ describe("useBoardReconstruction room resolution (DRA-28)", () => {
     });
   });
 });
+
+describe("useBoardReconstruction session reuse (DRA-36)", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * A history-service that honours `reuse_session_id`: it re-points the supplied
+   * session and, having created no room, reports none.
+   */
+  function reusingFetch() {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/restore")) {
+        const body = JSON.parse((init?.body as string) ?? "{}");
+        if (body.reuse_session_id) {
+          return jsonResponse({
+            status: "restored",
+            session_id: body.reuse_session_id,
+          });
+        }
+        return jsonResponse({
+          status: "restored",
+          session_id: "sess-first",
+          room_slug: "room-first",
+        });
+      }
+      return jsonResponse({});
+    });
+  }
+
+  function restoreBodies(fetchMock: ReturnType<typeof vi.fn>) {
+    return fetchMock.mock.calls
+      .filter(([input]) => String(input).includes("/restore"))
+      .map(([, init]) => JSON.parse((init as RequestInit).body as string));
+  }
+
+  function deletes(fetchMock: ReturnType<typeof vi.fn>) {
+    return fetchMock.mock.calls
+      .filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === "DELETE"
+      )
+      .map(([input]) => String(input));
+  }
+
+  it("re-points the session it already holds at the newly selected moment", async () => {
+    const fetchMock = reusingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerender } = render(<Harness gameId="game-1" selectedSeq={5} />);
+    await act(async () => {
+      fireEvent.click(screen.getByText("open"));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("recon")).toHaveTextContent(
+        "sess-first:room-first"
+      )
+    );
+
+    // Move to another moment of the same game, then open again.
+    await act(async () => {
+      rerender(<Harness gameId="game-1" selectedSeq={9} />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("open"));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("recon")).toHaveTextContent(
+        "sess-first:room-first"
+      )
+    );
+
+    const bodies = restoreBodies(fetchMock);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0].reuse_session_id).toBeUndefined();
+    // The saving being claimed: the second open re-points the open room rather
+    // than building a second one.
+    expect(bodies[1]).toMatchObject({
+      target_seq: 9,
+      mode: "new",
+      ephemeral: true,
+      reuse_session_id: "sess-first",
+    });
+    expect(deletes(fetchMock)).toHaveLength(0);
+  });
+
+  it("embeds the remembered room when a reuse reports no new room", async () => {
+    const fetchMock = reusingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerender } = render(<Harness gameId="game-1" selectedSeq={5} />);
+    await act(async () => {
+      fireEvent.click(screen.getByText("open"));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("recon")).toBeInTheDocument()
+    );
+    await act(async () => {
+      rerender(<Harness gameId="game-1" selectedSeq={9} />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("open"));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("recon")).toHaveTextContent(
+        "sess-first:room-first"
+      )
+    );
+    // A reuse creates no room, so it reports none — and the room is already
+    // known. Listing every live session to rediscover it would be a wasted round
+    // trip that also races the ephemeral reaper.
+    const listed = fetchMock.mock.calls.filter(([input]) =>
+      String(input).endsWith("/api/proxy/game/games")
+    );
+    expect(listed).toHaveLength(0);
+  });
+
+  it("stops showing the board when the moment changes but keeps the session", async () => {
+    const fetchMock = reusingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerender } = render(<Harness gameId="game-1" selectedSeq={5} />);
+    await act(async () => {
+      fireEvent.click(screen.getByText("open"));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("recon")).toBeInTheDocument()
+    );
+
+    await act(async () => {
+      rerender(<Harness gameId="game-1" selectedSeq={9} />);
+    });
+
+    // The header names the moment the board was built from, so the board has to
+    // go; the session does not, because re-opening reuses it.
+    expect(screen.queryByTestId("recon")).not.toBeInTheDocument();
+    expect(deletes(fetchMock)).toHaveLength(0);
+  });
+
+  it("disposes the retained session when the game changes", async () => {
+    const fetchMock = reusingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerender } = render(<Harness gameId="game-1" selectedSeq={5} />);
+    await act(async () => {
+      fireEvent.click(screen.getByText("open"));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("recon")).toBeInTheDocument()
+    );
+
+    // Hide the board first: the retained session survives that, so the game
+    // switch is the only thing left that can reclaim it.
+    await act(async () => {
+      rerender(<Harness gameId="game-1" selectedSeq={9} />);
+    });
+    expect(deletes(fetchMock)).toHaveLength(0);
+
+    await act(async () => {
+      rerender(<Harness gameId="game-2" selectedSeq={9} />);
+    });
+
+    await waitFor(() =>
+      expect(
+        deletes(fetchMock).some((u) =>
+          u.includes("/api/proxy/game/games/sess-first")
+        )
+      ).toBe(true)
+    );
+  });
+
+  it("disposes the retained session when the service declines to reuse it", async () => {
+    // A restore with no full-state base cannot safely reuse a session, so the
+    // service builds a fresh one. The retained session is then orphaned.
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/restore")) {
+          const body = JSON.parse((init?.body as string) ?? "{}");
+          return jsonResponse({
+            status: "restored",
+            session_id: body.reuse_session_id ? "sess-second" : "sess-first",
+            room_slug: body.reuse_session_id ? "room-second" : "room-first",
+          });
+        }
+        return jsonResponse({});
+      }
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerender } = render(<Harness gameId="game-1" selectedSeq={5} />);
+    await act(async () => {
+      fireEvent.click(screen.getByText("open"));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("recon")).toBeInTheDocument()
+    );
+    await act(async () => {
+      rerender(<Harness gameId="game-1" selectedSeq={9} />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("open"));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("recon")).toHaveTextContent(
+        "sess-second:room-second"
+      )
+    );
+    await waitFor(() =>
+      expect(
+        deletes(fetchMock).some((u) =>
+          u.includes("/api/proxy/game/games/sess-first")
+        )
+      ).toBe(true)
+    );
+  });
+
+  it("keeps the retained session when a reuse restore fails", async () => {
+    let attempts = 0;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/restore")) {
+          attempts += 1;
+          if (attempts === 1) {
+            return jsonResponse({
+              status: "restored",
+              session_id: "sess-first",
+              room_slug: "room-first",
+            });
+          }
+          if (attempts === 2) {
+            return {
+              ok: false,
+              status: 400,
+              statusText: "Bad Request",
+              json: async () => ({ detail: "replay diverged" }),
+            } as unknown as Response;
+          }
+          const body = JSON.parse((init?.body as string) ?? "{}");
+          return jsonResponse({
+            status: "restored",
+            session_id: body.reuse_session_id ?? "sess-other",
+          });
+        }
+        return jsonResponse({});
+      }
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerender } = render(<Harness gameId="game-1" selectedSeq={5} />);
+    await act(async () => {
+      fireEvent.click(screen.getByText("open"));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("recon")).toBeInTheDocument()
+    );
+    await act(async () => {
+      rerender(<Harness gameId="game-1" selectedSeq={9} />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("open"));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("recon-error")).toBeInTheDocument()
+    );
+
+    // The history-service never deletes a session it did not create, so the
+    // retained one is still ours — and the retry offers it again.
+    expect(deletes(fetchMock)).toHaveLength(0);
+    await act(async () => {
+      fireEvent.click(screen.getByText("open"));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("recon")).toHaveTextContent(
+        "sess-first:room-first"
+      )
+    );
+    expect(restoreBodies(fetchMock)[2].reuse_session_id).toBe("sess-first");
+  });
+});

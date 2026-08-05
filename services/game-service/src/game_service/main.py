@@ -16,6 +16,7 @@ Environment variables:
   BOT_PASSWORD          default: dev_password
   HTTP_HOST             default: 0.0.0.0
   HTTP_PORT             default: 4001
+  DRAGNCARDS_AUTH_CACHE_TTL_SECONDS  default: 900 (0 disables the cache)
 """
 
 from __future__ import annotations
@@ -31,6 +32,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from game_service.dragncards.auth_cache import (
+    DEFAULT_TTL_SECONDS as DEFAULT_AUTH_CACHE_TTL_SECONDS,
+)
 from game_service.telemetry import setup_telemetry
 
 # ---------------------------------------------------------------------------
@@ -82,6 +86,30 @@ def _positive_float_env(name: str, default: float) -> float:
     return value
 
 
+def _non_negative_float_env(name: str, default: float) -> float:
+    """Parse a float env var where ``0`` is a meaningful value, not a typo.
+
+    Separate from :func:`_positive_float_env` because the credential cache TTL
+    uses ``0`` to mean "do not cache". Folding the two would either turn that
+    switch into a silently ignored typo or let a negative interval through to the
+    reaper.
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using default %s", name, raw, default)
+        return default
+    if value < 0:
+        logger.warning(
+            "%s must not be negative (got %s); using default %s", name, value, default
+        )
+        return default
+    return value
+
+
 # How long an ephemeral reconstruction session may live before the server-side
 # reaper reclaims it (session + DragnCards room), even if the client never tore
 # it down. Default 30 minutes.
@@ -91,6 +119,14 @@ EPHEMERAL_SESSION_TTL_SECONDS = _positive_float_env(
 # How often the reaper checks for expired ephemeral sessions. Default 60s.
 EPHEMERAL_REAPER_INTERVAL_SECONDS = _positive_float_env(
     "EPHEMERAL_REAPER_INTERVAL_SECONDS", 60.0
+)
+
+# How long the DragnCards session token and user id are reused out of Valkey
+# before being re-derived. DragnCards keeps an issued token valid for 30 minutes,
+# so the default is half that lifetime. Set to 0 to authenticate once per room, as
+# this service did before the cache existed.
+DRAGNCARDS_AUTH_CACHE_TTL_SECONDS = _non_negative_float_env(
+    "DRAGNCARDS_AUTH_CACHE_TTL_SECONDS", DEFAULT_AUTH_CACHE_TTL_SECONDS
 )
 
 # Plugin registry — maps plugin name to DragnCards plugin metadata.
@@ -114,7 +150,9 @@ def build_session_manager():
     from game_service.coordination.session_store import (
         InMemorySessionStore,
         ValkeySessionStore,
+        _RespConnection,
     )
+    from game_service.dragncards.auth_cache import DragnCardsAuthCache
     from game_service.logic.session_manager import SessionManager
 
     parsed = urlparse(VALKEY_URL)
@@ -152,6 +190,33 @@ def build_session_manager():
     else:
         logger.info("History ingestion disabled")
 
+    # The credential cache shares the session-store Valkey: both hold ephemeral
+    # coordination data for this service, and the connection is stateless (one TCP
+    # connection per command), so there is nothing to pool or hand around. With the
+    # in-memory session store selected there is no Valkey to use, and the cache is
+    # left inert — the same as setting the TTL to 0.
+    auth_cache = DragnCardsAuthCache(
+        DRAGNCARDS_HTTP_URL,
+        BOT_EMAIL,
+        BOT_PASSWORD,
+        valkey=(
+            None
+            if use_in_memory
+            else _RespConnection(parsed.hostname or "localhost", parsed.port or 6379)
+        ),
+        ttl_seconds=DRAGNCARDS_AUTH_CACHE_TTL_SECONDS,
+    )
+    if auth_cache.enabled:
+        logger.info(
+            "DragnCards credential cache enabled (ttl=%.0fs key=%s)",
+            DRAGNCARDS_AUTH_CACHE_TTL_SECONDS,
+            auth_cache.key,
+        )
+    else:
+        logger.info(
+            "DragnCards credential cache disabled; authenticating once per room"
+        )
+
     return SessionManager(
         dragncards_http_url=DRAGNCARDS_HTTP_URL,
         dragncards_ws_url=DRAGNCARDS_WS_URL,
@@ -162,6 +227,7 @@ def build_session_manager():
         history_emitter=history_emitter,
         ephemeral_session_ttl_seconds=EPHEMERAL_SESSION_TTL_SECONDS,
         ephemeral_reaper_interval_seconds=EPHEMERAL_REAPER_INTERVAL_SECONDS,
+        auth_cache=auth_cache,
     )
 
 

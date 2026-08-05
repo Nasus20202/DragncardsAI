@@ -36,6 +36,11 @@ services:
       # TTL reaper for non-emitting ephemeral reconstruction sessions.
       EPHEMERAL_SESSION_TTL_SECONDS: ${EPHEMERAL_SESSION_TTL_SECONDS:-1800}
       EPHEMERAL_REAPER_INTERVAL_SECONDS: ${EPHEMERAL_REAPER_INTERVAL_SECONDS:-60}
+      # How long the DragnCards session token and user id are reused out of
+      # VALKEY_URL above instead of being re-derived per room. DragnCards keeps an
+      # issued token valid for 30 minutes and does not extend that on use, so this
+      # is half its lifetime. 0 disables the cache.
+      DRAGNCARDS_AUTH_CACHE_TTL_SECONDS: ${DRAGNCARDS_AUTH_CACHE_TTL_SECONDS:-900}
       OTEL_SERVICE_NAME: ${GAME_SERVICE_OTEL_SERVICE_NAME:-game-service}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${GAME_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-lgtm:4318}
       OTEL_EXPORTER_OTLP_PROTOCOL: ${GAME_SERVICE_OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}

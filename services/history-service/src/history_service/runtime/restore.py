@@ -83,6 +83,7 @@ class RestoreService:
         target_seq: int,
         mode: RestoreMode = "new",
         ephemeral: bool = False,
+        reuse_session_id: str | None = None,
     ) -> RestoreResult:
         """Traced entry point; the workflow itself is :meth:`_restore`.
 
@@ -99,6 +100,10 @@ class RestoreService:
                 "history.target_seq": target_seq,
                 "history.restore_mode": mode,
                 "history.ephemeral": ephemeral,
+                # Whether a session to reuse was offered, not which one: the id is
+                # already the span's `game.id` when it is honoured, and a flag is
+                # what a trace needs to tell a fast re-point from a fresh build.
+                "history.reuse_offered": reuse_session_id is not None,
             },
         ):
             return await self._restore(
@@ -106,6 +111,7 @@ class RestoreService:
                 target_seq=target_seq,
                 mode=mode,
                 ephemeral=ephemeral,
+                reuse_session_id=reuse_session_id,
             )
 
     async def _restore(
@@ -115,6 +121,7 @@ class RestoreService:
         target_seq: int,
         mode: RestoreMode,
         ephemeral: bool,
+        reuse_session_id: str | None = None,
     ) -> RestoreResult:
         # 1. Validate target_seq is in range BEFORE mutating anything.
         latest_seq = await self._repository.get_latest_seq(game_id)
@@ -171,6 +178,41 @@ class RestoreService:
                     "branchable session instead)"
                 )
             game_session_id = game_id
+        elif reuse_session_id is not None and ephemeral and base is not None:
+            # Re-point a session the caller already owns instead of building a
+            # second room for the same game. Creating one is several sequential
+            # DragnCards round trips plus a channel join and a plugin load; loading
+            # a base into an open room is a single state load.
+            #
+            # Two conditions gate this, and neither is an optimisation detail.
+            #
+            # ``base is not None`` is what makes it correct. Loading a base issues
+            # DragnCards ``set_game``, which returns the supplied document outright
+            # rather than merging into the room's existing game, so the reused
+            # session ends in exactly the target state and nothing from the moment
+            # it previously held survives. The no-base path has no such guarantee —
+            # it replays forward from seq 1 onto whatever the session already holds
+            # — so it falls through to creating a fresh session below rather than
+            # being reasoned about case by case.
+            #
+            # ``ephemeral`` is what keeps it aimed at the flow it exists for. Reuse
+            # overwrites a session named by the caller rather than one this restore
+            # created, and an ephemeral reconstruction is by definition a throwaway
+            # the caller built to look at. A kept branch restore is meant to own the
+            # room it produces, so it gets a fresh one; without this condition the
+            # field would be a way to overwrite an unrelated live session with a
+            # different game's board.
+            #
+            # ``created_new_session`` stays false: the caller owns this session, so
+            # a failed restore must not delete it. ``room_slug`` stays None because
+            # no room was created; the caller already knows the room it handed over.
+            game_session_id = reuse_session_id
+            logger.info(
+                "Restoring game %s to seq %s into caller-supplied session %s",
+                game_id,
+                target_seq,
+                game_session_id,
+            )
         else:
             if plugin_name is None:
                 raise RestoreError(

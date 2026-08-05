@@ -122,6 +122,25 @@ class RestoreRequest(BaseModel):
     # moment. It never pollutes history and is reclaimed after a TTL even if the
     # client never tears it down. Ignored for ``mode="in_place"``.
     ephemeral: bool = False
+    # An existing game-service session to restore *into*, instead of creating one.
+    # A caller viewing a second moment of the same game already owns a room, and
+    # re-pointing that room at the new moment was measured at ~55 ms against
+    # ~730 ms to build a replacement.
+    #
+    # Honoured only for an ``ephemeral`` ``mode="new"`` restore, and only when a
+    # full-state base at or before the target exists.
+    #
+    # The base is what makes it correct: loading it issues the DragnCards
+    # ``set_game`` action, which replaces the room's game document outright, so
+    # nothing from the moment the session previously held can survive. A restore
+    # with no base replays forward onto whatever the session already holds, so it
+    # always creates a fresh session and leaves the supplied one untouched.
+    #
+    # ``ephemeral`` is what keeps the field aimed at the flow it exists for. It
+    # overwrites a session the caller names rather than one the restore created,
+    # and an ephemeral reconstruction is by definition a throwaway built for
+    # viewing; a kept branch restore owns the room it produces.
+    reuse_session_id: str | None = Field(default=None, max_length=200)
 
 
 class RestoreResponse(BaseModel):

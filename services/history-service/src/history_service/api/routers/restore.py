@@ -26,6 +26,7 @@ async def restore_game(
             target_seq=body.target_seq,
             mode=body.mode,
             ephemeral=body.ephemeral,
+            reuse_session_id=body.reuse_session_id,
         )
     except RestoreError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
