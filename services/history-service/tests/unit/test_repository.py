@@ -119,6 +119,43 @@ async def test_latest_agent_event_lookup(repository):
 
 
 @pytest.mark.asyncio
+async def test_an_illegal_action_finding_is_not_a_conversation_to_restore(repository):
+    """A context-less agent event must not be what a restore rebuilds from.
+
+    An ``illegal_action`` finding is an ``agent`` event carrying no
+    ``conversation_context``, and the orchestrator records one *after* the move it
+    concerns. If the lookup returned it, the restore would rebuild an empty
+    conversation and still report success, so the finding has to be skipped in
+    favour of the real move behind it.
+    """
+    await repository.commit_event(
+        make_envelope(
+            "g1",
+            actor="agent",
+            event_type="agent_move",
+            producer_offset=0,
+            payload={"conversation_context": [{"role": "user", "content": "go"}]},
+        )
+    )
+    await repository.commit_event(
+        make_envelope(
+            "g1",
+            actor="agent",
+            event_type="illegal_action",
+            producer_offset=1,
+            payload={"player": "player2", "violation": "played an unaffordable card"},
+        )
+    )
+
+    latest = await repository.get_latest_agent_event_at_or_before("g1", 2)
+
+    assert latest is not None
+    assert latest.event_type == "agent_move"
+    assert latest.seq == 1
+    assert latest.payload["conversation_context"]
+
+
+@pytest.mark.asyncio
 async def test_list_games_empty(repository):
     assert await repository.list_games() == []
 

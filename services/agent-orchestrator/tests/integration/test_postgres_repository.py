@@ -185,6 +185,21 @@ async def test_postgres_delete_session_satisfies_foreign_keys(
         covers_up_to_job_id=job.id,
         tokens_used=5,
     )
+    # The player channel and the findings also hang off the orchestrating session,
+    # and their foreign keys are only enforced here.
+    await postgres_repository.send_player_message(
+        session.id,
+        sender_player_id="player1",
+        recipient_player_id="player2",
+        body="table talk",
+    )
+    finding = await postgres_repository.open_illegal_action(
+        session.id,
+        player_id="player1",
+        violation="Played a second event in the same phase.",
+        required_undo="Return the event to hand and refund its cost.",
+    )
+    assert finding is not None
 
     assert await postgres_repository.delete_session(session.id) is True
 
@@ -192,3 +207,5 @@ async def test_postgres_delete_session_satisfies_foreign_keys(
     assert await postgres_repository.get_job(job.id) is None
     assert await postgres_repository.list_compaction_records(session.id) == []
     assert await postgres_repository.list_player_configs(session.id) == []
+    assert await postgres_repository.list_player_messages(session.id) == []
+    assert await postgres_repository.get_illegal_action(finding.id) is None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from eval_service.judge.events import is_agent_move
 from eval_service.schemas.history import StoredEvent
 
 
@@ -66,7 +67,7 @@ def neighbour_events(
     candidates = [
         event
         for event in events
-        if event.actor == "agent"
+        if is_agent_move(event)
         and (
             event.seq < target_seq if direction == "before" else event.seq > target_seq
         )

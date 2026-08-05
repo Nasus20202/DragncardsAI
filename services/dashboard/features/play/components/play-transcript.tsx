@@ -7,6 +7,8 @@ import {
   AggEvent,
   deriveUserQuestionResolutions,
   eventBodyText,
+  parseIllegalActionFindingEvent,
+  parseSeatScopeViolationEvent,
   parseUserQuestionEvent,
   TERMINAL_JOB_STATUSES,
   UserQuestionResolution,
@@ -314,6 +316,76 @@ export function AggEventRow({
               : undefined
           }
         />
+      );
+    }
+    case "seat_scope_violation": {
+      const violation = parseSeatScopeViolationEvent(agg.event);
+      if (!violation) {
+        return (
+          <CollapsibleEventBlock
+            label="Seat boundary refusal"
+            dotClass="bg-warning/60"
+            event={agg.event}
+          />
+        );
+      }
+      // Warning styling, for the same reason `compaction_failed` uses it and the
+      // `failure` row does not: nothing here is broken. The call never reached
+      // the tool, which is the boundary doing its job.
+      return (
+        <div
+          data-testid="seat-scope-violation"
+          className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm"
+        >
+          <span className="mr-1.5 font-semibold text-warning">
+            Refused: seat boundary held
+          </span>
+          <span className="text-default-500">
+            {violation.playerId} named {violation.foreignPlayerId} in{" "}
+            {violation.argument || "an argument"}
+            {violation.value ? ` (${violation.value})` : ""}, so{" "}
+            {violation.toolName || "the tool"} was not called.
+          </span>
+        </div>
+      );
+    }
+    case "illegal_action_finding": {
+      const finding = parseIllegalActionFindingEvent(agg.event);
+      if (!finding) {
+        return (
+          <CollapsibleEventBlock
+            label="Illegal action finding"
+            dotClass="bg-danger/60"
+            event={agg.event}
+          />
+        );
+      }
+      const isOpen = finding.status === "open";
+      return (
+        <div
+          data-testid="illegal-action-finding"
+          data-status={finding.status}
+          className={`rounded-lg border px-3 py-2 text-sm ${isOpen ? "border-danger/30 bg-danger/10" : "border-default-200/60 bg-default-50/40 dark:bg-white/3"}`}
+        >
+          <span
+            className={`mr-1.5 font-semibold ${isOpen ? "text-danger" : "text-default-500"}`}
+          >
+            {isOpen ? "Open finding" : "Resolved finding"}
+          </span>
+          <span className="text-default-500">
+            {finding.playerId}
+            {finding.roundNumber === null
+              ? ""
+              : `, round ${finding.roundNumber}`}
+            : {finding.violation || "no violation recorded"}
+            {isOpen && finding.requiredUndo
+              ? ` — to undo: ${finding.requiredUndo}`
+              : ""}
+            {!isOpen && finding.resolutionNote
+              ? ` — ${finding.resolutionNote}`
+              : ""}
+          </span>
+        </div>
       );
     }
     case "subagent_started":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from eval_service.judge.events import is_agent_move
 from eval_service.schemas.history import StoredEvent
 
 # Canonical single-player id used when a game has one player (or when the
@@ -171,7 +172,7 @@ def _round_bounds(events: list[StoredEvent], target_seq: int) -> tuple[int, int]
 def _move_index_in_round(events: list[StoredEvent], target_seq: int) -> int:
     frm, to = _round_bounds(events, target_seq)
     agent_seqs = sorted(
-        e.seq for e in events if e.actor == "agent" and frm <= e.seq <= to
+        e.seq for e in events if is_agent_move(e) and frm <= e.seq <= to
     )
     try:
         return agent_seqs.index(target_seq)
@@ -187,7 +188,7 @@ def players_in_span(events: list[StoredEvent], from_seq: int, to_seq: int) -> li
     """
     acted: set[str] = set()
     for event in events:
-        if event.actor == "agent" and from_seq <= event.seq <= to_seq:
+        if is_agent_move(event) and from_seq <= event.seq <= to_seq:
             acted.add(attribute_move(events, event.seq))
     if not acted:
         return [DEFAULT_PLAYER]

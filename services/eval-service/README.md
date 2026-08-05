@@ -124,6 +124,29 @@ above is what did the heavy lifting on size (13,750 → ~3,000 tokens) and it
 remains in place, so a round-scoped prompt still costs a fraction of the
 pre-projection one.
 
+## Orchestrated play is projected as orchestrated
+
+The projection states the session mode the play was recorded in. When it is
+`orchestrated` it also states that each player seat was a **separate agent holding
+its own context and its own persona**, so the judge does not mark a seat down for
+failing to account for information it could not have seen. When it is `chat` the
+projection reads exactly as it did before orchestrated mode existed — byte for byte —
+so verdicts recorded either side of the change stay comparable.
+
+A round additionally carries the **illegal-action findings** the orchestrator recorded
+inside it, naming the seat, the violation, and whether it was resolved or is still
+open. The judge no longer has to infer a rules violation from the move list when
+legality was already decided from game state, and a finding is presented as evidence
+to weigh alongside everything else rather than as a verdict that settles the score by
+itself. A finding naming a seat other than the one being scored is shown as
+explaining the position the round produced, not as that seat's play to answer for.
+
+An `illegal_action` finding is an `agent` event but **not a move**: history-service
+pins `actor` to a fixed set, so a new orchestrator concern arrives as a new event type
+under the existing actor. `judge/events.py::is_agent_move` is the single predicate
+that tells the two apart, and it is what keeps a finding from being graded as a play,
+attributed to a seat as an action, or counted into a round's move total.
+
 ## Non-strategic actions are skipped, visibly
 
 Not every recorded `agent_move` is a play a judge can grade. The dividing line is

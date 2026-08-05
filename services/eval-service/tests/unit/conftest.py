@@ -70,18 +70,74 @@ def state_event(
 
 
 def agent_event(
-    *, game_id: str, seq: int, action: str = "play", reasoning: str = "because"
+    *,
+    game_id: str,
+    seq: int,
+    action: str = "play",
+    reasoning: str = "because",
+    player: str | None = None,
+    session_mode: str | None = None,
 ) -> StoredEvent:
+    """A recorded agent move, shaped as the agent-orchestrator actually emits one.
+
+    ``event_type`` is ``agent_move`` because that is the type the orchestrator
+    writes — not an arbitrary agent event type. The distinction is load-bearing
+    now that the ``agent`` actor also carries non-move events (``illegal_action``),
+    and a fixture using a type nothing produces would test a predicate against a
+    world that does not exist.
+
+    ``player`` and ``session_mode`` are omitted from the payload unless supplied,
+    matching the producer: a chat-mode session states neither.
+    """
+    payload: dict[str, Any] = {
+        "intended_action": action,
+        "reasoning": reasoning,
+        "arguments": {"card_id": f"c{seq}"},
+    }
+    if session_mode is not None:
+        payload["session_mode"] = session_mode
+    if player is not None:
+        payload["player"] = player
     return make_event(
         game_id=game_id,
         seq=seq,
         actor="agent",
-        event_type="move",
-        payload={
-            "intended_action": action,
-            "reasoning": reasoning,
-            "arguments": {"card_id": f"c{seq}"},
-        },
+        event_type="agent_move",
+        payload=payload,
+    )
+
+
+def illegal_action_event(
+    *,
+    game_id: str,
+    seq: int,
+    player: str = "player1",
+    violation: str = "played an ally with no resources paid",
+    status: str = "open",
+    resolution_note: str | None = None,
+    required_undo: str = "return the ally to hand",
+) -> StoredEvent:
+    """An orchestrator-recorded illegal-action finding.
+
+    An ``agent`` event that is NOT a move: history-service pins ``actor`` to a
+    fixed literal set, so a new orchestrator concern arrives as a new event type
+    under the existing actor.
+    """
+    payload: dict[str, Any] = {
+        "player": player,
+        "violation": violation,
+        "required_undo": required_undo,
+        "status": status,
+        "session_mode": "orchestrated",
+    }
+    if resolution_note is not None:
+        payload["resolution_note"] = resolution_note
+    return make_event(
+        game_id=game_id,
+        seq=seq,
+        actor="agent",
+        event_type="illegal_action",
+        payload=payload,
     )
 
 

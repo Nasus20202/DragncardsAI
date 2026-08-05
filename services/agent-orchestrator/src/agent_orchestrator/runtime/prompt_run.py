@@ -32,7 +32,16 @@ from agent_orchestrator.runtime.personas import (
     persona_prompt_from_snapshot,
     session_persona_snapshot,
 )
-from agent_orchestrator.runtime.player_agents import session_player_id
+from agent_orchestrator.runtime.player_agents import (
+    SeatIdentity,
+    build_seat_inbox_message,
+    resolve_seat_identity,
+    session_player_id,
+    wrap_illegal_action_finding,
+    wrap_player_message,
+)
+from agent_orchestrator.runtime.seat_guard import SeatScopeViolation, check_seat_scope
+from agent_orchestrator.runtime.session_modes import is_orchestrated, session_mode
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
 from agent_orchestrator.runtime.skills import (
     JOB_INLINE_SKILLS_KEY,
@@ -194,6 +203,14 @@ class PromptRunService:
                 mcp_tools = self._mcp_tool_catalog.as_openai_tools(tool_definitions)
                 tool_mapping = self._mcp_tool_catalog.as_mapping(tool_definitions)
 
+                # Who this job is, resolved once from session metadata the agent
+                # cannot write. ``seat_identity`` is the caller's seat when this
+                # job is a player of an orchestrated game and ``None`` otherwise —
+                # including for a player child of a `chat` session, which must
+                # keep behaving exactly as it did before orchestrated mode.
+                seat_identity = await resolve_seat_identity(
+                    session, load_session=self._repository.get_session
+                )
                 builtin_registry = build_builtin_registry(
                     skill_registry=self._skill_registry,
                     repository=self._repository,
@@ -204,6 +221,13 @@ class PromptRunService:
                     job=full_job,
                     schedule_child_fn=self._schedule_child_job,
                     player_configs=list(session.player_configs),
+                    seat_identity=seat_identity,
+                    session_orchestrated=is_orchestrated(session),
+                    # An illegal-action finding is evidence the judge is handed
+                    # rather than a violation it has to re-derive, so it is written
+                    # to the durable game timeline as well as to this job.
+                    history_emitter=self._history_emitter,
+                    game_id=self._session_game_id(session),
                     subagent_wait_timeout_seconds=(
                         self._settings.subagent_wait_timeout_seconds
                     ),
@@ -231,6 +255,14 @@ class PromptRunService:
                         session.id, job.id
                     )
                     messages.extend(prior)
+                # A seat's out-of-band input — messages from other seats, and the
+                # findings still open against it — arrives as one user-role
+                # message ahead of its own prompt. Never in the system prompt:
+                # player text must not occupy an instruction position, and that
+                # rule is kept by construction rather than by review.
+                seat_inbox = await self._collect_seat_inbox(seat_identity)
+                if seat_inbox is not None:
+                    messages.append(seat_inbox)
                 # The skills the prompt loaded into its own turn go in the model's
                 # copy of the user message only: the stored prompt stays what the
                 # user typed, so the transcript and the replay of this turn are
@@ -437,6 +469,37 @@ class PromptRunService:
                                 },
                             }
                         )
+                        # The seat guard, before either dispatch path. A seat may
+                        # act only with its own cards, and that has to hold for
+                        # every tool it can reach — builtin and MCP alike — so the
+                        # check sits above the split rather than inside one branch.
+                        # `seat_identity` is None for the orchestrating job and for
+                        # every chat-mode session, and those calls are unguarded.
+                        if seat_identity is not None:
+                            violation = check_seat_scope(
+                                caller_player_id=seat_identity.player_id,
+                                tool_name=tool_call.name,
+                                arguments=tool_call.arguments,
+                            )
+                            if violation is not None:
+                                logger.warning(
+                                    "Job %s refused tool %s: seat %s named seat %s "
+                                    "in argument %s",
+                                    job.id,
+                                    tool_call.name,
+                                    seat_identity.player_id,
+                                    violation.foreign_player_id,
+                                    violation.argument,
+                                )
+                                await self.append_seat_scope_refusal(
+                                    job_id=job.id,
+                                    session_id=session.id,
+                                    messages=messages,
+                                    tool_call_id=tool_call.id,
+                                    arguments=tool_call.arguments,
+                                    violation=violation,
+                                )
+                                continue
                         builtin = builtin_registry.get(tool_call.name)
                         if builtin is not None:
                             logger.info(
@@ -629,6 +692,74 @@ class PromptRunService:
             return context
         return None
 
+    async def _collect_seat_inbox(
+        self, seat_identity: SeatIdentity | None
+    ) -> dict[str, str] | None:
+        """The out-of-band block a seat reads before its own prompt, if any.
+
+        Two channels, in one message, in this order: the messages other seats
+        sent it, then every finding still open against it.
+
+        Messages are *delivered* here — read undelivered, then conditionally
+        marked, and only the ones this call actually claimed are framed. That
+        ordering is what makes delivery exactly-once: two concurrent invocations
+        of the same seat both read the same rows, and the one that loses the
+        conditional write frames nothing rather than replaying a message already
+        in the other's context.
+
+        Findings are the opposite: they are *not* consumed. Every open finding is
+        carried into every invocation until the orchestrating agent resolves it,
+        so a seat cannot outlast a violation by ignoring one turn.
+
+        Returns ``None`` for any job that holds no seat, which is the
+        orchestrating job and every job of a `chat` session.
+        """
+        if seat_identity is None:
+            return None
+        entries: list[str] = []
+        try:
+            pending = await self._repository.list_undelivered_player_messages(
+                seat_identity.orchestrator_session_id, seat_identity.player_id
+            )
+            if pending:
+                claimed = set(
+                    await self._repository.mark_player_messages_delivered(
+                        [message.id for message in pending]
+                    )
+                )
+                entries.extend(
+                    wrap_player_message(
+                        sender_player_id=message.sender_player_id,
+                        body=message.body,
+                    )
+                    for message in pending
+                    if message.id in claimed
+                )
+            findings = await self._repository.list_open_illegal_actions(
+                seat_identity.orchestrator_session_id, seat_identity.player_id
+            )
+            entries.extend(
+                wrap_illegal_action_finding(
+                    finding_id=finding.id,
+                    violation=finding.violation,
+                    required_undo=finding.required_undo,
+                    round_number=finding.round_number,
+                )
+                for finding in findings
+            )
+        except Exception:
+            # A seat that cannot read its inbox still has a turn to play, and
+            # failing the job would lose the turn as well as the messages. The
+            # messages that were already marked delivered are the cost of that
+            # choice, which is why the marking happens as late as it does.
+            logger.warning(
+                "Failed to assemble the inbox for seat %s of session %s",
+                seat_identity.player_id,
+                seat_identity.orchestrator_session_id,
+                exc_info=True,
+            )
+        return build_seat_inbox_message(entries)
+
     def _session_game_id(self, session: Any) -> str | None:
         metadata = getattr(session, "metadata_json", None) or {}
         value = metadata.get(SESSION_GAME_ID_KEY)
@@ -733,7 +864,11 @@ class PromptRunService:
         game_id = self._session_game_id(session)
         if game_id is None:
             return
-        coro = emitter.emit_user_prompt(game_id=game_id, prompt=prompt)
+        coro = emitter.emit_user_prompt(
+            game_id=game_id,
+            prompt=prompt,
+            session_mode=session_mode(session),
+        )
         task = asyncio.create_task(coro)
         self._history_tasks.add(task)
         task.add_done_callback(self._history_tasks.discard)
@@ -754,6 +889,11 @@ class PromptRunService:
         multi-player game, the move is tagged with that seat so downstream
         evaluation attributes it exactly rather than inferring it from turn
         order.
+
+        The session's mode travels alongside the seat, and the two are not
+        redundant: the orchestrating agent's own moves carry the mode with no
+        seat, so a consumer can tell an orchestrated timeline from a chat one
+        without reading the absence of a seat id as evidence of either.
         """
         emitter = self._history_emitter
         if emitter is None or not emitter.enabled:
@@ -766,6 +906,7 @@ class PromptRunService:
             arguments=dict(arguments),
             conversation_context=conversation_context,
             player=session_player_id(session) if session is not None else None,
+            session_mode=session_mode(session),
         )
         task = asyncio.create_task(coro)
         self._history_tasks.add(task)
@@ -1027,6 +1168,91 @@ class PromptRunService:
             )
         except Exception as exc:
             raise InvalidToolInvocationError(tool_name, message) from exc
+
+    async def append_seat_scope_refusal(
+        self,
+        *,
+        job_id: str,
+        session_id: str,
+        messages: list[dict[str, Any]],
+        tool_call_id: str,
+        arguments: dict[str, Any],
+        violation: SeatScopeViolation,
+    ) -> None:
+        """Record a seat-scope refusal and answer the model, without dispatching.
+
+        Three events, in this order, and none of them optional:
+
+        - a `tool_call` carrying the arguments the seat actually attempted, so the
+          transcript shows what was tried rather than only that something was
+          refused;
+        - a `seat_scope_violation`, appended durably *and* published live, so the
+          attempt is visible in the session timeline and to evaluation. Its
+          `player_id` is the caller's own seat as the server resolved it — never a
+          value read out of `arguments`, which is exactly what was refused. The
+          live copy carries the durable row's id (DRA-34): the SSE stream both
+          polls `list_events` and forwards the bus, so a live copy published under
+          an id of its own would reach the browser as a second, undeduplicable
+          event and the transcript would show the refusal twice. The published
+          payload is the same object as the persisted one for the same reason — a
+          reload must not show less than the live stream did;
+        - a `tool_result` marked `is_error` carrying the refusal message.
+
+        The `tool_call`/`tool_result` pair is what
+        :mod:`agent_orchestrator.runtime.session_transcript` reconstructs a seat's
+        replayed history from. Omitting either would leave the seat's next
+        invocation with an assistant tool call that has no answer, which providers
+        reject — so a refusal that recorded only the violation would break the seat
+        one turn later, far from the cause.
+        """
+        result = {
+            "is_error": True,
+            "content": [{"type": "text", "text": violation.message}],
+        }
+        await self.append_tool_call_event(
+            job_id=job_id,
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            exposed_tool_name=violation.tool_name,
+            tool_name=violation.tool_name,
+            assignment=None,
+            server_url=None,
+            arguments=arguments,
+        )
+        payload = {
+            "player_id": violation.caller_player_id,
+            "foreign_player_id": violation.foreign_player_id,
+            "tool_name": violation.tool_name,
+            "argument": violation.argument,
+            "value": violation.value,
+            "message": violation.message,
+        }
+        durable_event_id = await self._repository.append_event(
+            job_id, session_id, "seat_scope_violation", payload
+        )
+        await self._live_event_bus.publish(
+            job_id,
+            "seat_scope_violation",
+            payload,
+            durable_event_id=durable_event_id,
+        )
+        await self.append_tool_result_event(
+            job_id=job_id,
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            exposed_tool_name=violation.tool_name,
+            tool_name=violation.tool_name,
+            assignment=None,
+            server_url=None,
+            result=result,
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": json.dumps(result),
+            }
+        )
 
     async def _maybe_terminate_child_session(self, job: Job) -> None:
         """Terminate a disposable child's session when its job ends.

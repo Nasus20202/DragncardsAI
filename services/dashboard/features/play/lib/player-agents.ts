@@ -29,6 +29,12 @@ export interface PlayerAgentDraft {
   reasoningEnabled: boolean;
   reasoningEffort: "low" | "medium" | "high";
   reasoningMaxTokens: string;
+  /**
+   * Persona name, or `""` for "no persona" — the seat then copies the session.
+   * The orchestrator snapshots it once, when the seat's own session is created,
+   * so editing it changes only seats that have not played yet.
+   */
+  persona: string;
   /** `null` inherits the session's skills; an array overrides them. */
   selectedSkills: string[] | null;
 }
@@ -49,6 +55,7 @@ export function createDefaultPlayerAgentDraft(
     reasoningEnabled: false,
     reasoningEffort: "medium",
     reasoningMaxTokens: "",
+    persona: "",
     selectedSkills: null,
   };
 }
@@ -82,6 +89,7 @@ export function buildDraftFromPlayerConfig(
       config.reasoning?.max_tokens === undefined
         ? ""
         : String(config.reasoning.max_tokens),
+    persona: config.persona ?? "",
     selectedSkills: config.skills === null ? null : [...config.skills],
   };
 }
@@ -108,6 +116,10 @@ export function assemblePlayerAgentConfig(
   const modelName = draft.modelName.trim();
   if (modelName) {
     body.model_name = modelName;
+  }
+  const persona = draft.persona.trim();
+  if (persona) {
+    body.persona = persona;
   }
 
   if (draft.reasoningEnabled) {

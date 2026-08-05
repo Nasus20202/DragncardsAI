@@ -12,6 +12,7 @@ from eval_service.judge.config import (
     UnknownSkillError,
     resolve_judge_config,
 )
+from eval_service.judge.events import is_agent_move
 from eval_service.runtime.inflight import InflightRegistry
 from eval_service.runtime.players import attribute_move, players_in_span
 from eval_service.schemas.api import (
@@ -184,7 +185,7 @@ class RequestService:
     def _selected_move_seqs(
         self, selection: Selection, events: list[StoredEvent]
     ) -> list[int]:
-        agent_seqs = {e.seq for e in events if e.actor == "agent"}
+        agent_seqs = {e.seq for e in events if is_agent_move(e)}
         chosen: set[int] = set()
         if selection.whole_game:
             chosen |= agent_seqs
@@ -304,5 +305,5 @@ class RequestService:
         events: list[StoredEvent], from_seq: int, to_seq: int
     ) -> list[int]:
         return sorted(
-            e.seq for e in events if e.actor == "agent" and from_seq <= e.seq <= to_seq
+            e.seq for e in events if is_agent_move(e) and from_seq <= e.seq <= to_seq
         )

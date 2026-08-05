@@ -59,6 +59,7 @@ describe("assemblePlayerAgentConfig", () => {
     expect(body.model_name).toBeUndefined();
     expect(body.display_name).toBeUndefined();
     expect(body.skills).toBeUndefined();
+    expect(body.persona).toBeUndefined();
   });
 
   it("sends reasoning disabled explicitly rather than omitting it", () => {
@@ -78,6 +79,7 @@ describe("assemblePlayerAgentConfig", () => {
       reasoningEnabled: true,
       reasoningEffort: "high" as const,
       reasoningMaxTokens: "2048",
+      persona: " rules-lawyer ",
       selectedSkills: ["marvel-champions-learn-to-play"],
     };
 
@@ -86,6 +88,7 @@ describe("assemblePlayerAgentConfig", () => {
       provider_id: "openai",
       model_name: "gpt-4o-mini",
       reasoning: { enabled: true, effort: "high", max_tokens: 2048 },
+      persona: "rules-lawyer",
       skills: ["marvel-champions-learn-to-play"],
     });
   });
@@ -130,6 +133,7 @@ describe("buildDraftFromPlayerConfig", () => {
         provider_id: "gemini",
         model_name: "gemini-2.0-flash",
         reasoning: { effort: "low", max_tokens: 512 },
+        persona: "rules-lawyer",
         skills: ["a", "b"],
       })
     );
@@ -142,8 +146,16 @@ describe("buildDraftFromPlayerConfig", () => {
       reasoningEnabled: true,
       reasoningEffort: "low",
       reasoningMaxTokens: "512",
+      persona: "rules-lawyer",
       selectedSkills: ["a", "b"],
     });
+  });
+
+  it("reads a seat that names no persona as naming none", () => {
+    expect(buildDraftFromPlayerConfig(makeConfig()).persona).toBe("");
+    expect(
+      buildDraftFromPlayerConfig(makeConfig({ persona: null })).persona
+    ).toBe("");
   });
 
   it("falls back to a medium effort for an unrecognised value", () => {

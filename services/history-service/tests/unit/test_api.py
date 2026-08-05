@@ -497,3 +497,50 @@ async def test_timeline_limit_bounds_are_enforced(client):
     assert (await c.get("/games/g1/timeline?limit=0")).status_code == 422
     assert (await c.get("/games/g1/timeline?limit=5001")).status_code == 422
     assert (await c.get("/games/g1/timeline?after_seq=-1")).status_code == 422
+
+
+# -- session mode on the read paths -----------------------------------------
+
+
+def _agent_move_envelope(game_id, offset, **payload):
+    return {
+        **_envelope(game_id, "agent", offset),
+        "event_type": "agent_move",
+        "payload": {"intended_action": "move_card", **payload},
+    }
+
+
+@pytest.mark.asyncio
+async def test_reads_state_the_session_mode_for_both_kinds_of_play(client):
+    """Both read paths state the mode, so a consumer never has to infer it.
+
+    An orchestrated seat's move, the orchestrating agent's own seatless event, and
+    a chat move are posted together. The events read and the timeline read must
+    agree on all three -- the timeline especially, because it is how a consumer
+    reads a whole game at once, and it is the read that prunes payload keys.
+    """
+    c, _ = client
+    await c.post(
+        "/games/g1/events",
+        json=_agent_move_envelope(
+            "g1", 0, session_mode="orchestrated", player="player2"
+        ),
+    )
+    await c.post(
+        "/games/g1/events",
+        json=_agent_move_envelope("g1", 1, session_mode="orchestrated"),
+    )
+    await c.post("/games/g1/events", json=_agent_move_envelope("g1", 2))
+
+    for path in ("/games/g1/events", "/games/g1/timeline"):
+        events = (await c.get(path)).json()["events"]
+        assert [e["session_mode"] for e in events] == [
+            "orchestrated",
+            "orchestrated",
+            "chat",
+        ], path
+        # The seat travels with the mode and is absent, not null, when there is
+        # none -- and its absence is never what decides the mode.
+        assert events[0]["payload"]["player"] == "player2", path
+        assert "player" not in events[1]["payload"], path
+        assert "session_mode" not in events[2]["payload"], path

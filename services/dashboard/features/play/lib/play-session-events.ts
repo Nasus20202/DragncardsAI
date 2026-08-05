@@ -32,6 +32,19 @@ export type AggEvent =
   | { kind: "subagent_completed"; event: JobEventResponse }
   | { kind: "subagent_failed"; event: JobEventResponse }
   | { kind: "user_question"; event: JobEventResponse }
+  /**
+   * A tool call a player seat made was refused before it reached the tool,
+   * because one of its arguments named another seat's cards. Its own row rather
+   * than a tool exchange: no tool ran, so there is no call/result pair to show,
+   * and the point of the row is that the boundary held.
+   */
+  | { kind: "seat_scope_violation"; event: JobEventResponse }
+  /**
+   * The orchestrator recorded (or resolved) a finding that a seat's action broke
+   * the rules. Opening and resolving are the same event type carrying different
+   * `status` values, so the transcript shows both halves of one finding's life.
+   */
+  | { kind: "illegal_action_finding"; event: JobEventResponse }
   | { kind: "failure"; event: JobEventResponse }
   | { kind: "cancellation"; event: JobEventResponse };
 
@@ -85,6 +98,8 @@ export const STREAM_EVENT_TYPES = [
   "user_question",
   "user_question_answered",
   "user_question_closed",
+  "seat_scope_violation",
+  "illegal_action_finding",
 ] as const;
 
 function sameEventPayload(
@@ -352,6 +367,85 @@ export function deriveUserQuestionResolutions(
   return resolutions;
 }
 
+/* ── Orchestrated-mode boundary events ───────────────────────────── */
+
+/**
+ * A refused seat-scoped tool call, as the transcript consumes it.
+ *
+ * `argument`/`value` are model-authored (they came out of the tool call the seat
+ * attempted); the seat ids and the message are server-authored. Everything here
+ * is rendered as plain text children only.
+ */
+export interface SeatScopeViolation {
+  playerId: string;
+  foreignPlayerId: string;
+  toolName: string;
+  argument: string;
+  value: string;
+  message: string;
+}
+
+/** An illegal-action finding the orchestrator opened or resolved. */
+export interface IllegalActionFinding {
+  findingId: string;
+  playerId: string;
+  violation: string;
+  requiredUndo: string;
+  status: "open" | "resolved";
+  roundNumber: number | null;
+  resolutionNote: string | null;
+}
+
+/**
+ * Read a `seat_scope_violation` event, or null when the payload does not name
+ * both the caller's seat and the foreign seat — without those two the row would
+ * not say what it exists to say, so the generic block is a better fallback.
+ */
+export function parseSeatScopeViolationEvent(
+  event: JobEventResponse
+): SeatScopeViolation | null {
+  const playerId = payloadString(event.payload.player_id);
+  const foreignPlayerId = payloadString(event.payload.foreign_player_id);
+  if (!playerId || !foreignPlayerId) {
+    return null;
+  }
+  return {
+    playerId,
+    foreignPlayerId,
+    toolName: payloadString(event.payload.tool_name) ?? "",
+    argument: payloadString(event.payload.argument) ?? "",
+    value: payloadString(event.payload.value) ?? "",
+    message: payloadString(event.payload.message) ?? "",
+  };
+}
+
+/**
+ * Read an `illegal_action_finding` event, or null when the payload does not name
+ * the seat the finding concerns. `status` is narrowed here rather than at the
+ * call site so an unrecognised value reads as `open` — an unresolved finding is
+ * the safe way to be wrong about one.
+ */
+export function parseIllegalActionFindingEvent(
+  event: JobEventResponse
+): IllegalActionFinding | null {
+  const playerId = payloadString(event.payload.player_id);
+  if (!playerId) {
+    return null;
+  }
+  return {
+    findingId: payloadString(event.payload.finding_id) ?? "",
+    playerId,
+    violation: payloadString(event.payload.violation) ?? "",
+    requiredUndo: payloadString(event.payload.required_undo) ?? "",
+    status: event.payload.status === "resolved" ? "resolved" : "open",
+    roundNumber:
+      typeof event.payload.round_number === "number"
+        ? event.payload.round_number
+        : null,
+    resolutionNote: payloadString(event.payload.resolution_note),
+  };
+}
+
 export function compactionText(event: JobEventResponse): string {
   if (typeof event.payload.summary_text === "string") {
     return event.payload.summary_text;
@@ -489,6 +583,8 @@ export function aggregateEvents(
       case "subagent_completed":
       case "subagent_failed":
       case "user_question":
+      case "seat_scope_violation":
+      case "illegal_action_finding":
       case "failure":
       case "cancellation":
       case "compaction_failed":

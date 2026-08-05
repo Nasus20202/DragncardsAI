@@ -20,6 +20,7 @@ from eval_service.judge.config import (
     SkillResolver,
     provider_from_model,
 )
+from eval_service.judge.events import is_agent_move
 from eval_service.judge.parse import VerdictParseError, parse_verdict
 from eval_service.judge.prompt import (
     build_game_messages,
@@ -454,7 +455,7 @@ class Evaluator:
         real problem, rather than being written off as non-strategic.
         """
         event = next((e for e in events if e.seq == target_seq), None)
-        if event is None or event.actor != "agent":
+        if event is None or not is_agent_move(event):
             return None
         reason = non_strategic_reason(
             event.payload.get("intended_action"),

@@ -99,6 +99,51 @@ real game's first round "Rounds 1-63" (DRA-25). Keep `round_of_play()` the singl
 conversion there is: put the converted number on the payload instead of leaving a
 client to re-derive it from seqs.
 
+### A move is `is_agent_move(event)`, never `actor == "agent"`
+
+`judge/events.py` owns the one predicate that decides whether a recorded event is a
+play. Use it anywhere a move is selected, counted, attributed, spanned or graded.
+
+The `agent` actor means "the agent-orchestrator produced this", not "the agent
+played this". history-service pins `actor` to a fixed `Literal`
+(`agent`/`game-service`/`evaluator`/`user`), so every new orchestrator concern
+arrives as a new **event type** under that same actor — `illegal_action` is the
+first. `actor == "agent"` is therefore a test that silently widens over time, and
+each of the nine places that once used it was one new event type away from grading a
+non-move as a play, attributing it to a seat, counting it into a round's move total,
+and shifting a round span. `AGENT_MOVE_EVENT_TYPES` is an **allowlist**, so the next
+event type the orchestrator adds is excluded by default rather than graded by
+accident. Add to it deliberately; never invert it into a denylist.
+
+### The judge is told the orchestration mode, and chat must not move
+
+`MoveInput`/`RoundInput`/`GameInput` carry `session_mode`, read off the span's agent
+events with `chat` as the default, so a game recorded before the mode existed reads
+as chat. When it is `orchestrated` the projection states that each seat was a
+separate agent holding its own context and its own persona, so the judge does not
+mark a seat down for information it could not have seen.
+
+**Every mode-dependent addition to a prompt must render as the empty string in chat
+mode.** A chat projection has to stay byte-identical to what it was before
+orchestrated mode existed, or verdicts stop being comparable across the change.
+`tests/unit/test_judge_session_mode.py` pins the chat prompts against literal
+expected strings captured from the pre-change code — do not regenerate those
+literals from the current implementation, which is the one thing that would make the
+test vacuous.
+
+### Illegal-action findings are evidence, not verdicts
+
+A round's `illegal_action` findings are collected onto `RoundInput` and rendered
+naming the seat, the violation, and whether it is resolved or still open. The point
+is that the judge no longer has to re-derive a violation the orchestrator already
+established from game state — but a finding is one input to a score, not the score,
+and the prompt says so. Keep it that way: a round with one corrected slip is not
+automatically a zero. A finding with no named violation is dropped rather than shown,
+because "something was wrong" only invites the judge to hunt for a fault to match,
+and an unrecognised `status` reads as `open` — the conservative direction, since
+treating an unfamiliar state as resolved would quietly retire a finding that may
+still stand.
+
 ### Non-strategic actions are skipped, never silently
 
 `judge/actions.py` classifies recorded actions. The line is whether the action

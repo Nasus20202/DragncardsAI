@@ -16,7 +16,7 @@ def _recorded_move(*, game_id, seq, player, action="play"):
         game_id=game_id,
         seq=seq,
         actor="agent",
-        event_type="move",
+        event_type="agent_move",
         payload={
             "intended_action": action,
             "reasoning": "because",
@@ -81,7 +81,7 @@ def test_recorded_player_wins_over_an_argument_hint():
             game_id="g",
             seq=2,
             actor="agent",
-            event_type="move",
+            event_type="agent_move",
             payload={
                 "intended_action": "play",
                 "arguments": {"player_n": "player1"},
@@ -100,7 +100,7 @@ def test_malformed_recorded_player_falls_back_to_inference():
             game_id="g",
             seq=2,
             actor="agent",
-            event_type="move",
+            event_type="agent_move",
             payload={"intended_action": "play", "player": "villain"},
         ),
     ]
