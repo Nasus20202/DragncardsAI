@@ -20,6 +20,7 @@ import {
 import { ConversationTranscript } from "@/features/history/components/conversation-transcript";
 import { RestoreControl } from "@/features/history/components/restore-control";
 import { BoardOpenControl } from "@/features/history/components/board-control";
+import { ScoreChip } from "@/features/history/components/score-chip";
 import { useEventDetail } from "@/features/history/lib/use-event-detail";
 import {
   TranscriptWindow,
@@ -401,7 +402,6 @@ function VerdictSubtree({
           data-testid={`history-evals-${graded.seq}`}
         >
           {orderedVerdicts.map((verdict) => {
-            const score = formatScore(verdict.payload.overall_score);
             const model = evaluatorModel(verdict);
             const scopeLabel = verdictScopeLabel(verdict);
             const level = verdictLevel(verdict);
@@ -480,16 +480,10 @@ function VerdictSubtree({
                         {player}
                       </Chip>
                     )}
-                    {score && (
-                      <Chip
-                        size="sm"
-                        variant="primary"
-                        color="success"
-                        data-testid={`history-eval-score-${verdict.seq}`}
-                      >
-                        {score}
-                      </Chip>
-                    )}
+                    <ScoreChip
+                      value={verdict.payload.overall_score}
+                      testId={`history-eval-score-${verdict.seq}`}
+                    />
                     {model && (
                       <span className="truncate text-xs text-default-400">
                         {model}
@@ -678,10 +672,11 @@ const TranscriptEvent = memo(function TranscriptEvent({
   const actorColor = isUser ? "default" : isAgent ? "warning" : "accent";
   const actorChipClass = isUser ? "bg-secondary/15 text-secondary" : undefined;
 
-  const latestScore =
+  const latestVerdictScore =
     verdicts.length > 0
-      ? formatScore(verdicts[verdicts.length - 1].payload.overall_score)
+      ? verdicts[verdicts.length - 1].payload.overall_score
       : null;
+  const latestScore = formatScore(latestVerdictScore);
 
   return (
     <div className="flex flex-col">
@@ -739,9 +734,7 @@ const TranscriptEvent = memo(function TranscriptEvent({
               }}
               className="rounded-full"
             >
-              <Chip size="sm" variant="primary" color="success">
-                {latestScore}
-              </Chip>
+              <ScoreChip value={latestVerdictScore} />
             </button>
           )}
           <span className="ml-auto text-xs text-default-400">
