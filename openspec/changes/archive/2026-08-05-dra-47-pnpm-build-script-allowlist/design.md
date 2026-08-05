@@ -7,11 +7,15 @@ Two Node projects exist in this repository: `services/dashboard` (Next.js) and
 `working-directory` set), and for the dashboard also by
 `services/dashboard/docker/Dockerfile`.
 
-Both pin `packageManager: pnpm@11.17.0`, and CI installs pnpm 11.17.0 via
-`pnpm/action-setup@v6`. All measurements below were taken with pnpm 11.17.0
+Both pin the same `packageManager` version, and CI installs the matching pnpm
+via `pnpm/action-setup@v6`. All measurements below were taken with pnpm 11.17.0
 (pnpm's `manage-package-manager-versions` resolves the pinned version
 automatically) on Node 24, against clean `node_modules` directories in scratch
-copies, so no concurrently running worktree was disturbed.
+copies, so no concurrently running worktree was disturbed. The pin has since
+moved to 11.20.0 with the routine dependency updates on `main`; `allowBuilds`
+and `strictDepBuilds` are unchanged across those releases, and a
+`pnpm install --frozen-lockfile` under 11.20.0 still exits 0 with no ignored
+builds.
 
 ## Decisions
 
