@@ -364,15 +364,13 @@ class SessionManager:
 
         Deliberately not inferred from whoever already occupies a seat in the
         room: a human may be sitting there, and claiming the remaining seats for
-        *them* would be worse than not claiming at all. This costs a login
-        round-trip, which is affordable because seat claiming happens when a game
-        is set up and never on the action path.
+        *them* would be worse than not claiming at all. The id comes from the
+        same cached credential every room-bootstrapping path uses, so asking for
+        it costs a login round-trip only when nothing is cached yet.
         """
         try:
-            auth_token = await get_auth_token(
-                self._http_url, self._email, self._password
-            )
-            return await get_user_id(self._http_url, auth_token)
+            identity = await self._credentials()
+            return identity.user_id
         except Exception as exc:
             logger.warning("Could not resolve own DragnCards user id: %s", exc)
             return None
