@@ -70,14 +70,18 @@ async def set_seat(
     manager: SessionManager = Depends(get_manager),
 ):
     logger.info(
-        "set_seat: session_id=%s player_index=%s user_id=%s",
+        "set_seat: session_id=%s player_id=%s user_id=%s",
         session_id,
-        body.player_index,
+        body.player_id,
         body.user_id,
     )
     async with manager.session_operation_lock(session_id):
         session = await manager.get_session(session_id)
-        await session.set_seat(player_index=body.player_index, user_id=body.user_id)
+        # Confirmed from room state rather than assumed: the set_seat channel
+        # event is written to the socket with no reply awaited, so a 204 on the
+        # strength of the push alone would make a dropped or rejected assignment
+        # indistinguishable from an applied one.
+        await session.claim_seat(player_id=body.player_id, user_id=body.user_id)
 
 
 @router.post(
@@ -158,6 +162,11 @@ async def set_player_count(
         new_state = await session.set_player_count(
             num_players=body.num_players, layout_id=body.layout_id
         )
+        # An unoccupied seat is missing from the game log, not merely unnamed:
+        # the plugin suppresses a seat's draw line when that seat has no alias.
+        # Best-effort inside the lock already held — a seat that will not take
+        # must not fail a player-count change.
+        await manager.claim_seats(session, body.num_players)
 
     # Apply simplified state for Marvel Champions
     if session.plugin_name == "marvel-champions":

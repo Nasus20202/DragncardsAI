@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from game_service.api.deps import SessionIdentifier, get_manager
+from game_service.api.enums import SeatId
 from game_service.api.models import LoadPrebuiltDeckResponse
 from game_service.logic.exceptions import SessionError, SessionNotFoundError
 from game_service.logic.session_manager import SessionManager
@@ -22,10 +25,21 @@ router = APIRouter(tags=["prebuilt-deck"])
 async def load_prebuilt_deck(
     session_id: SessionIdentifier,
     deck_id: str,
+    player_n: Annotated[
+        SeatId,
+        Query(
+            description=(
+                "Seat loading the deck. A hero deck's cards are declared against "
+                "'playerNDeck' and 'playerNNemesisSet', which DragnCards resolves "
+                "from this seat, so loading a second hero requires naming its seat "
+                "or the cards land in the first seat's groups."
+            )
+        ),
+    ] = "player1",
     manager: SessionManager = Depends(get_manager),
 ):
     try:
-        await manager.load_prebuilt_deck(session_id, deck_id)
+        await manager.load_prebuilt_deck(session_id, deck_id, player_n=player_n)
     except SessionNotFoundError as exc:
         return JSONResponse(
             status_code=404,

@@ -35,6 +35,12 @@ GroupId = Literal[tuple(_GROUP_IDS)]
 PlayerN = Literal["player1", "player2", "player3", "player4", "shared"]
 
 
+# A DragnCards *seat*. Narrower than PlayerN on purpose: "shared" names groups
+# belonging to no player, so it can be the target of an action but can never be
+# sat in.
+SeatId = Literal["player1", "player2", "player3", "player4"]
+
+
 # Layout IDs from the plugin's player count menu (may be empty if plugin lacks layouts)
 _CAT = plugin_metadata.build_action_catalog()
 _LAYOUT_IDS = [p.layout_id for p in _CAT.player_count_layouts if p.layout_id]

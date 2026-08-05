@@ -34,6 +34,11 @@ from game_service.logic.exceptions import (
     SnapshotValidationError,
     StateUnavailableError,
 )
+from game_service.logic.seats import (
+    normalise_seat_id,
+    seat_occupants,
+    seats_to_claim,
+)
 from game_service.logic.session import GameSession
 from game_service.coordination.session_store import InMemorySessionStore, SessionStore
 from game_service.phoenix_client.client import PhoenixClient
@@ -242,108 +247,135 @@ class SessionManager:
             )
             return session
 
-    async def _auto_seat(self, session: GameSession, user_id: int) -> None:
+    async def _read_state_for_seating(self, session: GameSession) -> Any | None:
+        """Room state for a seating decision, or ``None`` when it cannot be read.
+
+        Seating is always best-effort: a room whose state cannot be fetched is
+        still a usable room, and refusing to create or configure a session over
+        an unreadable seat map would be a worse failure than an unnamed seat.
+        """
         try:
             state = await session.get_state()
         except SessionError as exc:
             logger.warning(
-                "auto_seat: session_id=%s state unavailable: %s",
+                "seating: session_id=%s state unavailable: %s",
                 session.session_id,
                 exc,
             )
-            return
-
+            return None
         if not isinstance(state, dict):
             logger.warning(
-                "auto_seat: session_id=%s invalid state payload", session.session_id
+                "seating: session_id=%s invalid state payload", session.session_id
+            )
+            return None
+        return state
+
+    async def _auto_seat(self, session: GameSession, user_id: int) -> None:
+        """Seat this service in the first vacant seat of a freshly opened room.
+
+        Only one seat, because at creation and attach time the room's player
+        count is not yet known. The seats a multi-player game needs are claimed
+        later, by :meth:`claim_seats`, when the count is set.
+        """
+        state = await self._read_state_for_seating(session)
+        if state is None:
+            return
+
+        occupants = seat_occupants(state)
+        if user_id in occupants.values():
+            logger.info(
+                "auto_seat: session_id=%s user already seated", session.session_id
             )
             return
 
-        game = state.get("game")
-        if not isinstance(game, dict):
-            logger.warning(
-                "auto_seat: session_id=%s missing game payload", session.session_id
-            )
-            return
-
-        def _seat_key(item: tuple[str, object]) -> tuple[int, str]:
-            player_n = item[0]
-            suffix = player_n[6:] if player_n.startswith("player") else player_n
+        for player_n, occupant in occupants.items():
+            if occupant is not None:
+                continue
             try:
-                return (int(suffix), player_n)
-            except ValueError:
-                return (10_000, player_n)
-
-        player_info = game.get("playerInfo")
-        if isinstance(player_info, dict):
-            for info in player_info.values():
-                if isinstance(info, dict) and info.get("id") == user_id:
-                    logger.info(
-                        "auto_seat: session_id=%s user already seated",
-                        session.session_id,
-                    )
-                    return
-
-            ordered_seats = sorted(player_info.items(), key=_seat_key)
-            for player_n, info in ordered_seats:
-                if info is None or not isinstance(info, dict) or info.get("id") is None:
-                    try:
-                        await session.set_seat(player_index=player_n, user_id=user_id)
-                        logger.info(
-                            "auto_seat: session_id=%s assigned user=%s to %s",
-                            session.session_id,
-                            user_id,
-                            player_n,
-                        )
-                        return
-                    except Exception as exc:
-                        logger.warning(
-                            "auto_seat: session_id=%s seat %s failed: %s",
-                            session.session_id,
-                            player_n,
-                            exc,
-                        )
-
-            logger.info("auto_seat: session_id=%s no vacant seats", session.session_id)
-            return
-
-        player_data = game.get("playerData")
-        if not isinstance(player_data, dict):
-            logger.warning(
-                "auto_seat: session_id=%s missing playerInfo and playerData",
-                session.session_id,
-            )
-            return
-
-        for info in player_data.values():
-            if isinstance(info, dict) and info.get("user_id") == user_id:
+                await session.set_seat(player_id=player_n, user_id=user_id)
                 logger.info(
-                    "auto_seat: session_id=%s user already seated",
+                    "auto_seat: session_id=%s assigned user=%s to %s",
                     session.session_id,
+                    user_id,
+                    player_n,
                 )
                 return
-
-        ordered_seats = sorted(player_data.items(), key=_seat_key)
-        for player_n, info in ordered_seats:
-            if not isinstance(info, dict) or info.get("user_id") is None:
-                try:
-                    await session.set_seat(player_index=player_n, user_id=user_id)
-                    logger.info(
-                        "auto_seat: session_id=%s assigned user=%s to %s",
-                        session.session_id,
-                        user_id,
-                        player_n,
-                    )
-                    return
-                except Exception as exc:
-                    logger.warning(
-                        "auto_seat: session_id=%s seat %s failed: %s",
-                        session.session_id,
-                        player_n,
-                        exc,
-                    )
+            except Exception as exc:
+                logger.warning(
+                    "auto_seat: session_id=%s seat %s failed: %s",
+                    session.session_id,
+                    player_n,
+                    exc,
+                )
 
         logger.info("auto_seat: session_id=%s no vacant seats", session.session_id)
+
+    async def claim_seats(self, session: GameSession, num_players: int) -> list[str]:
+        """Occupy every vacant seat this room's player count implies.
+
+        A seat needs an occupant for the game *log* to be complete, not just for
+        display: Marvel Champions logs each seat's draw through that seat's
+        recorded alias and writes no line at all when the alias is absent, so an
+        unclaimed seat's draws never reach history or evaluation.
+
+        Seats held by another user are left alone — that occupant is a
+        participant this service did not put there. Failures are logged and
+        swallowed: a missing log alias must never block setting up a game.
+
+        Returns the seats actually claimed. Assumes the caller already holds the
+        session operation lock.
+        """
+        state = await self._read_state_for_seating(session)
+        if state is None:
+            return []
+
+        user_id = await self._own_user_id()
+        if user_id is None:
+            logger.warning(
+                "claim_seats: session_id=%s could not resolve own user id",
+                session.session_id,
+            )
+            return []
+
+        claimed: list[str] = []
+        for player_n in seats_to_claim(state, num_players):
+            try:
+                await session.claim_seat(player_id=player_n, user_id=user_id)
+            except Exception as exc:
+                logger.warning(
+                    "claim_seats: session_id=%s seat %s failed: %s",
+                    session.session_id,
+                    player_n,
+                    exc,
+                )
+                continue
+            claimed.append(player_n)
+
+        logger.info(
+            "claim_seats: session_id=%s num_players=%s claimed=%s",
+            session.session_id,
+            num_players,
+            claimed,
+        )
+        return claimed
+
+    async def _own_user_id(self) -> int | None:
+        """This service's DragnCards user id, asked of DragnCards.
+
+        Deliberately not inferred from whoever already occupies a seat in the
+        room: a human may be sitting there, and claiming the remaining seats for
+        *them* would be worse than not claiming at all. This costs a login
+        round-trip, which is affordable because seat claiming happens when a game
+        is set up and never on the action path.
+        """
+        try:
+            auth_token = await get_auth_token(
+                self._http_url, self._email, self._password
+            )
+            return await get_user_id(self._http_url, auth_token)
+        except Exception as exc:
+            logger.warning("Could not resolve own DragnCards user id: %s", exc)
+            return None
 
     async def create_session(
         self, plugin_name: str, *, ephemeral: bool = False
@@ -580,7 +612,10 @@ class SessionManager:
         await self._session_store.delete_session(session_id)
         logger.info("Session %s deleted", session_id)
 
-    async def load_prebuilt_deck(self, session_id: str, deck_id: str) -> Any:
+    async def load_prebuilt_deck(
+        self, session_id: str, deck_id: str, player_n: str = "player1"
+    ) -> Any:
+        player_n = normalise_seat_id(player_n)
         async with self.session_operation_lock(session_id):
             session = await self.get_session(session_id)
             deck = load_prebuilt_deck(deck_id, session.plugin_name)
@@ -589,7 +624,9 @@ class SessionManager:
                     f"Prebuilt deck {deck_id!r} not found for plugin {session.plugin_name!r}"
                 )
             before_state = await session.get_state()
-            result = await session.load_prebuilt_deck(deck.get("deck_id", deck_id))
+            result = await session.load_prebuilt_deck(
+                deck.get("deck_id", deck_id), player_n=player_n
+            )
 
             await asyncio.sleep(0.5)
             for _ in range(10):

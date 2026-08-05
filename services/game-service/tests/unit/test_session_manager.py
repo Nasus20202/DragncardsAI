@@ -369,11 +369,11 @@ async def test_reset_game_reload_plugin_pushes_reset_and_reload():
 async def test_set_seat_sends_message():
     session = _make_session()
     session.client._send = AsyncMock()
-    await session.set_seat(player_index=0, user_id=42)
+    await session.set_seat(player_id="player2", user_id=42)
     session.client._send.assert_awaited_once()
     msg = session.client._send.await_args.args[0]
     assert msg.event == "set_seat"
-    assert msg.payload["player_i"] == 0
+    assert msg.payload["player_i"] == "player2"
     assert msg.payload["new_user_id"] == 42
     assert "timestamp" in msg.payload
 
@@ -449,7 +449,7 @@ async def test_auto_seat_assigns_first_available_player():
 
     await manager._auto_seat(session, user_id=42)
 
-    session.set_seat.assert_awaited_once_with(player_index="player2", user_id=42)
+    session.set_seat.assert_awaited_once_with(player_id="player2", user_id=42)
 
 
 @pytest.mark.asyncio
@@ -485,7 +485,7 @@ async def test_auto_seat_falls_back_to_player_data():
 
     await manager._auto_seat(session, user_id=42)
 
-    session.set_seat.assert_awaited_once_with(player_index="player2", user_id=42)
+    session.set_seat.assert_awaited_once_with(player_id="player2", user_id=42)
 
 
 # ---------------------------------------------------------------------------

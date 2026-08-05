@@ -69,11 +69,18 @@ class PhoenixRoom:
         )
         await self.client._send(msg)
 
-    async def set_seat(self, player_index: int, user_id: int) -> None:
+    async def set_seat(self, player_id: str, user_id: int) -> None:
+        """Push ``set_seat`` for a DragnCards seat id (``player1``..``player4``).
+
+        ``player_i`` is a seat id, not an index: upstream uses it directly as a
+        key of the room's seat map, so a numeric value writes an entry that no
+        seat lookup ever finds. This was already a string on the wire — the
+        annotation said ``int`` and disagreed with its only working caller.
+        """
         await self.send_room_event(
             "set_seat",
             {
-                "player_i": player_index,
+                "player_i": player_id,
                 "new_user_id": user_id,
                 "timestamp": int(time.time() * 1000),
             },

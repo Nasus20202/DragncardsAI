@@ -19,6 +19,7 @@ def mock_session(**kwargs) -> MagicMock:
     session.plugin_name = "marvel-champions"
     session.reset_game = AsyncMock(return_value={"game": {"stepId": 0}})
     session.set_seat = AsyncMock()
+    session.claim_seat = AsyncMock()
     session.set_spectator = AsyncMock()
     session.send_alert = AsyncMock()
     session.save_replay = AsyncMock()
@@ -55,6 +56,7 @@ def mock_manager(session=None) -> MagicMock:
 
     manager.get_session = get_session
     manager.load_prebuilt_deck = AsyncMock(return_value=None)
+    manager.claim_seats = AsyncMock(return_value=[])
     manager.delete_session = AsyncMock()
     manager.list_sessions = MagicMock(return_value=[])
 
