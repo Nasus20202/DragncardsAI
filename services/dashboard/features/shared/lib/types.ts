@@ -667,6 +667,14 @@ export interface HistorySnapshot {
   [key: string]: JsonValue;
 }
 
+/**
+ * How much of a game an export carries. `full` is lossless; `minimal` omits an
+ * agent move's `conversation_context` — the LLM prompt material — and nothing
+ * else, which is what makes a bundle shareable without handing over every system
+ * prompt and tool result the model was sent.
+ */
+export type HistoryExportMode = "full" | "minimal";
+
 /** Response from `POST /history/import` for an accepted history bundle. */
 export interface HistoryImportResult {
   /** The game the history landed under (the requested target, or the bundle's). */
@@ -677,6 +685,22 @@ export interface HistoryImportResult {
   imported_snapshots: number;
   first_seq?: number | null;
   last_seq?: number | null;
+  /**
+   * The mode the imported bundle's header declared. Worth reporting because a
+   * `minimal` import writes moves with no recorded conversation behind them:
+   * unless the import says so, an empty agent transcript reads as a broken
+   * import rather than as the export choice it was.
+   */
+  mode: HistoryExportMode;
+  /**
+   * How many imported events still name the *source* game inside their payload.
+   * Imported payloads are deliberately never rewritten — they are the recorded
+   * evidence the stored evaluations judged — so landing a bundle on another id
+   * leaves those references behind. Counting them is what keeps a stale
+   * reference from being something a reader only discovers mid-transcript. Zero
+   * when the target and the source are the same id, where they are current.
+   */
+  source_id_references: number;
 }
 
 export type RestoreMode = "new" | "in_place";

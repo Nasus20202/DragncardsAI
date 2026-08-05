@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 
+from history_service.runtime.transfer import BundleReader, iter_export_lines
 from history_service.schemas.envelope import EventEnvelope
+from history_service.storage.repository import GameHistoryExistsError
 
 
 def _envelope(game_id: str, *, actor="game-service", offset=0, event_type="state"):
@@ -168,3 +172,175 @@ async def test_timeline_summary_paging_on_postgres(postgres_repository):
     page2 = await postgres_repository.list_event_summaries("g1", after_seq=2, limit=2)
     assert [e.seq for e in page2] == [3, 4]
     assert page2[0].payload == {"offset": 2}
+
+
+# -- bundle round trip on Postgres ------------------------------------------
+
+_PLUGIN_STATICS = {
+    "functions": {f"fn{n}": ["ACTION", f"body-{n}"] for n in range(12)},
+    "layout": [[f"cell-{n}" for n in range(12)]],
+}
+_CONVERSATION = [
+    {"role": "system", "content": "you play Marvel Champions. " * 12},
+    {"role": "user", "content": "take your turn. " * 12},
+]
+
+
+def _state_envelope(game_id: str, offset: int) -> EventEnvelope:
+    return EventEnvelope(
+        game_id=game_id,
+        actor="game-service",
+        event_type="game_state",
+        payload={
+            "plugin_name": "marvel-champions",
+            "action_path": "actions",
+            "action_args": {"type": "move_card", "instance_id": f"c{offset}"},
+            # A payload object whose only key is a marker: the escape has to
+            # survive JSONB, not only the codec.
+            "marker": {"$ref": "not-a-reference"},
+            "state": {
+                "game": {"lastCard": f"c{offset}", **_PLUGIN_STATICS},
+                "deltas": [{"step": s, "pad": "d" * 300} for s in range(offset + 1)],
+            },
+        },
+        occurred_at=datetime.now(timezone.utc),
+        idempotency_key=f"{game_id}:game-service:{offset}",
+        producer_offset=offset,
+    )
+
+
+def _agent_envelope(game_id: str, offset: int) -> EventEnvelope:
+    return EventEnvelope(
+        game_id=game_id,
+        actor="agent",
+        event_type="agent_move",
+        payload={
+            "intended_action": "move_card",
+            "reasoning": "ラウンド 3 — Rhino attaque " * 8,
+            "arguments": {"instance_id": "c1", "session_id": game_id},
+            "conversation_context": _CONVERSATION,
+        },
+        occurred_at=datetime.now(timezone.utc),
+        idempotency_key=f"{game_id}:agent:{offset}",
+        producer_offset=offset,
+    )
+
+
+async def _seed_bundle_game(repository, game_id: str, *, events: int = 8) -> None:
+    for offset in range(events):
+        envelope = (
+            _agent_envelope(game_id, offset)
+            if offset % 2
+            else _state_envelope(game_id, offset)
+        )
+        await repository.commit_event(envelope)
+    await repository.write_snapshot(
+        game_id, 4, {"plugin_name": "marvel-champions", "game": _PLUGIN_STATICS}
+    )
+
+
+async def _export(repository, game_id: str, mode: str = "full") -> bytes:
+    return "".join(
+        [line async for line in iter_export_lines(repository, game_id, mode=mode)]
+    ).encode()
+
+
+async def _import(repository, bundle: bytes, target: str):
+    async def chunks():
+        yield bundle
+
+    reader = BundleReader(chunks(), max_bytes=64 * 1024 * 1024)
+    await reader.read_header()
+    result = await repository.import_game_history(target, reader.records())
+    return result, reader
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_bundle_round_trip_preserves_every_stored_field_on_postgres(
+    postgres_repository,
+):
+    """The store, not just the codec: JSONB is what the payloads land in."""
+    await _seed_bundle_game(postgres_repository, "g1", events=8)
+    bundle = await _export(postgres_repository, "g1")
+
+    result, reader = await _import(postgres_repository, bundle, "g1copy")
+    assert result.imported_events == 8
+    assert result.imported_snapshots == 1
+    # Every agent move records the source id in `arguments.session_id`.
+    assert reader.source_id_references == 4
+
+    original = await postgres_repository.list_events("g1", limit=100)
+    copy = await postgres_repository.list_events("g1copy", limit=100)
+    assert len(copy) == len(original) == 8
+    for before, after in zip(original, copy):
+        assert after.seq == before.seq
+        assert after.event_id == before.event_id
+        assert after.envelope_version == before.envelope_version
+        assert after.actor == before.actor
+        assert after.event_type == before.event_type
+        assert after.payload == before.payload
+        assert after.occurred_at == before.occurred_at
+        assert after.recorded_at == before.recorded_at
+        assert after.idempotency_key == before.idempotency_key
+        assert after.producer_offset == before.producer_offset
+    # The escape survived a trip through JSONB in both directions.
+    assert copy[0].payload["marker"] == {"$ref": "not-a-reference"}
+
+    original_snaps = await postgres_repository.list_snapshots("g1")
+    copy_snaps = await postgres_repository.list_snapshots("g1copy")
+    for before, after in zip(original_snaps, copy_snaps):
+        assert after.snapshot_at_seq == before.snapshot_at_seq
+        assert after.snapshot == before.snapshot
+        assert after.created_at == before.created_at
+
+    # Re-exporting the copy reproduces the bundle, header aside.
+    again = await _export(postgres_repository, "g1copy")
+    before_lines = [json.loads(line) for line in bundle.decode().splitlines()]
+    after_lines = [json.loads(line) for line in again.decode().splitlines()]
+    for record in (before_lines[0], after_lines[0]):
+        record.pop("exported_at")
+        record.pop("game_id")
+    assert before_lines == after_lines
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_importing_the_same_bundle_twice_never_collides_on_postgres(
+    postgres_repository,
+):
+    """The 409 is one target id, not a globally unique row in the store."""
+    await _seed_bundle_game(postgres_repository, "g1", events=4)
+    bundle = await _export(postgres_repository, "g1")
+
+    first, _ = await _import(postgres_repository, bundle, str(uuid4()))
+    second, _ = await _import(postgres_repository, bundle, str(uuid4()))
+    assert first.game_id != second.game_id
+    assert first.imported_events == second.imported_events == 4
+
+    with pytest.raises(GameHistoryExistsError):
+        await _import(postgres_repository, bundle, "g1")
+    # The refused import left the source untouched.
+    assert len(await postgres_repository.list_events("g1", limit=100)) == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_a_minimal_bundle_loses_exactly_the_conversation_on_postgres(
+    postgres_repository,
+):
+    await _seed_bundle_game(postgres_repository, "g1", events=8)
+    bundle = await _export(postgres_repository, "g1", mode="minimal")
+
+    result, _ = await _import(postgres_repository, bundle, "g1min")
+    assert result.imported_events == 8
+
+    original = await postgres_repository.list_events("g1", limit=100)
+    copy = await postgres_repository.list_events("g1min", limit=100)
+    for before, after in zip(original, copy):
+        assert after.payload == {
+            key: value
+            for key, value in before.payload.items()
+            if key != "conversation_context"
+        }
+        assert "conversation_context" not in after.payload

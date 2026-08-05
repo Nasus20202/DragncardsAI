@@ -570,8 +570,9 @@ class Repository:
                     if existing.scalar_one_or_none() is not None:
                         raise GameHistoryExistsError(
                             f"game {game_id!r} already has recorded history; "
-                            "import into a different game_id, or delete that "
-                            "game's history first"
+                            "import with as_new=true for a freshly minted id, "
+                            "with an explicit game_id, or delete that game's "
+                            "history first"
                         )
 
                     event_values: list[dict[str, Any]] = []

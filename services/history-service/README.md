@@ -63,8 +63,10 @@ payload, a snapshot document, or a restored game state.
 - `POST /games/{game_id}/restore` — body
   `{ "target_seq": int, "mode": "new"|"in_place", "ephemeral": bool }`. See
   [Restoring a game](#restoring-a-game).
-- `GET  /games/{game_id}/export` — the game's whole history as an NDJSON bundle.
-- `POST /import?game_id=` — import an NDJSON bundle as a new game's history.
+- `GET  /games/{game_id}/export?mode=full|minimal` — the game's whole history as
+  an NDJSON bundle; `minimal` leaves out the LLM prompt material.
+- `POST /import?game_id=` / `?as_new=true` — import an NDJSON bundle as a new
+  game's history, under a named id or one the service mints.
 - `GET  /health`, `GET /ready` — liveness/readiness (no secrets).
 
 Unknown games return empty results, not errors.
@@ -244,52 +246,103 @@ the mode and its `player`; the coordinator's own events carry the mode and no se
 ## History bundles (export / import)
 
 A bundle is **NDJSON**: one self-contained JSON object per line, keys sorted, in
-this order and no other.
+this order and no other. The current format version is **2**.
 
 | Line | `kind` | Content |
 | --- | --- | --- |
-| first | `header` | `format`, `format_version`, source `game_id`, `plugin_name` (null when the game recorded none), `exported_at`, `event_count`, `snapshot_count` |
+| first | `header` | `format`, `format_version`, source `game_id`, `plugin_name` (null when the game recorded none), `exported_at`, `event_count`, `snapshot_count`, `mode`, `omitted_payload_fields` |
+| anywhere between | `blob` | one value carried once and referenced: `id`, `value`, `first_seen` (the dotted path where it first occurred) |
 | next `event_count` lines | `event` | one stored event, ascending `seq`: `seq`, `event_id`, `envelope_version`, `actor`, `event_type`, `payload`, `occurred_at`, `recorded_at`, `idempotency_key`, `producer_offset` |
 | next `snapshot_count` lines | `snapshot` | one stored snapshot, ascending `snapshot_at_seq`: `snapshot_at_seq`, `snapshot`, `created_at` |
-| last | `footer` | `event_count`, `snapshot_count`, repeated |
+| last | `footer` | `event_count`, `snapshot_count`, `blob_count`, repeated |
 
 ```
-{"event_count":122,"exported_at":"2026-07-28T21:40:00+00:00","format":"dragncards-ai.game-history","format_version":1,"game_id":"3512...","kind":"header","plugin_name":"Marvel Champions","snapshot_count":4}
-{"actor":"game-service","envelope_version":1,"event_id":"...","event_type":"game_state","idempotency_key":"...","kind":"event","occurred_at":"...","payload":{...},"producer_offset":"0","recorded_at":"...","seq":1}
-{"created_at":"...","kind":"snapshot","snapshot":{"game":{...},"plugin_name":"Marvel Champions","schema_version":1},"snapshot_at_seq":25}
-{"event_count":122,"kind":"footer","snapshot_count":4}
+{"event_count": 124, "exported_at": "2026-07-28T21:40:00+00:00", "format": "dragncards-ai.game-history", "format_version": 2, "game_id": "3512...", "kind": "header", "mode": "full", "omitted_payload_fields": [], "plugin_name": "marvel-champions", "snapshot_count": 6}
+{"first_seen": "event[1].payload.state", "id": "b90", "kind": "blob", "value": {...}}
+{"actor": "game-service", "envelope_version": 1, "event_id": "...", "event_type": "game_state", "idempotency_key": "...", "kind": "event", "occurred_at": "...", "payload": {"action_args": {...}, "action_path": "actions", "plugin_name": "marvel-champions", "state": {"$ref": "b90"}, "state_digest": "b516...", "status": "standard"}, "producer_offset": 1, "recorded_at": "...", "seq": 1}
+{"created_at": "...", "kind": "snapshot", "snapshot": {"game": {"$ref": "b241"}, "plugin_name": "marvel-champions", "schema_version": 1}, "snapshot_at_seq": 25}
+{"blob_count": 933, "event_count": 124, "kind": "footer", "snapshot_count": 6}
 ```
+
+**Repeated values are carried once.** A recorded game is overwhelmingly
+repetition: every state event re-ships DragnCards' whole delta log, every agent
+move re-ships the conversation before it, and the plugin's DragnLang functions,
+automation lists, rules and layout are byte-identical on every state. Any object
+or array reaching 256 bytes is therefore emitted as a `blob` record and replaced
+by `{"$ref": "b7"}` wherever it occurs. Measured on a real 124-event game:
+31 332 926 bytes as version 1, **1 888 826** as version 2 — `gzip -9` of the
+version 1 file is 3 117 144, so this beats compression *and* stays readable.
+
+The rules that make that safe to read and write in one pass:
+
+- a reference names only a blob defined on an **earlier** line, so cycles cannot
+  be expressed and a bundle streams in both directions;
+- a payload's own object whose only key is `$ref` or `$literal` is escaped as
+  `{"$literal": ...}` and unwrapped on import, so real data containing the
+  markers round-trips unchanged;
+- a record's own `payload` (or `snapshot`) is never extracted, only its members,
+  so an `event` line still shows its action, arguments, digest and status;
+- import prices each blob's *expanded* size as it reads, and refuses a reference
+  bomb with **413** before materializing it;
+- import bounds how deeply a value may nest (200 levels against the ~10 a real
+  DragnCards state uses) and refuses a deeper one with **400**, so a hand-built
+  file cannot choose how far this process recurses. Only the reading side needs
+  the bound: nothing deeper can then reach the store for an export to walk.
+
+**Modes.** `GET /games/{game_id}/export?mode=full|minimal`, default `full`.
+`full` is lossless. `minimal` carries the same records and omits exactly one
+thing: `conversation_context` on an `agent_move` payload, the LLM prompt
+material. The key is **removed, not emptied** — `[]` would say "the prompts were
+empty" instead of "this recording has no prompts" — and the header declares both
+the mode and the field it left out. Restoring a game whose agent event carries no
+conversation reports `agent_context_restored: false` with a reason, rather than
+seeding an empty conversation and calling it restored. Same game as above:
+957 821 bytes in `minimal`.
 
 Every field above is written on export and read on import; there are no reserved
 or unused fields. No line carries a `game_id` — the target game is chosen at
 import time. Unknown keys on a record are ignored, so a bundle from a future
 version still reads as long as its `format_version` is one this service knows.
 Keys are sorted so two exports of the same scenario diff to the events that
-actually differ. Round and phase labels are **not** in the format: DragnCards
-`roundNumber` counts *completed* rounds and an event embeds the state *after* its
-action, so the round shown for an event is a derivation, done in the dashboard
+actually differ, and blob ids are assigned in first-encounter order, so two
+exports of one game are byte-identical apart from `exported_at`. Round and phase
+labels are **not** in the format: DragnCards `roundNumber` counts *completed*
+rounds and an event embeds the state *after* its action, so the round shown for
+an event is a derivation, done in the dashboard
 (`features/history/lib/history-rounds.ts`) rather than duplicated here.
 
 **Export** streams; it never materializes the bundle. It reads only the history
-store, so no configuration or credential can reach the file. It does serialize
-the recorded game in full, which includes the agent's system prompt and
-conversation context, user prompt text, and the DragnCards user id and player
+store, so no configuration or credential can reach the file. In `full` mode it
+serializes the recorded game in full, which includes the agent's system prompt
+and conversation context, user prompt text, and the DragnCards user id and player
 alias in every game state — a bundle is game data and should be shared as
-deliberately as a database dump. An unknown game exports a header/footer pair
-with zero counts.
+deliberately as a database dump, and `minimal` is the mode for handing one to
+someone else. An unknown game exports a header/footer pair with zero counts.
 
 **Import** is non-destructive and atomic. The target is `?game_id=` when given,
-else the header's `game_id`; a target that already has history is refused with
-**409** and nothing is written. Records are validated against the bundle schemas
-as they stream and written in one transaction, so a malformed, truncated, or
-oversized file imports nothing and the **400** names the line at fault. The
-invariants checked are the store's own: gap-free ascending `seq` from 1,
-snapshots after the events with ascending `snapshot_at_seq` and none past the
-last event, footer counts matching the records read, nothing after the footer,
-and at least one event. A body
-over `HISTORY_IMPORT_MAX_BYTES` is refused with **413**. `seq`, `event_id`,
-`idempotency_key`, `occurred_at`, and `recorded_at` are preserved verbatim, so an
-imported game reads back identical to the game it came from.
+else a freshly minted `uuid4` when `?as_new=true`, else the header's `game_id`;
+passing `game_id` *and* `as_new` is a **400**, and a target that already has
+history is refused with **409** and nothing is written. Format versions 1 and 2
+are both accepted — version 1 declared its own version, so nothing on disk has to
+be sniffed — and a `blob` record inside a version 1 bundle is a **400**. Records
+are validated against the bundle schemas as they stream and written in one
+transaction, so a malformed, truncated, or oversized file imports nothing and the
+**400** names the line at fault. The invariants checked are the store's own:
+gap-free ascending `seq` from 1, snapshots after the events with ascending
+`snapshot_at_seq` and none past the last event, footer counts (including
+`blob_count`) matching the records read, nothing after the footer, and at least
+one event. A body over `HISTORY_IMPORT_MAX_BYTES` is refused with **413**. `seq`,
+`event_id`, `idempotency_key`, `occurred_at`, and `recorded_at` are preserved
+verbatim, so an imported game reads back identical to the game it came from.
+
+**Payloads are never rewritten.** An imported game's `conversation_context` and
+`arguments` still name the game the bundle came from — on the measured game, 56
+of 124 events do. That is deliberate: a captured conversation is the evidence the
+stored evaluation verdicts judged, and rewriting an id inside it would produce a
+transcript no model emitted. Nothing dereferences those ids, so instead of
+pretending they are absent the import response reports `source_game_id` and
+`source_id_references`, the count of imported events that still mention it (`0`
+when the target *is* the source).
 
 Import stops at "the history is in the store". Putting an imported game onto a
 playable board is `POST /games/{game_id}/restore` — target the last `seq` for the
