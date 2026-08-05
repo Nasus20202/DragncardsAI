@@ -17,13 +17,14 @@ from agent_orchestrator.runtime.compaction import (
     NothingToCompactError,
     perform_compaction,
 )
+from agent_orchestrator.runtime.context_estimate import estimate_request
 from agent_orchestrator.runtime.history_emitter import (
     SESSION_GAME_ID_KEY,
-    SESSION_RESTORED_CONTEXT_KEY,
     HistoryEventEmitter,
     extract_game_id,
     is_game_id_source_tool,
     is_game_mutating_tool,
+    restored_conversation_context,
 )
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.personas import (
@@ -55,6 +56,7 @@ from agent_orchestrator.runtime.system_prompts import (
     build_system_prompt,
 )
 from agent_orchestrator.runtime.tokens import (
+    count_tokens_for_text,
     estimate_tokens_for_messages,
     extract_tokens_from_response,
 )
@@ -255,13 +257,36 @@ class PromptRunService:
                 )
                 tools = builtin_registry.as_openai_tools() + mcp_tools
 
+                # The skills the prompt loaded into its own turn go in the model's
+                # copy of the user message only: the stored prompt stays what the
+                # user typed, so the transcript and the replay of this turn are
+                # unchanged and the content costs its tokens once.
+                #
+                # Rendered here, ahead of auto-compaction, because the inlined
+                # `SKILL.md` content is part of the request the trigger has to
+                # measure — a mentioned skill can add tens of thousands of
+                # tokens the trigger would otherwise never see. Only the render
+                # moved: the prompt event and the `skill_loaded` announcements
+                # stay below, so the transcript's ordering is unchanged.
+                user_content, inlined_skills = render_prompt_with_inline_skills(
+                    self._skill_registry,
+                    (full_job.metadata_json or {}).get(JOB_INLINE_SKILLS_KEY) or [],
+                    full_job.prompt,
+                )
+
                 if session.multi_turn_memory:
-                    await self.maybe_auto_compact(job.id, session.id)
+                    await self.maybe_auto_compact(
+                        job.id,
+                        session.id,
+                        system_prompt=system_prompt,
+                        tools=tools,
+                        user_message=user_content,
+                    )
 
                 messages: list[dict[str, Any]] = [
                     {"role": "system", "content": system_prompt},
                 ]
-                restored_context = self._restored_conversation_context(session)
+                restored_context = restored_conversation_context(session)
                 if restored_context:
                     messages.extend(copy.deepcopy(restored_context))
                 if session.multi_turn_memory:
@@ -277,15 +302,6 @@ class PromptRunService:
                 seat_inbox = await self._collect_seat_inbox(seat_identity)
                 if seat_inbox is not None:
                     messages.append(seat_inbox)
-                # The skills the prompt loaded into its own turn go in the model's
-                # copy of the user message only: the stored prompt stays what the
-                # user typed, so the transcript and the replay of this turn are
-                # unchanged and the content costs its tokens once.
-                user_content, inlined_skills = render_prompt_with_inline_skills(
-                    self._skill_registry,
-                    (full_job.metadata_json or {}).get(JOB_INLINE_SKILLS_KEY) or [],
-                    full_job.prompt,
-                )
                 messages.append({"role": "user", "content": user_content})
                 self._emit_user_prompt_event(session=session, prompt=full_job.prompt)
                 await self._announce_inlined_skills(
@@ -703,15 +719,6 @@ class PromptRunService:
         self._history_tasks.clear()
         await asyncio.gather(*pending, return_exceptions=True)
 
-    def _restored_conversation_context(
-        self, session: Any
-    ) -> list[dict[str, Any]] | None:
-        metadata = getattr(session, "metadata_json", None) or {}
-        context = metadata.get(SESSION_RESTORED_CONTEXT_KEY)
-        if isinstance(context, list) and context:
-            return context
-        return None
-
     async def _collect_seat_inbox(
         self, seat_identity: SeatIdentity | None
     ) -> dict[str, str] | None:
@@ -1030,8 +1037,32 @@ class PromptRunService:
         await self._repository.mark_job_completed(job.id, content)
         await self._maybe_terminate_child_session(job)
 
-    async def maybe_auto_compact(self, job_id: str, session_id: str) -> None:
-        """Compact the session's history when the replay estimate reaches the threshold.
+    async def maybe_auto_compact(
+        self,
+        job_id: str,
+        session_id: str,
+        *,
+        system_prompt: str,
+        tools: list[dict[str, Any]],
+        user_message: str | None,
+    ) -> None:
+        """Compact the session's history when the request reaches the threshold.
+
+        The estimate covers the request the worker is about to send, not the
+        replayed history alone: the system prompt, every tool definition the
+        model is offered, any conversation a restore attached to the session,
+        the replay, and the current turn's user message as rendered — which is
+        where a skill the prompt inlined into itself lives. The one part left
+        out is the seat inbox, which cannot be measured without delivering it.
+
+        `system_prompt`, `tools` and `user_message` are required rather than
+        defaulted, because a caller that forgot one would silently go back to
+        measuring less than the request — which is the defect this exists to
+        fix, and it would leave no trace.
+
+        Compaction can only shrink the replay, so a session whose pressure is
+        fixed request cost is left alone rather than made to pay for a
+        summarizing call that cannot lower the ratio.
 
         This never raises. Auto-compaction exists to keep a job inside its
         context window, so its own failure must not be the reason that job
@@ -1063,27 +1094,83 @@ class PromptRunService:
 
                 threshold = self._settings.context_compaction_threshold
 
-                # Estimate actual replay size (same logic as context metadata endpoint)
-                # so the threshold fires before the LLM receives an oversized request.
+                # The same estimator the context metadata endpoint runs, over
+                # the same components, so the ratio this fires on is the ratio
+                # the dashboard's context widget shows for the session.
                 replay_messages = await self._transcript_service.build_message_history(
                     session_id, current_job_id=job_id
                 )
-                tokens_used = estimate_tokens_for_messages(replay_messages)
-                ratio = (
-                    tokens_used / context_window_size
-                    if context_window_size > 0
-                    else 0.0
+                # A restored conversation is prepended to every request this
+                # session sends and compaction never rewrites it, so it is
+                # counted with the replay rather than left out — and then
+                # excluded again from what the guard treats as compactable. The
+                # seat inbox is the one request component neither side counts:
+                # `_collect_seat_inbox` consumes the messages it reads, so it
+                # cannot be measured without delivering them.
+                restored = restored_conversation_context(full_job.session)
+                estimate = estimate_request(
+                    system_prompt=system_prompt,
+                    tools=tools,
+                    replay_messages=restored + replay_messages,
+                    user_message=user_message,
+                    context_window_size=context_window_size,
                 )
+                ratio = estimate.usage_ratio
 
                 if ratio < threshold:
                     return
 
+                restored_tokens = (
+                    estimate_tokens_for_messages(restored) if restored else 0
+                )
+                compactable, min_replay_tokens = await self._compactable_replay(
+                    session_id, estimate.replay - restored_tokens
+                )
+                # Two reasons not to summarize. Either there is too little
+                # history for a summary to be an improvement on it, or the
+                # parts compaction cannot touch already fill the window on
+                # their own, so no amount of summarizing produces a request
+                # that fits. Both are fixed request cost rather than history,
+                # and in both the summarizing call would be spent for nothing.
+                #
+                # Not covered, deliberately: a session whose fixed cost alone
+                # is over the *threshold* but still under the window, with real
+                # history behind it. Compaction cannot get that session back
+                # under the threshold, but it does still shrink the request, so
+                # it runs.
+                hopeless = estimate.fixed_cost >= context_window_size
+                if compactable < min_replay_tokens or hopeless:
+                    logger.info(
+                        "Job %s: usage ratio %.3f reaches threshold %.3f on fixed "
+                        "request cost, not history — skipping compaction of session "
+                        "%s (reason=%s, fixed_cost=%d, compactable_replay=%d, "
+                        "floor=%d, %s)",
+                        job_id,
+                        ratio,
+                        threshold,
+                        session_id,
+                        (
+                            "fixed cost alone fills the window"
+                            if hopeless
+                            else "too little history to be worth summarizing"
+                        ),
+                        estimate.fixed_cost,
+                        compactable,
+                        min_replay_tokens,
+                        estimate.as_log_fields(),
+                        extra={"context_estimate": estimate.as_log_extra()},
+                    )
+                    return
+
                 logger.info(
-                    "Job %s: usage ratio %.3f exceeds threshold %.3f — auto-compacting session %s",
+                    "Job %s: usage ratio %.3f exceeds threshold %.3f — auto-compacting "
+                    "session %s (%s)",
                     job_id,
                     ratio,
                     threshold,
                     session_id,
+                    estimate.as_log_fields(),
+                    extra={"context_estimate": estimate.as_log_extra()},
                 )
 
                 await perform_compaction(
@@ -1113,6 +1200,40 @@ class PromptRunService:
             await self._record_compaction_failure(
                 job_id=job_id, session_id=session_id, exc=exc, ratio=ratio
             )
+
+    async def _compactable_replay(
+        self, session_id: str, replay_tokens: int
+    ) -> tuple[int, int]:
+        """What compaction could actually replace, and the size below which it should not bother.
+
+        Compaction rewrites only the span since the last checkpoint. The
+        previous summary is *also* in the replay — `build_message_history`
+        prepends it as a system message and the replay windows never drop it —
+        so the replay total is not the compactable part. Measuring against the
+        total would make this guard unreachable for any session that had
+        compacted once, and a session over the threshold on fixed cost would
+        then pay for a summarizing call on every single turn.
+
+        So the compactable part is the replay less the carried-forward summary,
+        and the floor it must clear is the size of the summary that would
+        replace it — the previous summary's measured token length, or the
+        configured floor before there is one.
+
+        `CompactionRecord.tokens_used` is deliberately not used as that size: it
+        is the summarizing call's `total_tokens`, which counts the history that
+        went in as well as the summary that came out, so it grows with the span
+        and would suppress compaction exactly when the span is large.
+        """
+        record = await self._repository.get_latest_compaction_record(session_id)
+        if record is None or not record.summary_text:
+            return replay_tokens, self._settings.context_compaction_min_replay_tokens
+        carried = estimate_tokens_for_messages(
+            [{"role": "system", "content": record.summary_text}]
+        )
+        return (
+            max(replay_tokens - carried, 0),
+            count_tokens_for_text(record.summary_text),
+        )
 
     async def _record_compaction_failure(
         self,

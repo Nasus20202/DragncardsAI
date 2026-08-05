@@ -770,8 +770,31 @@ optimisation, not a system of record, and a transport failure on it degrades rat
 - `POST /sessions/{session_id}/compact` — compact now. The body is optional; `from_session_start`
   re-reads the whole session instead of the span since the last checkpoint.
 
-When `multi_turn_memory` is enabled, a job estimates its replay before its first model request and
-compacts when the ratio against the model's context window reaches `CONTEXT_COMPACTION_THRESHOLD`.
+When `multi_turn_memory` is enabled, a job estimates the request it is about to send — the system
+prompt, every tool definition it offers the model (built-in and MCP), the replay, and the turn's
+user message as rendered, skills the prompt inlined into itself included — and compacts when the
+ratio against the model's context window reaches `CONTEXT_COMPACTION_THRESHOLD`.
+
+That estimate comes from `runtime/context_estimate.py`, which is also what
+`GET /sessions/{session_id}/context` reports, so the number the trigger fires on and the number the
+dashboard's context widget shows are produced by one function over the same components. The
+endpoint's figure is the trigger's less the current turn's user message, which a session at rest
+cannot know; the trigger's INFO line reports every component so the two can be compared on a real
+session.
+
+Compaction can only shrink the replayed history, so the trigger declines to call the summarizer in
+the two cases where that call would buy nothing. Either there is too little history for a summary to
+improve on it — the span since the last checkpoint, excluding the carried-forward summary and any
+restored conversation, is smaller than the summary that would replace it, measured from the
+session's most recent summary text or, before there is one,
+`CONTEXT_COMPACTION_MIN_REPLAY_TOKENS`. Or the parts compaction cannot touch already fill the
+context window on their own, so no summary produces a request that fits. Both are logged as fixed
+request cost rather than history, naming which applied.
+
+A session whose fixed cost is over the threshold but still inside the window does keep compacting,
+once per turn, and each compaction does shrink the request — it just cannot get the ratio back under
+the threshold. That is a session whose tool catalogue, system prompt or model is the real problem,
+and the trigger's log line is what says so.
 
 Compaction summarizes into a `CompactionRecord` and writes a synthetic `job_type='compaction'` job
 so the summary is visible in the transcript. Raw `job_events` rows are never deleted, so a summary
@@ -796,6 +819,7 @@ length:
 CONTEXT_WINDOW_SIZE=128000                  # fallback when the provider reports no context length
 CONTEXT_COMPACTION_THRESHOLD=0.8            # of the window, for both the trigger and the input ceiling
 CONTEXT_COMPACTION_EVENT_CHAR_BUDGET=20000  # per tool call or tool result, summarization input only
+CONTEXT_COMPACTION_MIN_REPLAY_TOKENS=4000   # smallest replay worth summarizing, before any summary exists
 ```
 
 Automatic compaction exists to keep a job inside its context window, so its own failure never fails

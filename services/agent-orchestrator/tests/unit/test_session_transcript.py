@@ -4,10 +4,12 @@ from pathlib import Path
 
 import pytest
 
+from agent_orchestrator.api.tool_catalog import resolve_session_request_tools
 from agent_orchestrator.integrations.mcp.client import McpToolDefinition
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
+from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
-from agent_orchestrator.runtime.skills import SkillRegistry
+from agent_orchestrator.runtime.skills import SkillRegistry, enabled_skill_assignments
 from agent_orchestrator.runtime.system_prompts import build_system_prompt
 from agent_orchestrator.runtime.tokens import (
     estimate_tokens_for_messages,
@@ -238,15 +240,22 @@ async def test_session_transcript_builds_context_metadata(
 
     transcript = SessionTranscriptService(repository)
     mcp_tool_catalog = McpToolCatalog(FakeMcp())
+    reloaded_session = await repository.get_session(session.id)
+    assert reloaded_session is not None
+    request_tools = await resolve_session_request_tools(
+        mcp_tool_catalog=mcp_tool_catalog,
+        skill_registry=skill_registry,
+        repository=repository,
+        live_event_bus=InMemoryLiveEventBus(),
+        session=reloaded_session,
+    )
     metadata = await transcript.build_context_metadata(
         session.id,
         128000,
         skill_registry=skill_registry,
-        mcp_tool_catalog=mcp_tool_catalog,
+        request_tools=request_tools,
     )
 
-    reloaded_session = await repository.get_session(session.id)
-    assert reloaded_session is not None
     replay_messages = await transcript.build_message_history(session.id, "")
     expected_breakdown = {
         "system_prompt": estimate_tokens_for_messages(
@@ -254,21 +263,15 @@ async def test_session_transcript_builds_context_metadata(
                 {
                     "role": "system",
                     "content": build_system_prompt(
-                        skill_registry, reloaded_session.enabled_skills
+                        skill_registry,
+                        enabled_skill_assignments(reloaded_session.enabled_skills),
+                        personas=await repository.list_personas(),
                     ),
                 }
             ]
         ),
         "replay": estimate_tokens_for_messages(replay_messages),
-        "tools": estimate_tokens_for_tools(
-            mcp_tool_catalog.as_openai_tools(
-                await mcp_tool_catalog.list_session_tools(
-                    reloaded_session.enabled_mcps,
-                    await repository.list_mcp_registries(),
-                    ignore_failures=True,
-                )
-            )
-        ),
+        "tools": estimate_tokens_for_tools(request_tools),
     }
 
     assert metadata.multi_turn_memory is True

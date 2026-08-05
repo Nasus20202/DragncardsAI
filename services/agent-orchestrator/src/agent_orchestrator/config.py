@@ -25,6 +25,28 @@ REQUIRED_PROVIDER_IDS = (
 # below the payloads that have to be cut.
 COMPACTION_EVENT_CHAR_BUDGET_DEFAULT = 20_000
 
+# The smallest span a compaction is allowed to be attempted on, in estimated
+# tokens, when no previous summary exists to measure against. Compaction can
+# only shrink the replayed history, so once the system prompt, the tool
+# definitions and an inlined skill count toward the trigger, a session can sit
+# above the threshold with almost no history — and summarizing it would cost a
+# blocking model call that cannot lower the ratio. Below this floor the trigger
+# reports fixed request cost as the cause and does not call the summarizer.
+#
+# The floor is a stand-in for "the summary would not be smaller than the
+# history it replaces". Once a session has a `CompactionRecord`, the measured
+# token length of its most recent summary is used instead and the floor stops
+# applying. 4000 tokens is about 3% of the default 128k window and about the
+# size of one mid-sized inlined `SKILL.md`; no session in the deployment has
+# compacted yet, so it is chosen to be revised from the first real summaries
+# rather than defended as measured.
+#
+# Setting it near or above a model's context window disables automatic
+# compaction for sessions that have never compacted, since no span can clear
+# it. It is not bounded here because the real window is whatever the provider
+# reports for the session's model, which this constant cannot know.
+COMPACTION_MIN_REPLAY_TOKENS_DEFAULT = 4_000
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -169,6 +191,13 @@ class Settings(BaseSettings):
             "CONTEXT_COMPACTION_EVENT_CHAR_BUDGET",
         ),
     )
+    context_compaction_min_replay_tokens: int = Field(
+        default=COMPACTION_MIN_REPLAY_TOKENS_DEFAULT,
+        validation_alias=AliasChoices(
+            "context_compaction_min_replay_tokens",
+            "CONTEXT_COMPACTION_MIN_REPLAY_TOKENS",
+        ),
+    )
     enabled_provider_ids_raw: str = Field(
         default=",".join(REQUIRED_PROVIDER_IDS),
         validation_alias=AliasChoices(
@@ -210,6 +239,15 @@ class Settings(BaseSettings):
     def validate_compaction_event_char_budget(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("context_compaction_event_char_budget must be positive")
+        return value
+
+    @field_validator("context_compaction_min_replay_tokens")
+    @classmethod
+    def validate_compaction_min_replay_tokens(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError(
+                "context_compaction_min_replay_tokens must not be negative"
+            )
         return value
 
     @field_validator("subagent_wait_timeout_seconds")

@@ -259,10 +259,6 @@ class WorkerService:
             logger.exception("Failed to announce the crash of job %s", job.id)
         await self._maybe_terminate_child_session(job)
 
-    async def _maybe_auto_compact(self, job_id: str, session_id: str) -> None:
-        """Auto-compact context if estimated usage ratio exceeds threshold."""
-        await self._prompt_run_service.maybe_auto_compact(job_id, session_id)
-
     def _format_execution_error(self, exc: Exception) -> str:
         return self._prompt_run_service.format_execution_error(exc)
 

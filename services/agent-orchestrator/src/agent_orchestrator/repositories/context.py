@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.repositories.base import utc_now
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
 from agent_orchestrator.runtime.skills import SkillRegistry
@@ -216,13 +217,19 @@ class ContextRepositoryMixin:
         context_window_size: int,
         *,
         skill_registry: SkillRegistry,
-        mcp_tool_catalog: McpToolCatalog,
+        request_tools: list[dict[str, Any]],
     ) -> dict:
-        """Return context health metadata for a session."""
+        """Return context health metadata for a session.
+
+        `request_tools` is the OpenAI-shaped tool list a top-level job on this
+        session would send — built-in and MCP alike. The caller resolves it,
+        because building the built-in half needs the live event bus and that is
+        an API-layer dependency.
+        """
         metadata = await SessionTranscriptService(self).build_context_metadata(
             session_id,
             context_window_size,
             skill_registry=skill_registry,
-            mcp_tool_catalog=mcp_tool_catalog,
+            request_tools=request_tools,
         )
         return metadata.as_dict()
