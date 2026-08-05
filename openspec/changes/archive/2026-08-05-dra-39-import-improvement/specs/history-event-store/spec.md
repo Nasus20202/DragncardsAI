@@ -46,76 +46,6 @@ Exporting a game with no recorded history SHALL return a bundle consisting of a 
 - **WHEN** a bundle is inspected for secrets
 - **THEN** it SHALL contain no API key, bearer token, authorization header, database credential, or other value drawn from service configuration or environment
 
-### Requirement: Repeated values are carried once and referenced
-
-The bundle format SHALL carry any repeated value once, as a `blob` record, and reference it from every place it occurs, because a recorded game is overwhelmingly repetition: on a measured 124-event game, the DragnCards delta log is re-shipped in full by every state event, every agent move re-ships the whole conversation that preceded it, and the plugin's DragnLang functions, automation lists, rules and layout are byte-identical on every state.
-
-While a record's `payload` (for an `event`) or `snapshot` (for a `snapshot`) is serialized, any object or array whose serialization reaches a fixed size threshold SHALL be replaced by a reference of the form `{"$ref": "<blob id>"}`, and the value itself SHALL be emitted as a `blob` record on an earlier line. Extraction SHALL be by size alone and SHALL NOT depend on field names, so that the format needs no knowledge of DragnCards and does not have to be revised when a recorded state gains a field.
-
-A reference SHALL name only a blob defined on an earlier line. Consequently a bundle can be read in one forward pass, and a reference cycle cannot be expressed.
-
-A blob's value MAY itself contain references to earlier blobs, so that a value which is repeated only in part is still carried once.
-
-Because an object in a recorded payload could genuinely have `$ref` as its only key, the format SHALL escape any object whose sole key is `$ref` or `$literal` as `{"$literal": <the object>}`, and reading SHALL unwrap it. This SHALL nest, so that a payload containing an escape marker round-trips unchanged.
-
-The service SHALL reject a bundle whose `blob` records do not resolve: a reference to an unknown identifier, a reference to a blob defined on a later line, a duplicate blob identifier, and a footer `blob_count` that disagrees with the blobs read SHALL each be a `400` naming the offending line.
-
-#### Scenario: A repeated value is carried once
-
-- **WHEN** a game whose events share a large identical value is exported
-- **THEN** the bundle SHALL contain that value in exactly one `blob` record, and each event that carried it SHALL carry a reference to that record instead
-
-#### Scenario: A partially repeated value is still shared
-
-- **WHEN** a value is an array that grows by appending, so that each occurrence contains every earlier occurrence's elements
-- **THEN** the bundle SHALL carry each distinct element once and each occurrence SHALL reference the elements it shares with the ones before it
-
-#### Scenario: An escape marker in real data round-trips
-
-- **WHEN** a stored payload contains an object whose only key is `$ref`, or one whose only key is `$literal`
-- **THEN** exporting and re-importing that game SHALL reproduce the payload exactly, and the reference resolver SHALL NOT treat the payload's own object as a reference
-
-#### Scenario: A dangling reference is rejected
-
-- **WHEN** an imported bundle contains a reference to a blob identifier that no earlier line defines
-- **THEN** the service SHALL answer `400` naming the line and the identifier, and SHALL import nothing
-
-### Requirement: Export modes select whether prompt material is included
-
-The export endpoint SHALL accept a mode of `full` or `minimal`, defaulting to `full`, and SHALL record the chosen mode in the bundle header together with the list of payload fields that mode omits.
-
-`full` SHALL be lossless: every stored event and every stored snapshot, every field verbatim. Exporting, importing and re-exporting in `full` mode SHALL reproduce the bundle.
-
-`minimal` SHALL carry the same records as `full` — the same events with the same `seq` values, and the same snapshots — and SHALL omit only the LLM prompt material, which is the `conversation_context` field of an `agent_move` payload. Every other field SHALL be carried, including an agent move's `reasoning`, `intended_action` and `arguments`, every user prompt, every evaluation, and every recorded state.
-
-A mode SHALL NOT be permitted to drop whole events, because event `seq` is required to be gap-free and ascending from 1 and a bundle with holes could not be imported; and because an agent's recorded moves are the substance of a recorded game rather than prompt material.
-
-An omitted field SHALL be omitted by **absence**: the key SHALL NOT be present, and SHALL NOT be written as an empty value. This is what distinguishes a minimally exported game from a fully exported game whose conversations happened to be empty.
-
-The mode SHALL describe the export operation rather than a permanent property of the game. A game imported from a minimal bundle genuinely holds no captured conversation, so exporting it in `full` mode SHALL report `full` and carry no `conversation_context`, which states that the recording has no prompts rather than that its prompts were empty.
-
-Import SHALL reject a bundle whose header declares `full` while also declaring omitted fields, because the two statements contradict one another.
-
-#### Scenario: A minimal export omits exactly the prompt material
-
-- **WHEN** a game with recorded agent moves is exported in `minimal` mode
-- **THEN** no `agent_move` record SHALL carry a `conversation_context` key, every other payload field of every record SHALL match the `full` export, and the header SHALL declare the mode `minimal` and name `conversation_context` as omitted
-
-#### Scenario: A full export declares itself lossless
-
-- **WHEN** a game is exported without a mode, or with `full`
-- **THEN** the header SHALL declare the mode `full` and an empty list of omitted fields
-
-#### Scenario: A minimal bundle is recognisable after import
-
-- **WHEN** a minimal bundle is imported
-- **THEN** the import response SHALL report the mode the bundle declared, and the imported `agent_move` events SHALL have no `conversation_context` key rather than an empty one
-
-#### Scenario: An unknown mode is refused
-
-- **WHEN** an export is requested with a mode that is neither `full` nor `minimal`
-- **THEN** the service SHALL reject the request rather than falling back to a default
-
 ### Requirement: Validated, atomic, non-destructive import of a history bundle
 
 The history-service SHALL expose a write endpoint that reads an NDJSON history bundle and persists it as one game's recorded history.
@@ -215,6 +145,76 @@ Reading a bundle also means walking structure the file chose, so the service SHA
 - **THEN** the service SHALL answer `400` naming the line and the bound, and the target game SHALL have no stored events
 
 ## ADDED Requirements
+
+### Requirement: Repeated values are carried once and referenced
+
+The bundle format SHALL carry any repeated value once, as a `blob` record, and reference it from every place it occurs, because a recorded game is overwhelmingly repetition: on a measured 124-event game, the DragnCards delta log is re-shipped in full by every state event, every agent move re-ships the whole conversation that preceded it, and the plugin's DragnLang functions, automation lists, rules and layout are byte-identical on every state.
+
+While a record's `payload` (for an `event`) or `snapshot` (for a `snapshot`) is serialized, any object or array whose serialization reaches a fixed size threshold SHALL be replaced by a reference of the form `{"$ref": "<blob id>"}`, and the value itself SHALL be emitted as a `blob` record on an earlier line. Extraction SHALL be by size alone and SHALL NOT depend on field names, so that the format needs no knowledge of DragnCards and does not have to be revised when a recorded state gains a field.
+
+A reference SHALL name only a blob defined on an earlier line. Consequently a bundle can be read in one forward pass, and a reference cycle cannot be expressed.
+
+A blob's value MAY itself contain references to earlier blobs, so that a value which is repeated only in part is still carried once.
+
+Because an object in a recorded payload could genuinely have `$ref` as its only key, the format SHALL escape any object whose sole key is `$ref` or `$literal` as `{"$literal": <the object>}`, and reading SHALL unwrap it. This SHALL nest, so that a payload containing an escape marker round-trips unchanged.
+
+The service SHALL reject a bundle whose `blob` records do not resolve: a reference to an unknown identifier, a reference to a blob defined on a later line, a duplicate blob identifier, and a footer `blob_count` that disagrees with the blobs read SHALL each be a `400` naming the offending line.
+
+#### Scenario: A repeated value is carried once
+
+- **WHEN** a game whose events share a large identical value is exported
+- **THEN** the bundle SHALL contain that value in exactly one `blob` record, and each event that carried it SHALL carry a reference to that record instead
+
+#### Scenario: A partially repeated value is still shared
+
+- **WHEN** a value is an array that grows by appending, so that each occurrence contains every earlier occurrence's elements
+- **THEN** the bundle SHALL carry each distinct element once and each occurrence SHALL reference the elements it shares with the ones before it
+
+#### Scenario: An escape marker in real data round-trips
+
+- **WHEN** a stored payload contains an object whose only key is `$ref`, or one whose only key is `$literal`
+- **THEN** exporting and re-importing that game SHALL reproduce the payload exactly, and the reference resolver SHALL NOT treat the payload's own object as a reference
+
+#### Scenario: A dangling reference is rejected
+
+- **WHEN** an imported bundle contains a reference to a blob identifier that no earlier line defines
+- **THEN** the service SHALL answer `400` naming the line and the identifier, and SHALL import nothing
+
+### Requirement: Export modes select whether prompt material is included
+
+The export endpoint SHALL accept a mode of `full` or `minimal`, defaulting to `full`, and SHALL record the chosen mode in the bundle header together with the list of payload fields that mode omits.
+
+`full` SHALL be lossless: every stored event and every stored snapshot, every field verbatim. Exporting, importing and re-exporting in `full` mode SHALL reproduce the bundle.
+
+`minimal` SHALL carry the same records as `full` — the same events with the same `seq` values, and the same snapshots — and SHALL omit only the LLM prompt material, which is the `conversation_context` field of an `agent_move` payload. Every other field SHALL be carried, including an agent move's `reasoning`, `intended_action` and `arguments`, every user prompt, every evaluation, and every recorded state.
+
+A mode SHALL NOT be permitted to drop whole events, because event `seq` is required to be gap-free and ascending from 1 and a bundle with holes could not be imported; and because an agent's recorded moves are the substance of a recorded game rather than prompt material.
+
+An omitted field SHALL be omitted by **absence**: the key SHALL NOT be present, and SHALL NOT be written as an empty value. This is what distinguishes a minimally exported game from a fully exported game whose conversations happened to be empty.
+
+The mode SHALL describe the export operation rather than a permanent property of the game. A game imported from a minimal bundle genuinely holds no captured conversation, so exporting it in `full` mode SHALL report `full` and carry no `conversation_context`, which states that the recording has no prompts rather than that its prompts were empty.
+
+Import SHALL reject a bundle whose header declares `full` while also declaring omitted fields, because the two statements contradict one another.
+
+#### Scenario: A minimal export omits exactly the prompt material
+
+- **WHEN** a game with recorded agent moves is exported in `minimal` mode
+- **THEN** no `agent_move` record SHALL carry a `conversation_context` key, every other payload field of every record SHALL match the `full` export, and the header SHALL declare the mode `minimal` and name `conversation_context` as omitted
+
+#### Scenario: A full export declares itself lossless
+
+- **WHEN** a game is exported without a mode, or with `full`
+- **THEN** the header SHALL declare the mode `full` and an empty list of omitted fields
+
+#### Scenario: A minimal bundle is recognisable after import
+
+- **WHEN** a minimal bundle is imported
+- **THEN** the import response SHALL report the mode the bundle declared, and the imported `agent_move` events SHALL have no `conversation_context` key rather than an empty one
+
+#### Scenario: An unknown mode is refused
+
+- **WHEN** an export is requested with a mode that is neither `full` nor `minimal`
+- **THEN** the service SHALL reject the request rather than falling back to a default
 
 ### Requirement: Previously exported bundles remain importable
 
