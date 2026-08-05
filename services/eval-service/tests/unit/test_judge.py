@@ -6,7 +6,12 @@ import httpx
 import pytest
 
 from eval_service.integrations.bifrost import BifrostError, BifrostJudgeClient
-from eval_service.judge.assembly import MoveInput, NeighbourMove, RoundInput
+from eval_service.judge.assembly import (
+    ChildVerdict,
+    MoveInput,
+    NeighbourMove,
+    RoundInput,
+)
 from eval_service.judge.config import ResolvedJudgeConfig, ResolvedReasoning
 from eval_service.judge.parse import VerdictParseError, parse_verdict
 from eval_service.judge.prompt import build_move_messages, build_round_messages
@@ -433,6 +438,71 @@ def test_round_prompt_caps_move_count(caplog):
     user = messages[1]["content"]
     assert "45 further moves omitted" in user
     assert any("Capped round move list" in rec.message for rec in caplog.records)
+
+
+def test_round_prompt_clips_a_verbose_move_reasoning():
+    """The round move list clipped nothing, so one verbose move could dominate.
+
+    ``_neighbour_block`` already clipped this SAME field for this reason. The
+    reference budget now reserves against the cap, so the cap has to hold.
+    """
+    rnd = RoundInput(
+        game_id="g1",
+        target_seq=1,
+        from_seq=1,
+        to_seq=1,
+        round_number=1,
+        moves=[
+            MoveInput(
+                game_id="g1",
+                target_seq=1,
+                intended_action="play",
+                reasoning="R" * 5_000,
+                arguments={},
+                prior_state=None,
+                resulting_state=None,
+            )
+        ],
+        closing_state={"roundNumber": 1},
+    )
+    user = build_round_messages(rnd, max_context_reasoning_chars=100)[1]["content"]
+    assert "R" * 101 not in user
+    assert "...[+4902 chars]" in user
+    # 0 keeps ``_clip``'s documented "do not clip" behaviour.
+    uncapped = build_round_messages(rnd, max_context_reasoning_chars=0)[1]["content"]
+    assert "R" * 5_000 in uncapped
+
+
+def test_a_roll_up_bounds_both_the_count_and_the_size_of_child_verdicts(caplog):
+    """A round carries one child per graded move and a game one per round;
+    neither the recording side nor this block bounded them before."""
+    children = [
+        ChildVerdict(
+            scope="move",
+            target_seq=s,
+            player="p1",
+            overall_score=7,
+            rationale="C" * 5_000,
+        )
+        for s in range(40)
+    ]
+    rnd = RoundInput(
+        game_id="g1",
+        target_seq=40,
+        from_seq=1,
+        to_seq=40,
+        round_number=1,
+        child_verdicts=children,
+        closing_state={"roundNumber": 1},
+    )
+    with caplog.at_level("INFO"):
+        user = build_round_messages(
+            rnd, max_round_moves=5, max_child_rationale_chars=100
+        )[1]["content"]
+    assert "35 further move verdict(s) omitted" in user
+    assert "C" * 101 not in user
+    assert "...[+4900 chars]" in user
+    assert any("Capped move child verdict" in rec.message for rec in caplog.records)
 
 
 def test_flatten_content_handles_string_and_text_blocks():

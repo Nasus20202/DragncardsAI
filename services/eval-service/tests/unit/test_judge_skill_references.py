@@ -34,6 +34,11 @@ from eval_service.judge.prompt import (
     build_move_messages,
     build_round_messages,
 )
+from eval_service.judge.reference_budget import (
+    UNCLIPPED_TEXT_PROJECTION_CHARS,
+    ReferenceBudget,
+    reference_budget,
+)
 from eval_service.judge.writeback import judge_config_digest
 from eval_service.schemas.api import JudgeConfig
 
@@ -64,6 +69,30 @@ def _resolver(tmp_path: Path) -> SkillResolver:
     return SkillResolver((tmp_path,))
 
 
+def _budget(cap_chars: int = 0, **settings_overrides) -> ReferenceBudget:
+    """A budget for tests that are about RESOLUTION rather than sizing.
+
+    ``cap_chars=0`` is the default: no operator cap, so the budget is whatever
+    the context window leaves (~340k chars at the default settings), which every
+    fixture file in this module fits inside many times over.
+    """
+    return reference_budget(
+        _settings(eval_judge_max_skill_reference_chars=cap_chars, **settings_overrides)
+    )
+
+
+#: The repo's shared ``skills/`` directory -- the same root the service resolves
+#: against in the dev layout (``services/eval-service/tests/unit/x.py`` -> repo).
+SHIPPED_SKILL_ROOT = Path(__file__).resolve().parents[4] / "skills"
+
+
+def _shipped_skill(name: str) -> Path:
+    path = SHIPPED_SKILL_ROOT / name
+    if not (path / "SKILL.md").is_file():
+        pytest.skip(f"shipped skill {name!r} not present at {SHIPPED_SKILL_ROOT}")
+    return path
+
+
 def _move() -> MoveInput:
     return MoveInput(
         game_id="g1",
@@ -89,7 +118,7 @@ def test_a_selected_reference_reaches_the_judge_prompt(tmp_path):
     resolver = _resolver(tmp_path)
     skills = resolver.load_markdown(("rules",))
     references = resolver.load_references(
-        ("rules/resources/errata.md",), max_total_chars=0
+        ("rules/resources/errata.md",), budget=_budget()
     )
 
     system = build_move_messages(_move(), skills=skills, skill_references=references)[
@@ -106,7 +135,7 @@ def test_a_reference_is_selectable_without_its_skill(tmp_path):
     _make_reference(skill, "resources/errata.md", "ERRATABODY-ZZZ")
 
     references = _resolver(tmp_path).load_references(
-        ("rules/resources/errata.md",), max_total_chars=0
+        ("rules/resources/errata.md",), budget=_budget()
     )
     system = build_move_messages(_move(), skills=[], skill_references=references)[0][
         "content"
@@ -128,7 +157,7 @@ def test_references_group_under_their_own_skill(tmp_path):
         _move(),
         skills=resolver.load_markdown(("rules", "play")),
         skill_references=resolver.load_references(
-            ("play/b.md", "rules/a.md"), max_total_chars=0
+            ("play/b.md", "rules/a.md"), budget=_budget()
         ),
     )[0]["content"]
 
@@ -152,7 +181,7 @@ def test_every_scope_carries_references(tmp_path, build):
     skill = _make_skill(tmp_path, "rules")
     _make_reference(skill, "faq.md", "FAQBODY-QQQ")
     references = _resolver(tmp_path).load_references(
-        ("rules/faq.md",), max_total_chars=0
+        ("rules/faq.md",), budget=_budget()
     )
     assert "FAQBODY-QQQ" in build(skill_references=references)[0]["content"]
 
@@ -175,7 +204,7 @@ def test_a_duplicated_selection_is_inlined_and_charged_once(tmp_path):
     _make_reference(skill, "errata.md", "E" * 4_000)
 
     loaded = _resolver(tmp_path).load_references(
-        ("rules/errata.md", "rules/errata.md"), max_total_chars=6_000
+        ("rules/errata.md", "rules/errata.md"), budget=_budget(6_000)
     )
     assert len(loaded) == 1
 
@@ -199,7 +228,7 @@ def test_a_selected_skill_and_a_references_only_skill_both_render(tmp_path):
         # reference alone.
         skills=resolver.load_markdown(("rules",)),
         skill_references=resolver.load_references(
-            ("rules/a.md", "extra/b.md"), max_total_chars=0
+            ("rules/a.md", "extra/b.md"), budget=_budget()
         ),
     )[0]["content"]
 
@@ -246,7 +275,7 @@ def test_a_reference_outside_its_skill_is_refused(tmp_path, reference):
     (tmp_path / "outside.md").write_text("OUTSIDE-SECRET", encoding="utf-8")
 
     with pytest.raises(SkillReferenceError):
-        _resolver(tmp_path).load_references((f"rules/{reference}",), max_total_chars=0)
+        _resolver(tmp_path).load_references((f"rules/{reference}",), budget=_budget())
 
 
 def test_a_symlink_out_of_the_skill_is_refused(tmp_path):
@@ -258,7 +287,7 @@ def test_a_symlink_out_of_the_skill_is_refused(tmp_path):
 
     with pytest.raises(SkillReferenceError):
         _resolver(tmp_path).load_references(
-            ("rules/resources/leak.md",), max_total_chars=0
+            ("rules/resources/leak.md",), budget=_budget()
         )
 
 
@@ -272,7 +301,7 @@ def test_a_symlinked_directory_component_is_refused(tmp_path):
 
     with pytest.raises(SkillReferenceError):
         _resolver(tmp_path).load_references(
-            ("rules/resources/errata.md",), max_total_chars=0
+            ("rules/resources/errata.md",), budget=_budget()
         )
 
 
@@ -283,7 +312,7 @@ def test_an_in_skill_symlink_is_refused(tmp_path):
     (skill / "alias.md").symlink_to(real)
 
     with pytest.raises(SkillReferenceError):
-        _resolver(tmp_path).load_references(("rules/alias.md",), max_total_chars=0)
+        _resolver(tmp_path).load_references(("rules/alias.md",), budget=_budget())
 
 
 def test_a_refusal_does_not_disclose_the_target(tmp_path):
@@ -293,7 +322,7 @@ def test_a_refusal_does_not_disclose_the_target(tmp_path):
     def message(reference: str) -> str:
         with pytest.raises(SkillReferenceError) as exc:
             _resolver(tmp_path).load_references(
-                (f"rules/{reference}",), max_total_chars=0
+                (f"rules/{reference}",), budget=_budget()
             )
         return str(exc.value).replace(reference, "<ref>")
 
@@ -305,7 +334,7 @@ def test_a_refusal_does_not_disclose_the_target(tmp_path):
 def test_an_unknown_skill_in_a_reference_is_refused(tmp_path):
     _make_skill(tmp_path, "rules")
     with pytest.raises(UnknownSkillError) as exc:
-        _resolver(tmp_path).load_references(("nope/a.md",), max_total_chars=0)
+        _resolver(tmp_path).load_references(("nope/a.md",), budget=_budget())
     assert "nope" in str(exc.value)
 
 
@@ -313,7 +342,7 @@ def test_an_unknown_skill_in_a_reference_is_refused(tmp_path):
 def test_a_malformed_selection_is_refused(tmp_path, raw):
     _make_skill(tmp_path, "rules")
     with pytest.raises(SkillReferenceError):
-        _resolver(tmp_path).load_references((raw,), max_total_chars=0)
+        _resolver(tmp_path).load_references((raw,), budget=_budget())
 
 
 @pytest.mark.parametrize(
@@ -332,12 +361,231 @@ def test_a_malformed_selection_is_refused(tmp_path, raw):
 def test_a_reference_the_os_rejects_is_refused_not_raised(tmp_path, reference):
     _make_skill(tmp_path, "rules")
     with pytest.raises(SkillReferenceError):
-        _resolver(tmp_path).load_references((f"rules/{reference}",), max_total_chars=0)
+        _resolver(tmp_path).load_references((f"rules/{reference}",), budget=_budget())
 
 
 # --------------------------------------------------------------------------
-# Bounds
+# Bounds: derived from the context window, not from a count (DRA-54)
 # --------------------------------------------------------------------------
+
+
+def test_the_budget_is_the_window_less_every_configured_reserve():
+    """Pinned as LITERALS, so a silently moved constant is a failing test.
+
+    Deliberately NOT asserted against the module's own constants: that form
+    still passes when ``PROMPT_FRAME_CHARS`` goes from 12,000 to 120,000 and
+    halves the budget, which is exactly the class of change worth catching for
+    the three numbers the design admits are projections rather than ceilings.
+
+    Token figures throughout are PROJECTIONS at ~4 chars/token, never measured:
+    no judge call is possible without ``EVAL_JUDGE_OPENROUTER_API_KEY``.
+    """
+    budget = reference_budget(_settings())
+
+    assert budget.window_tokens == 128_000
+    assert budget.window_chars == 512_000  # 128,000 tokens x 4 chars
+    assert budget.completion_chars == 4_096  # EVAL_JUDGE_MAX_TOKENS x 4
+    # A move prompt is the worst of the three scopes at the defaults: two states
+    # and 200 neighbours beat a round's one state, 100 moves and 100 verdicts.
+    assert budget.binding_scope == "move"
+    assert budget.state_chars == 40_000  # prior + resulting, 20,000 each
+    assert budget.move_context_chars == 160_000  # 200 neighbours x (400 + 400)
+    assert budget.child_context_chars == 0  # a move prompt has no roll-up context
+    assert budget.frame_chars == 12_000
+    assert budget.chars == 512_000 - 4_096 - 40_000 - 160_000 - 12_000  # 295,904
+    # The old fixed bound was 60,000 chars -- 12% of the window.
+    assert budget.chars > 4 * 60_000
+
+
+def test_the_reserve_is_the_worst_scope_not_the_sum_of_all_three():
+    """Summing the scopes would reserve for a prompt that cannot exist.
+
+    A move prompt carries neighbours and two states but no roll-up context; a
+    round prompt carries a move list, ONE state and its moves' verdicts. Adding
+    both reserves would refuse selections that fit every prompt the service can
+    actually build.
+    """
+    # Shrink the move window so the ROUND prompt becomes the worst case.
+    budget = reference_budget(
+        _settings(eval_judge_move_context_before=1, eval_judge_move_context_after=1)
+    )
+    assert budget.binding_scope == "round"
+    assert budget.state_chars == 20_000  # one closing state, not two
+    assert budget.move_context_chars == 100 * (400 + 400)
+    assert budget.child_context_chars == 100 * (600 + 200)
+    # And it is strictly smaller than the move scope it displaced, so the budget
+    # went UP rather than accumulating both.
+    assert budget.chars > reference_budget(_settings()).chars
+
+
+def test_switching_a_per_item_clip_off_does_not_raise_the_budget():
+    """``0`` means "do not clip" in the prompt builder, so reserving 0 for it
+    would move the reserve the wrong way: less bounded text, more budget."""
+    clipped = reference_budget(_settings())
+    unclipped = reference_budget(_settings(eval_judge_move_context_reasoning_chars=0))
+    assert unclipped.chars < clipped.chars
+    assert unclipped.move_context_chars == 200 * (UNCLIPPED_TEXT_PROJECTION_CHARS + 400)
+
+
+def test_the_budget_moves_with_the_context_window():
+    small = reference_budget(_settings(eval_judge_context_window_tokens=32_000))
+    large = reference_budget(_settings(eval_judge_context_window_tokens=1_000_000))
+    assert small.chars < reference_budget(_settings()).chars < large.chars
+    # A window too small to hold the fixed prompt floors at zero rather than
+    # going negative and reading as "unbounded".
+    assert reference_budget(_settings(eval_judge_context_window_tokens=1)).chars == 0
+
+
+def test_a_selection_refused_by_a_small_window_is_accepted_by_a_large_one(tmp_path):
+    skill = _make_skill(tmp_path, "rules")
+    _make_reference(skill, "big.md", "B" * 200_000)
+    resolver = _resolver(tmp_path)
+    requested = JudgeConfig(skill_references=["rules/big.md"])
+
+    with pytest.raises(SkillReferenceBudgetError):
+        resolve_judge_config(
+            _settings(eval_judge_context_window_tokens=64_000), requested, resolver
+        )
+    resolved = resolve_judge_config(
+        _settings(eval_judge_context_window_tokens=256_000), requested, resolver
+    )
+    assert resolved.skill_references == ("rules/big.md",)
+
+
+def test_the_operator_cap_lowers_the_budget_but_cannot_raise_it():
+    derived = reference_budget(_settings()).chars
+    lowered = reference_budget(_settings(eval_judge_max_skill_reference_chars=1_000))
+    assert lowered.chars == 1_000
+    assert lowered.capped_by_operator
+    # Above the derived budget it buys nothing: the window is not negotiable by a
+    # character setting, only by EVAL_JUDGE_CONTEXT_WINDOW_TOKENS.
+    raised = reference_budget(
+        _settings(eval_judge_max_skill_reference_chars=derived * 10)
+    )
+    assert raised.chars == derived
+    assert not raised.capped_by_operator
+
+
+def test_selected_skills_and_a_prompt_override_are_charged_to_the_budget(tmp_path):
+    """They share the prompt with the references, so they shrink what fits."""
+    bare = reference_budget(_settings())
+    with_skill = reference_budget(_settings(), skill_chars=90_000, skill_count=5)
+    with_override = reference_budget(_settings(), prompt_override_chars=50_000)
+
+    assert with_skill.chars == bare.chars - 90_000
+    assert with_override.chars == bare.chars - 50_000
+
+
+def test_a_selection_that_fits_alone_can_be_refused_alongside_its_skills(tmp_path):
+    skill = _make_skill(tmp_path, "rules", "S" * 300_000)
+    _make_reference(skill, "big.md", "B" * 200_000)
+    resolver = _resolver(tmp_path)
+
+    alone = resolve_judge_config(
+        _settings(), JudgeConfig(skill_references=["rules/big.md"]), resolver
+    )
+    assert alone.skill_references == ("rules/big.md",)
+
+    with pytest.raises(SkillReferenceBudgetError) as exc:
+        resolve_judge_config(
+            _settings(),
+            JudgeConfig(skills=["rules"], skill_references=["rules/big.md"]),
+            resolver,
+        )
+    assert "selected SKILL.md file(s)" in str(exc.value)
+
+
+def test_the_refusal_states_the_arithmetic_the_operator_can_act_on(tmp_path):
+    """The dashboard cannot see reference SIZES, so the 400 is the only place
+    a user learns why "select all" did not fit."""
+    skill = _make_skill(tmp_path, "rules")
+    _make_reference(skill, "big.md", "B" * 400_000)
+
+    with pytest.raises(SkillReferenceBudgetError) as exc:
+        resolve_judge_config(
+            _settings(),
+            JudgeConfig(skill_references=["rules/big.md"]),
+            _resolver(tmp_path),
+        )
+    detail = str(exc.value)
+    budget = reference_budget(_settings())
+    assert "400000" in detail  # the measured total
+    assert str(budget.chars) in detail  # the budget
+    assert str(400_000 - budget.chars) in detail  # the overage
+    assert "A 128000-token context window" in detail  # where the budget came from
+    assert "worst case is the move prompt" in detail  # which scope was reserved
+    assert "never truncated" in detail
+    for lever in (
+        "EVAL_JUDGE_CONTEXT_WINDOW_TOKENS",
+        "EVAL_JUDGE_MOVE_CONTEXT_BEFORE",
+        "EVAL_JUDGE_MAX_STATE_CHARS",
+    ):
+        assert lever in detail
+
+
+def test_an_operator_capped_refusal_names_the_cap_not_the_window(tmp_path):
+    skill = _make_skill(tmp_path, "rules")
+    _make_reference(skill, "big.md", "B" * 5_000)
+
+    with pytest.raises(SkillReferenceBudgetError) as exc:
+        resolve_judge_config(
+            _settings(eval_judge_max_skill_reference_chars=100),
+            JudgeConfig(skill_references=["rules/big.md"]),
+            _resolver(tmp_path),
+        )
+    detail = str(exc.value)
+    assert "EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS then lowers that to 100" in detail
+    # ...and still says what the window WOULD have allowed, so the operator can
+    # tell their own cap from physics.
+    assert str(reference_budget(_settings()).chars) in detail
+    # The spec's SHALL is unconditional: the reserve terms are present whether or
+    # not an operator cap is what bit, because they name the settings to change.
+    assert "for the completion" in detail
+    assert "for roll-up context" in detail
+    assert "EVAL_JUDGE_MOVE_CONTEXT_BEFORE" in detail
+
+
+def test_more_than_eight_references_are_accepted_by_the_schema():
+    """The count ceiling stops being a selection policy (DRA-54).
+
+    Fails before the change with a Pydantic 422 at the ninth entry.
+    """
+    JudgeConfig(skill_references=[f"rules/r{i}.md" for i in range(50)])
+    # The remaining ceiling is a request-BODY guard, not a selection bound.
+    with pytest.raises(ValidationError):
+        JudgeConfig(skill_references=[f"rules/r{i}.md" for i in range(1_001)])
+
+
+def test_an_operator_cap_cannot_rescue_a_window_too_small_to_hold_the_prompt():
+    """``min(derived, cap)`` with ``derived == 0``: the cap must not resurrect a
+    budget the window cannot fund."""
+    budget = reference_budget(
+        _settings(
+            eval_judge_context_window_tokens=1,
+            eval_judge_max_skill_reference_chars=50_000,
+        )
+    )
+    assert budget.derived_chars == 0
+    assert budget.chars == 0
+    # The cap is not what bit -- the window is -- so the refusal says so.
+    assert not budget.capped_by_operator
+
+
+def test_an_operator_cap_and_selected_skills_compose():
+    capped = reference_budget(
+        _settings(eval_judge_max_skill_reference_chars=100_000),
+        skill_chars=90_000,
+        skill_count=5,
+    )
+    # The skills come off the DERIVED budget; the cap then lowers what is left.
+    assert capped.derived_chars == reference_budget(_settings()).chars - 90_000
+    assert capped.chars == 100_000
+    assert capped.capped_by_operator
+
+
+def test_a_context_window_of_zero_is_refused():
+    with pytest.raises(ValidationError):
+        Settings(eval_judge_model="x", eval_judge_context_window_tokens=0)
 
 
 def test_an_over_budget_selection_is_refused_not_truncated(tmp_path):
@@ -347,7 +595,7 @@ def test_an_over_budget_selection_is_refused_not_truncated(tmp_path):
 
     with pytest.raises(SkillReferenceBudgetError) as exc:
         _resolver(tmp_path).load_references(
-            ("rules/big.md", "rules/bigger.md"), max_total_chars=6_000
+            ("rules/big.md", "rules/bigger.md"), budget=_budget(6_000)
         )
     detail = str(exc.value)
     assert "6000" in detail
@@ -359,7 +607,7 @@ def test_a_within_budget_selection_is_delivered_in_full(tmp_path):
     body = "B" * 5_000
     _make_reference(skill, "big.md", body)
     loaded = _resolver(tmp_path).load_references(
-        ("rules/big.md",), max_total_chars=6_000
+        ("rules/big.md",), budget=_budget(6_000)
     )
     assert loaded[0].content == body
 
@@ -373,10 +621,38 @@ def test_the_budget_rejects_the_request_before_any_target(tmp_path):
         resolve_judge_config(settings, requested, _resolver(tmp_path))
 
 
-def test_the_default_budget_admits_the_largest_shipped_reference():
-    # The default is chosen against the real corpus, so a plausible single-file
-    # selection is never refused by an arbitrary number.
-    assert Settings(eval_judge_model="x").eval_judge_max_skill_reference_chars >= 40_000
+def test_the_default_budget_admits_the_whole_shipped_rules_corpus():
+    """DRA-54's headline case, against the REAL ``skills/`` directory.
+
+    Fails before DRA-54 twice over: the 21-file selection is refused by the
+    schema at reference nine, and its 256,568 characters are refused by the old
+    60,000-character budget. Reads the shipped corpus rather than a fixture,
+    because the claim being made is about that corpus.
+    """
+    rules = _shipped_skill("marvel-champions-rules-reference")
+    references = sorted(
+        p.relative_to(rules).as_posix()
+        for p in rules.rglob("*.md")
+        if p.name != "SKILL.md"
+    )
+    assert len(references) > 8, "the point of the test is a selection over eight"
+
+    settings = _settings()
+    resolver = SkillResolver((rules.parent,))
+    resolved = resolve_judge_config(
+        settings,
+        JudgeConfig(
+            skills=["marvel-champions-rules-reference"],
+            skill_references=[
+                f"marvel-champions-rules-reference/{name}" for name in references
+            ],
+        ),
+        resolver,
+    )
+    assert len(resolved.skill_references) == len(references), (
+        "the shipped rules corpus no longer fits the derived budget -- the corpus "
+        "grew or a reserve term did, not necessarily a bug in reference_budget"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -498,10 +774,10 @@ def test_a_selection_is_stored_in_its_canonical_form(tmp_path):
 
 
 def test_a_negative_reference_budget_is_refused():
-    """``0`` disables the budget on purpose; a negative value must not do so silently."""
+    """``0`` means "no cap beyond the window"; a negative value must not, silently."""
     with pytest.raises(ValidationError):
         Settings(eval_judge_model="x", eval_judge_max_skill_reference_chars=-1)
-    # Zero stays a supported, documented way to switch the budget off.
+    # Zero is the default and the documented way to say "the window is the bound".
     assert (
         Settings(
             eval_judge_model="x", eval_judge_max_skill_reference_chars=0

@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_STATE_CHARS = 20_000
 DEFAULT_MAX_ROUND_MOVES = 100
 DEFAULT_MAX_CONTEXT_REASONING_CHARS = 400
+DEFAULT_MAX_CHILD_RATIONALE_CHARS = 600
 
 RUBRIC = """\
 You are an expert Marvel Champions judge. You grade how well an AI agent played \
@@ -246,6 +247,8 @@ def build_round_messages(
     skill_references: list[LoadedReference] | None = None,
     max_state_chars: int = DEFAULT_MAX_STATE_CHARS,
     max_round_moves: int = DEFAULT_MAX_ROUND_MOVES,
+    max_context_reasoning_chars: int = DEFAULT_MAX_CONTEXT_REASONING_CHARS,
+    max_child_rationale_chars: int = DEFAULT_MAX_CHILD_RATIONALE_CHARS,
 ) -> list[dict[str, str]]:
     """Build a fresh, self-contained judge prompt for a whole round."""
     moves = rnd.moves
@@ -267,7 +270,13 @@ def build_round_messages(
     for move in moves:
         move_blocks.append(
             f"- seq {move.target_seq}: action={_json(move.intended_action)} "
-            f"args={_json(move.arguments)} reasoning={_json(move.reasoning)}"
+            f"args={_json(move.arguments)} "
+            # Clipped for the same reason ``_neighbour_block`` clips the SAME
+            # field: one verbose move must not bloat the prompt. Left unclipped
+            # this is the largest unbounded term in a round prompt -- 100 moves
+            # of recorded reasoning outweighs everything else in it -- and the
+            # reference budget reserves against this cap, so it has to hold.
+            f"reasoning={_clip(move.reasoning, max_context_reasoning_chars)}"
         )
     if dropped:
         move_blocks.append(f"- ...[{dropped} further moves omitted]")
@@ -285,7 +294,7 @@ def build_round_messages(
         f"{_mode_note(rnd.session_mode)}"
         f"Evaluate this whole round{who} ({round_label(rnd.round_number)}, "
         f"seqs {rnd.from_seq}-{rnd.to_seq}) as a unit.\n\n"
-        f"{_child_context_block(rnd.child_verdicts, 'move')}"
+        f"{_child_context_block(rnd.child_verdicts, 'move', max_child_rationale_chars, max_round_moves)}"
         f"{_illegal_action_block(rnd.illegal_actions, rnd.player)}"
         f"{moves_label}:\n{moves_text}\n\n"
         f"Game state at round close:\n{_state_json(rnd.closing_state, max_state_chars, label='closing')}\n"
@@ -306,6 +315,8 @@ def build_game_messages(
     skills: list[tuple[str, str]] | None = None,
     skill_references: list[LoadedReference] | None = None,
     max_state_chars: int = DEFAULT_MAX_STATE_CHARS,
+    max_round_moves: int = DEFAULT_MAX_ROUND_MOVES,
+    max_child_rationale_chars: int = DEFAULT_MAX_CHILD_RATIONALE_CHARS,
 ) -> list[dict[str, str]]:
     """Build a fresh, self-contained judge prompt for a whole game, per player.
 
@@ -317,7 +328,7 @@ def build_game_messages(
         f"{_mode_note(game.session_mode)}"
         f"Evaluate this whole game{who} (seqs {game.from_seq}-{game.to_seq}) as a "
         f"unit, judging how well this player played across the whole game.\n\n"
-        f"{_child_context_block(game.child_verdicts, 'round')}"
+        f"{_child_context_block(game.child_verdicts, 'round', max_child_rationale_chars, max_round_moves)}"
         f"Final game state:\n{_state_json(game.closing_state, max_state_chars, label='final')}\n"
     )
     return [
@@ -373,15 +384,36 @@ def _illegal_action_block(
     return "\n".join(lines) + "\n\n"
 
 
-def _child_context_block(children: list[ChildVerdict], noun: str) -> str:
+def _child_context_block(
+    children: list[ChildVerdict],
+    noun: str,
+    max_rationale_chars: int = DEFAULT_MAX_CHILD_RATIONALE_CHARS,
+    max_children: int = DEFAULT_MAX_ROUND_MOVES,
+) -> str:
     """Render already-graded child verdicts as holistic roll-up context.
 
     The roll-up judge is given each child's score and rationale so it can grade
     the span holistically (capturing cross-move / cross-round strategy) rather
     than mechanically averaging child scores.
+
+    BOTH the count and each rationale are bounded, mirroring how the move list
+    above is bounded. A round roll-up carries one child per graded move and a
+    game roll-up one per round, neither of which the recording side limits, so
+    left unbounded this block is a second unbounded term in the only two scopes
+    that have one. The reference budget reserves against these caps.
     """
     if not children:
         return ""
+    dropped = 0
+    if max_children > 0 and len(children) > max_children:
+        dropped = len(children) - max_children
+        logger.info(
+            "Capped %s child verdict context from %d to %d for judge input",
+            noun,
+            len(children),
+            max_children,
+        )
+        children = children[:max_children]
     lines = [
         f"Already-graded {noun} verdicts (use as context; grade the span "
         f"holistically, do NOT just average these):"
@@ -390,8 +422,13 @@ def _child_context_block(children: list[ChildVerdict], noun: str) -> str:
         label = f"{noun} seq {child.target_seq}"
         if child.round_span:
             label += f" (span {child.round_span})"
-        lines.append(
-            f"- {label}: overall {child.overall_score}/10 — "
-            f"{child.rationale or '(no rationale)'}"
-        )
+        rationale = child.rationale or "(no rationale)"
+        if max_rationale_chars > 0 and len(rationale) > max_rationale_chars:
+            rationale = (
+                rationale[:max_rationale_chars]
+                + f"...[+{len(rationale) - max_rationale_chars} chars]"
+            )
+        lines.append(f"- {label}: overall {child.overall_score}/10 — {rationale}")
+    if dropped:
+        lines.append(f"- ...[{dropped} further {noun} verdict(s) omitted]")
     return "\n".join(lines) + "\n\n"

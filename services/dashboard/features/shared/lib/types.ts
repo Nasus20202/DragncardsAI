@@ -530,7 +530,9 @@ export interface JudgeConfig {
   skills?: string[];
   /**
    * `"<skill-name>/<relative-path>.md"` entries naming reference files of the
-   * selected skills. The server accepts at most 8.
+   * selected skills. There is no count limit a real selection can reach; the
+   * server bounds the combined SIZE against the judge model's context window
+   * and refuses an over-budget selection with a 400 stating the arithmetic.
    */
   skill_references?: string[];
 }

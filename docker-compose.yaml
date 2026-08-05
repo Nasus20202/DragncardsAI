@@ -191,6 +191,12 @@ services:
       # round. Set _AFTER=0 to grade with no hindsight.
       EVAL_JUDGE_MOVE_CONTEXT_BEFORE: ${EVAL_JUDGE_MOVE_CONTEXT_BEFORE:-100}
       EVAL_JUDGE_MOVE_CONTEXT_AFTER: ${EVAL_JUDGE_MOVE_CONTEXT_AFTER:-100}
+      # The judge model's context window. It BOUNDS how much skill-REFERENCE
+      # content one evaluation may carry -- the judge is single-shot, so every
+      # selected byte sits in the prompt -- and it is the only setting that
+      # RAISES that bound. Set it to your judge model's real window; the two
+      # settings above are the largest reserve subtracted from it.
+      EVAL_JUDGE_CONTEXT_WINDOW_TOKENS: ${EVAL_JUDGE_CONTEXT_WINDOW_TOKENS:-128000}
       HTTP_HOST: ${EVAL_SERVICE_HTTP_HOST:-0.0.0.0}
       HTTP_PORT: ${EVAL_SERVICE_HTTP_PORT:-4005}
       # Browser CORS allowlist, the same policy the other three services carry.

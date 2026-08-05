@@ -73,8 +73,31 @@ is a regression:
   Emitting `[]` unconditionally would silently un-dedupe every stored verdict.
 - **Reference content is never truncated.** State is clipped because a clipped
   board is still a board; a clipped rules reference reads to the judge exactly like
-  a complete one. Over `EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS` is a 400 naming the
-  measured size, raised in `resolve_judge_config` before any target is enqueued.
+  a complete one. Over budget is a 400, raised in `resolve_judge_config` before any
+  target is enqueued.
+- **What bounds a reference selection is the context window.** There is no count
+  limit; `MAX_SKILL_REFERENCES` (1,000) is a request-body guard, not a policy — a
+  count measures nothing when the corpus spans a 20x size range.
+  `judge/reference_budget.py` derives the size budget from
+  `EVAL_JUDGE_CONTEXT_WINDOW_TOKENS` less the WORST of the three scope reserves
+  (move, round, game hold different things; summing them reserves for a prompt
+  that cannot exist) and the `SKILL.md` the same request selects. Do not
+  reintroduce a fixed number: the derivation exists so "select all" works whenever
+  it physically can, and refuses legibly when it cannot.
+  `EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS` only ever *lowers* the derived budget —
+  raising a character cap above the window bought a provider error, not capacity.
+  (Skill `SKILL.md` selections are charged to the budget but are not themselves
+  gated by it; `MAX_SKILLS` = 32 against ~91k chars of shipped skills is why.)
+- **A new repeated prompt element needs a cap AND a reserve term.** The budget is
+  only sound while the prompt honours what it reserves against, so anything
+  rendered per move, per round or per child verdict must be bounded in count and
+  size and charged in `reference_budget.py`. A move's `arguments` are the one
+  deliberate exception: legality is judged on them, so they are projected in
+  `MOVE_BLOCK_OVERHEAD_CHARS` rather than clipped.
+- **The refusal message is load-bearing.** The skills catalogue reports reference
+  *names* only, so the dashboard cannot show sizes and its "select all" can
+  produce a selection the server refuses. The 400 is the only place the user
+  learns why, so it carries the whole arithmetic. Do not shorten it.
 - **A reference path is caller-supplied and stays inside its own skill.** All the
   rules live in `judge/skill_resources.py` and nowhere else. Every refusal raises
   the SAME message via `unresolvable()`, so the error cannot be used to probe the
