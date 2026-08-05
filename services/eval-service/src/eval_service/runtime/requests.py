@@ -9,6 +9,7 @@ from eval_service.integrations.history import HistoryClient
 from eval_service.judge.assembly import detect_round_boundaries
 from eval_service.judge.config import (
     SkillResolver,
+    SkillReferenceError,
     UnknownSkillError,
     resolve_judge_config,
 )
@@ -76,13 +77,14 @@ class RequestService:
         self, game_id: str, body: EvaluationRequestBody
     ) -> CreateEvaluationResponse:
         # Resolve + validate the per-evaluation judge config FIRST so an unknown
-        # skill (or other config error) rejects the request with a 400 before
-        # any target is enqueued.
+        # skill, an unresolvable/over-budget skill reference, or any other
+        # config error rejects the request with a 400 before any target is
+        # enqueued.
         try:
             resolved = resolve_judge_config(
                 self._settings, body.judge, self._skill_resolver
             )
-        except UnknownSkillError as exc:
+        except (UnknownSkillError, SkillReferenceError) as exc:
             raise RequestError(str(exc)) from exc
         judge_config = resolved.to_json()
 

@@ -5,14 +5,25 @@ from pathlib import Path
 from typing import Any
 
 from eval_service.config import Settings, provider_from_model
+from eval_service.judge.skill_resources import (
+    SKILL_FILE,
+    LoadedReference,
+    SkillReferenceBudgetError,
+    SkillReferenceError,
+    load_reference_content,
+    parse_reference_selection,
+)
 from eval_service.schemas.api import JudgeConfig
 
 # Re-exported: it lives next to ``Settings`` (which needs it for the readiness
 # provider check) but is part of this module's judge-config surface.
 __all__ = [
+    "LoadedReference",
     "ResolvedJudgeConfig",
     "ResolvedReasoning",
     "SkillDefinition",
+    "SkillReferenceBudgetError",
+    "SkillReferenceError",
     "SkillResolver",
     "UnknownSkillError",
     "provider_from_model",
@@ -55,9 +66,21 @@ class ResolvedJudgeConfig:
     prompt_override: str | None
     # Selected skill names (resolved separately to markdown content).
     skills: tuple[str, ...] = ()
+    # Selected ``<skill-name>/<path>.md`` reference files, resolved separately
+    # to markdown content alongside the skills.
+    skill_references: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        """The persisted/hashed form of this config.
+
+        ``skill_references`` is OMITTED when empty, and that is load-bearing
+        rather than tidiness: this dict is what ``judge_config_digest`` hashes
+        into every verdict's idempotency key. Emitting an empty list
+        unconditionally would change the digest of every judge config that has
+        ever run, so re-evaluating an already-graded target would record a second
+        verdict instead of deduplicating against the first.
+        """
+        data: dict[str, Any] = {
             "model": self.model,
             "provider": self.provider,
             "reasoning": {
@@ -68,6 +91,9 @@ class ResolvedJudgeConfig:
             "prompt_override": self.prompt_override,
             "skills": list(self.skills),
         }
+        if self.skill_references:
+            data["skill_references"] = list(self.skill_references)
+        return data
 
     @classmethod
     def from_json(cls, data: dict[str, Any] | None) -> "ResolvedJudgeConfig | None":
@@ -84,6 +110,7 @@ class ResolvedJudgeConfig:
             ),
             prompt_override=data.get("prompt_override"),
             skills=tuple(data.get("skills") or ()),
+            skill_references=tuple(data.get("skill_references") or ()),
         )
 
 
@@ -106,6 +133,12 @@ class SkillResolver:
         # Cache of (name -> content) per resolved name so a request that expands
         # to many targets re-reads each SKILL.md from disk at most once.
         self._content_cache: dict[str, str] = {}
+        # Reference files are deliberately NOT cached. The read is page-cache
+        # warm and vanishes next to the LLM round trip it precedes, whereas a
+        # cache that never invalidates would pin the largest and most frequently
+        # edited files in the corpus -- the errata, the FAQ -- to whatever they
+        # said when the process booted, and grade against them for as long as it
+        # lives, with no signal that it was doing so.
 
     def discover(self) -> dict[str, SkillDefinition]:
         discovered: dict[str, SkillDefinition] = {}
@@ -115,7 +148,7 @@ class SkillResolver:
             for candidate in sorted(root.iterdir()):
                 if not candidate.is_dir():
                     continue
-                skill_file = candidate / "SKILL.md"
+                skill_file = candidate / SKILL_FILE
                 if skill_file.exists() and candidate.name not in discovered:
                     discovered[candidate.name] = SkillDefinition(
                         name=candidate.name, path=candidate
@@ -138,11 +171,60 @@ class SkillResolver:
         for name in names:
             content = self._content_cache.get(name)
             if content is None:
-                content = (available[name].path / "SKILL.md").read_text(
+                content = (available[name].path / SKILL_FILE).read_text(
                     encoding="utf-8"
                 )
                 self._content_cache[name] = content
             out.append((name, content))
+        return out
+
+    def load_references(
+        self, selections: tuple[str, ...], *, max_total_chars: int
+    ) -> list[LoadedReference]:
+        """Resolve ``<skill>/<path>.md`` selections to their content, in order.
+
+        Raises :class:`UnknownSkillError` when a selection names a skill that
+        does not exist, :class:`SkillReferenceError` when a reference cannot be
+        resolved inside its skill, and :class:`SkillReferenceBudgetError` when
+        the selection's combined size exceeds ``max_total_chars``.
+
+        The budget REFUSES rather than clipping. Game state is truncated to fit a
+        prompt because a clipped board is still a board; a clipped rules
+        reference reads to the judge exactly like a complete one, and grading
+        against two thirds of the errata with no way to tell is the defect this
+        whole path exists to fix.
+        """
+        if not selections:
+            return []
+        available = self.discover()
+        # Dedupe by parsed selection: naming the same reference twice would
+        # inline two identical blocks and charge the budget twice, so a
+        # duplicated errata file alone could trip a limit it fits inside.
+        parsed = list(
+            dict.fromkeys(parse_reference_selection(raw) for raw in selections)
+        )
+        unknown = sorted({p.skill for p in parsed if p.skill not in available})
+        if unknown:
+            raise UnknownSkillError("unknown skill(s): " + ", ".join(unknown))
+
+        out: list[LoadedReference] = []
+        total = 0
+        for selection in parsed:
+            content = load_reference_content(available[selection.skill].path, selection)
+            total += len(content)
+            if max_total_chars > 0 and total > max_total_chars:
+                raise SkillReferenceBudgetError(
+                    f"selected skill references total at least {total} characters, "
+                    f"over the {max_total_chars} character limit; select fewer "
+                    "references (they are never truncated)"
+                )
+            out.append(
+                LoadedReference(
+                    skill=selection.skill,
+                    reference=selection.reference,
+                    content=content,
+                )
+            )
         return out
 
 
@@ -153,8 +235,10 @@ def resolve_judge_config(
 ) -> ResolvedJudgeConfig:
     """Merge a request's ``judge`` overrides over the env defaults and validate.
 
-    Validates skill names eagerly (loads them) so an unknown skill raises
-    :class:`UnknownSkillError` before any target is enqueued.
+    Validates skill names and reference selections eagerly (loads them) so an
+    unknown skill, an unresolvable reference, or an over-budget selection is
+    raised before any target is enqueued — a bad selection costs the caller a
+    400, never a batch of failed targets.
     """
     requested = requested or JudgeConfig()
 
@@ -183,10 +267,25 @@ def resolve_judge_config(
     # Eagerly validate skill names (raises UnknownSkillError on failure).
     skill_resolver.load_markdown(skills)
 
+    # Same, for reference selections: resolving them here is what turns a bad
+    # path into a 400 instead of a batch of targets that each fail at judge time.
+    loaded = skill_resolver.load_references(
+        tuple(requested.skill_references or ()),
+        max_total_chars=settings.eval_judge_max_skill_reference_chars,
+    )
+    # Keep the CANONICAL selection, not the caller's string. Parsing strips outer
+    # whitespace, so ``"rules/a.md"`` and ``"rules/a.md "`` read the same file and
+    # build a byte-identical prompt -- but storing them verbatim would give them
+    # two different config digests, and so two idempotency keys, and so a
+    # duplicate verdict for one evaluation. Canonicalising here keeps the
+    # persisted config equal to what the judge was actually shown.
+    skill_references = tuple(f"{ref.skill}/{ref.reference}" for ref in loaded)
+
     return ResolvedJudgeConfig(
         model=model,
         provider=provider,
         reasoning=reasoning,
         prompt_override=prompt_override,
         skills=skills,
+        skill_references=skill_references,
     )

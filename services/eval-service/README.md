@@ -46,6 +46,8 @@ evaluate (and reports readiness `degraded`) until it is set. See `.env.example`.
 | `EVAL_JUDGE_MOVE_CONTEXT_BEFORE` | `100` | Backstop on the earlier-in-round moves attached to a move prompt (the window is the round, not this number) |
 | `EVAL_JUDGE_MOVE_CONTEXT_AFTER` | `100` | Backstop on the later-in-round moves attached (`0` removes hindsight) |
 | `EVAL_JUDGE_MOVE_CONTEXT_REASONING_CHARS` | `400` | Per-context-move reasoning cap |
+| `SKILL_ROOTS` | repo `skills/` (`/app/skills` in the image) | `;`/`,`-separated roots searched for selected skills, by name — the same directory the agent-orchestrator discovers from |
+| `EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS` | `60000` | Total budget across a request's selected skill **reference files**. Unlike the caps above this one **refuses** (400) rather than truncating; `0` disables it. See [Rules skills and their references](#rules-skills-and-their-references) |
 | `EVAL_SKIP_NON_STRATEGIC_MOVES` | `true` | Skip actions that carry no strategic decision |
 | `EVAL_NON_STRATEGIC_ACTIONS` | _(built-in taxonomy)_ | Replaces the skip list; anything unlisted is evaluated |
 | `EVAL_CORS_ALLOW_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001` | Comma-separated CORS allowlist (dashboard reaches the service via a server-side proxy, so a strict list is safe) |
@@ -123,6 +125,72 @@ payload size, so the prompt is now bounded by the round instead. The projection
 above is what did the heavy lifting on size (13,750 → ~3,000 tokens) and it
 remains in place, so a round-scoped prompt still costs a fraction of the
 pre-projection one.
+
+## Rules skills and their references
+
+A judge configuration can select **rules skills** by name (`judge.skills`) and
+**individual reference files** of those skills (`judge.skill_references`). Both
+resolve under `SKILL_ROOTS`, the same directory the agent-orchestrator discovers
+skills from, so a name chosen in the dashboard means the same file in both
+services.
+
+```jsonc
+"judge": {
+  "skills": ["marvel-champions-rules-reference"],
+  "skill_references": [
+    "marvel-champions-rules-reference/resources/errata.md",
+    "marvel-champions-rules-reference/resources/timing.md"
+  ]
+}
+```
+
+A selection is `"<skill-name>/<path-relative-to-the-skill>.md"` — the two
+arguments the orchestrator's `load_skill_reference` tool takes, joined. The
+agent-orchestrator's `GET /skills` reports each skill's `references`, which are
+exactly the names accepted here.
+
+**A reference may be selected without its skill.** "Give the judge only the
+errata" is a legitimate configuration, and it would be an arbitrary tax to charge
+it the whole `SKILL.md` to reach one file. References that arrive without their
+skill are grouped under a `## Skill: <name> (references only)` heading, so the
+judge is never told it holds the whole skill when it holds two files from it.
+
+**Why the skill is inlined rather than fetched with a tool.** Agents call
+`load_skill` because what an agent needs varies turn by turn. A judge runs the
+same rubric against the same rules for every target, so a tool round trip would
+return identical bytes on every call — and a judge that *declined* to call it
+would still emit a well-formed verdict graded on no rules at all, with nothing in
+the output to show it. Inlining also keeps a verdict's identity honest: the
+write-back idempotency key hashes the resolved judge config, which only
+identifies what the judge saw while the config fully determines the prompt.
+
+**Why references are selected rather than inlined wholesale.** `SKILL.md` is
+affordable — `marvel-champions-rules-reference` is 18,306 characters against a
+move prompt's ~41,500 of rubric and projected state. Its 21 reference files are
+256,568 characters, **14x its own `SKILL.md`**, and cannot go in a prompt
+wholesale under any policy. Hence an explicit selection, bounded two ways:
+`MAX_SKILL_REFERENCES` (8) rejects an absurd list at the schema (422), and
+`EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS` rejects an over-budget one when the
+request is resolved (400), before any target is enqueued.
+
+**References are never truncated.** State is clipped to fit a prompt because a
+clipped board is still a board; a clipped rules reference reads to the judge
+exactly like a complete one. Over budget is a refusal naming the measured size,
+not a silent trim.
+
+**Reference paths are confined to their own skill.** A selection is
+caller-supplied, so `judge/skill_resources.py` refuses an absolute path, any `..`
+component, a non-canonical form, a symlink anywhere along the path, a non-`.md`
+file, a directory, and the skill's own `SKILL.md`. Every refusal carries the same
+message, so it cannot be used to probe for files outside the skill.
+
+Selecting references changes the judge config digest, so a re-evaluation with
+references is recorded as a distinct verdict rather than deduplicated against one
+graded without them. A config that selects **no** references hashes exactly as it
+did before references existed, so nothing already recorded stops deduplicating —
+which is why `EVALUATOR_VERSION` is not bumped for this: the digest already
+distinguishes the two regimes precisely, and bumping would invalidate every
+`eval-2` verdict whose prompt is provably unchanged.
 
 ## Orchestrated play is projected as orchestrated
 
@@ -250,7 +318,13 @@ back to a game-playing key:
 ## HTTP API
 
 - `POST /games/{game_id}/evaluations` — request evaluation of selected targets.
-  Body: `{ "scope": "move"|"round", "selection": { ... }, "force": bool }`.
+  Body: `{ "scope": "move"|"round", "selection": { ... }, "force": bool,
+  "judge": { ... } }`. The optional `judge` object overrides the server defaults
+  for this evaluation only — provider, model, reasoning, `prompt_override`,
+  `skills` and `skill_references` (see
+  [Rules skills and their references](#rules-skills-and-their-references)). It is
+  resolved and validated first, so an unknown skill or an unresolvable /
+  over-budget reference is a `400` before any target is enqueued.
   Returns `201` with created/skipped counts and the target list.
 - `GET  /games/{game_id}/evaluations/{request_id}` — per-target status + verdicts.
 - `GET  /games/{game_id}/evaluations` — list a game's requests (UI polling).

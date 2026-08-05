@@ -7,7 +7,9 @@ import {
 import {
   JudgeDraft,
   modelOptionsForProvider,
+  pruneSkillReferences,
 } from "@/features/history/lib/judge-config";
+import { JudgeSkillReferences } from "@/features/history/components/judge-skill-references";
 import {
   ComboSelectField,
   SelectField,
@@ -34,8 +36,9 @@ const EFFORT_ITEMS = [
 /**
  * Play-parity judge configuration controls for the Evaluate panel: provider +
  * model selects (sourced from listProviders), reasoning toggle/effort/max
- * tokens, a custom prompt/rubric textarea, and a skills multiselect (from
- * listAvailableSkills). All values feed {@link assembleJudgeConfig}.
+ * tokens, a custom prompt/rubric textarea, a skills multiselect (from
+ * listAvailableSkills), and the reference files of the selected skills. All
+ * values feed {@link assembleJudgeConfig}.
  *
  * Every control is one of the shared field components the Play settings panel is
  * built from, so the same setting looks and behaves the same in both tabs.
@@ -171,7 +174,26 @@ export function JudgeConfigPanel({
         disabled={disabled}
         testId="judge-skills"
         skillTestId={(name) => `judge-skill-${name}`}
-        onChange={(next) => set("selectedSkills", next)}
+        onChange={(selectedSkills) =>
+          // Deselecting a skill takes its reference files with it, in the same
+          // update, so the draft never carries an orphaned reference.
+          onChange({
+            ...draft,
+            selectedSkills,
+            selectedSkillReferences: pruneSkillReferences(
+              selectedSkills,
+              draft.selectedSkillReferences
+            ),
+          })
+        }
+      />
+
+      <JudgeSkillReferences
+        skills={skills}
+        selectedSkills={draft.selectedSkills}
+        selectedSkillReferences={draft.selectedSkillReferences}
+        disabled={disabled}
+        onChange={(next) => set("selectedSkillReferences", next)}
       />
     </fieldset>
   );

@@ -181,7 +181,12 @@ Use these to populate selection UIs before a session is configured.
 - `POST /providers/refresh`
 - `GET /skills`
 
-`GET /skills` returns discovered skills with their path and markdown content.
+`GET /skills` returns discovered skills with their path and markdown content, plus
+`references`: the skill's markdown reference files by path relative to the skill
+directory. Those are exactly the names `load_skill_reference` accepts, so a
+consumer can offer a listed entry and have the selection resolve. The field is
+always present — empty for a skill with no references — so nobody has to tell "no
+references" apart from "not reported".
 
 ### Sessions
 

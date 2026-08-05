@@ -52,6 +52,34 @@ into a prompt: project it through `judge/state_view.py`, which reduces it to the
 same view the playing agent saw and collapses face-down cards and deck contents to
 `HIDDEN` counts. `EVAL_JUDGE_MAX_STATE_CHARS` is a backstop, not the mechanism.
 
+### Rules skills are inlined; their references are selected, never fetched
+
+The judge is a SINGLE-SHOT completion. `BifrostJudgeClient` sends
+`{model, messages, max_tokens}` with no `tools` key, `Evaluator._call_judge` makes
+one call per attempt, and `parse_verdict` demands one JSON object. There is no tool
+loop, so `load_skill` is not available to the judge and adding it means building
+one — a provider-loop change, not a prompt change.
+
+Selected skills' `SKILL.md` is inlined. Their reference files are selected
+explicitly, as `"<skill-name>/<path>.md"` entries in `judge.skill_references`, and
+inlined the same way. Three invariants hold that together, and breaking any of them
+is a regression:
+
+- **A config with no references produces a byte-identical prompt.** Everything new
+  in `_system_content` is gated so the reference-free branch emits exactly what it
+  emitted before, for the same reason the mode note is (see below).
+  `ResolvedJudgeConfig.to_json()` OMITS `skill_references` when empty, which keeps
+  `judge_config_digest` — and so every already-recorded idempotency key — unchanged.
+  Emitting `[]` unconditionally would silently un-dedupe every stored verdict.
+- **Reference content is never truncated.** State is clipped because a clipped
+  board is still a board; a clipped rules reference reads to the judge exactly like
+  a complete one. Over `EVAL_JUDGE_MAX_SKILL_REFERENCE_CHARS` is a 400 naming the
+  measured size, raised in `resolve_judge_config` before any target is enqueued.
+- **A reference path is caller-supplied and stays inside its own skill.** All the
+  rules live in `judge/skill_resources.py` and nowhere else. Every refusal raises
+  the SAME message via `unresolvable()`, so the error cannot be used to probe the
+  filesystem — do not add a more helpful one.
+
 ### A move is judged in the context of its round
 
 A move prompt carries the agent moves of the graded move's OWN ROUND, on BOTH

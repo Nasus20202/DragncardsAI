@@ -5,6 +5,7 @@ import {
   assembleJudgeConfig,
   createDefaultJudgeDraft,
   modelOptionsForProvider,
+  pruneSkillReferences,
   reconcileProviderModel,
 } from "@/features/history/lib/judge-config";
 import { DashboardConfig, ProviderResponse } from "@/features/shared/lib/types";
@@ -34,6 +35,7 @@ function draft(overrides: Partial<JudgeDraft> = {}): JudgeDraft {
     reasoningMaxTokens: "",
     promptOverride: "",
     selectedSkills: [],
+    selectedSkillReferences: [],
     ...overrides,
   };
 }
@@ -48,6 +50,7 @@ describe("createDefaultJudgeDraft", () => {
       reasoningMaxTokens: "",
       promptOverride: "",
       selectedSkills: ["core-rules"],
+      selectedSkillReferences: [],
     });
   });
 });
@@ -98,6 +101,53 @@ describe("assembleJudgeConfig", () => {
     expect(
       assembleJudgeConfig(draft({ providerId: " ", modelName: "" }))
     ).toBeUndefined();
+  });
+
+  it("carries the selected skill reference files", () => {
+    const result = assembleJudgeConfig(
+      draft({
+        selectedSkills: ["rules"],
+        selectedSkillReferences: [
+          "rules/resources/errata.md",
+          "rules/resources/timing.md",
+        ],
+      })
+    );
+    expect(result?.skill_references).toEqual([
+      "rules/resources/errata.md",
+      "rules/resources/timing.md",
+    ]);
+  });
+
+  it("omits skill_references entirely when none are selected", () => {
+    const result = assembleJudgeConfig(draft({ selectedSkills: ["rules"] }));
+    expect(result).not.toHaveProperty("skill_references");
+  });
+});
+
+describe("pruneSkillReferences", () => {
+  it("keeps references whose owning skill is still selected", () => {
+    expect(
+      pruneSkillReferences(
+        ["rules", "strategy"],
+        ["rules/resources/errata.md", "strategy/resources/tempo.md"]
+      )
+    ).toEqual(["rules/resources/errata.md", "strategy/resources/tempo.md"]);
+  });
+
+  it("drops references of a deselected skill", () => {
+    expect(
+      pruneSkillReferences(
+        ["rules"],
+        ["rules/resources/errata.md", "strategy/resources/tempo.md"]
+      )
+    ).toEqual(["rules/resources/errata.md"]);
+  });
+
+  it("drops an entry that names no owning skill", () => {
+    expect(
+      pruneSkillReferences(["rules"], ["errata.md", "/errata.md"])
+    ).toEqual([]);
   });
 });
 

@@ -32,6 +32,7 @@ function draft(overrides: Partial<JudgeDraft> = {}): JudgeDraft {
     reasoningMaxTokens: "",
     promptOverride: "",
     selectedSkills: [],
+    selectedSkillReferences: [],
     ...overrides,
   };
 }

@@ -28,6 +28,12 @@ export interface SkillDefinitionResponse {
   path: string;
   description: string;
   metadata: Record<string, string>;
+  /**
+   * Relative paths of the skill's markdown reference files, sorted. Optional
+   * only to tolerate an older orchestrator (and existing fixtures); the current
+   * server always sends it, as an empty list when a skill has no references.
+   */
+  references?: string[];
 }
 
 export interface ModelConfigResponse {
@@ -490,6 +496,11 @@ export interface JudgeConfig {
   reasoning?: JudgeReasoning;
   prompt_override?: string;
   skills?: string[];
+  /**
+   * `"<skill-name>/<relative-path>.md"` entries naming reference files of the
+   * selected skills. The server accepts at most 8.
+   */
+  skill_references?: string[];
 }
 
 export interface EvaluationRequestBody {

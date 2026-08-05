@@ -17,21 +17,29 @@ def judge_config_digest(config: ResolvedJudgeConfig | None) -> str:
     """Stable, deterministic hash of the resolved judge config.
 
     Folds in every dimension that changes a verdict's meaning
-    (model/provider/reasoning/prompt_override/skills) so two evaluations under
-    DIFFERENT judge configurations produce different idempotency keys, while an
-    identical re-evaluation produces the same key. ``None`` (no per-request
-    config) hashes to a stable sentinel so legacy callers stay deterministic.
+    (model/provider/reasoning/prompt_override/skills/skill_references) so two
+    evaluations under DIFFERENT judge configurations produce different
+    idempotency keys, while an identical re-evaluation produces the same key.
+    ``None`` (no per-request config) hashes to a stable sentinel so legacy
+    callers stay deterministic.
+
+    A config that selects no references hashes exactly as it did before
+    references existed: ``to_json`` omits the key entirely when it is empty, so
+    every already-recorded verdict still deduplicates against a re-run.
     """
     if config is None:
         raw = "none"
     else:
-        # ``sort_keys`` sorts dict KEYS but not list ELEMENTS, so the skills list
-        # is sorted explicitly here: the same skill set in a different order is
-        # semantically identical and MUST hash the same, otherwise a re-eval with
-        # reordered skills would spuriously produce a second history event. Only
-        # the digest copy is sorted; the stored/injected skill order is untouched.
+        # ``sort_keys`` sorts dict KEYS but not list ELEMENTS, so the selection
+        # lists are sorted explicitly here: the same skill (or reference) set in a
+        # different order is semantically identical and MUST hash the same,
+        # otherwise a re-eval with a reordered selection would spuriously produce
+        # a second history event. Only the digest copy is sorted; the
+        # stored/injected order is untouched.
         payload = config.to_json()
         payload["skills"] = sorted(payload.get("skills") or [])
+        if "skill_references" in payload:
+            payload["skill_references"] = sorted(payload["skill_references"])
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 

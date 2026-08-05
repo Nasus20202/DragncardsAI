@@ -13,6 +13,7 @@ from eval_service.judge.assembly import (
 )
 from eval_service.judge.events import SESSION_MODE_ORCHESTRATED
 from eval_service.judge.rounds import round_label
+from eval_service.judge.skill_resources import LoadedReference
 from eval_service.judge.state_view import canonical_json, render_state
 
 logger = logging.getLogger(__name__)
@@ -97,20 +98,57 @@ def _state_json(value: Any, max_chars: int, *, label: str) -> str:
 def _system_content(
     prompt_override: str | None,
     skills: list[tuple[str, str]] | None,
+    skill_references: list[LoadedReference] | None = None,
 ) -> str:
     """Assemble the judge system prompt.
 
     ``prompt_override`` replaces the built-in rubric when provided. Any selected
     skills' markdown is appended as reference material so the judge can rely on
-    the supplied rules content.
+    the supplied rules content, and any selected REFERENCE files are appended
+    beneath the skill they belong to — a skill's references are part of its
+    content, and a judge given only ``SKILL.md`` grades against a fraction of the
+    rulebook it was pointed at.
+
+    With no references selected this emits the exact bytes it emitted before
+    references existed: the reference loop contributes nothing, so every judge
+    config that predates this argument produces a byte-identical prompt and its
+    verdicts stay comparable.
+    ``test_judge_skill_references.py::test_a_reference_free_system_prompt_matches_the_pre_change_literal``
+    pins that against a LITERAL. Note that ``test_judge_session_mode.py`` does NOT
+    help here -- it asserts the USER message, and nothing but that literal covers
+    a byte of this one.
     """
     base = prompt_override if prompt_override else RUBRIC
-    if not skills:
+    if not skills and not skill_references:
         return base
+    by_skill = _references_by_skill(skill_references)
     blocks = [base, "\n\n# Rules reference skills\n"]
-    for name, content in skills:
+    for name, content in skills or []:
         blocks.append(f"\n## Skill: {name}\n\n{content}\n")
+        blocks.extend(_reference_blocks(by_skill.pop(name, [])))
+    # A reference whose SKILL.md was NOT selected still belongs to a skill, and
+    # the heading says so rather than implying the judge holds the whole thing.
+    for name, references in by_skill.items():
+        blocks.append(f"\n## Skill: {name} (references only)\n")
+        blocks.extend(_reference_blocks(references))
     return "".join(blocks)
+
+
+def _references_by_skill(
+    references: list[LoadedReference] | None,
+) -> dict[str, list[LoadedReference]]:
+    """Group references under their skill, preserving the selected order."""
+    grouped: dict[str, list[LoadedReference]] = {}
+    for reference in references or []:
+        grouped.setdefault(reference.skill, []).append(reference)
+    return grouped
+
+
+def _reference_blocks(references: list[LoadedReference]) -> list[str]:
+    return [
+        f"\n### Reference: {reference.reference}\n\n{reference.content}\n"
+        for reference in references
+    ]
 
 
 def build_move_messages(
@@ -118,6 +156,7 @@ def build_move_messages(
     *,
     prompt_override: str | None = None,
     skills: list[tuple[str, str]] | None = None,
+    skill_references: list[LoadedReference] | None = None,
     max_state_chars: int = DEFAULT_MAX_STATE_CHARS,
     max_context_reasoning_chars: int = DEFAULT_MAX_CONTEXT_REASONING_CHARS,
 ) -> list[dict[str, str]]:
@@ -136,7 +175,10 @@ def build_move_messages(
         f"{_neighbour_block(move.context_after, max_context_reasoning_chars, direction='after')}"
     )
     return [
-        {"role": "system", "content": _system_content(prompt_override, skills)},
+        {
+            "role": "system",
+            "content": _system_content(prompt_override, skills, skill_references),
+        },
         {"role": "user", "content": user},
     ]
 
@@ -201,6 +243,7 @@ def build_round_messages(
     *,
     prompt_override: str | None = None,
     skills: list[tuple[str, str]] | None = None,
+    skill_references: list[LoadedReference] | None = None,
     max_state_chars: int = DEFAULT_MAX_STATE_CHARS,
     max_round_moves: int = DEFAULT_MAX_ROUND_MOVES,
 ) -> list[dict[str, str]]:
@@ -248,7 +291,10 @@ def build_round_messages(
         f"Game state at round close:\n{_state_json(rnd.closing_state, max_state_chars, label='closing')}\n"
     )
     return [
-        {"role": "system", "content": _system_content(prompt_override, skills)},
+        {
+            "role": "system",
+            "content": _system_content(prompt_override, skills, skill_references),
+        },
         {"role": "user", "content": user},
     ]
 
@@ -258,6 +304,7 @@ def build_game_messages(
     *,
     prompt_override: str | None = None,
     skills: list[tuple[str, str]] | None = None,
+    skill_references: list[LoadedReference] | None = None,
     max_state_chars: int = DEFAULT_MAX_STATE_CHARS,
 ) -> list[dict[str, str]]:
     """Build a fresh, self-contained judge prompt for a whole game, per player.
@@ -274,7 +321,10 @@ def build_game_messages(
         f"Final game state:\n{_state_json(game.closing_state, max_state_chars, label='final')}\n"
     )
     return [
-        {"role": "system", "content": _system_content(prompt_override, skills)},
+        {
+            "role": "system",
+            "content": _system_content(prompt_override, skills, skill_references),
+        },
         {"role": "user", "content": user},
     ]
 

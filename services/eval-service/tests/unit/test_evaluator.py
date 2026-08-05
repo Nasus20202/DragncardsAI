@@ -622,3 +622,67 @@ async def test_attempt_error_does_not_overwrite_a_cancelled_row(repository):
     row = await repository.get_target_by_id(target_id)
     assert row.status == "cancelled"
     assert row.error == "cancelled by request"
+
+
+@pytest.mark.asyncio
+async def test_a_reference_that_vanishes_before_the_drain_fails_only_its_target(
+    repository, tmp_path
+):
+    """The whole point of the skill-resolution handler, which nothing exercised.
+
+    A target carries a judge config validated when the request was made, but the
+    worker re-resolves it from disk later and possibly in another process. If the
+    skill directory has been redeployed in between, that target must fail with the
+    reason -- not raise out of the drain loop and take the rest of the batch down.
+    """
+    from eval_service.judge.config import (
+        ResolvedJudgeConfig,
+        ResolvedReasoning,
+        SkillResolver,
+    )
+
+    root = tmp_path / "skills"
+    skill = root / "rules"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("body", encoding="utf-8")
+    (skill / "errata.md").write_text("errata", encoding="utf-8")
+
+    events = _events()
+    history = FakeHistoryClient({"g1": events})
+    judge = StubJudgeClient()
+    evaluator = Evaluator(
+        settings=_settings(),
+        repository=repository,
+        history=history,
+        judge=judge,
+        skill_resolver=SkillResolver((root,)),
+    )
+    config = ResolvedJudgeConfig(
+        model="anthropic/claude-x",
+        provider="anthropic",
+        reasoning=ResolvedReasoning(enabled=False, effort="medium"),
+        prompt_override=None,
+        skills=(),
+        skill_references=("rules/errata.md",),
+    )
+    target_id = await _claim_move(repository)
+
+    # The file goes away between enqueue and drain.
+    (skill / "errata.md").unlink()
+
+    progressed = await evaluator.evaluate_target(
+        target_id=target_id,
+        game_id="g1",
+        target_seq=2,
+        scope="move",
+        events=events,
+        judge_config=config,
+    )
+
+    assert progressed is True
+    row = await repository.get_target_by_id(target_id)
+    assert row.status == "failed"
+    assert "skill resolution failed" in row.error
+    # No judge call was spent and nothing was written back.
+    assert judge.calls == []
+    assert history.written == []

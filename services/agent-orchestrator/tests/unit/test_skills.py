@@ -133,3 +133,52 @@ def test_load_reference_content_rejects_path_traversal(tmp_path: Path):
         pass
     else:
         raise AssertionError("Expected FileNotFoundError for path traversal")
+
+
+def test_load_reference_content_refuses_a_null_byte_without_raising(tmp_path: Path):
+    """`resolve()` raises ValueError, not OSError, for an embedded null byte.
+
+    It used to escape `load_reference_content` entirely, past the tool handler's
+    `except FileNotFoundError`, and fail the whole job rather than the one tool
+    call. eval-service hit the same bug and fixed it; this is the back-port.
+    """
+    skill_dir = tmp_path / "rules-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("Skill body.", encoding="utf-8")
+    (skill_dir / "alpha.md").write_text("Alpha.", encoding="utf-8")
+
+    registry = SkillRegistry((tmp_path,))
+
+    for hostile in ("alpha\x00.md", "\x00alpha.md", "a" * 5000 + ".md"):
+        try:
+            registry.load_reference_content("rules-skill", hostile)
+        except FileNotFoundError:
+            pass
+        else:
+            raise AssertionError(f"expected FileNotFoundError for {hostile!r}")
+
+
+def test_list_reference_files_omits_symlinks_it_could_not_load(tmp_path: Path):
+    """The catalogue must not advertise a reference the loader refuses.
+
+    A symlink out of the skill fails containment; a symlink within it resolves to
+    a name other than the one asked for. Either way `load_reference_content`
+    refuses, so listing one would offer a dead entry to whoever renders it.
+    """
+    skill_dir = tmp_path / "rules-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("Skill body.", encoding="utf-8")
+    real = skill_dir / "alpha.md"
+    real.write_text("Alpha.", encoding="utf-8")
+    outside = tmp_path / "outside.md"
+    outside.write_text("Outside.", encoding="utf-8")
+    (skill_dir / "leak.md").symlink_to(outside)
+    (skill_dir / "alias.md").symlink_to(real)
+
+    registry = SkillRegistry((tmp_path,))
+
+    listed = registry.list_reference_files("rules-skill")
+    assert listed == ["alpha.md"]
+    # Everything listed loads.
+    for name in listed:
+        registry.load_reference_content("rules-skill", name)

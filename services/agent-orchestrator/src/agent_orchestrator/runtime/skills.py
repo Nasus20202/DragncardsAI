@@ -87,6 +87,26 @@ class SkillDefinition:
     metadata: dict[str, str] = field(default_factory=dict)
 
 
+def reference_files_under(skill_path: Path) -> list[str]:
+    """The markdown references of the skill at ``skill_path``, sorted.
+
+    Takes a PATH rather than a skill name so a caller that already holds the
+    definition does not pay a full re-scan of every skill root to get back to it.
+
+    Symlinks are left out because `load_reference_content` refuses them — a link
+    out of the skill fails its containment check, and a link within the skill
+    resolves to a name other than the one it was asked for. Listing one would
+    advertise a reference that cannot then be loaded.
+    """
+    return sorted(
+        ref_file.relative_to(skill_path).as_posix()
+        for ref_file in skill_path.rglob("*.md")
+        if ref_file.is_file()
+        and not ref_file.is_symlink()
+        and ref_file.name != "SKILL.md"
+    )
+
+
 class SkillRegistry:
     def __init__(self, roots: tuple[Path, ...]):
         self._roots = roots
@@ -134,19 +154,21 @@ class SkillRegistry:
         return definition.path
 
     def list_reference_files(self, skill_name: str) -> list[str]:
-        skill_path = self._skill_path(skill_name)
-        return sorted(
-            ref_file.relative_to(skill_path).as_posix()
-            for ref_file in skill_path.rglob("*.md")
-            if ref_file.is_file() and ref_file.name != "SKILL.md"
-        )
+        return reference_files_under(self._skill_path(skill_name))
 
     def load_reference_content(self, skill_name: str, reference_name: str) -> str:
         skill_path = self._skill_path(skill_name).resolve()
-        reference_path = (skill_path / reference_name).resolve()
         try:
+            reference_path = (skill_path / reference_name).resolve()
             normalized_reference = reference_path.relative_to(skill_path).as_posix()
         except ValueError:
+            # ValueError covers two unrelated cases, both of which mean "no such
+            # reference": `relative_to` on a path outside the skill, and the
+            # `lstat: embedded null character` that `resolve()` raises for a name
+            # holding a null byte. Letting the latter escape used to fail the
+            # whole job rather than just the tool call.
+            raise FileNotFoundError(reference_name) from None
+        except OSError:
             raise FileNotFoundError(reference_name) from None
         if (
             reference_path.suffix != ".md"
