@@ -1,22 +1,39 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from collections.abc import Sequence
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest_asyncio
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from eval_service.schema_migrations import ensure_schema
 from eval_service.schemas.history import StoredEvent
 from eval_service.storage.db import create_session_factory
+from eval_service.storage.models import EvaluatedTargetRow, utc_now
 from eval_service.storage.repository import Repository
 
 
 @pytest_asyncio.fixture
 async def repository():
-    """A repository backed by a shared in-memory sqlite database."""
+    """A repository backed by a shared in-memory sqlite database.
+
+    ``StaticPool`` hands every session the SAME DBAPI connection, so two
+    "concurrent" transactions against this fixture do not isolate from each
+    other -- they interleave on one connection and corrupt each other's work
+    (observed: the same target claimed twice, rows stranded in ``running``).
+    That is a property of the fixture, not of the code under test; the identical
+    workload is clean against real PostgreSQL.
+
+    So anything needing two claimers at once -- a claim race, ``run_forever``'s
+    continuous refill, a reclaim competing with a live worker -- belongs in
+    ``tests/integration/`` on the ``postgres_repository`` fixture. Tests on THIS
+    fixture must drive the repository sequentially, or they end up testing the
+    fixture instead of the service.
+    """
     engine = create_async_engine(
         "sqlite+aiosqlite://",
         future=True,
@@ -29,6 +46,30 @@ async def repository():
         yield Repository(factory)
     finally:
         await engine.dispose()
+
+
+async def age_target_rows(
+    repository: Repository, target_ids: Sequence[int], *, seconds: float
+) -> int:
+    """Push ``updated_at`` back in time so the lease sweep sees rows as stale.
+
+    Done from the test, through the repository's own session factory, rather
+    than through a production seam: the lease IS a comparison against
+    ``updated_at``, so rewriting that column reproduces exactly the state a
+    worker that stopped heartbeating leaves behind -- and the service is left
+    with no "pretend it is later" affordance that only tests would ever use.
+    Returns how many rows were aged.
+    """
+    stale = utc_now() - timedelta(seconds=seconds)
+    session_factory = repository._session_factory
+    async with session_factory() as session:
+        async with session.begin():
+            result = await session.execute(
+                update(EvaluatedTargetRow)
+                .where(EvaluatedTargetRow.id.in_(tuple(target_ids)))
+                .values(updated_at=stale)
+            )
+            return result.rowcount or 0
 
 
 def make_event(

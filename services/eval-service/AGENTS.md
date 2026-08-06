@@ -239,6 +239,76 @@ does not hold for a second replica. `EvaluationWorker.drain_once` reports PROGRE
 rather than rows touched, so a cycle where every roll-up merely re-deferred is
 idle and the worker waits instead of hot-looping on the database.
 
+On PostgreSQL the claim transaction takes `pg_advisory_xact_lock` before it counts
+the `running` rows. That count is what the cap is computed from, and it was
+unlocked: under READ COMMITTED two replicas claiming at once each read the
+pre-claim count and each spent the same capacity, so the global cap overshot by
+the replica count. Keep the lock key a single shared constant — claimers that
+contend on different keys do not serialize at all. SQLite already serializes
+writers, so the lock is skipped there, exactly as `FOR UPDATE SKIP LOCKED` is.
+Games already at their per-game cap are excluded in the candidate SELECT, BEFORE
+the `LIMIT` window is taken; filtering them in Python afterwards let one game's
+backlog fill the whole window and starve every other game. `ORDER BY created_at,
+id` must stay as it is — it is what offers a cascade's move targets before the
+roll-ups that depend on them.
+
+**`run_forever` refills continuously; `self._tasks` is NOT the bound.** The loop
+holds the tasks it is awaiting and wakes on `FIRST_COMPLETED`, re-claiming into a
+freed slot at once rather than awaiting a whole batch (which made every slot wait
+for the slowest target of its batch). Something has to hold an `asyncio.Task` to
+await it, and that dict is only that — plus the id set the heartbeat needs. It is
+NOT a semaphore, NOT a per-game registry, and must never grow into one. The test
+to apply when reading or changing it: *if this set were emptied right now, would
+the cap still hold?* It would, because capacity is re-read from the `running` rows
+inside the claiming transaction, which is also why a second replica that has never
+seen these tasks is bounded identically. Completions are harvested in bulk per
+wake so one claim covers every freed slot — refilling one slot at a time would
+multiply `list_all_events` round trips to history-service by the target count.
+
+### The claim epoch, the lease, and the heartbeat
+
+`evaluated_targets.attempts` is the claim epoch AND the retry counter, incremented
+by every claim (ordinary, forced, reclaimed). Every terminal transition guards on
+`status='running' AND attempts = <the claimed epoch>`, not on `status='running'`
+alone: a status can only answer "is this row running?", never "is it still running
+under MY claim?". Without the epoch, a worker whose claim was revoked mid-call
+passes the old guard and writes its stale verdict over the row of the worker that
+now owns the target, whose own write then matches nothing and is dropped. Thread
+the claimed epoch through every write path (`finalize_completed`, `mark_skipped`,
+`mark_failed`, `record_attempt_error`, `defer_to_pending`) and keep "no epoch
+known" expressible for the paths that legitimately have none — passing a wrong
+epoch silently bypasses the fence.
+
+`reclaim_stale_targets` runs at the head of each cycle and resets `running` rows
+whose `updated_at` is older than `EVAL_CLAIM_LEASE_SECONDS` (120) back to
+`pending`. This is not a nicety: capacity is the count of `running` rows, so
+before it existed, `EVAL_GLOBAL_CONCURRENCY` rows orphaned by one restart wedged
+the ENTIRE service permanently, for every game, with no log and no recovery. It is
+BEST-EFFORT — a failure logs a warning and the cycle continues, because DRA-35
+established in history-service's ingest reclaim that aborting the cycle turns a
+database blip into a hot loop — and `CancelledError` is re-raised so shutdown
+still works. There is no separate reaper task and no unconditional start-up sweep;
+a start-up sweep would steal every other replica's live claims.
+
+The worker heartbeats the targets it still owns every
+`EVAL_CLAIM_HEARTBEAT_SECONDS` (30), which is what lets the lease be short: it
+measures "is the worker alive?", not "could this judge call still be running?", so
+a slow call under a live worker is never stolen. The lease MUST stay strictly
+greater than the heartbeat (validated in `config.py`) or every live claim goes
+stale on the cycle before its next refresh. The epoch is the backstop if a
+heartbeat is ever missed under load — the outcome is a duplicated *grading*, never
+a duplicated *verdict*. A target over `EVAL_MAX_ATTEMPTS` is marked `failed`
+instead of reclaimed again, so a target that reliably kills its worker stops
+rather than spending judge budget on every pass forever.
+
+The measured effect of continuous refill is a **scheduling** figure only: 27.4 % →
+~63 % pipeline efficiency, ~2.1x wall clock, on real Postgres against a stub judge
+with scripted latency and one straggler per four calls. No judge key exists in
+this environment, so no real-provider speed-up was measured; at uniform latency
+the old shape was already ~93 % efficient. Do not quote the number without that
+qualification. Full rationale in
+`openspec/changes/dra-46-parallel-evaluation/design.md`.
+
 ### MCP surface
 
 The service mounts its own MCP server at `/mcp`, wired in `main.py` and

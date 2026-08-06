@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from eval_service.judge.actions import (
@@ -177,6 +177,33 @@ class Settings(BaseSettings):
         default=8,
         validation_alias=AliasChoices(
             "eval_global_concurrency", "EVAL_GLOBAL_CONCURRENCY"
+        ),
+    )
+
+    # The CLAIM LEASE and its refresh interval. A claim is held by a row, not by
+    # a process, so a worker killed mid-evaluation would otherwise leave its
+    # targets ``running`` forever -- and since the caps above count ``running``
+    # rows, those orphans permanently consume capacity. A worker whose
+    # ``updated_at`` has not moved within the lease has its claims reset to
+    # ``pending`` (or ``failed`` past ``EVAL_MAX_ATTEMPTS``).
+    #
+    # The heartbeat is what lets the lease be SHORT. Because a live worker
+    # refreshes the targets it still owns every ``EVAL_CLAIM_HEARTBEAT_SECONDS``,
+    # the lease measures "is the worker alive?" rather than "could this judge
+    # call still be running?" -- so an unusually slow call is never reclaimed out
+    # from under a healthy worker. 120/30 tolerates four missed heartbeats
+    # (event-loop stalls, a slow database round trip) while bounding post-crash
+    # recovery at about two minutes.
+    eval_claim_lease_seconds: float = Field(
+        default=120.0,
+        validation_alias=AliasChoices(
+            "eval_claim_lease_seconds", "EVAL_CLAIM_LEASE_SECONDS"
+        ),
+    )
+    eval_claim_heartbeat_seconds: float = Field(
+        default=30.0,
+        validation_alias=AliasChoices(
+            "eval_claim_heartbeat_seconds", "EVAL_CLAIM_HEARTBEAT_SECONDS"
         ),
     )
 
@@ -403,6 +430,28 @@ class Settings(BaseSettings):
         if value < 1:
             raise ValueError("concurrency caps must be at least 1")
         return value
+
+    @field_validator("eval_claim_lease_seconds", "eval_claim_heartbeat_seconds")
+    @classmethod
+    def validate_claim_timings(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("claim lease and heartbeat intervals must be positive")
+        return value
+
+    @model_validator(mode="after")
+    def validate_lease_exceeds_heartbeat(self) -> Settings:
+        # Cross-field, so it cannot be a ``field_validator``. A lease at or below
+        # the refresh interval is self-defeating: the sweep would find every
+        # LIVE claim stale on the very cycle before its next heartbeat lands, so
+        # healthy work would be reclaimed and re-graded continuously. Refuse the
+        # setting rather than shipping a service that churns its own targets.
+        if self.eval_claim_lease_seconds <= self.eval_claim_heartbeat_seconds:
+            raise ValueError(
+                "eval_claim_lease_seconds must be greater than "
+                "eval_claim_heartbeat_seconds, or live claims are reclaimed "
+                "before they can be refreshed"
+            )
+        return self
 
     @field_validator("eval_max_targets_per_request")
     @classmethod

@@ -118,6 +118,7 @@ class Evaluator:
         events: list[StoredEvent],
         player: str | None = None,
         judge_config: ResolvedJudgeConfig | None = None,
+        attempts: int | None = None,
         on_token: TokenSink | None = None,
         on_error: ErrorSink | None = None,
     ) -> bool:
@@ -130,19 +131,29 @@ class Evaluator:
         to tell a productive drain cycle from one that merely re-queued roll-ups,
         so it can wait instead of hot-looping on the database while the children
         are graded.
+
+        ``attempts`` is the CLAIM EPOCH the caller was handed by
+        ``claim_pending_targets`` (the target row's ``attempts``). It is passed
+        down to every durable write this evaluation makes, so a write issued
+        after the claim was revoked — reclaimed as stale, or force re-claimed —
+        matches no rows instead of overwriting the new claim's outcome. ``None``
+        means "no epoch known" and keeps the status-only guard; only a caller
+        that genuinely has no claim should pass it.
         """
         # The target arrives already claimed as ``running`` by the worker, so
-        # all transitions below are conditional on it still being running: a
-        # concurrent force re-claim (which resets the row to ``pending`` under a
-        # new claim) is therefore never clobbered by this stale evaluation. The
-        # same guard means a cancel (which sets the row to ``cancelled``) is
-        # never clobbered by a stale finalize.
+        # all transitions below are conditional on it still being running UNDER
+        # THIS CLAIM: a concurrent force re-claim or stale-claim reclaim (both
+        # of which reset the row and move the epoch) is therefore never
+        # clobbered by this evaluation once it has been superseded. The status
+        # half of the same guard means a cancel (which sets the row to
+        # ``cancelled``) is never clobbered by a stale finalize.
         config = judge_config or self._default_config()
 
         if not config.model.strip():
             await self._repository.mark_failed(
                 target_id,
                 "no judge model configured (EVAL_JUDGE_MODEL unset)",
+                attempts=attempts,
             )
             raise JudgeNotConfiguredError(
                 "EVAL_JUDGE_MODEL is not configured; refusing to evaluate"
@@ -156,7 +167,9 @@ class Evaluator:
         if scope == "move":
             reason = self._non_strategic_reason(events, target_seq)
             if reason is not None:
-                await self._repository.mark_skipped(target_id, reason)
+                await self._repository.mark_skipped(
+                    target_id, reason, attempts=attempts
+                )
                 return True
 
         # Dependency gate: a round/game roll-up SHALL NOT be produced until every
@@ -171,6 +184,7 @@ class Evaluator:
                 target_seq=target_seq,
                 scope=scope,
                 events=events,
+                attempts=attempts,
             )
             if deferred:
                 return False
@@ -190,11 +204,14 @@ class Evaluator:
                 events=events,
                 player=player,
                 config=config,
+                attempts=attempts,
                 on_token=on_token,
                 on_error=on_error,
             )
         except BoundaryUndetectedError as exc:
-            await self._fail(target_id, f"boundary undetected: {exc}", on_error)
+            await self._fail(
+                target_id, f"boundary undetected: {exc}", on_error, attempts=attempts
+            )
             return True
         except (UnknownSkillError, SkillReferenceError) as exc:
             # The request validated this selection, but the worker resolves it
@@ -202,14 +219,24 @@ class Evaluator:
             # skill directory can be redeployed out from under a queued target.
             # Fail THIS target with the reason rather than letting the exception
             # escape into the drain loop and take the rest of the batch with it.
-            await self._fail(target_id, f"skill resolution failed: {exc}", on_error)
+            await self._fail(
+                target_id,
+                f"skill resolution failed: {exc}",
+                on_error,
+                attempts=attempts,
+            )
             return True
         except ValueError as exc:
-            await self._fail(target_id, f"assembly error: {exc}", on_error)
+            await self._fail(
+                target_id, f"assembly error: {exc}", on_error, attempts=attempts
+            )
             return True
         except JudgeAttemptsExhaustedError as exc:
             await self._fail(
-                target_id, f"judge failed after retry limit: {exc}", on_error
+                target_id,
+                f"judge failed after retry limit: {exc}",
+                on_error,
+                attempts=attempts,
             )
             return True
 
@@ -217,7 +244,12 @@ class Evaluator:
             # Defensive: exhausted retries raise JudgeAttemptsExhaustedError above
             # (with the gateway's reason), so this only guards a verdict-less
             # return that no current path produces.
-            await self._fail(target_id, "judge failed after retry limit", on_error)
+            await self._fail(
+                target_id,
+                "judge failed after retry limit",
+                on_error,
+                attempts=attempts,
+            )
             return True
 
         # Re-check the durable status IMMEDIATELY before writing back: a cancel
@@ -226,15 +258,26 @@ class Evaluator:
         # task must not leave a stale verdict in history. If the row is no
         # longer ``running`` the cancellation/re-claim owns it, so we abort the
         # write-back and leave the durable status untouched.
-        current = await self._repository.get_target_status(target_id)
-        if current != "running":
+        # The claim EPOCH is part of this check, not just the status: a row that
+        # was reset and re-claimed by ANOTHER worker is ``running`` again, so a
+        # status-only test passes and this superseded evaluation would go on to
+        # write a verdict event to history under a claim it no longer holds. The
+        # row-level fence on ``finalize_completed`` would still keep it from
+        # corrupting the target, but only AFTER that history event was emitted,
+        # so the epoch has to be compared here — before anything is written.
+        current, current_attempts = await self._repository.get_target_claim(target_id)
+        superseded = attempts is not None and current_attempts != attempts
+        if current != "running" or superseded:
             logger.info(
                 "Skipping verdict write-back for game=%s seq=%s scope=%s: "
-                "target is %r, not running (cancelled or re-claimed)",
+                "target is %r at attempt %s, expected running at attempt %s "
+                "(cancelled, re-claimed, or reclaimed from a stale worker)",
                 game_id,
                 target_seq,
                 scope,
                 current,
+                current_attempts,
+                attempts,
             )
             # The cancellation / re-claim already moved the row to a terminal (or
             # freshly-pending) state of its own, so this cycle is not idle.
@@ -252,22 +295,36 @@ class Evaluator:
                 scope,
                 exc,
             )
-            await self._fail(target_id, f"write-back failed: {exc}", on_error)
+            await self._fail(
+                target_id, f"write-back failed: {exc}", on_error, attempts=attempts
+            )
             return True
 
-        await self._repository.finalize_completed(target_id, verdict.model_dump())
+        await self._repository.finalize_completed(
+            target_id, verdict.model_dump(), attempts=attempts
+        )
         return True
 
     async def _fail(
-        self, target_id: int, detail: str, on_error: ErrorSink | None
+        self,
+        target_id: int,
+        detail: str,
+        on_error: ErrorSink | None,
+        *,
+        attempts: int | None = None,
     ) -> None:
         """Mark a target ``failed`` with its reason and push the reason live."""
-        await self._repository.mark_failed(target_id, detail)
+        await self._repository.mark_failed(target_id, detail, attempts=attempts)
         if on_error is not None:
             await on_error(detail)
 
     async def _report_attempt_error(
-        self, target_id: int, detail: str, on_error: ErrorSink | None
+        self,
+        target_id: int,
+        detail: str,
+        on_error: ErrorSink | None,
+        *,
+        attempts: int | None = None,
     ) -> None:
         """Surface a failure hit mid-evaluation, while the target keeps running.
 
@@ -276,7 +333,9 @@ class Evaluator:
         live sink, so a failed attempt is reported as it happens instead of being
         logged and forgotten with only the LAST one surviving to the terminal row.
         """
-        await self._repository.record_attempt_error(target_id, detail)
+        await self._repository.record_attempt_error(
+            target_id, detail, attempts=attempts
+        )
         if on_error is not None:
             await on_error(detail)
 
@@ -290,6 +349,7 @@ class Evaluator:
         events: list[StoredEvent],
         player: str | None,
         config: ResolvedJudgeConfig,
+        attempts: int | None = None,
         on_token: TokenSink | None,
         on_error: ErrorSink | None = None,
     ) -> VerdictPayload | None:
@@ -437,6 +497,7 @@ class Evaluator:
                     f"judge attempt {attempt}/{self._settings.eval_max_attempts} "
                     f"failed: {exc}",
                     on_error,
+                    attempts=attempts,
                 )
                 # Honor the gateway's retryability signal: a non-retryable
                 # BifrostError (e.g. a 4xx that won't change on a retry) fails
@@ -510,6 +571,7 @@ class Evaluator:
         target_seq: int,
         scope: str,
         events: list[StoredEvent],
+        attempts: int | None = None,
     ) -> bool:
         """Re-defer a round/game target while its children are still in flight.
 
@@ -533,7 +595,7 @@ class Evaluator:
             child_scope=child_scope,
         )
         if pending > 0:
-            return await self._repository.defer_to_pending(target_id)
+            return await self._repository.defer_to_pending(target_id, attempts=attempts)
         return False
 
     async def _latest_events(
