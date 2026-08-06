@@ -47,6 +47,7 @@ from agent_orchestrator.schemas.sessions import (
     SessionToolsResponse,
     SessionUpdateRequest,
     SkillAssignmentRequest,
+    SkillRegistrationRequest,
     SubagentAllowanceEnabledRequest,
     SubagentAllowanceListResponse,
     SubagentAllowanceRequest,
@@ -472,15 +473,14 @@ async def _register_on_disk_skill(
 
 @router.post("/skills", status_code=201, operation_id="register_skill")
 async def add_skill_registry(
-    body: dict[str, Any],
+    body: SkillRegistrationRequest,
     repo: Repository = Depends(get_repository),
     registry: SkillRegistry = Depends(get_skill_registry),
 ) -> dict[str, Any]:
-    skill_name = body.get("name")
-    if not skill_name:
+    if not body.name:
         raise HTTPException(status_code=400, detail="name is required")
     item = await _register_on_disk_skill(
-        repo, registry, skill_name, metadata_json=body.get("metadata")
+        repo, registry, body.name, metadata_json=body.metadata
     )
     return {
         "skill": {

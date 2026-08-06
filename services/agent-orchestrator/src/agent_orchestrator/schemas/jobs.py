@@ -5,10 +5,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from agent_orchestrator.schemas.base import StrictRequest
 from agent_orchestrator.schemas.common import PageInfo
 
 
-class PromptRequest(BaseModel):
+class PromptRequest(StrictRequest):
     prompt: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     max_attempts: int | None = None
@@ -43,7 +44,7 @@ class JobEventResponse(BaseModel):
     created_at: datetime
 
 
-class QuestionAnswerRequest(BaseModel):
+class QuestionAnswerRequest(StrictRequest):
     """An answer to a question the agent asked.
 
     Exactly one field is accepted. ``choice_value`` must be one of the values the

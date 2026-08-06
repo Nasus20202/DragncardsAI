@@ -10,6 +10,7 @@ from agent_orchestrator.runtime.session_modes import (
     SESSION_MODE_CHAT,
     SESSION_MODE_ORCHESTRATED,
 )
+from agent_orchestrator.schemas.base import StrictRequest
 from agent_orchestrator.schemas.common import PageInfo
 from agent_orchestrator.schemas.jobs import JobSummary, SessionToolResponse
 from agent_orchestrator.schemas.players import PlayerConfigResponse
@@ -57,7 +58,7 @@ ALLOWED_SUBAGENTS_DESCRIPTION = (
 )
 
 
-class SessionCreateRequest(BaseModel):
+class SessionCreateRequest(StrictRequest):
     name: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     multi_turn_memory: bool = True
@@ -78,7 +79,7 @@ class SessionCreateRequest(BaseModel):
     )
 
 
-class SessionUpdateRequest(BaseModel):
+class SessionUpdateRequest(StrictRequest):
     name: str | None = None
     metadata: dict[str, Any] | None = None
     # Omitted leaves the mode unchanged. A change is refused once the session has
@@ -102,24 +103,38 @@ class SessionUpdateRequest(BaseModel):
     )
 
 
-class ModelConfigRequest(BaseModel):
+class ModelConfigRequest(StrictRequest):
     provider_id: str
     model_name: str
     gateway_options: dict[str, Any] = Field(default_factory=dict)
     provider_options: dict[str, Any] = Field(default_factory=dict)
 
 
-class SkillAssignmentRequest(BaseModel):
+class SkillAssignmentRequest(StrictRequest):
     skill_name: str
 
 
-class SubagentAllowanceRequest(BaseModel):
+class SkillRegistrationRequest(StrictRequest):
+    """Register an on-disk skill in the deployment-global registry.
+
+    ``name`` is declared optional even though the endpoint requires it, so that a
+    body omitting it keeps answering `400 name is required` rather than turning
+    into a `422`. Requiring it here would have been tidier and would have moved an
+    error this change has no business moving: what became strict is the body's
+    *shape*, not the endpoint's validation of the values in it.
+    """
+
+    name: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class SubagentAllowanceRequest(StrictRequest):
     """Add one persona to a session's subagent allowlist."""
 
     persona: str = Field(min_length=1, max_length=64)
 
 
-class SubagentAllowanceEnabledRequest(BaseModel):
+class SubagentAllowanceEnabledRequest(StrictRequest):
     enabled: bool
 
 
@@ -142,18 +157,18 @@ class SubagentAllowanceListResponse(BaseModel):
     subagents: list[SubagentAllowanceResponse]
 
 
-class McpRegistryRequest(BaseModel):
+class McpRegistryRequest(StrictRequest):
     name: str
     transport: Literal["streamable-http", "sse"] = "streamable-http"
     server_url: str
     headers: dict[str, str] = Field(default_factory=dict)
 
 
-class SessionMcpEnableRequest(BaseModel):
+class SessionMcpEnableRequest(StrictRequest):
     enabled: bool
 
 
-class SessionRestoreRequest(BaseModel):
+class SessionRestoreRequest(StrictRequest):
     game_id: str = Field(min_length=1, max_length=64)
     conversation_context: list[dict[str, Any]] = Field(default_factory=list)
     mode: Literal["new", "in_place"] = "new"

@@ -4,8 +4,10 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from agent_orchestrator.schemas.base import StrictRequest
 
-class CompactSessionRequest(BaseModel):
+
+class CompactSessionRequest(StrictRequest):
     """Options for a manually triggered compaction.
 
     Compaction normally summarizes only the span since the previous checkpoint,

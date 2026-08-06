@@ -6,9 +6,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from agent_orchestrator.runtime.player_agents import MAX_PLAYER_SKILLS
+from agent_orchestrator.schemas.base import StrictRequest
 
 
-class PlayerReasoningConfig(BaseModel):
+class PlayerReasoningConfig(StrictRequest):
     """Per-seat reasoning settings.
 
     Stored folded into ``gateway_options`` under ``reasoning`` — the shape the
@@ -21,7 +22,7 @@ class PlayerReasoningConfig(BaseModel):
     max_tokens: int | None = Field(default=None, ge=1)
 
 
-class PlayerConfigRequest(BaseModel):
+class PlayerConfigRequest(StrictRequest):
     """A seat's configuration. Unset fields inherit from the session."""
 
     display_name: str | None = Field(default=None, max_length=255)
