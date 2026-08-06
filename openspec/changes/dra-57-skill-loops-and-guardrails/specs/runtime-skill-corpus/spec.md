@@ -1,0 +1,64 @@
+## ADDED Requirements
+
+### Requirement: Every shipped skill declares its scope in its own body
+
+Each `SKILL.md` under the repo-root skill directory SHALL open by stating who the skill is for and what it does not cover, SHALL name the skill that owns each subject it excludes, and a skill that is not about playing a hand of the game SHALL say so explicitly.
+
+The repo-root `skills/` directory is a runtime skill root: the agent-orchestrator enumerates it into the system prompt and the eval-service inlines selections from it into the judge's prompt, so everything placed there is offered to the game-playing agent as though it were game knowledge.
+
+#### Scenario: A non-play skill is identified as such
+
+- **WHEN** an agent loads a skill in the runtime root that documents platform or plugin internals rather than play
+- **THEN** the skill SHALL state that it is not a play skill and SHALL state that its platform primitives are not a way to act on a live table
+
+#### Scenario: A skill names the skill that owns what it excludes
+
+- **WHEN** a skill states a subject it does not cover
+- **THEN** it SHALL name the skill that does cover it
+
+### Requirement: A skill's entry point stays small and routes to its references
+
+A `SKILL.md` that exceeds roughly five hundred lines SHALL be split, with the detail moved into reference files under the skill directory, and every reference file a skill ships SHALL be named in its `SKILL.md` together with the condition under which the agent loads it.
+
+Reference files are fetched on demand by the agent and selected individually by the judge, whereas a `SKILL.md` body is inlined whole every time its skill is loaded or mentioned. Detail therefore belongs in references and routing belongs in the entry point.
+
+#### Scenario: A monolithic skill is split
+
+- **WHEN** a skill's entry point holds detail beyond what routing and the common path require
+- **THEN** that detail SHALL be moved into reference files under the skill directory
+- **AND** the entry point SHALL retain a routing table naming each reference and its load condition
+
+#### Scenario: A reference is discoverable from the entry point
+
+- **WHEN** an agent reads a skill's entry point
+- **THEN** every markdown file the skill ships SHALL be findable from it without listing the directory
+
+### Requirement: A skill that answers questions states its lookup loop
+
+A skill whose purpose is answering rules questions SHALL state its lookup loop: how a question is routed to a reference, that errata is applied to any named card before the rest of the answer is composed, that the answer cites the rule or glossary entry it came from, and that the loop then stops. It SHALL state that answers are composed from loaded references rather than recalled from memory, SHALL forbid loading references speculatively, and SHALL require an unanswerable question to be reported as unanswerable.
+
+#### Scenario: A question names a card with errata
+
+- **WHEN** a rules question names a specific card
+- **THEN** the skill SHALL route the errata reference first and SHALL apply corrected text before answering
+
+#### Scenario: A question cannot be answered from the references
+
+- **WHEN** no loaded reference settles the question
+- **THEN** the skill SHALL instruct the agent to say so rather than compose an answer from recollection
+
+### Requirement: The shipped rules corpus stays within the judge's derived reference budget
+
+The rules reference skill SHALL remain selectable in full: its `SKILL.md` together with every reference file it ships SHALL fit the reference budget derived at the default judge configuration, and it SHALL keep enough separate reference files that a judge can select a subset of the rulebook rather than all or none.
+
+The judge is single-shot: every selected skill and reference is inlined into one prompt, the budget for that content is derived from the judge's context window, and a selection that exceeds it is refused rather than truncated.
+
+#### Scenario: The whole rules corpus is selectable
+
+- **WHEN** a judge configuration selects the rules reference skill and every one of its reference files at the default context window
+- **THEN** the selection SHALL be accepted and no reference SHALL be refused for exceeding the budget
+
+#### Scenario: Growth in the entry point costs reference headroom
+
+- **WHEN** content is added to a skill's `SKILL.md`
+- **THEN** the available reference budget SHALL fall by the same amount, because a selected `SKILL.md` is charged against the budget before references are measured

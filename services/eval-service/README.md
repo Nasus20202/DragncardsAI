@@ -167,11 +167,12 @@ write-back idempotency key hashes the resolved judge config, which only
 identifies what the judge saw while the config fully determines the prompt.
 
 **Why references are selected rather than inlined wholesale.** `SKILL.md` is
-affordable — `marvel-champions-rules-reference` is 18,306 characters against a
+affordable — `marvel-champions-rules-reference` is 21,654 characters against a
 move prompt's ~41,500 of rubric and projected state. Its 21 reference files are
-256,568 characters, **14x its own `SKILL.md`**. The judge is single-shot with no
-tool loop, so every selected byte is in the prompt on every graded target; the
-selection is explicit so the operator, not the model, decides what that costs.
+256,568 characters, **nearly 12x its own `SKILL.md`**. The judge is single-shot
+with no tool loop, so every selected byte is in the prompt on every graded
+target; the selection is explicit so the operator, not the model, decides what
+that costs.
 
 ### The reference budget is what the context window leaves
 
@@ -201,9 +202,10 @@ prompt that cannot exist:
 At the defaults the move prompt binds, and the budget is **295,904 characters** —
 4.9x the 60,000 it replaced, and enough for all 21
 `marvel-champions-rules-reference` files (256,568) alongside their `SKILL.md`
-(18,306). Selecting *every* reference of *every* skill (313,317 across 28 files,
-plus 91,355 of `SKILL.md`) does **not** fit a 128k window and is refused; raise
-`EVAL_JUDGE_CONTEXT_WINDOW_TOKENS` if your judge model has the room.
+(21,654), with roughly 17,700 characters to spare. Selecting *every* reference of
+*every* skill (338,790 across 35 files, plus 78,619 of `SKILL.md`) does **not**
+fit a 128k window and is refused; raise `EVAL_JUDGE_CONTEXT_WINDOW_TOKENS` if
+your judge model has the room.
 
 Character counts are measured from `skills/`; **token figures are projections at
 ~4 chars/token, never measured** — no judge call is possible without
