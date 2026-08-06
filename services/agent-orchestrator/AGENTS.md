@@ -26,6 +26,29 @@ agent-orchestrator/
 
 ## Core Concepts
 
+### Request Bodies
+
+**Every request model inherits `StrictRequest` (`schemas/base.py`), which sets
+`extra="forbid"`.** A body carrying a key the model does not define is a `422` naming that key,
+not a `200` with the key discarded — which is what Pydantic does by default, and what let a
+dashboard narrow a subagent allowlist against an orchestrator that had no such field and be told
+the save succeeded (DRA-53).
+
+- **A new request model inherits `StrictRequest`, never `BaseModel`.** Response models stay on
+  `BaseModel`. `tests/unit/test_app_strict_request_bodies.py` reads the app's own OpenAPI
+  document and fails if any request body is missing it, so this is checked rather than
+  remembered.
+- **A new endpoint takes a model, never `dict[str, Any]`.** An unmodelled body is a hole the
+  rule cannot reach; `POST /skills` was the last one.
+- **Do not loosen a model to make a caller pass.** A refused field is a caller sending something
+  this service does not implement, which is the whole point of the check.
+- **Strictness is about a model's declared keys.** `metadata`, `gateway_options` and
+  `provider_options` are open mappings by design and keep accepting anything.
+- **It does not protect against an orchestrator older than the field.** The check runs on the
+  server, so only a server that already carries it can refuse. The client-side half is the
+  dashboard's `unappliedSessionSettings`; do not delete it as redundant.
+- **It does not reach an MCP tool call.** See **Two MCP directions** below.
+
 ### Sessions
 
 Sessions are persistent agent configurations:
@@ -162,6 +185,14 @@ because both live under the name "MCP":
   came from and a tool's name is that endpoint's `operation_id`. There is no hand-written tool
   layer, and there should not be one — it would be a second implementation of the API, free to
   drift from the first.
+
+**A strict request body does not make a tool call strict.** FastMCP builds a tool's input schema
+by flattening the body's properties alongside the path parameters into a fresh object and does not
+copy `additionalProperties` up to that object's root — it keeps it only on a *nested* model, which
+today is `compact_session` and `save_session_player`. An argument the route's parameter map does
+not know is dropped by FastMCP's request director before the HTTP request is built, so it is a log
+line here and a successful tool result to the model. Do not read `additionalProperties: false` in
+the OpenAPI document and conclude the tool surface is covered.
 
 Because tools come from the schema, **adding a route to this service adds an MCP tool
 automatically**. Give every route an explicit `operation_id`: without one, FastAPI derives a

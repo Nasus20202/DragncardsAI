@@ -11,10 +11,11 @@ from agent_orchestrator.runtime.personas import (
     MAX_PERSONA_PROMPT_CHARS,
     MAX_PERSONA_SKILLS,
 )
+from agent_orchestrator.schemas.base import StrictRequest
 from agent_orchestrator.schemas.players import PlayerReasoningConfig
 
 
-class PersonaRequest(BaseModel):
+class PersonaRequest(StrictRequest):
     """A persona's configuration. Unset fields inherit from the spawning session.
 
     Every field is bounded here rather than only at the database column, so an

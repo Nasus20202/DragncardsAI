@@ -154,6 +154,36 @@ If a provider returns `available: false`, check that:
 - `bifrost` has been restarted after the env change
 - the negative cache has been cleared (`POST /providers/refresh` or `GET /providers?refresh=true`)
 
+## Request Bodies Are Strict
+
+**Every request body this service accepts refuses a field it does not define.** A
+`POST` or `PATCH` carrying an unknown key is a `422` naming that key, and nothing
+in the request is applied.
+
+This exists because the alternative is silent. Pydantic's default is to drop an
+undeclared key, so an orchestrator predating a feature used to answer `200 OK` to a
+write it had not performed. That happened: a dashboard sent `session_persona` and
+`allowed_subagents` to a build that had neither, the server stored neither and said
+nothing, and the user was told their subagent allowlist — which governs what the
+agent may spawn — had been narrowed when it had not (DRA-53).
+
+Two things to hold on to:
+
+- **It protects against a client newer than the server, and only from a server that
+  already carries the check.** The refusal is performed by the server, so an
+  orchestrator older than a field still accepts and discards it. Detecting *that*
+  is the client's job; the dashboard does it by comparing what it asked for against
+  what the session reports afterwards (`unappliedSessionSettings`).
+- **A field declared as an open mapping stays open.** `metadata`,
+  `gateway_options` and `provider_options` are `dict[str, Any]`, and strictness is
+  about the keys a model declares, not the contents of a dictionary declared as
+  free-form. An unrecognised setting parked inside `metadata` is still ignored.
+
+The rule is enforced structurally: every request model inherits `StrictRequest`
+(`src/agent_orchestrator/schemas/base.py`), and
+`tests/unit/test_app_strict_request_bodies.py` reads this service's own OpenAPI
+document and fails if any request body is missing it.
+
 ## Endpoint Guide
 
 ### Meta
@@ -895,6 +925,15 @@ Some routes are deliberately absent from MCP, declared in
 
 Exclusion applies to MCP only. Every one of those endpoints still works over HTTP, for the
 dashboard and for a developer who types it deliberately.
+
+**Strict request bodies do not reach a tool call.** The endpoints' OpenAPI schemas declare
+`additionalProperties: false`, but FastMCP builds a tool's input schema by flattening the body's
+properties alongside the path parameters into a fresh object, and does not carry the flag up to
+that object's root. It does keep it on a *nested* model, so `compact_session` and
+`save_session_player` each enforce it on one nested argument. Everywhere else an unknown tool
+argument is dropped by FastMCP's request director before the HTTP call is built — it becomes a
+warning in this service's log and a successful tool result to the model, and the server never
+sees it. Do not read the OpenAPI document and conclude a tool call is protected.
 
 The end-to-end debugging loop this surface exists for — create a game, start a player agent, read
 its actions, read the live board, request an evaluation, read the verdict — is documented in the
