@@ -2,7 +2,7 @@
 
 A skill is a directory holding a ``SKILL.md`` plus, usually, a set of markdown
 reference files beside it. ``SKILL.md`` is the summary; the references are the
-bulk of the content — ``marvel-champions-rules-reference`` is 21 files and ~14x
+bulk of the content — ``marvel-champions-rules-reference`` is 21 files and ~12x
 the bytes of its own ``SKILL.md``. A judge pointed at that skill without them is
 grading against a fraction of the rulebook it was handed.
 

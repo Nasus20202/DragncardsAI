@@ -5,6 +5,22 @@ metadata:
   version: "1.0"
 ---
 
+## Scope: this is not a play skill
+
+This skill is for **building and debugging the platform** — writing DragnLang action lists, plugin JSON, and automation rules, and reading the engine's source when something does not behave. It sits in the same skill root as the Marvel Champions play skills because that root is where all domain knowledge lives, not because it is one of them.
+
+If you are playing a game, this is the wrong file:
+
+| You want to...                                         | Load                                |
+| ------------------------------------------------------ | ------------------------------------- |
+| Take a hero's turn through the game-service tools      | `marvel-champions-play`             |
+| Run a whole game across several seats                  | `marvel-champions-orchestrator`     |
+| Settle a rules question                                | `marvel-champions-rules-reference`  |
+
+**DragnLang is not a way to act on a live table.** The operations below are what the engine evaluates; they are not a back door around the typed game-service tools. A player agent has no `raw_action` and should not go looking for one — the typed tools exist because an unvalidated action list with a typo corrupts the table for every seat, and nothing rolls it back. Reading this skill to understand *why* a tool behaves as it does is fine; using it to hand-write an action list against a game in progress is not.
+
+---
+
 DragnCards is a browser-based platform for playing card games. A game is defined by a **plugin** (a set of JSON files) and an **engine** (a React frontend + Elixir/Phoenix backend). The frontend and backend communicate via Phoenix Channels (WebSocket) and an HTTP REST API.
 
 Game logic is written in **DragnLang**, a custom LISP-like scripting language interpreted by the Elixir backend. Action lists are arrays of arrays that modify the game state, log messages, draw cards, move cards, and automate game rules.
