@@ -33,8 +33,8 @@ importers:
         specifier: 0.2.11
         version: 0.2.11(zod@4.4.3)
       '@openuidev/react-lang':
-        specifier: 0.2.10
-        version: 0.2.10(react@19.2.8)(zod@4.4.3)
+        specifier: 0.2.11
+        version: 0.2.11(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3)
       '@vercel/otel':
         specifier: ^2.0.0
         version: 2.1.3(@opentelemetry/api-logs@0.221.0)(@opentelemetry/api@1.9.1)(@opentelemetry/instrumentation@0.221.0(@opentelemetry/api@1.9.1))(@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.221.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1))
@@ -737,6 +737,13 @@ packages:
     resolution: {integrity: sha512-eSYWTm620tTk45EKSedaUL8MFYI8hW164hIXsgIHyxu3VobUB3fFCu5t0hQby6OoWRPsG1KkKUG2M5UadiLiVg==}
     engines: {node: '>=14'}
 
+  '@openuidev/devtools@0.0.4':
+    resolution: {integrity: sha512-DVf5Bu6gpKEfAnETyl/ZOQMyZCi1vapGohNSxaIyZ03jVZ+e5F9fkQJp+5T1ryg0v3vYi3AC0B4NRwEuCbZmmQ==}
+    peerDependencies:
+      '@openuidev/observability': ^0.0.2
+      react: ^18.3.1 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
+
   '@openuidev/lang-core@0.2.11':
     resolution: {integrity: sha512-30tTX7bnTLMQMs1kPhIv/tVY8hlW5xtimf6fBBS16ctidceuMZNWEe0VTpuz3lEmdyThp2lc7vy+lSfTqIIwlg==}
     peerDependencies:
@@ -749,14 +756,17 @@ packages:
   '@openuidev/observability@0.0.2':
     resolution: {integrity: sha512-uNtO4VGGwcL8Lg1L+9a8JCpee0dOm0djIjItxtGpUPkZNUwzpMQX6mQ4YCtA9Hho4VuqZgHBo1ON8FjsLbNMHg==}
 
-  '@openuidev/react-lang@0.2.10':
-    resolution: {integrity: sha512-CLd5rhJwy9hlMQoeySAwnHu8qb3lolSvW+LdZTGu7pVm7ipnXAwaT34qsDFrsUSBEsu73UGNedlId7mRVUV/uw==}
+  '@openuidev/react-lang@0.2.11':
+    resolution: {integrity: sha512-RXyRmFLxRBQ/pNnCq4CYFLl/1SnUvv3O5cnyTaaG6RqtXQ/CLmRiooqCtNY8xqi/cDVt3HJTgrfQOCN2ZhAQbg==}
     peerDependencies:
       '@modelcontextprotocol/sdk': '>=1.0.0'
-      react: ^18.3.1 || ^19.0.0
+      react: '*'
+      react-dom: '*'
       zod: ^3.25.0 || ^4.0.0
     peerDependenciesMeta:
       '@modelcontextprotocol/sdk':
+        optional: true
+      react-dom:
         optional: true
 
   '@oxc-project/types@0.139.0':
@@ -2847,6 +2857,11 @@ packages:
   lru-cache@5.1.1:
     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
 
+  lucide-react@0.575.0:
+    resolution: {integrity: sha512-VuXgKZrk0uiDlWjGGXmKV6MSk9Yy4l10qgVvzGn2AWBx1Ylt0iBexKOAoA6I7JO3m+M9oeovJd3yYENfkUbOeg==}
+    peerDependencies:
+      react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
   lz-string@1.5.0:
     resolution: {integrity: sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==}
     hasBin: true
@@ -4615,18 +4630,28 @@ snapshots:
 
   '@opentelemetry/semantic-conventions@1.43.0': {}
 
+  '@openuidev/devtools@0.0.4(@openuidev/observability@0.0.2)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+    dependencies:
+      '@openuidev/observability': 0.0.2
+      lucide-react: 0.575.0(react@19.2.8)
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
+
   '@openuidev/lang-core@0.2.11(zod@4.4.3)':
     dependencies:
       zod: 4.4.3
 
   '@openuidev/observability@0.0.2': {}
 
-  '@openuidev/react-lang@0.2.10(react@19.2.8)(zod@4.4.3)':
+  '@openuidev/react-lang@0.2.11(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.4.3)':
     dependencies:
+      '@openuidev/devtools': 0.0.4(@openuidev/observability@0.0.2)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@openuidev/lang-core': 0.2.11(zod@4.4.3)
       '@openuidev/observability': 0.0.2
       react: 19.2.8
       zod: 4.4.3
+    optionalDependencies:
+      react-dom: 19.2.8(react@19.2.8)
 
   '@oxc-project/types@0.139.0': {}
 
@@ -7060,6 +7085,10 @@ snapshots:
   lru-cache@5.1.1:
     dependencies:
       yallist: 3.1.1
+
+  lucide-react@0.575.0(react@19.2.8):
+    dependencies:
+      react: 19.2.8
 
   lz-string@1.5.0: {}
 
