@@ -41,9 +41,16 @@ describe("PlayWorkspace execution", () => {
         []
       )
     );
+    // Awaited, not queried synchronously: `submitPrompt` having been *called* is
+    // the first step of the handler, and the banner only renders once the
+    // follow-up `getJob` has resolved and streaming has started two awaits
+    // later. A synchronous query here races that render and loses whenever the
+    // machine is busy enough to push the chain past the one `setTimeout(0)` of
+    // grace Testing Library allows it.
     expect(
-      screen.getByRole("status", { name: /streaming response/i })
+      await screen.findByRole("status", { name: /streaming response/i })
     ).toBeInTheDocument();
+    // Committed in the same render as the banner, so these cannot be early.
     expect(screen.getByText("Streaming response...")).toBeInTheDocument();
     expect(screen.getByTestId("active-job-id")).toHaveTextContent("job-2");
   });
