@@ -53,6 +53,40 @@ def test_invalid_concurrency_rejected():
         Settings(eval_per_game_concurrency=0)
 
 
+def test_claim_lease_defaults_and_override(monkeypatch: pytest.MonkeyPatch):
+    # Four missed heartbeats before a claim is considered abandoned: enough to
+    # ride out an event-loop stall, short enough to bound post-crash recovery.
+    assert Settings().eval_claim_lease_seconds == 120.0
+    assert Settings().eval_claim_heartbeat_seconds == 30.0
+    monkeypatch.setenv("EVAL_CLAIM_LEASE_SECONDS", "10")
+    monkeypatch.setenv("EVAL_CLAIM_HEARTBEAT_SECONDS", "2")
+    settings = Settings()
+    assert settings.eval_claim_lease_seconds == 10.0
+    assert settings.eval_claim_heartbeat_seconds == 2.0
+
+
+def test_non_positive_claim_timings_rejected():
+    with pytest.raises(ValueError):
+        Settings(eval_claim_lease_seconds=0)
+    with pytest.raises(ValueError):
+        Settings(eval_claim_heartbeat_seconds=0)
+    with pytest.raises(ValueError):
+        Settings(eval_claim_heartbeat_seconds=-1)
+
+
+def test_lease_must_exceed_the_heartbeat():
+    # A lease at or below the refresh interval finds every LIVE claim stale on
+    # the cycle before its next heartbeat lands, so healthy work is reclaimed and
+    # re-graded continuously. Refuse the setting rather than ship that churn.
+    with pytest.raises(ValueError):
+        Settings(eval_claim_lease_seconds=30, eval_claim_heartbeat_seconds=30)
+    with pytest.raises(ValueError):
+        Settings(eval_claim_lease_seconds=10, eval_claim_heartbeat_seconds=30)
+    # Strictly greater is accepted.
+    ok = Settings(eval_claim_lease_seconds=31, eval_claim_heartbeat_seconds=30)
+    assert ok.eval_claim_lease_seconds == 31.0
+
+
 def test_invalid_token_budget_rejected():
     with pytest.raises(ValueError):
         Settings(eval_judge_max_tokens=0)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import func, select, text, update
@@ -16,6 +18,12 @@ from eval_service.storage.models import (
     utc_now,
 )
 
+# The single advisory-lock key every claimer contends on. It must be ONE
+# constant: two claimers taking different keys serialize against nobody, which
+# is exactly the overshoot the lock exists to prevent. The value is the ASCII
+# bytes of "EVAL" -- arbitrary, but fixed and greppable.
+CLAIM_ADVISORY_LOCK_KEY = 0x4556414C
+
 
 @dataclass(frozen=True)
 class ClaimResult:
@@ -29,6 +37,21 @@ class ClaimResult:
     claimed: bool
     target_id: int | None
     existing_status: str | None = None
+
+
+@dataclass(frozen=True)
+class ReclaimResult:
+    """What one stale-claim sweep did, so the worker can log it.
+
+    ``reclaimed_ids`` went back to ``pending`` and will be claimed again;
+    ``failed_ids`` had burned through ``max_attempts`` and were given up on. Both
+    are returned rather than a bare count because the two mean very different
+    things operationally -- a steady trickle of reclaims is a crashing worker, a
+    failure is a target nobody should keep paying to grade.
+    """
+
+    reclaimed_ids: tuple[int, ...]
+    failed_ids: tuple[int, ...]
 
 
 def _within_capacity(
@@ -222,12 +245,20 @@ class Repository:
                     )
                 # Force: reset the existing row to pending and re-link to this
                 # request, in the SAME transaction as the conflict check.
+                #
+                # ``attempts`` moves too, because a force reset REVOKES whatever
+                # claim was live on this row. Without the bump, a worker still
+                # mid-evaluation under the old claim would find the row
+                # ``running`` again once the forced re-claim started and write
+                # its stale verdict over the fresh one -- the exact race the
+                # epoch exists to close.
                 await session.execute(
                     update(EvaluatedTargetRow)
                     .where(EvaluatedTargetRow.id == row.id)
                     .values(
                         request_id=request_id,
                         status="pending",
+                        attempts=EvaluatedTargetRow.attempts + 1,
                         error=None,
                         verdict_json=None,
                         judge_config_json=judge_config,
@@ -258,86 +289,128 @@ class Repository:
 
     # -- target lifecycle ---------------------------------------------------
 
-    async def finalize_completed(self, target_id: int, verdict: dict[str, Any]) -> None:
+    async def finalize_completed(
+        self,
+        target_id: int,
+        verdict: dict[str, Any],
+        *,
+        attempts: int | None = None,
+    ) -> None:
         await self._transition_running(
-            target_id, status="completed", verdict_json=verdict, error=None
+            target_id,
+            attempts=attempts,
+            status="completed",
+            verdict_json=verdict,
+            error=None,
         )
 
-    async def mark_skipped(self, target_id: int, error: str) -> None:
+    async def mark_skipped(
+        self, target_id: int, error: str, *, attempts: int | None = None
+    ) -> None:
         """Record a DELIBERATE skip (a non-strategic action) with its reason.
 
         Reserved for "there was no decision to grade here". A failure uses
         ``mark_failed`` so a client can tell an error apart from a designed skip.
         """
         await self._transition_running(
-            target_id, status="skipped", error=sanitize_error_detail(error)
+            target_id,
+            attempts=attempts,
+            status="skipped",
+            error=sanitize_error_detail(error),
         )
 
-    async def mark_failed(self, target_id: int, error: str) -> None:
+    async def mark_failed(
+        self, target_id: int, error: str, *, attempts: int | None = None
+    ) -> None:
         await self._transition_running(
-            target_id, status="failed", error=sanitize_error_detail(error)
+            target_id,
+            attempts=attempts,
+            status="failed",
+            error=sanitize_error_detail(error),
         )
 
-    async def record_attempt_error(self, target_id: int, error: str) -> bool:
+    async def record_attempt_error(
+        self, target_id: int, error: str, *, attempts: int | None = None
+    ) -> bool:
         """Record a mid-evaluation failure on a target that is still ``running``.
 
         A judge attempt that failed and will be retried is detail the user must be
         able to read WHILE the evaluation continues, so it is written to Postgres
         rather than held in the worker — any poller or stream then reads it from
         the authoritative snapshot. The status is left untouched (the target is
-        still being worked on), and the ``status='running'`` guard means a
-        concurrent cancel or force re-claim is never clobbered. Returns whether a
-        row was actually updated.
+        still being worked on), and the ``status='running'`` + epoch guard means a
+        concurrent cancel, reclaim or force re-claim is never clobbered. Returns
+        whether a row was actually updated.
         """
         async with self._session_factory() as session:
             async with session.begin():
                 result = await session.execute(
                     update(EvaluatedTargetRow)
-                    .where(
-                        EvaluatedTargetRow.id == target_id,
-                        EvaluatedTargetRow.status == "running",
-                    )
+                    .where(*self._running_under_claim(target_id, attempts))
                     .values(error=sanitize_error_detail(error), updated_at=utc_now())
                 )
                 return (result.rowcount or 0) > 0
 
-    async def _transition_running(self, target_id: int, **values: Any) -> None:
+    @staticmethod
+    def _running_under_claim(target_id: int, attempts: int | None) -> tuple[Any, ...]:
+        """The WHERE terms for "this row is still running UNDER MY claim".
+
+        ``status='running'`` alone is not that question: a reclaim or a force
+        reset hands the row to a NEW claim which puts it back to ``running``, and
+        a stale worker's write would then pass the status guard and overwrite the
+        new claim's outcome. Adding ``attempts = :claimed`` fences that write out
+        — the epoch moved when the claim was revoked, so the UPDATE matches no
+        rows and is correctly discarded.
+
+        ``attempts=None`` means "no epoch known" and keeps the historical
+        status-only guard. It is not a loophole to be closed: some writes
+        legitimately have no claimed epoch (a target failed before it was ever
+        claimed), and inventing one would fence a write that should land.
+        """
+        conditions: list[Any] = [
+            EvaluatedTargetRow.id == target_id,
+            EvaluatedTargetRow.status == "running",
+        ]
+        if attempts is not None:
+            conditions.append(EvaluatedTargetRow.attempts == attempts)
+        return tuple(conditions)
+
+    async def _transition_running(
+        self, target_id: int, *, attempts: int | None = None, **values: Any
+    ) -> None:
         """Move a target out of ``running`` to a terminal state, conditionally.
 
-        The ``status='running'`` guard means a concurrent force re-claim (which
-        resets the row to ``pending`` under a NEW claim) is never clobbered by a
-        stale worker finalizing the prior evaluation: the UPDATE simply matches
-        no rows and is a no-op.
+        Guarded by :meth:`_running_under_claim`, so a concurrent force re-claim or
+        stale-claim reclaim (both of which hand the row to a NEW claim) is never
+        clobbered by the prior worker finalizing its abandoned evaluation: the
+        UPDATE simply matches no rows and is a no-op.
         """
         async with self._session_factory() as session:
             async with session.begin():
                 values["updated_at"] = utc_now()
                 await session.execute(
                     update(EvaluatedTargetRow)
-                    .where(
-                        EvaluatedTargetRow.id == target_id,
-                        EvaluatedTargetRow.status == "running",
-                    )
+                    .where(*self._running_under_claim(target_id, attempts))
                     .values(**values)
                 )
 
-    async def defer_to_pending(self, target_id: int) -> bool:
+    async def defer_to_pending(
+        self, target_id: int, *, attempts: int | None = None
+    ) -> bool:
         """Reset a ``running`` target back to ``pending`` so a later drain retries.
 
         Used to gate a higher-level (round/game) target while the lower-level
         children it depends on are still being graded: the roll-up is re-queued
         rather than produced against incomplete child context. The
-        ``status='running'`` guard means a concurrent cancel / force re-claim is
-        never clobbered. Returns whether a row was actually re-deferred.
+        ``status='running'`` + epoch guard means a concurrent cancel, reclaim or
+        force re-claim is never clobbered. Returns whether a row was actually
+        re-deferred.
         """
         async with self._session_factory() as session:
             async with session.begin():
                 result = await session.execute(
                     update(EvaluatedTargetRow)
-                    .where(
-                        EvaluatedTargetRow.id == target_id,
-                        EvaluatedTargetRow.status == "running",
-                    )
+                    .where(*self._running_under_claim(target_id, attempts))
                     .values(status="pending", updated_at=utc_now())
                 )
                 return (result.rowcount or 0) > 0
@@ -384,6 +457,29 @@ class Repository:
                     EvaluatedTargetRow.id == target_id
                 )
             )
+
+    async def get_target_claim(self, target_id: int) -> tuple[str | None, int | None]:
+        """Return a target's ``(status, attempts)`` — its status and claim epoch.
+
+        The status alone cannot answer the question a worker actually needs to
+        ask before writing back: not *"is this row running?"* but *"is this row
+        still running UNDER MY CLAIM?"*. A row that was reset and re-claimed by
+        another worker is ``running`` again, so a status-only check passes and
+        the superseded worker goes on to emit a verdict event nobody asked for.
+        Returning the epoch too lets the caller compare it against the one it
+        claimed at, and abort before writing anything to history.
+        """
+        async with self._session_factory() as session:
+            row = (
+                await session.execute(
+                    select(
+                        EvaluatedTargetRow.status, EvaluatedTargetRow.attempts
+                    ).where(EvaluatedTargetRow.id == target_id)
+                )
+            ).first()
+            if row is None:
+                return None, None
+            return row[0], row[1]
 
     async def list_targets_for_request(
         self, request_id: str
@@ -467,10 +563,39 @@ class Repository:
         the same transaction serializes claims, so the lock clause is omitted
         and the conditional ``status='pending'`` UPDATE is the at-most-once
         guard.
+
+        The whole transaction is additionally serialized against other claimers
+        by a transaction-scoped advisory lock on PostgreSQL — see below for why
+        ``SKIP LOCKED`` alone leaves the cap unenforced.
         """
         async with self._session_factory() as session:
             async with session.begin():
                 dialect = session.bind.dialect.name
+                if dialect == "postgresql":
+                    # SERIALIZE THE WHOLE CLAIM. ``FOR UPDATE SKIP LOCKED`` locks
+                    # the pending CANDIDATES; it does not lock the ``running``
+                    # rows the capacity COUNT below reads. Under READ COMMITTED
+                    # two replicas claiming at once each see the pre-claim count
+                    # and each spend the same capacity, so the global cap
+                    # overshoots by up to the replica count. That is not a
+                    # double-grading bug (the claimed sets stay disjoint) but a
+                    # SPEND-control one: a provider guard that doubles when
+                    # someone scales to two replicas is not a guard.
+                    #
+                    # ``xact`` scope is what makes this safe to hold: it is
+                    # released at commit, at rollback, AND when the backend dies,
+                    # so unlike the claim lease it can never leave stuck state.
+                    # The critical section is a COUNT, a bounded SELECT and one
+                    # UPDATE — single-digit milliseconds against work items that
+                    # take seconds — and the evaluations themselves run entirely
+                    # outside it.
+                    #
+                    # SQLite (tests) already serializes writers, so the lock is
+                    # skipped there, exactly as ``FOR UPDATE SKIP LOCKED`` is.
+                    await session.execute(
+                        text("SELECT pg_advisory_xact_lock(:key)"),
+                        {"key": CLAIM_ADVISORY_LOCK_KEY},
+                    )
                 capacity = limit
                 if global_limit is not None:
                     running_total = (
@@ -492,6 +617,24 @@ class Repository:
                     )
                     running_by_game = dict(rows.all())  # type: ignore[arg-type]
 
+                # Games already AT their per-game cap are excluded here, before
+                # the LIMIT window is taken, rather than being fetched and
+                # dropped by ``_within_capacity`` afterwards. One whole-game
+                # request can leave far more than ``limit`` rows pending for a
+                # single game (``EVAL_MAX_TARGETS_PER_REQUEST`` is 200), so once
+                # that game saturates, a window taken over all pending rows
+                # contains nothing BUT its rows: every candidate is discarded,
+                # the claim returns empty, and a second game's targets are never
+                # even considered while global capacity sits idle.
+                saturated_games = (
+                    [
+                        game_id
+                        for game_id, running in running_by_game.items()
+                        if running >= per_game_limit
+                    ]
+                    if per_game_limit is not None
+                    else []
+                )
                 stmt = (
                     select(EvaluatedTargetRow.id, EvaluatedTargetRow.game_id)
                     .where(EvaluatedTargetRow.status == "pending")
@@ -510,8 +653,16 @@ class Repository:
                     )
                     .limit(limit)
                 )
+                if saturated_games:
+                    stmt = stmt.where(
+                        EvaluatedTargetRow.game_id.not_in(saturated_games)
+                    )
                 if dialect == "postgresql":
                     stmt = stmt.with_for_update(skip_locked=True)
+                # ``_within_capacity`` stays the FINAL authority: the SQL filter
+                # only removes games that were ALREADY saturated, while this
+                # enforces the global cap and stops a game from exceeding its own
+                # cap through rows claimed within this very batch.
                 candidate_ids = _within_capacity(
                     list((await session.execute(stmt)).all()),
                     capacity=capacity,
@@ -527,6 +678,11 @@ class Repository:
                 # claim/force-reset won). The conditional ``status='pending'``
                 # filter is the at-most-once guard; SKIP LOCKED merely avoids
                 # contention on Postgres.
+                #
+                # ``attempts`` is incremented BY the claim, so every returned row
+                # already carries the epoch it was claimed at. The caller passes
+                # that value back to its terminal write, which is what fences a
+                # revoked claim out (see ``_running_under_claim``).
                 claimed = list(
                     (
                         await session.execute(
@@ -535,7 +691,11 @@ class Repository:
                                 EvaluatedTargetRow.id.in_(candidate_ids),
                                 EvaluatedTargetRow.status == "pending",
                             )
-                            .values(status="running", updated_at=now)
+                            .values(
+                                status="running",
+                                attempts=EvaluatedTargetRow.attempts + 1,
+                                updated_at=now,
+                            )
                             .returning(EvaluatedTargetRow)
                         )
                     )
@@ -547,6 +707,120 @@ class Repository:
                 for row in claimed:
                     session.expunge(row)
                 return claimed
+
+    async def reclaim_stale_targets(
+        self, *, lease_seconds: float, max_attempts: int
+    ) -> ReclaimResult:
+        """Give back the claims of workers that stopped reporting in.
+
+        A claim is held by a row, not by a process, so a worker that is SIGKILLed
+        mid-evaluation leaves its targets ``running`` forever — and because the
+        concurrency cap counts ``running`` rows, those orphans permanently
+        consume capacity until an operator intervenes. This is the sweep that
+        makes a claim recoverable without one.
+
+        Staleness is ``updated_at`` older than ``lease_seconds``. The lease
+        measures *"is the worker alive?"*, not *"could this call still be
+        running?"*, because a live worker heartbeats the targets it still owns
+        (:meth:`heartbeat_targets`) — so a slow judge call is safe while its
+        worker breathes, and the lease can be short enough for fast recovery.
+
+        A target whose ``attempts`` has passed ``max_attempts`` is marked
+        ``failed`` rather than reclaimed once more. A target that reliably kills
+        its worker (an oversized prompt, a pathological timeline, an OOM) spends
+        judge budget on every pass before crashing, so unbounded reclaim is both
+        a money leak and a crashloop generator.
+
+        Both statements run in ONE transaction so a concurrent claimer never sees
+        a half-swept set.
+        """
+        # The cutoff is computed in Python and BOUND as a parameter rather than
+        # expressed as database arithmetic (``now() - interval``), because
+        # ``UtcDateTime`` stores a real ``timestamptz`` on Postgres and an ISO-8601
+        # string on SQLite; a single piece of SQL date arithmetic cannot be right
+        # on both. Bound this way the TypeDecorator renders the cutoff in each
+        # dialect's own storage form, so the comparison is like-for-like: a
+        # ``timestamptz`` compare on Postgres, and a lexicographic compare on
+        # SQLite over fixed-width UTC ISO strings, whose byte order matches
+        # chronological order.
+        cutoff = utc_now() - timedelta(seconds=lease_seconds)
+        async with self._session_factory() as session:
+            async with session.begin():
+                now = utc_now()
+                failed = list(
+                    (
+                        await session.execute(
+                            update(EvaluatedTargetRow)
+                            .where(
+                                EvaluatedTargetRow.status == "running",
+                                EvaluatedTargetRow.updated_at < cutoff,
+                                EvaluatedTargetRow.attempts > max_attempts,
+                            )
+                            .values(
+                                status="failed",
+                                error=(
+                                    "abandoned claim: the worker holding this "
+                                    "target stopped reporting and it has already "
+                                    f"been attempted more than {max_attempts} "
+                                    "times (see the attempts column); giving up "
+                                    "rather than spending another judge call"
+                                ),
+                                updated_at=now,
+                            )
+                            .returning(EvaluatedTargetRow.id)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                # Explicitly bounded by ``max_attempts`` rather than relying on
+                # the statement above having already moved the poison rows out of
+                # ``running``: each statement then states its own rule and the
+                # pair is order-independent.
+                reclaimed = list(
+                    (
+                        await session.execute(
+                            update(EvaluatedTargetRow)
+                            .where(
+                                EvaluatedTargetRow.status == "running",
+                                EvaluatedTargetRow.updated_at < cutoff,
+                                EvaluatedTargetRow.attempts <= max_attempts,
+                            )
+                            .values(status="pending", updated_at=now)
+                            .returning(EvaluatedTargetRow.id)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                return ReclaimResult(
+                    reclaimed_ids=tuple(reclaimed), failed_ids=tuple(failed)
+                )
+
+    async def heartbeat_targets(self, target_ids: Sequence[int]) -> int:
+        """Refresh the lease on the targets a worker still owns. Returns the count.
+
+        One UPDATE for the whole in-flight set, conditional on ``status='running'``
+        so it can never RESURRECT a target that was cancelled, force-reset or
+        reclaimed underneath the worker — those rows are simply not matched, and
+        the worker's own terminal write is fenced separately by the epoch.
+
+        An empty set issues no SQL at all: an idle worker beating once per cycle
+        against the database would be pure noise.
+        """
+        if not target_ids:
+            return 0
+        async with self._session_factory() as session:
+            async with session.begin():
+                result = await session.execute(
+                    update(EvaluatedTargetRow)
+                    .where(
+                        EvaluatedTargetRow.id.in_(tuple(target_ids)),
+                        EvaluatedTargetRow.status == "running",
+                    )
+                    .values(updated_at=utc_now())
+                )
+                return result.rowcount or 0
 
     async def cancel_request_targets(self, request_id: str) -> list[int]:
         """Mark all non-terminal targets of a request ``cancelled``, atomically.

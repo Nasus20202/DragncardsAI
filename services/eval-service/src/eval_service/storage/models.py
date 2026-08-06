@@ -126,6 +126,24 @@ class EvaluatedTargetRow(Base):
     round_from_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     round_to_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    # The CLAIM EPOCH and the retry counter, in one monotonic integer: every
+    # claim (a drain claim, or a ``force`` re-claim) increments it, so every
+    # claim is both a new attempt and a new epoch.
+    #
+    # As an epoch it is what makes a terminal write safe. ``status='running'``
+    # alone answers "is this row running?", never "is this row still running
+    # under MY claim?" -- so a worker whose claim was revoked mid-evaluation
+    # (reclaimed after its lease expired, or force-reset) would find the row
+    # ``running`` again under someone else's claim and overwrite their verdict
+    # with its own abandoned one. Terminal writes therefore guard on
+    # ``status='running' AND attempts = :claimed``; a revoked claim's write
+    # matches no rows and is discarded, which is correct.
+    #
+    # As a counter it is the poison guard: a target whose ``attempts`` exceeds
+    # ``EVAL_MAX_ATTEMPTS`` is marked ``failed`` instead of being reclaimed
+    # again, because a target that reliably kills its worker spends judge budget
+    # on every pass and would otherwise loop forever.
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     verdict_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # The effective judge config to evaluate THIS target with (snapshot of the

@@ -90,3 +90,35 @@ async def postgres_repository():
     finally:
         await engine.dispose()
         await _drop_database(database_name)
+
+
+@pytest_asyncio.fixture
+async def postgres_repository_factory():
+    """Build independent repositories against ONE throwaway database.
+
+    Each call returns a repository on its OWN engine, and therefore its own
+    connection pool. A claim race has to be run over genuinely separate database
+    sessions to mean anything -- that is the exact configuration the advisory
+    lock exists to serialize, and it is what distinguishes two replicas from two
+    coroutines sharing one connection.
+    """
+    if not await _postgres_available():
+        pytest.skip("PostgreSQL not reachable for integration tests")
+    database_name = f"eval_service_test_{uuid4().hex}"
+    await _create_database(database_name)
+    url = _database_url(database_name)
+    engines = []
+
+    async def make_repository() -> Repository:
+        engine = create_engine(url)
+        if not engines:
+            await ensure_schema(engine)
+        engines.append(engine)
+        return Repository(create_session_factory(engine))
+
+    try:
+        yield make_repository
+    finally:
+        for engine in engines:
+            await engine.dispose()
+        await _drop_database(database_name)

@@ -186,6 +186,18 @@ services:
       # stampeding the provider.
       EVAL_PER_GAME_CONCURRENCY: ${EVAL_PER_GAME_CONCURRENCY:-4}
       EVAL_GLOBAL_CONCURRENCY: ${EVAL_GLOBAL_CONCURRENCY:-8}
+      # Stale-claim lease and its heartbeat. Capacity is the COUNT of `running`
+      # rows, so rows left `running` by a killed or redeployed replica consume
+      # global capacity forever; the sweep at the head of each worker cycle
+      # resets a claim that has not been refreshed within the lease. The worker
+      # refreshes the claims it still holds every heartbeat, so the lease
+      # measures "is the worker alive?" rather than "could this judge call still
+      # be running?" -- a slow call under a live worker is never stolen.
+      # 120/30 tolerates four missed heartbeats and bounds post-crash recovery
+      # at ~2 minutes. The lease MUST exceed the heartbeat or the service
+      # refuses to start.
+      EVAL_CLAIM_LEASE_SECONDS: ${EVAL_CLAIM_LEASE_SECONDS:-120}
+      EVAL_CLAIM_HEARTBEAT_SECONDS: ${EVAL_CLAIM_HEARTBEAT_SECONDS:-30}
       # Backstops on the per-move context window, NOT the window itself: a move is
       # judged in the context of its ROUND, and these only bound a pathological
       # round. Set _AFTER=0 to grade with no hindsight.

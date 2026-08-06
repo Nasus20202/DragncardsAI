@@ -40,6 +40,8 @@ evaluate (and reports readiness `degraded`) until it is set. See `.env.example`.
 | `EVAL_MAX_ATTEMPTS` | `3` | Retry attempts before skip |
 | `EVAL_PER_GAME_CONCURRENCY` | `4` | Per-game in-flight judge cap, enforced by the durable claim |
 | `EVAL_GLOBAL_CONCURRENCY` | `8` | Global in-flight judge cap (the provider-stampede guard), enforced by the durable claim |
+| `EVAL_CLAIM_LEASE_SECONDS` | `120` | How long a claim may go unrefreshed before the sweep takes it back. Bounds recovery after a worker dies; see [Parallel evaluation and stale claims](#parallel-evaluation-and-stale-claims) |
+| `EVAL_CLAIM_HEARTBEAT_SECONDS` | `30` | How often a worker refreshes the claims it still holds. Must be strictly **less** than the lease, or live work is reclaimed out from under a healthy worker (refused at startup) |
 | `EVAL_JUDGE_MAX_TOKENS` | `1024` | Per-evaluation token budget |
 | `EVAL_JUDGE_MAX_STATE_CHARS` | `20000` | Backstop cap on each rendered state in the judge prompt (truncated + logged) |
 | `EVAL_JUDGE_MAX_ROUND_MOVES` | `100` | Cap on per-move blocks listed in a round prompt |
@@ -71,6 +73,80 @@ Set `OTEL_SDK_DISABLED=true` to run with telemetry off; the service is otherwise
 unaffected. The judge prompt, the recorded state it is assembled from, the judge's
 response, and gateway error text are never attached as span attributes — error
 detail goes to the target row through `sanitize_error_detail` instead.
+
+## Parallel evaluation and stale claims
+
+Targets are graded concurrently, and the concurrency bound is the **durable claim
+itself**: `claim_pending_targets` counts the rows already `running` and hands out
+only the remaining per-game and global capacity. The worker holds no semaphore and
+no per-game registry, which is what makes both caps survive a restart and hold if
+this service is scaled past one replica.
+
+**Slots are refilled continuously.** The worker keeps the tasks it is awaiting and
+wakes on the *first* completion, re-claiming into the freed slot immediately,
+rather than draining a claimed batch to completion before claiming again. The
+batch shape it replaced was a barrier: no slot was refilled until the **slowest**
+target of its batch finished. Every task that finished is harvested per wake and
+one claim covers all the freed slots at once, so a burst of simultaneous
+completions — the common case, since similar prompts finish at similar times —
+coalesces back into one claim and one history read per game instead of one per
+target.
+
+Measured on real Postgres against a **stub judge with scripted latency** (24
+targets, per-game cap 4, one 400 ms straggler per four 20 ms calls): pipeline
+efficiency went from **27.4 % to ~63 %**, about a **2.1x** wall-clock improvement.
+That is a measurement of *scheduling*, not of a provider: no judge API key is
+configured in this environment, so **no end-to-end speed-up against a real judge
+has been measured and none is claimed**. At uniform judge latency the old shape
+was already ~93 % efficient, so the entire gain is a function of latency variance
+— it is real to the extent that real judge latency varies.
+
+The caps themselves are **unchanged** (4 per game, 8 global). This makes the
+existing budget effective rather than raising it, so peak provider load is the
+same as before.
+
+**The claim is a real bound, and a fair one.** On PostgreSQL the claim transaction
+takes a transaction-scoped advisory lock before counting `running` rows: the count
+was previously unlocked, so two replicas claiming at once each saw the pre-claim
+count and each spent the same capacity, overshooting the global cap by a factor of
+the replica count. Games already at their per-game cap are also excluded in SQL
+*before* the candidate window is taken, so one game with a backlog larger than the
+window can no longer hide every other game's targets behind it.
+
+**A claim carries an epoch.** `evaluated_targets.attempts` is incremented by every
+claim — ordinary, forced, or reclaimed — and every transition out of `running` is
+conditional on `status='running' AND attempts = <the epoch that was claimed>`. A
+worker whose claim was revoked mid-evaluation therefore cannot write its stale
+verdict over the row of the worker that now owns the target; its write matches
+nothing and is discarded. The same column doubles as the retry counter.
+
+**A dead worker's claim comes back on its own.** `reclaim_stale_targets` runs at
+the head of each worker cycle and resets `running` rows whose `updated_at` is
+older than `EVAL_CLAIM_LEASE_SECONDS` back to `pending`. This matters more than a
+stuck target: capacity is computed from the count of `running` rows, so before
+this existed, `EVAL_GLOBAL_CONCURRENCY` rows orphaned by one restart mid-cascade
+consumed the global capacity **permanently** and the service silently stopped
+evaluating anything, for every game, until the database was edited by hand.
+
+The sweep is **best-effort** — a failure logs a warning and the cycle continues,
+because letting a failed reclaim abort the cycle turns a transient database blip
+into a hot loop (established in `history-service`, DRA-35). Reclaims are logged at
+`warning` and give-ups at `error`; a steady trickle of either means a worker is
+dying repeatedly.
+
+The worker **heartbeats** the targets it still owns every
+`EVAL_CLAIM_HEARTBEAT_SECONDS`, so the lease measures *"is the worker alive?"*
+rather than *"could this judge call still be running?"* — an unusually slow judge
+call belonging to a live worker is never stolen, and the lease can be sized for
+fast recovery (`120 / 30` = four missed heartbeats, so ~2 minutes after a crash)
+instead of against a worst-case judge call. A target claimed more than
+`EVAL_MAX_ATTEMPTS` times is marked `failed` with the reason rather than reclaimed
+again, so a target that reliably kills its worker cannot burn judge budget in a
+loop.
+
+The full rationale, the rejected alternatives (a Valkey lease, `SERIALIZABLE`
+isolation, a fixed lease with no heartbeat) and the invariants each mechanism
+discharges are in `openspec/changes/dra-46-parallel-evaluation/`.
 
 ## What the judge is sent
 
