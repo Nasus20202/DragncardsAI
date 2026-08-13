@@ -112,7 +112,7 @@ services:
       - dragncards-shared
 
   agent-orchestrator-postgres:
-    image: postgres:18.4-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -131,7 +131,7 @@ services:
       - dragncards-shared
 
   history-postgres:
-    image: postgres:18.4-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -150,7 +150,7 @@ services:
       - dragncards-shared
 
   eval-postgres:
-    image: postgres:18.4-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
