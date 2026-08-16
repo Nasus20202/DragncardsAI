@@ -19,6 +19,10 @@ def build_app() -> FastAPI:
     async def ready() -> dict[str, str]:
         return {"status": "ready"}
 
+    @app.get("/capabilities", operation_id="capabilities")
+    async def capabilities() -> dict[str, object]:
+        return {"service": "svc", "version": "0.1.0", "features": []}
+
     @app.get("/games", operation_id="list_games")
     async def list_games() -> list[str]:
         return []
@@ -47,13 +51,14 @@ async def tool_names(server) -> set[str]:
 
 
 async def test_probes_are_never_exposed_as_tools():
-    """`/health` and `/ready` are noise in an LLM's tool list."""
+    """Probes and own-state negotiation are noise in an LLM's tool list."""
     server = build_mcp_server(app=build_app(), name="svc")
 
     names = await tool_names(server)
 
     assert "health" not in names
     assert "ready" not in names
+    assert "capabilities" not in names
     assert "list_games" in names
 
 
@@ -142,9 +147,9 @@ def test_mount_path_is_the_same_for_every_service():
     assert MCP_MOUNT_PATH == "/mcp"
 
 
-@pytest.mark.parametrize("probe", [r"^/health$", r"^/ready$"])
+@pytest.mark.parametrize("probe", [r"^/health$", r"^/ready$", r"^/capabilities$"])
 def test_probe_exclusions_are_not_overridable_by_a_caller(probe):
-    """A service cannot opt back into exposing its probes."""
+    """A service cannot opt back into exposing its probes or capabilities."""
     assert probe in shared_mcp.ALWAYS_EXCLUDED_ROUTES
 
     patterns = [rule.pattern for rule in shared_mcp._route_maps([])]

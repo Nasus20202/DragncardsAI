@@ -25,6 +25,10 @@ def create_mcp_server(session_manager, fastapi_app) -> FastMCP:
         route_maps=[
             # /health is noise for an LLM client
             RouteMap(pattern=r"^/health$", mcp_type=MCPType.EXCLUDE),
+            # /capabilities tells a client what the server supports — the
+            # server's own state, like the probes — and is not a tool an agent
+            # needs to call. A client asks over HTTP before it sends anything.
+            RouteMap(pattern=r"^/capabilities$", mcp_type=MCPType.EXCLUDE),
             # snapshot import/export are privileged HTTP-only operations
             RouteMap(pattern=r"^/games/[^/]+/snapshot$", mcp_type=MCPType.EXCLUDE),
             # room control and room observability endpoints are HTTP-only

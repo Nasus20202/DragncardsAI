@@ -54,8 +54,15 @@ logger = logging.getLogger(__name__)
 #: it with a trailing slash (``http://localhost:4002/mcp/``).
 MCP_MOUNT_PATH = "/mcp"
 
-#: Excluded for every service: probes are noise in an LLM's tool list.
-ALWAYS_EXCLUDED_ROUTES: tuple[str, ...] = (r"^/health$", r"^/ready$")
+#: Excluded for every service: probes and own-state negotiation are noise in an
+#: LLM's tool list. `/capabilities` tells a client what the server supports —
+#: describing the server's own state, like the probes — and a tool that answers
+#: "which server am I talking to" is not something an agent needs to call.
+ALWAYS_EXCLUDED_ROUTES: tuple[str, ...] = (
+    r"^/health$",
+    r"^/ready$",
+    r"^/capabilities$",
+)
 
 #: A route to keep out of the MCP surface: either a path-regex on its own (all
 #: methods) or ``(path_regex, methods)`` to exclude only some verbs — needed

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
+from dragncards_common.capabilities import capabilities_payload
 from history_service.api.deps import get_repository, get_settings
 from history_service.config import Settings
 from history_service.storage.db import ping_database
 from history_service.storage.repository import Repository
+from history_service.telemetry import DEFAULT_SERVICE_NAME
 
 router = APIRouter(tags=["meta"])
 
@@ -13,6 +15,19 @@ router = APIRouter(tags=["meta"])
 @router.get("/health", operation_id="health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/capabilities", operation_id="capabilities")
+async def capabilities(request: Request) -> dict[str, object]:
+    """What this server supports, for a client detecting version skew.
+
+    The feature list is derived from the app's own OpenAPI document, so every
+    route the service serves is advertised as ``verb:path`` and a route added
+    later appears without anyone remembering to add it. A server old enough to
+    lack this endpoint answers with a 404, which is itself the signal that it
+    predates the negotiation.
+    """
+    return capabilities_payload(request.app, DEFAULT_SERVICE_NAME)
 
 
 @router.get("/ready", operation_id="ready")

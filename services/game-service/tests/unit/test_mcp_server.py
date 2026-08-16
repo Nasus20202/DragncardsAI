@@ -133,6 +133,15 @@ async def test_health_excluded():
     assert "health" not in names
 
 
+async def test_capabilities_excluded():
+    """Own-state negotiation is HTTP-only; a client asks before it sends."""
+    mcp = _make_mcp()
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    names = {t.name for t in tools}
+    assert "capabilities" not in names
+
+
 async def test_all_tools_have_descriptions():
     mcp = _make_mcp()
     async with Client(mcp) as client:
