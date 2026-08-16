@@ -81,3 +81,57 @@ async def test_session_manager_load_prebuilt_deck_missing_deck():
     manager = _make_manager(session)
     with pytest.raises(SessionError):
         await manager.load_prebuilt_deck(SESSION_ID, "missing")
+
+
+@pytest.mark.asyncio
+async def test_session_manager_load_prebuilt_deck_bumps_count_for_uncovered_seat():
+    """Loading for player2 while the room is laid out for 1 player must first
+    switch the player count and layout, or the hero's cards land in groups the
+    UI has no region for (visible over MCP, never on the table) — DRA-52."""
+    session = mock_session(
+        get_state=AsyncMock(return_value={"game": {"numPlayers": 1}})
+    )
+    manager = _make_manager(session)
+    await manager.load_prebuilt_deck(SESSION_ID, "set-001", player_n="player2")
+    session.set_player_count.assert_awaited_once_with(
+        num_players=2, layout_id="standard2Player"
+    )
+    session.load_prebuilt_deck.assert_awaited_once_with(
+        "Spider-Verse (Hero)", player_n="player2"
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_manager_load_prebuilt_deck_skips_bump_when_seat_covered():
+    session = mock_session(
+        get_state=AsyncMock(return_value={"game": {"numPlayers": 2}})
+    )
+    manager = _make_manager(session)
+    await manager.load_prebuilt_deck(SESSION_ID, "set-001", player_n="player2")
+    session.set_player_count.assert_not_awaited()
+    session.load_prebuilt_deck.assert_awaited_once_with(
+        "Spider-Verse (Hero)", player_n="player2"
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_manager_load_prebuilt_deck_bumps_for_deeper_seat():
+    session = mock_session(
+        get_state=AsyncMock(return_value={"game": {"numPlayers": 1}})
+    )
+    manager = _make_manager(session)
+    await manager.load_prebuilt_deck(SESSION_ID, "set-001", player_n="player3")
+    session.set_player_count.assert_awaited_once_with(num_players=3, layout_id=None)
+    session.load_prebuilt_deck.assert_awaited_once_with(
+        "Spider-Verse (Hero)", player_n="player3"
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_manager_load_prebuilt_deck_bumps_when_count_missing():
+    session = mock_session(get_state=AsyncMock(return_value={"game": {}}))
+    manager = _make_manager(session)
+    await manager.load_prebuilt_deck(SESSION_ID, "set-001", player_n="player2")
+    session.set_player_count.assert_awaited_once_with(
+        num_players=2, layout_id="standard2Player"
+    )
