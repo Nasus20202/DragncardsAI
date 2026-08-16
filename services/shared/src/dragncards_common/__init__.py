@@ -11,6 +11,9 @@ Bundles cross-service helpers that were previously copy-pasted between
 - :mod:`dragncards_common.mcp` — the MCP surface derived from a service's own
   OpenAPI schema, so a coding agent can drive every service over MCP and not
   only ``game-service``.
+- :mod:`dragncards_common.capabilities` — the ``GET /capabilities`` payload,
+  whose feature list is derived from the app's own OpenAPI document so a client
+  can detect version skew before it sends anything.
 """
 
 from __future__ import annotations
@@ -22,4 +25,5 @@ __all__ = [
     "bifrost",
     "telemetry",
     "mcp",
+    "capabilities",
 ]

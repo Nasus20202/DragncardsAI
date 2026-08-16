@@ -9,7 +9,9 @@ single source of truth for game history: nothing about a played game is retained
 and consumers such as `game-history-ui` and `agent-move-evaluation` read from here rather than
 keeping their own copies. Ingest isolates per-entry failures so one bad event cannot cost a game its
 log.
+
 ## Requirements
+
 ### Requirement: History service boundary and persistence
 The system SHALL provide a dedicated `history-service` (Python/FastAPI) that persists a per-game append-only event log and periodic game-state snapshots in a dedicated PostgreSQL database, and SHALL NOT retain game history in process memory.
 
@@ -759,3 +761,58 @@ An event recorded before the mode existed, and an event from a session in chat m
 - **WHEN** a chat session records a move
 - **THEN** the stored event SHALL state the chat mode
 
+### Requirement: Capability endpoint
+
+The history-service SHALL expose `GET /capabilities`, returning a JSON document
+with the service name, the service's version string, and the list of features
+the server supports, so a client can detect version skew before it sends
+anything.
+
+The feature list SHALL be derived from the service's own OpenAPI document — one
+`verb:path` entry per documented route, for example `get:/games` or
+`get:/games/{game_id}/events` — rather than from a hand-maintained list, so a
+route added later is advertised without anyone remembering to add it and a route
+removed stops being advertised. The derivation SHALL be asserted structurally by
+a test that reads the app's own OpenAPI document and fails if the advertised
+feature list does not cover every documented route exactly once.
+
+The endpoint SHALL be excluded from the service's MCP surface, because it
+describes the server's own state like the liveness and readiness probes, and
+SHALL remain fully functional over HTTP.
+
+A server built before this requirement SHALL answer `GET /capabilities` with
+`404`, and a client SHALL treat that response as the signal that the server
+predates the negotiation.
+
+#### Scenario: A client learns what the server supports
+
+- **WHEN** a client sends `GET /capabilities` to the history-service
+- **THEN** the service SHALL respond `200` with the service name, the version
+  string, and a feature list containing one `verb:path` entry per documented
+  route
+
+#### Scenario: A new route is advertised without a list edit
+
+- **WHEN** a route is added to the history-service and the service's OpenAPI
+  document is read
+- **THEN** the added route SHALL appear in the `/capabilities` feature list,
+  because the list is derived from the document rather than maintained by hand
+
+#### Scenario: The advertised features match the route table
+
+- **WHEN** the service's `/capabilities` response is compared against its own
+  OpenAPI document
+- **THEN** every documented route SHALL appear exactly once in the feature list
+
+#### Scenario: Capabilities is not an MCP tool
+
+- **WHEN** a client lists the history-service's MCP tools
+- **THEN** the `capabilities` tool SHALL be absent, while `GET /capabilities`
+  over HTTP SHALL keep working
+
+#### Scenario: A server that predates the endpoint is detectable
+
+- **WHEN** a client sends `GET /capabilities` to a server built before this
+  requirement
+- **THEN** the server SHALL answer `404`, and the client SHALL treat that
+  response as the signal that the server predates the negotiation

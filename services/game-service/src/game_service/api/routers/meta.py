@@ -1,6 +1,6 @@
 """Router: meta endpoints (liveness check, action catalogue)."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from game_service.logic.action_catalog import build_action_catalog_entries
 from game_service.api.models import (
@@ -10,6 +10,7 @@ from game_service.api.models import (
     HealthResponse,
     ListActionsResponse,
 )
+from game_service.telemetry import DEFAULT_SERVICE_NAME
 
 router = APIRouter(tags=["meta"])
 
@@ -552,6 +553,37 @@ def build_generic_action_catalog() -> tuple[list[ActionSchema], list[DragnLangOp
 async def health():
     """Simple liveness check."""
     return HealthResponse()
+
+
+#: The HTTP verbs FastAPI documents on a path item. Path items may also carry a
+#: non-method ``parameters`` key, which is why membership here is the filter.
+_HTTP_METHODS = frozenset(
+    {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+)
+
+
+@router.get("/capabilities", operation_id="capabilities")
+async def capabilities(request: Request) -> dict[str, object]:
+    """What this server supports, for a client detecting version skew.
+
+    The feature list is derived from the app's own OpenAPI document, so every
+    route the service serves is advertised as ``verb:path`` and a route added
+    later appears without anyone remembering to add it. A server old enough to
+    lack this endpoint answers with a 404, which is itself the signal that it
+    predates the negotiation.
+    """
+    openapi = request.app.openapi()
+    features = sorted(
+        f"{method}:{path}"
+        for path, path_item in openapi.get("paths", {}).items()
+        for method in path_item
+        if method in _HTTP_METHODS
+    )
+    return {
+        "service": DEFAULT_SERVICE_NAME,
+        "version": request.app.version,
+        "features": features,
+    }
 
 
 @router.get(

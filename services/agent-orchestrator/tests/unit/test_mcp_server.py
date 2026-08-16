@@ -103,3 +103,5 @@ async def test_probes_are_not_tools():
 
     assert "health" not in names
     assert "ready" not in names
+    # Own-state negotiation: a client asks the server over HTTP before it sends.
+    assert "capabilities" not in names
