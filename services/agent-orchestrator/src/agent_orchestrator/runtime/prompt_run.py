@@ -1154,9 +1154,12 @@ class PromptRunService:
         if response.content:
             candidate.append({"role": "assistant", "content": response.content})
         candidate.append({"role": "user", "content": TURN_CONTINUATION_INSTRUCTION})
-        estimate = estimate_tokens_for_messages(candidate) + estimate_tokens_for_tools(
-            tools
-        )
+        estimate = estimate_request(
+            system_prompt="",
+            tools=tools,
+            replay_messages=candidate,
+            context_window_size=context_window_size,
+        ).total
         budget = int(context_window_size * self._settings.context_compaction_threshold)
         if estimate >= budget:
             # Compaction cannot help: it rewrites persisted history and has no
