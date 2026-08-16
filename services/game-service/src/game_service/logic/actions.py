@@ -22,12 +22,13 @@ from __future__ import annotations
 import time
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import ConfigDict, Field
 from pydantic import field_validator
 import re
 
 from game_service.catalog.providers.marvel_champions import plugin_metadata
 from game_service.api.enums import GroupId
+from game_service.schemas.base import StrictRequest
 
 # Import enum-like Literal types exposed at the API/schema layer so internal
 # action models validate common plugin-scoped fields (group IDs, player ids,
@@ -38,7 +39,7 @@ from game_service.api.enums import GroupId
 # coupling runtime models to plugin metadata.
 
 
-class MoveCardAction(BaseModel):
+class MoveCardAction(StrictRequest):
     """Move a card to a different group/position on the table."""
 
     type: Literal["move_card"] = "move_card"
@@ -68,7 +69,7 @@ class MoveCardAction(BaseModel):
     )
 
 
-class DrawCardAction(BaseModel):
+class DrawCardAction(StrictRequest):
     """Draw one or more cards from a player's deck to their hand."""
 
     type: Literal["draw_card"] = "draw_card"
@@ -88,19 +89,19 @@ class DrawCardAction(BaseModel):
     count: int = Field(default=1, ge=1, description="Number of cards to draw")
 
 
-class NextStepAction(BaseModel):
+class NextStepAction(StrictRequest):
     """Advance the game to the next step/phase."""
 
     type: Literal["next_step"] = "next_step"
 
 
-class PrevStepAction(BaseModel):
+class PrevStepAction(StrictRequest):
     """Go back to the previous step/phase."""
 
     type: Literal["prev_step"] = "prev_step"
 
 
-class SetCardPropertyAction(BaseModel):
+class SetCardPropertyAction(StrictRequest):
     """Set an arbitrary property on a card (e.g. flip face-up/face-down)."""
 
     type: Literal["set_card_property"] = "set_card_property"
@@ -115,7 +116,7 @@ class SetCardPropertyAction(BaseModel):
     value: Any = Field(..., description="New value to set")
 
 
-class SetPlayerCountAction(BaseModel):
+class SetPlayerCountAction(StrictRequest):
     """
     Set the number of active players in the game room.
 
@@ -137,7 +138,7 @@ class SetPlayerCountAction(BaseModel):
     )
 
 
-class RawAction(BaseModel):
+class RawAction(StrictRequest):
     """
     Escape hatch: send an arbitrary DragnLang action list directly.
     Use when no typed action covers the intended operation.
@@ -160,7 +161,7 @@ class RawAction(BaseModel):
     )
 
 
-class LoadCardItem(BaseModel):
+class LoadCardItem(StrictRequest):
     """A single card entry in a LOAD_CARDS load list."""
 
     database_id: str = Field(
@@ -182,10 +183,10 @@ class LoadCardItem(BaseModel):
 
     quantity: int = Field(default=1, ge=1, description="Number of copies to load")
 
-    model_config = {"populate_by_name": True}
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
-class LoadCardsAction(BaseModel):
+class LoadCardsAction(StrictRequest):
     """
     Load a list of cards into the game by databaseId.
 
@@ -230,7 +231,7 @@ class LoadCardsAction(BaseModel):
     )
 
 
-class UnloadCardsAction(BaseModel):
+class UnloadCardsAction(StrictRequest):
     """
     Remove all cards belonging to a player or all shared/encounter cards.
 
@@ -259,28 +260,28 @@ class UnloadCardsAction(BaseModel):
     # level APIs may tighten allowed values via schema enums.
 
 
-class ExhaustCardAction(BaseModel):
+class ExhaustCardAction(StrictRequest):
     """Exhaust a card (turn it sideways)."""
 
     type: Literal["exhaust_card"] = "exhaust_card"
     instance_id: str = Field(..., description="Instance ID of the card to exhaust")
 
 
-class ReadyCardAction(BaseModel):
+class ReadyCardAction(StrictRequest):
     """Ready a card (remove exhaustion)."""
 
     type: Literal["ready_card"] = "ready_card"
     instance_id: str = Field(..., description="Instance ID of the card to ready")
 
 
-class FlipCardAction(BaseModel):
+class FlipCardAction(StrictRequest):
     """Flip a card to the next side (A → B → C → A)."""
 
     type: Literal["flip_card"] = "flip_card"
     instance_id: str = Field(..., description="Instance ID of the card to flip")
 
 
-class DealEncounterAction(BaseModel):
+class DealEncounterAction(StrictRequest):
     """Deal an encounter card to a player."""
 
     type: Literal["deal_encounter"] = "deal_encounter"
@@ -302,7 +303,7 @@ class DealEncounterAction(BaseModel):
         return v
 
 
-class DrawBoostAction(BaseModel):
+class DrawBoostAction(StrictRequest):
     """Draw a boost card from the encounter deck."""
 
     type: Literal["draw_boost"] = "draw_boost"
@@ -317,7 +318,7 @@ class DrawBoostAction(BaseModel):
         return v
 
 
-class ShuffleIntoDeckAction(BaseModel):
+class ShuffleIntoDeckAction(StrictRequest):
     """Move a card to its deck and shuffle that deck."""
 
     type: Literal["shuffle_into_deck"] = "shuffle_into_deck"
@@ -346,7 +347,7 @@ class ShuffleIntoDeckAction(BaseModel):
         return v
 
 
-class ZeroTokensAction(BaseModel):
+class ZeroTokensAction(StrictRequest):
     """Remove all tokens from a card."""
 
     type: Literal["zero_tokens"] = "zero_tokens"
@@ -355,7 +356,7 @@ class ZeroTokensAction(BaseModel):
     )
 
 
-class MulliganDrawHandAction(BaseModel):
+class MulliganDrawHandAction(StrictRequest):
     """Draw a player up to their hand size - never discards, no-op on a full hand."""
 
     type: Literal["mulligan_draw_hand"] = "mulligan_draw_hand"
@@ -372,7 +373,7 @@ class MulliganDrawHandAction(BaseModel):
         return v
 
 
-class ShadowsOfThePastAction(BaseModel):
+class ShadowsOfThePastAction(StrictRequest):
     """Resolve Shadows of the Past - move nemesis minions and side schemes."""
 
     type: Literal["shadows_of_the_past"] = "shadows_of_the_past"
@@ -387,31 +388,31 @@ class ShadowsOfThePastAction(BaseModel):
         return v
 
 
-class PlayerEndPhaseAction(BaseModel):
+class PlayerEndPhaseAction(StrictRequest):
     """End the player phase and begin villain phase."""
 
     type: Literal["player_end_phase"] = "player_end_phase"
 
 
-class VillainEncounterPhaseAction(BaseModel):
+class VillainEncounterPhaseAction(StrictRequest):
     """Execute villain encounter phase (deal facedown to all players)."""
 
     type: Literal["villain_encounter_phase"] = "villain_encounter_phase"
 
 
-class VillainEndPhaseAction(BaseModel):
+class VillainEndPhaseAction(StrictRequest):
     """End the villain phase and return to player phase."""
 
     type: Literal["villain_end_phase"] = "villain_end_phase"
 
 
-class MultipleDoubleSidedVillainsAction(BaseModel):
+class MultipleDoubleSidedVillainsAction(StrictRequest):
     """Handle multiple double-sided villains setup."""
 
     type: Literal["multiple_double_sided_villains"] = "multiple_double_sided_villains"
 
 
-class DiscardMinionAction(BaseModel):
+class DiscardMinionAction(StrictRequest):
     """Discard cards until a minion is found."""
 
     type: Literal["discard_minion"] = "discard_minion"
@@ -426,7 +427,7 @@ class DiscardMinionAction(BaseModel):
         return v
 
 
-class DiscardSideSchemeAction(BaseModel):
+class DiscardSideSchemeAction(StrictRequest):
     """Discard cards until a side scheme is found."""
 
     type: Literal["discard_side_scheme"] = "discard_side_scheme"
@@ -441,7 +442,7 @@ class DiscardSideSchemeAction(BaseModel):
         return v
 
 
-class ModifyTokensAction(BaseModel):
+class ModifyTokensAction(StrictRequest):
     """Add or remove tokens from a card."""
 
     type: Literal["modify_tokens"] = "modify_tokens"

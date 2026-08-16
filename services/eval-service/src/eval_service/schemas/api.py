@@ -10,6 +10,7 @@ from pydantic import (
     model_validator,
 )
 
+from eval_service.schemas.base import StrictRequest
 from eval_service.schemas.verdict import Scope, VerdictPayload
 
 # Terminal/non-terminal target statuses shared across response models. A target
@@ -47,7 +48,7 @@ MAX_SELECTION_LIST = 1000
 MAX_SEQ_RANGE_SPAN = 100_000
 
 
-class SeqRange(BaseModel):
+class SeqRange(StrictRequest):
     from_seq: int = Field(ge=1)
     to_seq: int = Field(ge=1)
 
@@ -60,7 +61,7 @@ class SeqRange(BaseModel):
         return self
 
 
-class Selection(BaseModel):
+class Selection(StrictRequest):
     """A target selection. At least one field must be provided."""
 
     seqs: list[int] | None = Field(default=None, max_length=MAX_SELECTION_LIST)
@@ -104,7 +105,7 @@ class RoundListResponse(BaseModel):
     rounds: list[RoundSummary]
 
 
-class JudgeReasoning(BaseModel):
+class JudgeReasoning(StrictRequest):
     """Per-evaluation reasoning controls (mirrors the Play config shape)."""
 
     enabled: bool = False
@@ -113,7 +114,7 @@ class JudgeReasoning(BaseModel):
     max_tokens: int | None = Field(default=None, ge=1, le=MAX_REASONING_TOKENS)
 
 
-class JudgeConfig(BaseModel):
+class JudgeConfig(StrictRequest):
     """Optional per-evaluation judge overrides. All fields are optional;
     omitted fields fall back to the server (env) defaults."""
 
@@ -138,7 +139,7 @@ class JudgeConfig(BaseModel):
     ) = Field(default=None, max_length=MAX_SKILL_REFERENCES)
 
 
-class EvaluationRequestBody(BaseModel):
+class EvaluationRequestBody(StrictRequest):
     scope: Scope
     selection: Selection
     force: bool = False
