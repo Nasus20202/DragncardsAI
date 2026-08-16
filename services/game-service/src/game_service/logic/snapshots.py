@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from game_service.schemas.base import StrictRequest
 
 SNAPSHOT_SCHEMA_VERSION = 1
 
 
-class GameStateSnapshot(BaseModel):
+class GameStateSnapshot(StrictRequest):
     """Versioned snapshot document for setup import/export."""
 
     schema_version: int = Field(

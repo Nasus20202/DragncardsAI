@@ -11,13 +11,14 @@ from game_service.api.enums import LayoutId, PlayerN, SeatId
 
 from game_service.logic.actions import GameAction
 from game_service.logic.snapshots import GameStateSnapshot
+from game_service.schemas.base import StrictRequest
 
 # ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
 
 
-class CreateGameRequest(BaseModel):
+class CreateGameRequest(StrictRequest):
     plugin_name: str = Field(
         default="marvel-champions",
         description="Plugin identifier to use for the new game session",
@@ -33,7 +34,7 @@ class CreateGameRequest(BaseModel):
     )
 
 
-class AttachGameRequest(BaseModel):
+class AttachGameRequest(StrictRequest):
     plugin_name: str = Field(
         default="marvel-champions",
         description="Plugin identifier for the existing room",
@@ -218,14 +219,14 @@ class ErrorResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ResetGameRequest(BaseModel):
+class ResetGameRequest(StrictRequest):
     save: bool = Field(default=False, description="Save the game before resetting")
     reload_plugin: bool = Field(
         default=False, description="Reload the plugin after resetting"
     )
 
 
-class SetSeatRequest(BaseModel):
+class SetSeatRequest(StrictRequest):
     player_id: SeatId = Field(
         description=(
             "DragnCards seat id, 'player1' to 'player4'. Not an index: DragnCards "
@@ -236,14 +237,14 @@ class SetSeatRequest(BaseModel):
     user_id: int = Field(description="DragnCards user ID to assign to the seat")
 
 
-class SetSpectatorRequest(BaseModel):
+class SetSpectatorRequest(StrictRequest):
     user_id: int = Field(description="DragnCards user ID")
     spectating: bool = Field(
         description="True to enable spectator mode, False to disable"
     )
 
 
-class SendAlertRequest(BaseModel):
+class SendAlertRequest(StrictRequest):
     message: str = Field(description="Alert message text to broadcast to the room")
 
 
@@ -273,7 +274,7 @@ class GuiUpdateResponse(BaseModel):
     )
 
 
-class SetPlayerCountRequest(BaseModel):
+class SetPlayerCountRequest(StrictRequest):
     num_players: int = Field(..., ge=1, description="Number of players (1 or more)")
     layout_id: LayoutId | None = Field(
         default=None,
