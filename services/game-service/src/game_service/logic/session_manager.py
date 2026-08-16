@@ -20,7 +20,7 @@ from game_service.dragncards.auth_cache import (
     DragnCardsIdentity,
 )
 from game_service.dragncards.http_client import create_room
-from game_service.catalog.service import load_prebuilt_deck
+from game_service.catalog.service import get_plugin_action_catalog, load_prebuilt_deck
 from game_service.coordination.history_emitter import (
     HistoryEmitter,
     NullHistoryEmitter,
@@ -46,6 +46,30 @@ from game_service.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
 tracer = get_tracer(__name__)
+
+
+def _seat_number(player_n: str) -> int | None:
+    """The 1-based seat number of a seat id like ``player3`` (-> 3)."""
+    if not player_n.startswith("player"):
+        return None
+    try:
+        return int(player_n[len("player") :])
+    except ValueError:
+        return None
+
+
+def _layout_id_for_player_count(plugin_name: str, num_players: int) -> str | None:
+    """The plugin layout for a player count, or None if the plugin has none.
+
+    Derived from the plugin's player-count menu (e.g. Marvel Champions maps
+    ``2`` to ``standard2Player``) so the count bump also switches the table
+    layout to one that has regions for the new seat's groups.
+    """
+    catalog = get_plugin_action_catalog(plugin_name)
+    for entry in catalog.player_count_layouts:
+        if entry.num_players == num_players:
+            return entry.layout_id
+    return None
 
 
 class SessionManager:
@@ -622,6 +646,7 @@ class SessionManager:
                     f"Prebuilt deck {deck_id!r} not found for plugin {session.plugin_name!r}"
                 )
             before_state = await session.get_state()
+            await self._ensure_seat_has_layout(session, player_n, before_state)
             result = await session.load_prebuilt_deck(
                 deck.get("deck_id", deck_id), player_n=player_n
             )
@@ -648,6 +673,38 @@ class SessionManager:
                 await asyncio.sleep(0.2)
 
             return result
+
+    async def _ensure_seat_has_layout(
+        self, session: GameSession, player_n: str, state: Any
+    ) -> None:
+        """Bump the room's player count before a deck load targets an uncovered seat.
+
+        DragnCards renders only the groups that have a region in the room's
+        active layout. Loading a hero deck for ``player2`` while the room is
+        still laid out for one player puts that hero's cards in groups with no
+        region: they exist in the game state (and are visible over MCP) but
+        never appear on the table. The human flow avoids this by setting the
+        player count — which switches the layout — before loading decks; this
+        replicates that order for automated callers that get it wrong (DRA-52).
+        """
+        if not isinstance(state, dict):
+            return
+        game = state.get("game")
+        if not isinstance(game, dict):
+            return
+        seat_number = _seat_number(player_n)
+        if seat_number is None or seat_number <= 1:
+            # Seat 1 is covered by every layout; a fresh room starts at 1 player.
+            return
+        raw_count = game.get("numPlayers")
+        try:
+            current_players = int(raw_count) if raw_count is not None else 1
+        except (TypeError, ValueError):
+            current_players = 1
+        if current_players >= seat_number:
+            return
+        layout_id = _layout_id_for_player_count(session.plugin_name, seat_number)
+        await session.set_player_count(num_players=seat_number, layout_id=layout_id)
 
     async def list_sessions(self) -> list[dict]:
         records = await self._session_store.list_sessions()
