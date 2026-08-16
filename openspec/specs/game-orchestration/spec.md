@@ -7,7 +7,9 @@ This spec describes how a full cooperative Marvel Champions game is orchestrated
 The separation of authority between orchestrator and player agents is the point of the capability: it is what makes each seat's recorded play attributable, evaluable, and comparable against a differently configured seat that played the same game.
 
 The mechanics that make this possible — the per-seat configuration API, child session spawning, and player identity on recorded moves — belong in `agent-orchestrator/spec.md`. The tools the orchestrator uses to do it belong in `llm-capabilities/spec.md`. How the resulting play is scored belongs in `agent-move-evaluation/spec.md`.
+
 ## Requirements
+
 ### Requirement: Orchestrator skill for cooperative Marvel Champions games
 The system SHALL provide a `marvel-champions-orchestrator` skill that instructs an agent session how to run a complete cooperative Marvel Champions game with one agent per player seat. The skill SHALL be discoverable by name through the skill catalogue and assignable to a session like any other skill.
 
@@ -26,7 +28,7 @@ The orchestrator SHALL coordinate the game and SHALL NOT make a hero's play deci
 
 In an orchestrated session the card-ownership half of this separation SHALL be enforced by the server and SHALL NOT rest on the skill's instructions: a tool call from a seat that identifies another seat's cards SHALL be refused before the tool is invoked, whether the seat was instructed to make it, persuaded into it, or chose it. The instructions in the skill SHALL remain, because an agent that understands its scope plays better than one that discovers it through errors — but they are guidance layered over enforcement, not the enforcement itself.
 
-The turn-and-phase half of the separation SHALL remain an orchestrator-side responsibility, because it concerns when an action may happen rather than whose cards it touches: the orchestrator SHALL perform phase transitions itself and SHALL treat a seat's attempt to advance the game as an illegal action to be reported.
+The turn-and-phase half of the separation SHALL also be enforced by the server, after the fact: when a seat's tool call is a phase-advancing tool (`next_step`, `prev_step`, `player_end_phase`, `villain_end_phase`) or a seat action tool, the runtime SHALL read the current phase from game state and, when the board is outside the player phase (villain phase, beginning of round, or end of round), SHALL record an illegal-action finding against that seat through the same findings store the `report_illegal_action` tool writes to. The call SHALL NOT be refused — detection is after the fact — and the finding SHALL be carried into every later invocation of that seat until the orchestrator resolves it, and SHALL reach the durable timeline as an `illegal_action` history event. The state read SHALL happen only for those phase-sensitive game-service tools, SHALL use the same game-service state read the session already holds, and SHALL degrade to no finding rather than failing the job when the state cannot be read. The acting player within the player phase is not a field in game state, so turn order within the player phase SHALL remain the orchestrator's prompt-tracked responsibility.
 
 #### Scenario: Orchestrator defers a hero decision to its seat
 - **WHEN** it is a seat's turn during the player phase
@@ -39,6 +41,24 @@ The turn-and-phase half of the separation SHALL remain an orchestrator-side resp
 #### Scenario: A seat reaching for another seat's cards is refused, not merely discouraged
 - **WHEN** a player agent in an orchestrated session calls a tool identifying another seat's cards
 - **THEN** the call SHALL be refused before the tool is invoked and the attempt SHALL be recorded on the seat's job
+
+#### Scenario: A seat advancing the phase outside the player phase gets a finding
+- **WHEN** a player agent in an orchestrated session calls a phase-advancing tool while the board is outside the player phase
+- **THEN** the call SHALL still be dispatched
+- **AND** an open illegal-action finding SHALL be recorded against that seat, carried into its later invocations and emitted as an `illegal_action` history event
+
+#### Scenario: A seat playing an action tool during the villain phase gets a finding
+- **WHEN** a player agent in an orchestrated session calls a seat action tool while the villain phase resolves
+- **THEN** the call SHALL still be dispatched
+- **AND** an open illegal-action finding SHALL be recorded against that seat
+
+#### Scenario: A seat acting during the player phase records no finding
+- **WHEN** a player agent in an orchestrated session calls an action tool or a phase-advancing tool while the board is in the player phase
+- **THEN** no finding SHALL be recorded for that call
+
+#### Scenario: A read-only or setup tool never records a finding
+- **WHEN** a player agent calls a read-only tool (`get_game_state`, card search), a lifecycle tool (`create_game`, deck loading, `set_player_count_action`) or `mulligan_draw_hand` at any step
+- **THEN** no finding SHALL be recorded for that call
 
 ### Requirement: Orchestrated round structure matches the game rules
 The orchestrator SHALL drive each round in the order defined by the Marvel Champions rules: the player phase in which every seat takes a turn in player order, the end of the player phase, the villain phase, passing the first player marker, and then the next round. The orchestrator SHALL perform the villain phase and the phase transitions itself through game-service tools rather than delegating them to a player agent.
@@ -225,4 +245,3 @@ This SHALL be achieved by where player text is placed rather than by the orchest
 #### Scenario: Player text never occupies an instruction position
 - **WHEN** a seat's report is delivered
 - **THEN** it SHALL arrive as labelled data in a tool result and SHALL NOT be placed in the orchestrator's system prompt or read as a directive
-

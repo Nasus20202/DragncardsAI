@@ -426,6 +426,18 @@ actor because history-service pins `actor` to a fixed set — which is also why 
 move by event type and not by the actor alone, so a finding is never graded as a play. The eval-service
 judge is then given the round's findings as recorded evidence to weigh, not as a verdict.
 
+One class of finding is recorded automatically rather than by the orchestrator's tool call. The seat
+guard (`runtime/seat_guard.py`) answers *whose* cards a call touches and refuses a foreign-seat call
+before dispatch; it deliberately does not answer *when*. That half now lives in
+`runtime/seat_turn_guard.py`: at a seat's call site, after the seat guard has passed, a
+phase-advancing tool (`next_step`, `prev_step`, `player_end_phase`, `villain_end_phase`) or a seat
+action tool called while the board is outside the player phase opens a finding through the same store
+and the same announcement path — durably, live, and as an `illegal_action` history event. The call is
+not refused (detection is after the fact), the state read happens only for those phase-sensitive
+game-service tools and is best-effort (an unreachable game-service means no finding, never a failed
+job), and the acting player within the player phase is not in game state, so that slice remains the
+orchestrator's prompt-tracked judgement.
+
 ### Agent Personas
 
 A **persona** is a reusable, user-authored bundle of the three things that make one agent behave
@@ -793,9 +805,12 @@ Event types include:
 - `seat_scope_violation` — a player seat's tool call named another seat's cards and was refused
   before the tool ran. Carries the caller's `player_id`, the `foreign_player_id` it reached for, the
   `tool_name`, and the `argument`/`value` that named it. Orchestrated mode only
-- `illegal_action_finding` — the orchestrator recorded, or resolved, a finding that a seat's action
-  broke the rules. Carries the `finding_id`, the `player_id` it concerns, the `violation`, the
-  `required_undo`, and a `status` of `open` or `resolved`. Orchestrated mode only
+- `illegal_action_finding` — a finding that a seat's action broke the rules was recorded, or
+  resolved. Carries the `finding_id`, the `player_id` it concerns, the `violation`, the
+  `required_undo`, and a `status` of `open` or `resolved`. The recorder is either the orchestrating
+  job's `report_illegal_action` tool or the automatic turn/phase detection
+  (`runtime/seat_turn_guard.py`), which opens one when a seat advances the phase or acts outside
+  the player phase. Orchestrated mode only
 - `turn_continued` — the provider cut the model off at its output token limit and the service
   resumed the turn automatically instead of reporting it finished. Carries the `reason`
   (`output_token_limit`), the raw provider `finish_reason`, the 1-based `continuation`, and the

@@ -12,7 +12,10 @@ from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError
 from agent_orchestrator.integrations.mcp.client import McpClientError
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
-from agent_orchestrator.runtime.builtin_tools import build_builtin_registry
+from agent_orchestrator.runtime.builtin_tools import (
+    _announce_illegal_action_finding,
+    build_builtin_registry,
+)
 from agent_orchestrator.runtime.compaction import (
     NothingToCompactError,
     perform_compaction,
@@ -43,6 +46,12 @@ from agent_orchestrator.runtime.player_agents import (
     wrap_player_message,
 )
 from agent_orchestrator.runtime.seat_guard import SeatScopeViolation, check_seat_scope
+from agent_orchestrator.runtime.seat_turn_guard import (
+    PHASE_ADVANCING_TOOLS,
+    SEAT_ACTION_TOOLS,
+    TurnAuthorityViolation,
+    check_turn_authority,
+)
 from agent_orchestrator.runtime.session_modes import is_orchestrated, session_mode
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
 from agent_orchestrator.runtime.skills import (
@@ -668,6 +677,31 @@ class PromptRunService:
                                     violation=violation,
                                 )
                                 continue
+                        # Turn and phase authority, detected after the fact
+                        # (DRA-62). The seat guard above answers *whose* cards a
+                        # call touches and refuses before dispatch; this answers
+                        # *when* and refuses nothing — a seat that advances the
+                        # phase, or acts outside the player phase, gets a finding
+                        # recorded against it instead, through the same DRA-30
+                        # illegal-action store the coordinator and the judge
+                        # already read. Like the seat guard, it applies only to
+                        # seat jobs; the orchestrating job holds no seat.
+                        if seat_identity is not None:
+                            detected = await self._detect_turn_authority_violation(
+                                session=session,
+                                seat_identity=seat_identity,
+                                exposed_tool_name=tool_call.name,
+                                tool_mapping=tool_mapping,
+                            )
+                            if detected is not None:
+                                turn_violation, round_number = detected
+                                await self._record_turn_authority_finding(
+                                    job=job,
+                                    session=session,
+                                    seat_identity=seat_identity,
+                                    violation=turn_violation,
+                                    round_number=round_number,
+                                )
                         builtin = builtin_registry.get(tool_call.name)
                         if builtin is not None:
                             logger.info(
@@ -1671,6 +1705,141 @@ class PromptRunService:
                 "tool_call_id": tool_call_id,
                 "content": json.dumps(result),
             }
+        )
+
+    async def _detect_turn_authority_violation(
+        self,
+        *,
+        session: Any,
+        seat_identity: SeatIdentity,
+        exposed_tool_name: str,
+        tool_mapping: dict[str, Any],
+    ) -> tuple[TurnAuthorityViolation, int | None] | None:
+        """The turn-authority violation a seat's call commits, if any.
+
+        Cheap by construction: the common path — builtins, read-only tools,
+        lifecycle tools, and every tool that is not a game-service tool — returns
+        before anything touches the network. Only a phase-advancing or
+        seat-action game-service tool from a seat reads game state, and that read
+        is best-effort: an unreachable game-service, a session with no game
+        attached, or an unreadable step id means no finding, never a failed job.
+
+        Returns ``(violation, round_number)`` so the finding records the round
+        the violation happened in, from the same state read.
+        """
+        definition = tool_mapping.get(exposed_tool_name)
+        if definition is None or definition.assignment_name != "game-service":
+            return None
+        tool_name = definition.actual_name
+        if (
+            tool_name not in PHASE_ADVANCING_TOOLS
+            and tool_name not in SEAT_ACTION_TOOLS
+        ):
+            return None
+        game_id = self._session_game_id(session)
+        if game_id is None:
+            return None
+        step = await self._read_game_step(game_id, tool_mapping)
+        if step is None:
+            return None
+        violation = check_turn_authority(
+            caller_player_id=seat_identity.player_id,
+            tool_name=tool_name,
+            step_id=step[0],
+        )
+        if violation is None:
+            return None
+        return violation, step[1]
+
+    async def _read_game_step(
+        self, game_id: str, tool_mapping: dict[str, Any]
+    ) -> tuple[str | None, int | None] | None:
+        """The current step id and round from game state, or ``None``.
+
+        Uses the same game-service ``get_game_state`` tool the session already
+        holds — the state-read mechanism that exists — rather than a second
+        client or a new configuration. ``ignore_failures=True`` is what makes
+        the whole read best-effort: a game-service that cannot be reached
+        degrades to no finding instead of failing the seat's job.
+        """
+        state_tool = next(
+            (
+                definition
+                for definition in tool_mapping.values()
+                if definition.assignment_name == "game-service"
+                and definition.actual_name == "get_game_state"
+            ),
+            None,
+        )
+        if state_tool is None:
+            return None
+        result = await self._mcp_tool_catalog.call_tool(
+            state_tool, {"session_id": game_id}, ignore_failures=True
+        )
+        if result.get("is_error"):
+            return None
+        content = result.get("content") or []
+        if not content:
+            return None
+        item = content[0]
+        if isinstance(item, dict) and "text" in item:
+            try:
+                item = json.loads(item["text"])
+            except TypeError, ValueError:
+                return None
+        if not isinstance(item, dict):
+            return None
+        state = item.get("state")
+        if not isinstance(state, dict):
+            return None
+        step_id = state.get("stepId")
+        round_number = state.get("roundNumber")
+        return (
+            step_id if step_id is not None else None,
+            (
+                round_number
+                if isinstance(round_number, int) and not isinstance(round_number, bool)
+                else None
+            ),
+        )
+
+    async def _record_turn_authority_finding(
+        self,
+        *,
+        job: Job,
+        session: Any,
+        seat_identity: SeatIdentity,
+        violation: TurnAuthorityViolation,
+        round_number: int | None,
+    ) -> None:
+        """Record a detected turn-authority violation through the DRA-30 store.
+
+        This is the same dispatch site the ``report_illegal_action`` built-in
+        uses: the finding is a row on the orchestrating session (so it reaches
+        the seat's inbox and the coordinator's stream), and announcing it writes
+        the durable ``job_events`` row, the live copy under the durable id, and
+        the ``illegal_action`` history event the judge reads. The seat cannot
+        close it — resolution is the coordinator's, after verifying against game
+        state, exactly as for a reported finding.
+        """
+        game_id = self._session_game_id(session)
+        finding = await self._repository.open_illegal_action(
+            seat_identity.orchestrator_session_id,
+            player_id=seat_identity.player_id,
+            violation=violation.message,
+            required_undo=violation.required_undo,
+            round_number=round_number,
+        )
+        if finding is None:
+            return
+        await _announce_illegal_action_finding(
+            repository=self._repository,
+            live_event_bus=self._live_event_bus,
+            session_id=seat_identity.orchestrator_session_id,
+            job_id=job.parent_job_id or job.id,
+            finding=finding,
+            history_emitter=self._history_emitter,
+            game_id=game_id,
         )
 
     async def _maybe_terminate_child_session(self, job: Job) -> None:

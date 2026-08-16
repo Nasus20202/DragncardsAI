@@ -60,7 +60,7 @@ and thwarting the main scheme are your turn's legal business.
 
 | Nothing checks | What that means |
 | --- | --- |
-| Turn and phase authority | The guard answers *whose* cards a call touches, never *when*. Playing out of turn or advancing a phase is caught by the orchestrator reading game state, or not at all. |
+| Turn and phase authority | The guard answers *whose* cards a call touches, never *when*. Since DRA-62 the runtime records an illegal-action finding against a seat that advances the phase (`next_step`, `prev_step`, `player_end_phase`, `villain_end_phase`) or plays action tools while the board is outside the player phase — the call is not refused, but the finding follows the seat until the coordinator resolves it. |
 | Paying a card's cost | Fact 5 below: you discard the resources yourself. Skip it and you have cheated, not errored. |
 | One form change per turn | `flip_card` flips you as often as you call it. |
 | The hand limit | Nothing discards you down; `mulligan_draw_hand` never discards. |
