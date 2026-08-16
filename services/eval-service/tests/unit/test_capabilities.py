@@ -14,9 +14,9 @@ asymmetry the ticket was filed for.
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
-from eval_service.config import Settings
 from eval_service.runtime.app import create_app
 
 #: The HTTP verbs FastAPI documents on a path item; path items may also carry a
@@ -35,8 +35,16 @@ def _documented_features(openapi: dict) -> list[str]:
     )
 
 
-def test_capabilities_are_derived_from_the_apps_own_route_table():
-    app = create_app(settings=Settings(), start_worker=False)
+@pytest.mark.asyncio
+async def test_capabilities_are_derived_from_the_apps_own_route_table(
+    repository,
+):
+    # The lifespan in `create_app` connects to PostgreSQL when no repository is
+    # supplied; CI has no Postgres, so we pass the in-memory sqlite repository
+    # from conftest.py instead. The capabilities endpoint reads only the
+    # OpenAPI document and does not touch the repository, but the lifespan
+    # still runs unless a repository is supplied, so this is the seam.
+    app = create_app(repository=repository, start_worker=False)
     openapi = app.openapi()
     expected = _documented_features(openapi)
     # A guard on the guard: if the traversal found no routes, the equality
