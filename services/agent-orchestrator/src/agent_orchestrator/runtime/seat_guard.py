@@ -62,7 +62,12 @@ batched payload is caught and reported by its path (``updates[0].groupId``).
 - **It does not police turn or phase authority.** *When* an action happens — that
   a seat must not advance the phase or play out of turn — is an orchestrator-side
   judgement made from game state, not a property of the arguments. This function
-  answers only "whose cards does this call touch".
+  answers only "whose cards does this call touch". That judgement now lives in
+  :mod:`agent_orchestrator.runtime.seat_turn_guard`: after this guard has passed,
+  the call site reads the current step from game state and records a DRA-30
+  illegal-action finding when a seat advances the phase or acts outside the
+  player phase. The seat guard answers *whose*, the turn guard answers *when*,
+  and the two modules read as one story.
 - **Traversal is bounded.** Past :data:`MAX_TRAVERSAL_DEPTH` levels of nesting or
   :data:`MAX_TRAVERSAL_NODES` visited nodes, values are simply not examined, so a
   pathological payload cannot make the guard cost more than the tool call it
