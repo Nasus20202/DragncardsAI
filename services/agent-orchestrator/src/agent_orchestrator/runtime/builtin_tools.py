@@ -36,6 +36,9 @@ from agent_orchestrator.runtime.player_agents import (
 )
 from agent_orchestrator.runtime.session_modes import is_orchestrated
 from agent_orchestrator.runtime.skills import SkillRegistry, enabled_skill_assignments
+from agent_orchestrator.runtime.subagent_failsafes import (
+    FAILSAFE_REASON_BY_ERROR_CODE,
+)
 from agent_orchestrator.storage.repository import Repository
 
 logger = logging.getLogger(__name__)
@@ -436,7 +439,14 @@ def _make_child_monitor(
                 **(extra_payload or {}),
             }
             if not outcome.has_result:
-                outcome_payload["reason"] = outcome.kind
+                # A child ended by a failsafe (DRA-51) carries the failsafe's
+                # own reason — `timeout`, `error_loop`, `no_progress` — so the
+                # parent's timeline says *why* rather than only that the child
+                # failed. Every other outcome keeps the terminal status it
+                # reached, as before.
+                outcome_payload["reason"] = FAILSAFE_REASON_BY_ERROR_CODE.get(
+                    outcome.error_code or "", outcome.kind
+                )
                 if outcome.error_code:
                     outcome_payload["error_code"] = outcome.error_code
                 if outcome.error_message:

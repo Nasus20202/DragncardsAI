@@ -118,3 +118,32 @@ def test_automatic_continuation_can_be_switched_off_by_environment():
         Settings(AUTO_CONTINUE_TRUNCATED_TURNS=False).auto_continue_truncated_turns
         is False
     )
+
+
+def test_subagent_failsafe_settings_defaults_and_validation():
+    """DRA-51: the subagent timeout is large and the counters are bounded."""
+    settings = Settings()
+    assert settings.subagent_timeout_seconds == 30 * 60.0
+    assert settings.subagent_failsafe_max_consecutive_errors == 3
+    assert settings.subagent_failsafe_max_empty_responses == 3
+
+    assert Settings(SUBAGENT_TIMEOUT_SECONDS=60).subagent_timeout_seconds == 60
+    assert (
+        Settings(
+            SUBAGENT_FAILSAFE_MAX_CONSECUTIVE_ERRORS=2
+        ).subagent_failsafe_max_consecutive_errors
+        == 2
+    )
+    assert (
+        Settings(
+            SUBAGENT_FAILSAFE_MAX_EMPTY_RESPONSES=5
+        ).subagent_failsafe_max_empty_responses
+        == 5
+    )
+
+    with pytest.raises(ValueError):
+        Settings(subagent_timeout_seconds=0)
+    with pytest.raises(ValueError):
+        Settings(subagent_failsafe_max_consecutive_errors=0)
+    with pytest.raises(ValueError):
+        Settings(subagent_failsafe_max_empty_responses=0)

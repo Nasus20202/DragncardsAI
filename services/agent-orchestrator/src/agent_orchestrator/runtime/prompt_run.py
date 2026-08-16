@@ -51,6 +51,10 @@ from agent_orchestrator.runtime.skills import (
     enabled_skill_assignments,
     render_prompt_with_inline_skills,
 )
+from agent_orchestrator.runtime.subagent_failsafes import (
+    SubagentFailsafe,
+    SubagentFailsafeError,
+)
 from agent_orchestrator.runtime.system_prompts import (
     build_subagent_system_prompt,
     build_system_prompt,
@@ -193,6 +197,22 @@ class PromptRunService:
                     model_config.model_name,
                 )
                 is_subagent = job.parent_job_id is not None
+                # A subagent gets the three failsafes (DRA-51): an absolute
+                # deadline, a repeated-error counter, and an empty-response
+                # counter. Top-level jobs never construct one, so their run
+                # keeps exactly the behaviour it had before the failsafes
+                # existed.
+                failsafe = None
+                if is_subagent:
+                    failsafe = SubagentFailsafe(
+                        timeout_seconds=self._settings.subagent_timeout_seconds,
+                        max_consecutive_errors=(
+                            self._settings.subagent_failsafe_max_consecutive_errors
+                        ),
+                        max_empty_responses=(
+                            self._settings.subagent_failsafe_max_empty_responses
+                        ),
+                    )
                 active_skills = enabled_skill_assignments(session.enabled_skills)
                 # The persona snapshot was captured onto this session when the
                 # child was spawned, or when this session adopted a persona of its
@@ -359,6 +379,9 @@ class PromptRunService:
                         await self._maybe_terminate_child_session(full_job)
                         return
 
+                    if failsafe is not None:
+                        failsafe.check_timeout()
+
                     reasoning_event_id: int | None = None
                     output_event_id: int | None = None
                     accumulated_reasoning: list[str] = []
@@ -447,23 +470,65 @@ class PromptRunService:
                                 },
                             )
 
-                    with tracer.start_as_current_span(
-                        "agent_orchestrator.chat_completion",
-                        attributes={
-                            "job.id": job.id,
-                            "provider.id": model_config.provider_id,
-                            "model.name": model_config.model_name,
-                        },
-                    ):
-                        response = await self._bifrost_client.chat_completion(
-                            model_config.provider_id,
-                            model_config.model_name,
-                            messages,
-                            tools,
-                            model_config.gateway_options,
-                            model_config.provider_options,
-                            on_delta=on_bifrost_delta,
+                    try:
+                        with tracer.start_as_current_span(
+                            "agent_orchestrator.chat_completion",
+                            attributes={
+                                "job.id": job.id,
+                                "provider.id": model_config.provider_id,
+                                "model.name": model_config.model_name,
+                            },
+                        ):
+                            chat_call = self._bifrost_client.chat_completion(
+                                model_config.provider_id,
+                                model_config.model_name,
+                                messages,
+                                tools,
+                                model_config.gateway_options,
+                                model_config.provider_options,
+                                on_delta=on_bifrost_delta,
+                            )
+                            if failsafe is not None:
+                                # The deadline bounds the call itself, so a
+                                # provider that hangs is cancelled when the
+                                # budget is spent rather than holding the
+                                # worker (DRA-51).
+                                response = await asyncio.wait_for(
+                                    chat_call, timeout=failsafe.remaining_seconds()
+                                )
+                            else:
+                                response = await chat_call
+                    except asyncio.TimeoutError:
+                        # Either the bounded call above spent the whole budget,
+                        # or a provider raised its own timeout. Both mean "no
+                        # response within budget"; `check_timeout` turns that
+                        # into the failsafe only when the budget really is
+                        # spent, so a provider timeout that landed early keeps
+                        # its existing classification.
+                        if failsafe is None:
+                            raise
+                        failsafe.check_timeout()
+                        raise
+                    except (BifrostError, McpClientError) as exc:
+                        if failsafe is None:
+                            raise
+                        # A subagent's model-call failure is counted by error
+                        # code instead of ending the run, so a repeating
+                        # transport failure is detected as an error loop after
+                        # three identical codes rather than failing on the
+                        # first blip (DRA-51).
+                        failure = self.classify_execution_failure(exc)
+                        failsafe.note_model_error(
+                            failure["code"], message=failure["message"]
                         )
+                        logger.warning(
+                            "Job %s subagent model-call failure code=%s; "
+                            "the run continues and will fail on the third "
+                            "identical code",
+                            job.id,
+                            failure["code"],
+                        )
+                        continue
 
                     if reasoning_event_id is not None and accumulated_reasoning:
                         await self._repository.update_event(
@@ -497,6 +562,12 @@ class PromptRunService:
                         round_tokens = estimate_tokens_for_messages(messages)
                     accumulated_job_tokens += round_tokens
 
+                    if failsafe is not None:
+                        # Counts the response against the no-progress and error
+                        # streaks; raises `subagent_no_progress` on the third
+                        # consecutive empty response (DRA-51).
+                        failsafe.note_response(response)
+
                     if not response.tool_calls:
                         # "No tool calls" used to mean both "the model answered"
                         # and "the model stopped for some other reason". A
@@ -521,6 +592,16 @@ class PromptRunService:
                                 continued_segments.append(response.content)
                                 continuations += 1
                                 continue
+
+                        if failsafe is not None and failsafe.is_empty(response):
+                            # An empty, non-truncated answer is not a
+                            # completion for a subagent: it is the no-progress
+                            # condition, counted by `note_response` above and
+                            # failed after three consecutive ones. Reaching
+                            # here the streak is below the cap, so the run
+                            # loops back to the model instead of completing
+                            # with nothing (DRA-51).
+                            continue
 
                         logger.info(
                             "Job %s completed without further tool calls", job.id
@@ -733,6 +814,19 @@ class PromptRunService:
                 )
                 await self._maybe_terminate_child_session(full_job)
                 return
+            except SubagentFailsafeError as exc:
+                # A failsafe ends a subagent that would otherwise hang
+                # (DRA-51). Recorded through the ordinary failure path so the
+                # job, the event, the parent's wait and the child monitor all
+                # see the same definitive outcome.
+                logger.warning(
+                    "Job %s ended by subagent failsafe code=%s message=%s",
+                    job.id,
+                    exc.error_code,
+                    exc.message,
+                )
+                job_span.set_attribute("job.status", "failed")
+                await self.record_failure(full_job, exc.as_failure())
             except BifrostError as exc:
                 failure = self.classify_execution_failure(exc)
                 logger.warning(
