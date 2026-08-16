@@ -955,14 +955,15 @@ Some routes are deliberately absent from MCP, declared in
 Exclusion applies to MCP only. Every one of those endpoints still works over HTTP, for the
 dashboard and for a developer who types it deliberately.
 
-**Strict request bodies do not reach a tool call.** The endpoints' OpenAPI schemas declare
-`additionalProperties: false`, but FastMCP builds a tool's input schema by flattening the body's
-properties alongside the path parameters into a fresh object, and does not carry the flag up to
-that object's root. It does keep it on a *nested* model, so `compact_session` and
-`save_session_player` each enforce it on one nested argument. Everywhere else an unknown tool
-argument is dropped by FastMCP's request director before the HTTP call is built — it becomes a
-warning in this service's log and a successful tool result to the model, and the server never
-sees it. Do not read the OpenAPI document and conclude a tool call is protected.
+**Strict request bodies reach a tool call through the flattened schema's root.** The endpoints'
+OpenAPI schemas declare `additionalProperties: false`, and FastMCP builds a tool's input schema by
+flattening the body's properties alongside the path parameters into a fresh object — dropping the
+flag on the way. The shared MCP bootstrap (`dragncards_common.mcp`) re-applies
+`additionalProperties: false` at that flattened root on every tool, so a strict client refuses an
+unknown tool argument at inference time, before the call is built. That is the layer the flag
+protects: the server's request director still drops an argument it does not know and reports
+success, so a non-strict client can still provoke the silent drop. Do not read the OpenAPI
+document alone and conclude a tool call is protected.
 
 The end-to-end debugging loop this surface exists for — create a game, start a player agent, read
 its actions, read the live board, request an evaluation, read the verdict — is documented in the

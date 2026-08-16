@@ -36,6 +36,17 @@ routes it will not expose, and three kinds are always kept out:
 
 Excluding a route removes it from MCP only. The HTTP endpoint is untouched, so
 nothing here reduces what the dashboard or a human with ``curl`` can do.
+
+**Tool calls are strict against the endpoint's own schema.** ``extra="forbid"``
+on a request body model does not by itself reach a tool call: FastMCP flattens
+the body's properties alongside the path parameters into a fresh object and drops
+the body model's ``additionalProperties`` flag on the way, and an argument the
+route's parameter map does not know is then dropped by the request director with
+a WARNING in the service log — a successful tool result to the model. The
+bootstrap re-applies ``additionalProperties: false`` at the flattened schema's
+root via FastMCP's ``mcp_component_fn`` hook, so a strict client (Claude among
+them) refuses a hallucinated argument at inference time, before the call reaches
+the director.
 """
 
 from __future__ import annotations
@@ -45,10 +56,35 @@ from collections.abc import Sequence
 from typing import Any
 
 from fastmcp import FastMCP
-from fastmcp.server.providers.openapi import MCPType, RouteMap
+from fastmcp.server.providers.openapi import MCPType, OpenAPITool, RouteMap
 from fastmcp.utilities.lifespan import combine_lifespans
 
 logger = logging.getLogger(__name__)
+
+
+def _refuse_unknown_tool_arguments(route: Any, component: Any) -> None:
+    """Make a generated tool's input schema refuse arguments its endpoint does not take.
+
+    FastMCP builds a tool's parameters by flattening the request body's
+    properties alongside the route's path parameters into a freshly constructed
+    ``{'type': 'object', 'properties': ..., 'required': ...}``, and never copies
+    the body model's ``additionalProperties`` flag up to that object's root — so
+    ``extra="forbid"`` on a request model survives only on nested models and the
+    tool call itself stays open. An argument the route's parameter map does not
+    know is then dropped by FastMCP's request director before the HTTP request is
+    built, and the model sees a successful call.
+
+    This is FastMCP's own ``mcp_component_fn`` hook, invoked once per generated
+    component. Re-applying the flag at the flattened root makes a strict client
+    (Claude among them — FastMCP's defaults already lean on this) refuse the call
+    at inference time, before it reaches the director.
+    """
+    if not isinstance(component, OpenAPITool):
+        return
+    parameters = getattr(component, "parameters", None)
+    if isinstance(parameters, dict):
+        parameters["additionalProperties"] = False
+
 
 #: Where every service mounts its streamable-HTTP MCP transport. Clients address
 #: it with a trailing slash (``http://localhost:4002/mcp/``).
@@ -105,7 +141,12 @@ def build_mcp_server(
         name,
         len(route_maps),
     )
-    return FastMCP.from_fastapi(app=app, name=name, route_maps=route_maps)
+    return FastMCP.from_fastapi(
+        app=app,
+        name=name,
+        route_maps=route_maps,
+        mcp_component_fn=_refuse_unknown_tool_arguments,
+    )
 
 
 def mount_mcp_server(

@@ -80,6 +80,25 @@ async def test_tools_are_named_after_the_endpoint_operation_ids():
     }
 
 
+async def test_every_tool_refuses_arguments_the_endpoint_does_not_take():
+    """The flattened tool schema carries `additionalProperties: false` at its root.
+
+    FastMCP builds a tool's parameters by flattening the body's properties
+    alongside the path parameters into a fresh object and never copies the body
+    model's `additionalProperties` flag up to that root, so a strict client would
+    otherwise accept — and the request director would silently drop — any
+    argument the endpoint does not define. The bootstrap re-applies the flag, and
+    this test pins that it reaches every tool in the surface.
+    """
+    server = build_mcp_server(app=build_app(), name="svc")
+
+    tools = await server.list_tools()
+
+    assert len(tools) > 0
+    for tool in tools:
+        assert tool.parameters.get("additionalProperties") is False, tool.name
+
+
 async def test_a_path_regex_excludes_every_method_on_that_path():
     server = build_mcp_server(
         app=build_app(),

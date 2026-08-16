@@ -3,11 +3,34 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastmcp import FastMCP
-from fastmcp.server.providers.openapi import MCPType, RouteMap
+from fastmcp.server.providers.openapi import MCPType, OpenAPITool, RouteMap
 
 logger = logging.getLogger(__name__)
+
+
+def _refuse_unknown_tool_arguments(route: Any, component: Any) -> None:
+    """Re-apply ``additionalProperties: false`` at a tool's flattened schema root.
+
+    FastMCP builds a tool's parameters by flattening the request body's
+    properties alongside the path parameters into a fresh object and never copies
+    the body model's ``additionalProperties`` flag up to that root, so an
+    argument the route's parameter map does not know is dropped by the request
+    director with a log warning and the model sees a successful call. The flag at
+    the root is what a strict client validates a generated call against, so a
+    hallucinated argument is refused at inference time instead.
+
+    This service predates ``dragncards_common.mcp`` and keeps an equivalent copy
+    of the shared bootstrap; this hook mirrors the one that lives there, and the
+    two must stay in step.
+    """
+    if not isinstance(component, OpenAPITool):
+        return
+    parameters = getattr(component, "parameters", None)
+    if isinstance(parameters, dict):
+        parameters["additionalProperties"] = False
 
 
 def create_mcp_server(session_manager, fastapi_app) -> FastMCP:
@@ -22,6 +45,7 @@ def create_mcp_server(session_manager, fastapi_app) -> FastMCP:
     return FastMCP.from_fastapi(
         app=fastapi_app,
         name="game-service",
+        mcp_component_fn=_refuse_unknown_tool_arguments,
         route_maps=[
             # /health is noise for an LLM client
             RouteMap(pattern=r"^/health$", mcp_type=MCPType.EXCLUDE),
