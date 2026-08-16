@@ -121,23 +121,32 @@ rules:
   proposal:
     - Keep proposals concise (1-2 pages). The "why" matters more than the "how".
     - Always include a Non-goals section to prevent scope creep.
-    - List only capabilities that have spec-level requirement changes — not implementation details.
+    - List only capabilities that have spec-level requirement changes — not
+      implementation details.
     - Check openspec/specs/ before naming new capabilities to avoid duplicates.
 
   specs:
     - Use SHALL/MUST for all normative requirements. Never use "should" or "may".
     - Every requirement MUST have at least one concrete WHEN/THEN scenario.
-    - Scenarios must use exactly 4 hashtags (####). Never use 3 hashtags or bullets for scenarios.
+    - Scenarios must use exactly 4 hashtags (####). Never use 3 hashtags or
+      bullets for scenarios.
     - Specs should be testable — each scenario is a potential test case.
-    - When adding requirements for the game-service, check the existing spec first to avoid duplication.
+    - When adding requirements for the game-service, check the existing spec
+      first to avoid duplication.
 
   design:
     - Focus on architecture and key decisions, not line-by-line implementation.
-    - Every decision MUST include alternatives considered and the reason they were rejected.
-    - Explicitly call out risks that relate to the DragnCards WebSocket protocol or upstream behavior we don't control.
+    - Every decision MUST include alternatives considered and the reason they
+      were rejected.
+    - Explicitly call out risks that relate to the DragnCards WebSocket protocol
+      or upstream behavior we don't control.
 
   tasks:
     - "Every task MUST use checkbox format: `- [ ] X.Y description`"
-    - Tasks that touch the WebSocket/Phoenix layer should be separate from HTTP API tasks.
-    - Include integration test tasks alongside the features they test (not as a separate phase at the end).
+    - Tasks that touch the WebSocket/Phoenix layer should be separate from HTTP
+      API tasks.
+    - Include integration test tasks alongside the features they test (not as a
+      separate phase at the end).
     - Keep tasks small — completable in a single focused session.
+githubCopilot:
+  cloudAgent: true
