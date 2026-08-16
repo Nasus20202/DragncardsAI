@@ -150,6 +150,23 @@ async def test_all_tools_have_descriptions():
         assert tool.description, f"Tool {tool.name!r} has no description"
 
 
+async def test_every_tool_refuses_arguments_the_endpoint_does_not_take():
+    """A tool's input schema forbids additional properties at the root.
+
+    FastMCP flattens a body's properties alongside the path parameters into a
+    fresh object and drops the body model's `additionalProperties` flag on the
+    way, so without this an unknown tool argument is dropped by FastMCP's request
+    director with a log warning only, and the model sees a successful call. This
+    service keeps an equivalent copy of the shared bootstrap, so it must carry
+    the same flag the shared one does.
+    """
+    mcp = _make_mcp()
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    for tool in tools:
+        assert tool.inputSchema.get("additionalProperties") is False, tool.name
+
+
 async def test_execute_action_requires_session_id_and_action():
     mcp = _make_mcp()
     async with Client(mcp) as client:

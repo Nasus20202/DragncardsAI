@@ -47,7 +47,13 @@ the save succeeded (DRA-53).
 - **It does not protect against an orchestrator older than the field.** The check runs on the
   server, so only a server that already carries it can refuse. The client-side half is the
   dashboard's `unappliedSessionSettings`; do not delete it as redundant.
-- **It does not reach an MCP tool call.** See **Two MCP directions** below.
+- **It reaches an MCP tool call only through the schema, not the HTTP body.**
+  FastMCP flattens a body's properties alongside the path parameters into a fresh
+  tool schema and drops `additionalProperties` on the way, so the shared MCP
+  bootstrap re-applies `additionalProperties: false` at the flattened root. That
+  makes a *strict client* refuse an unknown tool argument at inference time,
+  before the call is built; the server's own request director still drops an
+  argument it does not know with a log warning. See **Two MCP directions** below.
 
 ### Sessions
 
@@ -186,13 +192,19 @@ because both live under the name "MCP":
   layer, and there should not be one — it would be a second implementation of the API, free to
   drift from the first.
 
-**A strict request body does not make a tool call strict.** FastMCP builds a tool's input schema
-by flattening the body's properties alongside the path parameters into a fresh object and does not
-copy `additionalProperties` up to that object's root — it keeps it only on a *nested* model, which
-today is `compact_session` and `save_session_player`. An argument the route's parameter map does
-not know is dropped by FastMCP's request director before the HTTP request is built, so it is a log
-line here and a successful tool result to the model. Do not read `additionalProperties: false` in
-the OpenAPI document and conclude the tool surface is covered.
+**A strict request body reaches a tool call through the flattened schema's root.**
+FastMCP builds a tool's input schema by flattening the body's properties alongside
+the path parameters into a fresh object and does not copy `additionalProperties`
+up to that object's root — it used to keep it only on a *nested* model
+(`compact_session` and `save_session_player`). The shared bootstrap
+(`dragncards_common.mcp`) now re-applies `additionalProperties: false` at the
+flattened root of every tool via FastMCP's `mcp_component_fn` hook, so a strict
+client refuses an argument the endpoint does not take at inference time, before
+the call is built. That is the only layer the flag protects: the server's own
+request director still drops an unknown argument before the HTTP request is built
+and reports success — so a non-strict client can still provoke the old silent
+drop, and do not read the OpenAPI document alone and conclude the tool surface is
+covered. The surface test asserts the flag on every reachable tool.
 
 Because tools come from the schema, **adding a route to this service adds an MCP tool
 automatically**. Give every route an explicit `operation_id`: without one, FastAPI derives a

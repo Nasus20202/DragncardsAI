@@ -11,15 +11,22 @@ that quietly matches nothing looks identical to one that works.
 
 from __future__ import annotations
 
+import jsonschema
+import pytest
+
 from agent_orchestrator import main as main_module
 from agent_orchestrator import mcp_server
 from agent_orchestrator.config import Settings
 from agent_orchestrator.runtime.app import create_app
 
 
-async def tool_names() -> set[str]:
+async def tools() -> list:
     server = mcp_server.mount(create_app(settings=Settings()))
-    return {tool.name for tool in await server.list_tools()}
+    return await server.list_tools()
+
+
+async def tool_names() -> set[str]:
+    return {tool.name for tool in await tools()}
 
 
 def test_the_entrypoint_mounts_this_services_surface():
@@ -105,3 +112,40 @@ async def test_probes_are_not_tools():
     assert "ready" not in names
     # Own-state negotiation: a client asks the server over HTTP before it sends.
     assert "capabilities" not in names
+
+
+async def test_every_tool_refuses_arguments_the_endpoint_does_not_take():
+    """A tool's input schema forbids additional properties at the root.
+
+    FastMCP flattens a body's properties alongside the path parameters into a
+    fresh object and drops the body model's `additionalProperties` flag on the
+    way, so without this the strict request bodies this service declares never
+    reach a tool call and an unknown argument is dropped by FastMCP's request
+    director with a log warning only.
+    """
+    for tool in await tools():
+        assert tool.parameters.get("additionalProperties") is False, tool.name
+
+
+async def test_a_hallucinated_tool_argument_is_refused_not_dropped():
+    """A call with an unknown argument fails the served input schema.
+
+    A strict client validates a generated call against the tool's inputSchema
+    before sending it, so `additionalProperties: false` at the root makes the
+    inference-time layer refuse `allowed_subagants` — the argument never reaches
+    the request director that would otherwise drop it and report success. This
+    exercises the exact schema that client sees, via the same JSON Schema
+    validation it applies.
+    """
+    create_session = next(
+        tool for tool in await tools() if tool.name == "create_session"
+    )
+    schema = create_session.parameters
+
+    # A valid call — every field optional — still validates.
+    jsonschema.validate({}, schema)
+
+    # A hallucinated argument is refused, naming the offending key.
+    with pytest.raises(jsonschema.ValidationError) as excinfo:
+        jsonschema.validate({"allowed_subagants": ["nope"]}, schema)
+    assert "allowed_subagants" in str(excinfo.value)
