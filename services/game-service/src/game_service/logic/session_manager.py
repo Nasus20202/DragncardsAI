@@ -699,7 +699,7 @@ class SessionManager:
         raw_count = game.get("numPlayers")
         try:
             current_players = int(raw_count) if raw_count is not None else 1
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             current_players = 1
         if current_players >= seat_number:
             return
