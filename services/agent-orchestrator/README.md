@@ -628,6 +628,35 @@ waiting, and a `subagent_failed` event with `reason: "wait_timeout"` is recorded
 the stall is visible in the session timeline. A job orphaned by a hard worker kill (SIGKILL, OOM)
 still stays `running` — nothing reclaims it yet — but it can no longer hold a parent hostage.
 
+#### Failsafes that end a stuck child
+
+The wait above bounds the **parent**. The child itself is bounded by three failsafes (DRA-51), so a
+subagent that would otherwise run forever — a provider call that never returns, a model-call failure
+repeating with the same error code, or a model that keeps answering with nothing — fails its own job
+instead of hanging and spending tokens:
+
+- **Timeout** — the run must reach a terminal event within
+  `SUBAGENT_TIMEOUT_SECONDS` (default 30 minutes). The deadline bounds the model call itself, so a
+  hanging provider is cancelled when the budget is spent.
+- **Error loop** — the same model-call `error_code` on three consecutive calls
+  (`SUBAGENT_FAILSAFE_MAX_CONSECUTIVE_ERRORS`) fails the run with `subagent_error_loop`. A different
+  code, or a successful call, resets the streak.
+- **No progress** — an empty response (no tool calls, no content) is not a completion for a subagent;
+  three consecutive ones (`SUBAGENT_FAILSAFE_MAX_EMPTY_RESPONSES`) fail the run with
+  `subagent_no_progress`. Any content or tool call resets the streak.
+
+```text
+SUBAGENT_TIMEOUT_SECONDS=1800                     # absolute budget for the whole child run
+SUBAGENT_FAILSAFE_MAX_CONSECUTIVE_ERRORS=3        # same error code this many times in a row fails
+SUBAGENT_FAILSAFE_MAX_EMPTY_RESPONSES=3           # empty responses this many times in a row fails
+```
+
+The child's job is marked `failed` with the failsafe's error code, the `subagent_failed` event the
+monitor appends to the parent job carries the matching reason (`timeout`, `error_loop`,
+`no_progress`), and `wait_for_subagent` returns the failure to the parent agent. The failsafe failures
+are non-retryable: the child is never re-queued, and the parent agent may re-spawn as its own turn
+allows. Top-level jobs are unaffected — the failsafes exist only for subagent runs.
+
 ### Asking The User
 
 Master prompt jobs also get an `ask_user` built-in tool, so a decision that belongs to the human is

@@ -104,6 +104,34 @@ class Settings(BaseSettings):
     default_job_max_attempts: int = 2
     subagent_wait_timeout_seconds: float = 600.0
     subagent_wait_poll_interval_seconds: float = 5.0
+    # Failsafes that end a subagent run which would otherwise hang (DRA-51).
+    # `subagent_timeout_seconds` is the absolute budget a subagent has to reach
+    # a terminal event; it is deliberately large (30 minutes) because a legit
+    # run may spend minutes in long tool calls, and deliberately independent of
+    # the parent-side `subagent_wait_timeout_seconds`, which bounds how long a
+    # parent blocks on one wait. The two counters bound the degenerate runs:
+    # three consecutive identical model-call failures, or three consecutive
+    # empty responses, fail the subagent rather than leaving it running.
+    subagent_timeout_seconds: float = Field(
+        default=30 * 60.0,
+        validation_alias=AliasChoices(
+            "subagent_timeout_seconds", "SUBAGENT_TIMEOUT_SECONDS"
+        ),
+    )
+    subagent_failsafe_max_consecutive_errors: int = Field(
+        default=3,
+        validation_alias=AliasChoices(
+            "subagent_failsafe_max_consecutive_errors",
+            "SUBAGENT_FAILSAFE_MAX_CONSECUTIVE_ERRORS",
+        ),
+    )
+    subagent_failsafe_max_empty_responses: int = Field(
+        default=3,
+        validation_alias=AliasChoices(
+            "subagent_failsafe_max_empty_responses",
+            "SUBAGENT_FAILSAFE_MAX_EMPTY_RESPONSES",
+        ),
+    )
     ask_user_timeout_seconds: float = 600.0
     ask_user_poll_interval_seconds: float = 2.0
     game_service_mcp_url: str = Field(
@@ -295,6 +323,29 @@ class Settings(BaseSettings):
     def validate_subagent_wait_poll_interval(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("subagent_wait_poll_interval_seconds must be positive")
+        return value
+
+    @field_validator("subagent_timeout_seconds")
+    @classmethod
+    def validate_subagent_timeout(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("subagent_timeout_seconds must be positive")
+        return value
+
+    @field_validator("subagent_failsafe_max_consecutive_errors")
+    @classmethod
+    def validate_subagent_failsafe_max_consecutive_errors(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(
+                "subagent_failsafe_max_consecutive_errors must be at least 1"
+            )
+        return value
+
+    @field_validator("subagent_failsafe_max_empty_responses")
+    @classmethod
+    def validate_subagent_failsafe_max_empty_responses(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("subagent_failsafe_max_empty_responses must be at least 1")
         return value
 
     @field_validator("ask_user_timeout_seconds")
