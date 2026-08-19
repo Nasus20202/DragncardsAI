@@ -51,10 +51,16 @@ class McpClient:
             McpToolDefinition(
                 name=tool.name,
                 description=tool.description,
-                input_schema=tool.inputSchema or {"type": "object", "properties": {}},
+                input_schema=self._tool_input_schema(tool),
             )
             for tool in result.tools
         ]
+
+    def _tool_input_schema(self, tool: Any) -> dict[str, Any]:
+        schema = getattr(tool, "inputSchema", None)
+        if schema is None:
+            schema = getattr(tool, "input_schema", None)
+        return schema or {"type": "object", "properties": {}}
 
     async def call_tool(
         self,
