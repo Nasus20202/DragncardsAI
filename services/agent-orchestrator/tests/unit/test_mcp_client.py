@@ -64,3 +64,20 @@ def test_unpack_transport_streams_rejects_invalid_shapes():
 
     with pytest.raises(ValueError, match="MCP transport must yield"):
         client._unpack_transport_streams((object(),))
+
+
+def test_tool_input_schema_supports_camel_and_snake_case():
+    client = McpClient(timeout_seconds=30.0)
+
+    class Camel:
+        inputSchema = {"type": "object", "properties": {"a": {"type": "string"}}}
+
+    class Snake:
+        input_schema = {"type": "object", "properties": {"b": {"type": "string"}}}
+
+    class Missing:
+        pass
+
+    assert client._tool_input_schema(Camel()) == Camel.inputSchema
+    assert client._tool_input_schema(Snake()) == Snake.input_schema
+    assert client._tool_input_schema(Missing()) == {"type": "object", "properties": {}}
