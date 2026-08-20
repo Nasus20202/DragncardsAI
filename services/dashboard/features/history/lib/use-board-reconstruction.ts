@@ -72,7 +72,8 @@ export interface BoardReconstruction {
  */
 export function useBoardReconstruction(
   gameId: string | null,
-  selectedSeq: number | null
+  selectedSeq: number | null,
+  platform: "dragncards" | "marvel-lcg" = "dragncards"
 ): BoardReconstruction {
   const [built, setBuilt] = useState<Reconstruction | null>(null);
   const [isOpening, setIsOpening] = useState(false);
@@ -176,6 +177,10 @@ export function useBoardReconstruction(
 
   const open = useCallback(async () => {
     if (!gameId || selectedSeq === null) return;
+    if (platform !== "dragncards") {
+      setFailure({ gameId, seq: selectedSeq, message: "This platform cannot be rewound into a throwaway copy." });
+      return;
+    }
     setFailure(null);
     setIsOpening(true);
 
@@ -247,7 +252,7 @@ export function useBoardReconstruction(
     } finally {
       setIsOpening(false);
     }
-  }, [gameId, selectedSeq, disposeSession]);
+  }, [gameId, selectedSeq, disposeSession, platform]);
 
   return { reconstruction, isOpening, error, open, close };
 }

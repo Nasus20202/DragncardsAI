@@ -4,6 +4,7 @@ import { Button, Chip, Spinner } from "@heroui/react";
 
 import { DragnCardsIframe } from "@/features/games/components/dragncards-iframe";
 import { Reconstruction } from "@/features/history/lib/use-board-reconstruction";
+import { GamePlatform } from "@/features/shared/lib/types";
 
 /**
  * The "open board at this event" trigger, shown in the controls column. The
@@ -17,6 +18,7 @@ export function BoardOpenControl({
   error,
   isOpen,
   onOpen,
+  platform = "dragncards",
 }: {
   gameId: string | null;
   selectedSeq: number | null;
@@ -24,7 +26,9 @@ export function BoardOpenControl({
   error: string | null;
   isOpen: boolean;
   onOpen: () => void;
+  platform?: GamePlatform;
 }) {
+  const unavailable = platform !== "dragncards";
   return (
     <div
       className="flex flex-col gap-2 border-t border-default-200/60 p-4"
@@ -43,10 +47,10 @@ export function BoardOpenControl({
         around in. This game is not changed, and the copy is discarded when you
         close it.
       </p>
-      <Button
+        <Button
         type="button"
         variant="secondary"
-        isDisabled={gameId === null || selectedSeq === null || isOpening}
+          isDisabled={unavailable || gameId === null || selectedSeq === null || isOpening}
         data-testid="board-open"
         onPress={onOpen}
       >
@@ -72,6 +76,11 @@ export function BoardOpenControl({
           Select a timeline event first.
         </span>
       )}
+      {unavailable && (
+        <span className="text-xs text-default-500" data-testid="board-unavailable">
+          This platform cannot be rewound into a throwaway copy, so reconstruction is unavailable.
+        </span>
+      )}
       {error && (
         <div
           role="alert"
@@ -92,10 +101,12 @@ export function BoardOpenControl({
 export function BoardView({
   reconstruction,
   frontendUrl,
+  marvelLcgBaseUrl,
   onClose,
 }: {
   reconstruction: Reconstruction;
   frontendUrl: string;
+  marvelLcgBaseUrl?: string;
   onClose: () => void;
 }) {
   return (
@@ -140,8 +151,8 @@ export function BoardView({
       </div>
       <div className="min-h-0 flex-1">
         <DragnCardsIframe
-          roomSlug={reconstruction.roomSlug}
-          frontendUrl={frontendUrl}
+          game={{ id: reconstruction.sessionId, plugin: "", plugin_id: 0, created_at: "", room_slug: reconstruction.roomSlug, platform: "dragncards" }}
+          urls={{ dragncardsFrontendUrl: frontendUrl, marvelLcgBaseUrl: marvelLcgBaseUrl ?? "" }}
         />
       </div>
     </div>

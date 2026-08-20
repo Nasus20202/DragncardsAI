@@ -15,6 +15,7 @@ export interface RestoreControlProps {
    * clickable.
    */
   frontendUrl?: string;
+  platform?: "dragncards" | "marvel-lcg";
 }
 
 type Outcome =
@@ -90,6 +91,7 @@ export function RestoreControl({
   targetSeq,
   onRestore,
   frontendUrl,
+  platform = "dragncards",
 }: RestoreControlProps) {
   const [mode, setModeState] = useState<RestoreMode>("new");
   const [confirmed, setConfirmed] = useState(false);
@@ -112,7 +114,8 @@ export function RestoreControl({
     setOutcome(null);
   };
 
-  const disabled = targetSeq === null;
+  const unavailable = platform !== "dragncards";
+  const disabled = unavailable || targetSeq === null;
   const needsConfirm = mode === "in_place" && !confirmed;
 
   const handleRestore = async () => {
@@ -190,6 +193,11 @@ export function RestoreControl({
         Puts a playable game back at this moment. Pick where that game should
         be.
       </p>
+      {unavailable && (
+        <p className="text-xs text-default-500" data-testid="restore-unavailable">
+          Restore is unavailable: this platform cannot import a past state.
+        </p>
+      )}
 
       <fieldset
         className="flex flex-col gap-2"

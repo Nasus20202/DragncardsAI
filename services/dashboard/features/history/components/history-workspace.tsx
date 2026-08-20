@@ -215,7 +215,8 @@ export function HistoryWorkspace({
   const queue = useEvaluationQueue(queueOpen, refresh);
 
   // On-demand "board at this event" reconstruction (ephemeral, single live).
-  const board = useBoardReconstruction(gameId, selectedSeq);
+  const selectedPlatform = selectedGame?.platform ?? "dragncards";
+  const board = useBoardReconstruction(gameId, selectedSeq, selectedPlatform);
 
   // Keep history live without a manual reload: refresh the games list, friendly
   // names, and the selected game's events whenever this tab regains focus or
@@ -508,6 +509,7 @@ export function HistoryWorkspace({
                 searchQuery={searchQuery}
                 board={transcriptBoard}
                 frontendUrl={frontendUrl}
+                platform={selectedPlatform}
                 reveal={reveal}
               />
             </div>

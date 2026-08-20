@@ -58,6 +58,8 @@ export function getServerConfig() {
     orchestratorUrl.includes("127.0.0.1");
   const dragncardsFrontendUrl =
     process.env.DRAGNCARDS_FRONTEND_URL ?? "http://localhost:3000";
+  const marvelLcgBaseUrl =
+    process.env.MARVEL_LCG_BASE_URL ?? "http://localhost:4006";
   // Browser-reachable Bifrost UI. Deliberately distinct from the services'
   // BIFROST_URL, which is the Docker-internal gateway address.
   const bifrostUiUrl = process.env.BIFROST_UI_URL ?? "http://localhost:4003";
@@ -68,6 +70,7 @@ export function getServerConfig() {
     historyServiceUrl,
     evalServiceUrl,
     dragncardsFrontendUrl,
+    marvelLcgBaseUrl,
     bifrostUiUrl,
     // One entry per ServiceKey (features/proxy/lib/proxy.ts).
     orchestratorOpenApiPath:
@@ -100,6 +103,7 @@ export function getServerConfig() {
       defaultSkills: splitCsv(process.env.DEFAULT_SKILLS),
       defaultCustomMcps: parseCustomMcps(process.env.DEFAULT_CUSTOM_MCPS_JSON),
       dragncardsFrontendUrl,
+      marvelLcgBaseUrl,
       bifrostUiUrl,
       defaultReasoningEnabled: parseBoolean(
         process.env.DEFAULT_REASONING_ENABLED,

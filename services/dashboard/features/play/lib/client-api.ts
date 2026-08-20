@@ -397,8 +397,10 @@ interface SessionMetadata {
   session_id: string;
   plugin_name: string;
   plugin_id: number;
-  room_slug: string;
+  room_slug?: string | null;
   created_at: string;
+  platform?: GameSession["platform"];
+  game_id?: string | null;
 }
 
 export async function listGames(): Promise<GameSession[]> {
@@ -409,8 +411,10 @@ export async function listGames(): Promise<GameSession[]> {
     id: s.session_id,
     plugin: s.plugin_name,
     plugin_id: s.plugin_id,
-    room_slug: s.room_slug,
+    room_slug: s.room_slug ?? null,
     created_at: s.created_at,
+    platform: s.platform ?? "dragncards",
+    game_id: s.game_id ?? null,
   }));
 }
 
