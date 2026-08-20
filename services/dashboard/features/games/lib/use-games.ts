@@ -11,6 +11,7 @@ export function useGames() {
   const [games, setGames] = useState<GameSession[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   const [frontendUrl, setFrontendUrl] = useState<string>("");
+  const [marvelLcgBaseUrl, setMarvelLcgBaseUrl] = useState<string>("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,6 +20,7 @@ export function useGames() {
       try {
         const config = await fetchDashboardConfig();
         setFrontendUrl(config.dragncardsFrontendUrl);
+        setMarvelLcgBaseUrl(config.marvelLcgBaseUrl ?? "");
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load config");
       }
@@ -48,6 +50,7 @@ export function useGames() {
     games: games ?? [],
     selectedGame,
     frontendUrl,
+    marvelLcgBaseUrl,
     error,
     isLoading,
     selectGame: setSelectedGameId,

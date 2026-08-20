@@ -1,39 +1,35 @@
 "use client";
 
-import { dragncardsRoomUrl } from "@/features/shared/lib/dragncards";
+import { GameSession } from "@/features/shared/lib/types";
+import {
+  resolveGameViewerUrl,
+  viewerConfigurationMessage,
+  ViewerUrls,
+} from "@/features/games/lib/viewer-resolver";
 
 interface DragnCardsIframeProps {
-  roomSlug: string | null;
-  frontendUrl: string;
+  game?: GameSession | null;
+  urls: ViewerUrls;
 }
 
 export function DragnCardsIframe({
-  roomSlug,
-  frontendUrl,
+  game,
+  urls,
 }: DragnCardsIframeProps) {
-  if (!roomSlug) {
+  const src = resolveGameViewerUrl(game, urls);
+  if (!src) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-default-500">
-        Select a game to view
+      <div className="flex h-full items-center justify-center px-6 text-center text-sm text-default-500">
+        {viewerConfigurationMessage(game, urls)}
       </div>
     );
   }
-
-  if (!frontendUrl) {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-danger">
-        Configuration error: DRAGNCARDS_FRONTEND_URL not set
-      </div>
-    );
-  }
-
-  const src = dragncardsRoomUrl(frontendUrl, roomSlug);
 
   return (
     <iframe
       src={src}
       className="h-full w-full border-none"
-      title="DragnCards Game Viewer"
+      title={`${game?.platform === "marvel-lcg" ? "Marvel LCG" : "DragnCards"} Game Viewer`}
       sandbox="allow-scripts allow-same-origin allow-forms"
     />
   );

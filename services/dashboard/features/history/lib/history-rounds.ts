@@ -54,6 +54,8 @@ export interface RoundMeta {
    */
   round: number | null;
   step: string | null;
+  platform: "dragncards" | "marvel-lcg";
+  phase: string | null;
 }
 
 /**
@@ -80,6 +82,12 @@ export function phaseName(step: string | null): string {
   return STEP_PHASES[step] ?? "Unknown";
 }
 
+function normaliseMarvelPhase(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const cleaned = value.replace(/^\s*(?:-+\s*)+|(?:\s*-+)+\s*$/g, "").trim();
+  return cleaned || null;
+}
+
 /** The DragnCards step at which a game is set up, before the first round. */
 const SETUP_STEP = "0.0";
 
@@ -99,12 +107,27 @@ function metaFromGameState(
 ): RoundMeta {
   const game = asRecord(asRecord(event.payload.state)?.game ?? undefined);
   if (!game) return fallback;
+  const platform = event.platform === "marvel-lcg" || event.payload.platform === "marvel-lcg"
+    ? "marvel-lcg"
+    : event.platform === "dragncards" || event.payload.platform === "dragncards"
+      ? "dragncards"
+      : fallback.platform;
+  if (platform === "marvel-lcg") {
+    const rawRound = game.round_id;
+    const phase = normaliseMarvelPhase(game.phase);
+    return {
+      round: typeof rawRound === "number" && rawRound > 0 ? rawRound : null,
+      step: null,
+      platform,
+      phase,
+    };
+  }
   const rawRound = game.roundNumber;
   const rawStep = game.stepId;
   const step = rawStep != null ? String(rawStep) : fallback.step;
-  if (typeof rawRound !== "number") return { round: fallback.round, step };
+  if (typeof rawRound !== "number") return { ...fallback, step };
   const isSetup = rawRound === 0 && step === SETUP_STEP;
-  return { round: isSetup ? null : rawRound + 1, step };
+  return { round: isSetup ? null : rawRound + 1, step, platform: "dragncards", phase: step ? phaseName(step) : null };
 }
 
 export function roundKey(meta: RoundMeta): string {
@@ -171,7 +194,9 @@ export function verdictScopeLabel(verdict: HistoryEvent): string {
     typeof verdict.payload.scope === "string" ? verdict.payload.scope : "move";
   if (scope === "round") {
     const round = verdictRoundNumber(verdict);
-    return round === null ? "Round" : roundHeading({ round, step: null });
+    return round === null
+      ? "Round"
+      : roundHeading({ round, step: null, platform: "dragncards", phase: null });
   }
   if (scope === "range") {
     // The only branch that reads the span, and it labels it as the seqs it is.
@@ -356,9 +381,12 @@ export function primaryEvents(events: HistoryEvent[]): HistoryEvent[] {
  */
 export function buildMetaBySeq(events: HistoryEvent[]): Map<number, RoundMeta> {
   const map = new Map<number, RoundMeta>();
-  let current: RoundMeta = { round: null, step: null };
+  let current: RoundMeta = { round: null, step: null, platform: "dragncards", phase: null };
   let observed = false;
   for (const event of events) {
+    if (event.platform === "marvel-lcg" || event.payload.platform === "marvel-lcg") {
+      current = { ...current, platform: "marvel-lcg", phase: null, step: null };
+    }
     if (event.actor === "game-service") {
       const next = metaFromGameState(event, current);
       // Before any state has been observed there is no "acted from" round. The
@@ -388,7 +416,7 @@ export function buildHeadingBySeq(
   const map = new Map<number, { key: string; label: string }>();
   let lastKey: string | null = null;
   for (const event of primary) {
-    const meta = metaBySeq.get(event.seq) ?? { round: null, step: null };
+    const meta = metaBySeq.get(event.seq) ?? { round: null, step: null, platform: "dragncards", phase: null };
     const key = roundKey(meta);
     if (key !== lastKey) {
       const heading = roundHeading(meta);
@@ -416,13 +444,15 @@ export function buildRoundEndBySeq(
 ): Map<number, { key: string; label: string }> {
   const map = new Map<number, { key: string; label: string }>();
   for (let i = 0; i < primary.length; i += 1) {
-    const meta = metaBySeq.get(primary[i].seq) ?? { round: null, step: null };
+    const meta = metaBySeq.get(primary[i].seq) ?? { round: null, step: null, platform: "dragncards", phase: null };
     if (!meta.round) continue;
     if (i + 1 >= primary.length) continue;
     const key = roundKey(meta);
     const nextMeta = metaBySeq.get(primary[i + 1].seq) ?? {
       round: null,
       step: null,
+      platform: "dragncards",
+      phase: null,
     };
     if (roundKey(nextMeta) !== key) {
       map.set(primary[i].seq, { key, label: `${roundHeading(meta)} — end` });
@@ -476,7 +506,7 @@ export function buildNavTree(
   const rounds: NavRound[] = [];
   const byKey = new Map<string, NavRound>();
   for (const event of primary) {
-    const meta = metaBySeq.get(event.seq) ?? { round: null, step: null };
+    const meta = metaBySeq.get(event.seq) ?? { round: null, step: null, platform: "dragncards", phase: null };
     const key = roundKey(meta);
     let round = byKey.get(key);
     if (!round) {

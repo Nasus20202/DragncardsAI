@@ -556,6 +556,7 @@ function VerdictSubtree({
 interface TranscriptEventProps {
   event: HistoryEvent;
   step: string | null;
+  phase?: string | null;
   verdicts: HistoryEvent[];
   selected: boolean;
   /**
@@ -576,6 +577,7 @@ interface TranscriptEventProps {
    * and only the restore control's "open the new game" link needs it.
    */
   frontendUrl?: string;
+  platform?: "dragncards" | "marvel-lcg";
   // Global expand/collapse pulse — each event syncs its body to this on change.
   expandSignal: ExpandSignal;
   // Reveal pulse — open this event's body or evals when it is the target.
@@ -592,6 +594,7 @@ interface TranscriptEventProps {
 const TranscriptEvent = memo(function TranscriptEvent({
   event,
   step,
+  phase,
   verdicts,
   selected,
   selectedVerdictSeq,
@@ -599,6 +602,7 @@ const TranscriptEvent = memo(function TranscriptEvent({
   onRestore,
   board,
   frontendUrl,
+  platform = "dragncards",
   expandSignal,
   reveal,
 }: TranscriptEventProps) {
@@ -719,7 +723,8 @@ const TranscriptEvent = memo(function TranscriptEvent({
               color="default"
               data-testid={`history-event-phase-${event.seq}`}
             >
-              {phaseName(step)} {step}
+              {phase ?? (platform === "dragncards" ? phaseName(step) : null)}
+              {platform === "dragncards" && step ? ` ${step}` : ""}
             </Chip>
           )}
           {latestScore && (
@@ -768,18 +773,20 @@ const TranscriptEvent = memo(function TranscriptEvent({
                   user usually wants -- just looking at the board -- was below two
                   controls that change a game.
                 */}
-                <BoardOpenControl
+                  <BoardOpenControl
                   gameId={board.gameId}
                   selectedSeq={event.seq}
                   isOpening={board.isOpening}
                   error={board.error}
                   isOpen={board.isOpen}
-                  onOpen={board.onOpen}
+                   onOpen={board.onOpen}
+                   platform={platform}
                 />
                 <RestoreControl
                   targetSeq={event.seq}
                   onRestore={onRestore}
                   frontendUrl={frontendUrl}
+                   platform={platform}
                 />
               </div>
             )}
@@ -868,6 +875,7 @@ export interface HistoryTranscriptProps {
   board: BoardActions;
   /** DragnCards frontend base URL, for the restore control's new-game link. */
   frontendUrl?: string;
+  platform?: "dragncards" | "marvel-lcg";
   // Global expand/collapse pulse from the workspace toolbar (default: collapsed).
   expandSignal?: ExpandSignal;
   // Case-insensitive transcript search query (empty string = no filter).
@@ -883,6 +891,7 @@ export function HistoryTranscript({
   onRestore,
   board,
   frontendUrl,
+  platform = "dragncards",
   expandSignal = NO_EXPAND_SIGNAL,
   searchQuery = "",
   reveal = NO_REVEAL,
@@ -1097,6 +1106,8 @@ export function HistoryTranscript({
             const meta = metaBySeq.get(event.seq) ?? {
               round: null,
               step: null,
+              platform,
+              phase: null,
             };
             const heading = headingBySeq.get(event.seq) ?? null;
             const roundEnd = roundEndBySeq.get(event.seq) ?? null;
@@ -1120,6 +1131,8 @@ export function HistoryTranscript({
                   <TranscriptEvent
                     event={event}
                     step={meta.step}
+                    phase={meta.phase}
+                    platform={meta.platform ?? platform}
                     verdicts={verdicts}
                     selected={selectedSeq === event.seq}
                     selectedVerdictSeq={

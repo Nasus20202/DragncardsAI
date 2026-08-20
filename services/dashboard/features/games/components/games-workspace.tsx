@@ -5,7 +5,7 @@ import { DragnCardsIframe } from "@/features/games/components/dragncards-iframe"
 import { useGames } from "@/features/games/lib/use-games";
 
 export function GamesWorkspace() {
-  const { games, selectedGame, frontendUrl, error, isLoading, selectGame } =
+  const { games, selectedGame, frontendUrl, marvelLcgBaseUrl, error, isLoading, selectGame } =
     useGames();
 
   if (isLoading) {
@@ -35,8 +35,8 @@ export function GamesWorkspace() {
       </aside>
       <div className="flex-1 overflow-hidden">
         <DragnCardsIframe
-          roomSlug={selectedGame?.room_slug ?? null}
-          frontendUrl={frontendUrl}
+          game={selectedGame}
+          urls={{ dragncardsFrontendUrl: frontendUrl, marvelLcgBaseUrl }}
         />
       </div>
     </div>

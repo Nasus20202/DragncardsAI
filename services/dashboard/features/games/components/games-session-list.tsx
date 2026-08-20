@@ -44,8 +44,17 @@ export function GamesSessionList({
             onClick={() => onSelect(game.id)}
           >
             <div className="flex flex-col items-start">
-              <span className="font-bold text-sm">{game.room_slug}</span>
-              <span className="text-xs text-default-500">{game.plugin}</span>
+              <span className="font-bold text-sm">
+                {game.platform === "marvel-lcg"
+                  ? game.game_id ?? game.id
+                  : game.room_slug ?? game.id}
+              </span>
+              <span className="text-xs text-default-500">
+                {game.platform === "marvel-lcg" ? "Marvel LCG" : game.plugin}
+              </span>
+              <span className="text-[10px] uppercase tracking-wide text-default-400">
+                {game.platform === "marvel-lcg" ? "marvel-lcg" : "dragncards"}
+              </span>
             </div>
           </button>
         );

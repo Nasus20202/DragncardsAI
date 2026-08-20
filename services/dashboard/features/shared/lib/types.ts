@@ -336,6 +336,7 @@ export interface DashboardConfig {
   defaultSkills: string[];
   defaultCustomMcps: CustomMcpDraft[];
   dragncardsFrontendUrl: string;
+  marvelLcgBaseUrl?: string;
   bifrostUiUrl: string;
   defaultReasoningEnabled: boolean;
   defaultReasoningEffort: "low" | "medium" | "high";
@@ -400,8 +401,12 @@ export interface GameSession {
   plugin: string;
   plugin_id: number;
   created_at: string;
-  room_slug: string;
+  room_slug: string | null;
+  platform?: GamePlatform;
+  game_id?: string | null;
 }
+
+export type GamePlatform = "dragncards" | "marvel-lcg";
 
 export type HistoryActor = "agent" | "game-service" | "evaluator" | "user";
 
@@ -631,6 +636,7 @@ export interface HistoryGame {
   event_count: number;
   first_recorded_at: string;
   last_recorded_at: string;
+  platform?: GamePlatform;
 }
 
 /** Response from `DELETE /history/games/{game_id}`. */
@@ -652,6 +658,7 @@ export interface HistoryEvent {
     Record<string, JsonValue>;
   occurred_at: string;
   recorded_at: string;
+  platform?: GamePlatform;
   /**
    * False on a *timeline* entry, whose `payload` deliberately omits the
    * unbounded fields (the raw DragnCards `state` bulk and an agent move's
