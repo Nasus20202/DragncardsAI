@@ -75,6 +75,16 @@ class GameServiceFakeMcp:
                 input_schema={"type": "object", "properties": {}},
             ),
             McpToolDefinition(
+                name="list_marvel_lcg_scenarios",
+                description="List Marvel LCG scenarios",
+                input_schema={"type": "object", "properties": {}},
+            ),
+            McpToolDefinition(
+                name="list_marvel_lcg_decks",
+                description="List Marvel LCG decks",
+                input_schema={"type": "object", "properties": {}},
+            ),
+            McpToolDefinition(
                 name="choose_game_option",
                 description="Choose an option",
                 input_schema={"type": "object", "properties": {}},
@@ -106,6 +116,10 @@ class GameServiceFakeMcp:
                     }
                 ]
             }
+        elif tool_name == "list_marvel_lcg_scenarios":
+            body = {"scenarios": []}
+        elif tool_name == "list_marvel_lcg_decks":
+            body = {"decks": []}
         else:
             body = {"session_id": GAME_ID, "ok": True}
         return {
@@ -214,6 +228,8 @@ def test_is_game_mutating_tool_distinguishes_reads_and_writes():
     assert is_game_mutating_tool("game-service", "next_step") is True
     assert is_game_mutating_tool("game-service", "get_game_state") is False
     assert is_game_mutating_tool("game-service", "list_game_options") is False
+    assert is_game_mutating_tool("game-service", "list_marvel_lcg_scenarios") is False
+    assert is_game_mutating_tool("game-service", "list_marvel_lcg_decks") is False
     assert is_game_mutating_tool("game-service", "create_game") is False
     assert is_game_mutating_tool("other-mcp", "next_step") is False
 
@@ -986,6 +1002,52 @@ async def test_option_listing_is_not_a_move_and_choice_records_its_identity(
     refreshed = await repository.get_session(session.id)
     assert refreshed.metadata_json["game_id"] == GAME_ID
     assert refreshed.metadata_json["platform"] == PLATFORM_MARVEL_LCG
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool_name",
+    ["list_marvel_lcg_scenarios", "list_marvel_lcg_decks"],
+)
+async def test_marvel_catalog_reads_do_not_emit_agent_moves(
+    repository, skill_registry, tool_name
+):
+    session = await _prepare_session(repository)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="inspect catalog", metadata_json={}, max_attempts=1
+    )
+    claimed = await repository.claim_next_job()
+    assert job is not None and claimed is not None
+
+    bus = InMemoryHistoryEventBus()
+    service = _make_service(
+        repository,
+        FakeBifrost(
+            responses=[
+                ChatResponse(
+                    content="inspect the catalog",
+                    tool_calls=[
+                        ToolCall(
+                            id="t1",
+                            name=f"game-service_{tool_name}",
+                            arguments={"session_id": GAME_ID},
+                        )
+                    ],
+                    raw={},
+                ),
+                ChatResponse(content="finished", tool_calls=[], raw={}),
+            ]
+        ),
+        GameServiceFakeMcp(),
+        skill_registry,
+        HistoryEventEmitter(bus=bus),
+    )
+
+    await service.run(claimed)
+
+    assert bus.events == []
+    refreshed = await repository.get_session(session.id)
+    assert refreshed.metadata_json == {"game_id": GAME_ID}
 
 
 @pytest.mark.asyncio

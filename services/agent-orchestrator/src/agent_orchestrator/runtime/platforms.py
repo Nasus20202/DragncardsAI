@@ -15,6 +15,13 @@ PLATFORM_MARVEL_LCG = "marvel-lcg"
 DEFAULT_PLATFORM = PLATFORM_DRAGNCARDS
 SUPPORTED_PLATFORMS = frozenset({PLATFORM_DRAGNCARDS, PLATFORM_MARVEL_LCG})
 
+# These catalog reads discover the rules engine's shipped setup data. They are
+# not moves and must not become seat-action tools if either platform's surface
+# grows around them.
+MARVEL_LCG_CATALOG_TOOLS = frozenset(
+    {"list_marvel_lcg_scenarios", "list_marvel_lcg_decks"}
+)
+
 
 @dataclass(frozen=True)
 class PlatformToolSets:
