@@ -7,8 +7,8 @@
 # docker-compose.infra.yaml plus external/docker/docker-compose.yaml is
 # infrastructure, everything defined in docker-compose.yaml itself is an
 # application service. Services behind an optional profile (the `smoke` model
-# runtime) stay out of the list, because `config --services` hides them unless the
-# profile is selected.
+# runtime and the `marvel-lcg` platform) stay out of the list, because
+# `config --services` hides them unless the profile is selected.
 
 set -euo pipefail
 

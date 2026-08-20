@@ -24,10 +24,13 @@ services:
       # History events go to the SHARED orchestrator Valkey (the history bus),
       # separate from the game-service's own session-store Valkey above.
       HISTORY_VALKEY_URL: ${GAME_SERVICE_HISTORY_VALKEY_URL:-redis://agent-orchestrator-valkey:6379/0}
+      # Required only when the marvel-lcg compose profile is selected. Keep the
+      # value outside committed files; the platform container refuses an empty
+      # password.
+      MARVEL_LCG_PASSWORD: ${MARVEL_LCG_PASSWORD:-}
       BOT_EMAIL: ${BOT_EMAIL:-dev_user@example.com}
       BOT_PASSWORD: ${BOT_PASSWORD:-password}
       MARVEL_LCG_HTTP_URL: ${MARVEL_LCG_HTTP_URL:-http://marvel-lcg:2345}
-      MARVEL_LCG_PASSWORD: ${MARVEL_LCG_PASSWORD:-change-me}
       HTTP_HOST: ${GAME_SERVICE_HTTP_HOST:-0.0.0.0}
       HTTP_PORT: ${GAME_SERVICE_HTTP_PORT:-8000}
       # Browser CORS allowlist. This port is published on the host, so a wildcard
@@ -49,6 +52,7 @@ services:
       OTEL_RESOURCE_ATTRIBUTES: ${GAME_SERVICE_OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=local,service.namespace=dragncardsai}
     networks:
       - dragncards-shared
+      - marvel-lcg-internal
 
   agent-orchestrator:
     image: ${AGENT_ORCHESTRATOR_IMAGE:-dragncardsai-agent-orchestrator:latest}
@@ -251,6 +255,9 @@ services:
       GAME_SERVICE_URL: ${GAME_SERVICE_URL:-http://game-service:8000}
       HISTORY_SERVICE_URL: ${HISTORY_SERVICE_URL:-http://history-service:4004}
       EVAL_SERVICE_URL: ${EVAL_SERVICE_URL:-http://eval-service:4005}
+      # Browser-facing platform URL; the platform profile publishes this port
+      # for deliberate local development only.
+      MARVEL_LCG_BASE_URL: ${MARVEL_LCG_BASE_URL:-http://localhost:4006}
       # Browser-reachable Bifrost UI (host port), not the internal BIFROST_URL.
       BIFROST_UI_URL: ${BIFROST_UI_URL:-http://localhost:4003}
       APP_NAME: ${APP_NAME:-DragnCardsAI Dashboard}
@@ -272,3 +279,6 @@ services:
 networks:
   dragncards-shared:
     name: dragncards-shared
+  marvel-lcg-internal:
+    name: marvel-lcg-internal
+    internal: true

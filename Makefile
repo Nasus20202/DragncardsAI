@@ -1,4 +1,4 @@
-.PHONY: help lint lint-fix test test-unit test-integration build up up-registry down down-clean \
+.PHONY: help lint lint-fix test test-unit test-integration test-marvel-lcg-infrastructure build up up-registry up-marvel-lcg down down-clean \
 	infra-up infra-down infra-restart smoke-up smoke-check smoke-model smoke-test \
 	run run-game-service run-agent-orchestrator run-history-service run-eval-service run-dashboard
 
@@ -21,6 +21,8 @@ help:
 		"make smoke-check                # validate smoke dependencies" \
 		"make smoke-model                # start compose-managed llama.cpp smoke model" \
 		"make smoke-test                 # run smoke tests against running stack" \
+		"make up-marvel-lcg              # start the profile-gated marvel-lcg platform (password required)" \
+		"make test-marvel-lcg-infrastructure # check marvel-lcg compose/security wiring" \
 		"make run                        # run local services directly" \
 		"make run-game-service           # run game-service locally" \
 		"make run-agent-orchestrator     # run agent-orchestrator locally" \
@@ -43,6 +45,9 @@ test-unit:
 test-integration:
 	./scripts/test.sh integration
 
+test-marvel-lcg-infrastructure:
+	./scripts/test-marvel-lcg-infrastructure.sh
+
 build:
 	./scripts/docker.sh build
 
@@ -58,7 +63,12 @@ up-registry:
 	DRAGNCARDS_MC_PLUGIN_IMAGE=ghcr.io/nasus20202/dragncardsai/dragncards-mc-plugin:latest \
 	DRAGNCARDS_BACKEND_IMAGE=ghcr.io/nasus20202/dragncardsai/dragncards-backend:latest \
 	DRAGNCARDS_FRONTEND_IMAGE=ghcr.io/nasus20202/dragncardsai/dragncards-frontend:latest \
+	MARVEL_LCG_IMAGE=ghcr.io/nasus20202/dragncardsai/marvel-lcg:latest \
 	IMAGE_PULL_POLICY=always ./scripts/docker.sh start
+
+up-marvel-lcg:
+	@test -n "$${MARVEL_LCG_PASSWORD:-}" || (printf '%s\n' 'MARVEL_LCG_PASSWORD must be set' >&2; exit 1)
+	docker compose --profile marvel-lcg up -d marvel-lcg
 
 down:
 	./scripts/docker.sh down

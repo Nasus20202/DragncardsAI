@@ -71,6 +71,8 @@ jobs:
         run: scripts/test.sh unit
 
       - name: Build Docker stack
+        env:
+          COMPOSE_PROFILES: marvel-lcg
         uses: docker/bake-action@v7
         with:
           files: docker-compose.yaml
@@ -97,6 +99,12 @@ jobs:
           done
           echo "DragnCards backend did not become reachable in time" >&2
           exit 1
+
+      - name: Start marvel-lcg profile and wait for readiness
+        env:
+          # Generated for this run; never use a committed platform password.
+          MARVEL_LCG_PASSWORD: ci-only-${{ github.run_id }}-${{ github.run_attempt }}
+        run: docker compose --profile marvel-lcg up -d --wait marvel-lcg
 
       - name: Run integration tests
         run: scripts/test.sh integration

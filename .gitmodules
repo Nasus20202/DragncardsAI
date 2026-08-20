@@ -6,3 +6,6 @@
 	path = external/dragncards-mc-plugin
 	url = https://github.com/hone/dragncards-mc-plugin.git
 	branch = main
+[submodule "external/marvel-lcg"]
+	path = external/marvel-lcg
+	url = https://github.com/z00lus/marvel-lcg.git
