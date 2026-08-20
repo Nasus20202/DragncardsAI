@@ -25,8 +25,8 @@ describe("resolveGameViewerUrl", () => {
 
   it("opens Marvel LCG read-only by default", () => {
     const value = resolveGameViewerUrl(game("marvel-lcg"), urls);
-    expect(value).toBe("http://marvel.test:4006/watch");
-    expect(value).not.toMatch(/debug|show|replay/i);
+    expect(value).toBe("http://marvel.test:4006/?watch=1");
+    expect(value).not.toMatch(/debug|show|replay|cheat|hot[_-]?seat/i);
   });
 
   it("maps neutral seats only at the viewer edge", () => {
