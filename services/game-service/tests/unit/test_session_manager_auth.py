@@ -17,6 +17,7 @@ from game_service.coordination.session_store import InMemorySessionStore
 from game_service.dragncards import auth_cache as auth_cache_module
 from game_service.dragncards.auth_cache import DragnCardsAuthCache
 from game_service.logic import session_manager as session_manager_module
+from game_service.logic import platform as platform_module
 from game_service.logic.session_manager import SessionManager
 
 TOKEN = "11111111-1111-4111-8111-111111111111"
@@ -106,7 +107,7 @@ def stub_dragncards(monkeypatch):
     monkeypatch.setattr(auth_cache_module, "get_auth_token", fake_get_auth_token)
     monkeypatch.setattr(auth_cache_module, "get_user_id", fake_get_user_id)
     monkeypatch.setattr(session_manager_module, "create_room", fake_create_room)
-    monkeypatch.setattr(session_manager_module, "PhoenixClient", FakeClient)
+    monkeypatch.setattr(platform_module, "PhoenixClient", FakeClient)
 
     # Auto-seating reads state and pushes seats over the channel; neither is what
     # these tests are about, and the stub channel has no seat support.

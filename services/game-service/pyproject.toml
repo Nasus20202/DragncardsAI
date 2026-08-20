@@ -44,6 +44,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "live: requires a running DragnCards backend (skipped automatically when unreachable)",
+    "marvel_lcg: requires an explicitly enabled Marvel LCG integration profile",
 ]
 
 [dependency-groups]

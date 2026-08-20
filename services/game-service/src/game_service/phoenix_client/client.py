@@ -17,6 +17,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 import websockets
 from websockets.exceptions import ConnectionClosed
@@ -100,6 +101,11 @@ class PhoenixClient:
         self._connected = asyncio.Event()
         self._closed = False
 
+    @staticmethod
+    def _safe_url(value: str) -> str:
+        parsed = urlsplit(value)
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
     # ------------------------------------------------------------------
     # Connection lifecycle
     # ------------------------------------------------------------------
@@ -113,7 +119,7 @@ class PhoenixClient:
         self._heartbeat_task = asyncio.create_task(
             self._heartbeat_loop(), name="phx-heartbeat"
         )
-        logger.debug("PhoenixClient connected to %s", self._url)
+        logger.debug("PhoenixClient connected to %s", self._safe_url(self._url))
 
     async def disconnect(self) -> None:
         """Close the WebSocket and cancel background tasks."""
@@ -166,7 +172,7 @@ class PhoenixClient:
             raise
         if reply.payload.get("status") != "ok":
             self._channels.pop(topic, None)
-            raise PhoenixChannelError(f"Failed to join {topic!r}: {reply.payload}")
+            raise PhoenixChannelError(f"Failed to join {topic!r}")
         logger.debug("Joined channel %s", topic)
         return channel
 
@@ -227,11 +233,13 @@ class PhoenixClient:
                     msg = PhxMessage.decode(raw)
                     self._dispatch(msg)
                 except Exception as exc:
-                    logger.warning("Error decoding message %r: %s", raw, exc)
+                    logger.warning(
+                        "Error decoding Phoenix message (%s)", type(exc).__name__
+                    )
         except ConnectionClosed, asyncio.CancelledError:
             pass
         except Exception as exc:
-            logger.error("recv_loop error: %s", exc)
+            logger.error("recv_loop error (%s)", type(exc).__name__)
         finally:
             self._connected.clear()
             if not self._closed:
@@ -269,7 +277,7 @@ class PhoenixClient:
                     await self._push_and_await(msg, reply_ref=ref, timeout=5.0)
                     logger.debug("Heartbeat OK (ref=%s)", ref)
                 except (asyncio.TimeoutError, PhoenixChannelError) as exc:
-                    logger.warning("Heartbeat failed: %s", exc)
+                    logger.warning("Heartbeat failed (%s)", type(exc).__name__)
         except asyncio.CancelledError:
             pass
 
@@ -289,10 +297,16 @@ class PhoenixClient:
                             await self.join(topic)
                             logger.info("Rejoined channel %s after reconnect", topic)
                         except Exception as exc:
-                            logger.error("Failed to rejoin %s: %s", topic, exc)
+                            logger.error(
+                                "Failed to rejoin %s (%s)", topic, type(exc).__name__
+                            )
                     return
                 except Exception as exc:
-                    logger.warning("Reconnect attempt %d failed: %s", attempt, exc)
+                    logger.warning(
+                        "Reconnect attempt %d failed (%s)",
+                        attempt,
+                        type(exc).__name__,
+                    )
             logger.error("All reconnect attempts exhausted — session degraded")
         except asyncio.CancelledError:
             logger.debug("Reconnect task cancelled")
@@ -337,9 +351,7 @@ class Channel:
         )
         reply = await self.client._push_and_await(msg, reply_ref=ref, timeout=timeout)
         if reply.payload.get("status") == "error":
-            raise PhoenixChannelError(
-                f"Action rejected: {reply.payload.get('response')}"
-            )
+            raise PhoenixChannelError("Action rejected by Phoenix server")
         return reply.payload.get("response", reply.payload)
 
     def on(self, event: str, handler) -> None:
@@ -355,7 +367,9 @@ class Channel:
             try:
                 h(msg.payload)
             except Exception as exc:
-                logger.warning("Handler error for event %s: %s", msg.event, exc)
+                logger.warning(
+                    "Handler error for event %s (%s)", msg.event, type(exc).__name__
+                )
         # Queue state-update events for consumption by callers.
         # - current_state: full state broadcast (on join or after request_state)
         # - state_update:  delta broadcast sent after game_action (DragnCards v2 API)

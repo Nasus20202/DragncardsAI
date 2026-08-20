@@ -128,6 +128,10 @@ EPHEMERAL_REAPER_INTERVAL_SECONDS = _positive_float_env(
 DRAGNCARDS_AUTH_CACHE_TTL_SECONDS = _non_negative_float_env(
     "DRAGNCARDS_AUTH_CACHE_TTL_SECONDS", DEFAULT_AUTH_CACHE_TTL_SECONDS
 )
+MARVEL_LCG_HTTP_URL = os.environ.get("MARVEL_LCG_HTTP_URL", "http://localhost:4006")
+MARVEL_LCG_PASSWORD = os.environ.get("MARVEL_LCG_PASSWORD", "")
+MARVEL_LCG_SCENARIO_PATH = os.environ.get("MARVEL_LCG_SCENARIO_PATH")
+MARVEL_LCG_HERO_PATH = os.environ.get("MARVEL_LCG_HERO_PATH")
 
 # Plugin registry — maps plugin name to DragnCards plugin metadata.
 # Extend this dict to support additional plugins.
@@ -154,6 +158,12 @@ def build_session_manager():
     )
     from game_service.dragncards.auth_cache import DragnCardsAuthCache
     from game_service.logic.session_manager import SessionManager
+    from game_service.logic.platform import (
+        DRAGNCARDS_PLATFORM,
+        MARVEL_LCG_PLATFORM,
+        DragnCardsPlatform,
+    )
+    from game_service.marvel_lcg.platform import MarvelLcgPlatform
 
     parsed = urlparse(VALKEY_URL)
     use_in_memory = os.environ.get(
@@ -218,10 +228,21 @@ def build_session_manager():
         )
 
     return SessionManager(
-        dragncards_http_url=DRAGNCARDS_HTTP_URL,
-        dragncards_ws_url=DRAGNCARDS_WS_URL,
-        email=BOT_EMAIL,
-        password=BOT_PASSWORD,
+        platform_registry={
+            DRAGNCARDS_PLATFORM: DragnCardsPlatform(
+                DRAGNCARDS_HTTP_URL,
+                DRAGNCARDS_WS_URL,
+                email=BOT_EMAIL,
+                password=BOT_PASSWORD,
+                auth_cache=auth_cache,
+            ),
+            MARVEL_LCG_PLATFORM: MarvelLcgPlatform(
+                MARVEL_LCG_HTTP_URL,
+                MARVEL_LCG_PASSWORD,
+                scenario_path=MARVEL_LCG_SCENARIO_PATH,
+                hero_paths=([MARVEL_LCG_HERO_PATH] if MARVEL_LCG_HERO_PATH else ()),
+            ),
+        },
         plugin_registry=PLUGIN_REGISTRY,
         session_store=session_store,
         history_emitter=history_emitter,

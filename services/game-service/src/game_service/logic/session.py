@@ -1,8 +1,8 @@
 """
 GameSession dataclass.
 
-Represents a single active DragnCards game room with:
-- A persistent WebSocket connection (PhoenixClient + Channel)
+Represents a single active game-platform session with:
+- A persistent platform-owned live connection
 - Cached latest game state (updated on broadcasts)
 - Metadata: session ID, plugin name, creation time, room slug
 - Inbound event buffers: alerts (deque, maxlen=50), GUI updates (dict per player)
@@ -26,26 +26,27 @@ from game_service.logic.actions import (
     GameAction,
     RawAction,
     SetPlayerCountAction,
-    translate_action,
 )
 from game_service.logic.exceptions import (
     BadGameStateError,
+    PlatformTimeoutError,
+    PlatformTransportError,
     SessionError,
     SnapshotValidationError,
     StateUnavailableError,
 )
-from game_service.logic.room import PhoenixRoom
+from game_service.logic.platform import (
+    DRAGNCARDS_PLATFORM,
+    GamePlatform,
+    PlatformSlug,
+    create_legacy_dragncards_platform,
+)
 from game_service.logic.seats import (
     SEAT_IDS,
     normalise_seat_id,
     seat_held_by,
 )
 from game_service.logic.snapshots import GameStateSnapshot, SNAPSHOT_SCHEMA_VERSION
-from game_service.phoenix_client.client import (
-    Channel,
-    PhoenixChannelError,
-    PhoenixClient,
-)
 from game_service.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
@@ -66,39 +67,65 @@ class GameSession:
     """Represents a single active game session."""
 
     session_id: str
-    plugin_name: str
-    plugin_id: int
-    room_slug: str
-    created_at: datetime
-    client: PhoenixClient
-    channel: Channel
+    plugin_name: str | None = None
+    plugin_id: int | None = None
+    plugin_version: int | None = None
+    room_slug: str = ""
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    platform: PlatformSlug = DRAGNCARDS_PLATFORM
+    driver: GamePlatform | None = None
+    # Untyped constructor-only compatibility handles for older DragnCards tests
+    # and callers. Runtime behavior is driven exclusively through the protocol.
+    client: Any = None
+    channel: Any = None
     initial_state: Any = None
     on_close: Callable[[], Awaitable[None]] | None = None
     history_emitter: HistoryEmitter | None = None
     # Non-emitting, server-reaped reconstruction session (view-only). When true
     # this session never emits history events and is eligible for TTL reaping.
     ephemeral: bool = False
-    room: PhoenixRoom = field(init=False)
+    room: GamePlatform = field(init=False)
     _state: Any = field(default=None, init=False)
     _state_stale: bool = field(default=False, init=False)
     _state_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
     _bad_state: bool = field(default=False, init=False)
     _state_unavailable: bool = field(default=False, init=False)
+    _terminal: bool = field(default=False, init=False)
     _alerts: deque = field(default_factory=lambda: deque(maxlen=50), init=False)
     _gui_updates: dict = field(default_factory=dict, init=False)
     _action_error: str | None = field(default=None, init=False)
 
     def __post_init__(self):
-        if self.history_emitter is None:
+        if self.ephemeral:
+            # Platform-native prompt/move/terminal events bypass the generic
+            # post-action emitter, so an ephemeral session must not hand its
+            # driver the live history emitter at all.
             self.history_emitter = NullHistoryEmitter()
-        self.room = PhoenixRoom(client=self.client, channel=self.channel)
-        self.room.register_state_handlers(
+        elif self.history_emitter is None:
+            self.history_emitter = NullHistoryEmitter()
+        if self.driver is None:
+            if self.client is None or self.channel is None:
+                raise ValueError(
+                    "GameSession requires a platform driver or legacy transport handles"
+                )
+            self.driver = create_legacy_dragncards_platform(self.client, self.channel)
+        if self.client is None:
+            self.client = getattr(self.driver, "client", None)
+        if self.channel is None:
+            self.channel = getattr(self.driver, "channel", None)
+        self.room = self.driver
+        # Platform-native prompt/move history uses the same emitter as the
+        # existing post-action state path, but remains optional for test doubles
+        # and deployments with history ingestion disabled.
+        self.driver.configure_history(self.history_emitter, self.session_id)
+        self.driver.register_state_handlers(
             on_full_state=self._on_full_state,
             on_state_update=self._on_delta,
             on_bad_game_state=self._on_bad_game_state,
             on_state_unavailable=self._on_state_unavailable,
             on_alert=self._on_alert,
             on_gui_update=self._on_gui_update,
+            on_terminal=self._on_terminal,
         )
         self._state = self.initial_state
 
@@ -109,16 +136,22 @@ class GameSession:
         self._state_stale = True
 
     def _on_bad_game_state(self, payload: Any) -> None:
-        logger.warning(
-            "bad_game_state received for session %s: %s", self.session_id, payload
-        )
+        logger.warning("bad_game_state received for session %s", self.session_id)
         self._bad_state = True
+
+    def _on_terminal(self, payload: Any) -> None:
+        del payload
+        self._terminal = True
+        self._state_stale = True
 
     def _on_state_unavailable(self, payload: Any) -> None:
         logger.warning(
-            "unable_to_get_state received for session %s: %s", self.session_id, payload
+            "unable_to_get_state received for session %s (%s)",
+            self.session_id,
+            type(payload).__name__,
         )
         self._state_unavailable = True
+        self._state_stale = True
 
     def _on_alert(self, payload: Any) -> None:
         self._alerts.append(payload)
@@ -144,7 +177,7 @@ class GameSession:
 
     async def _request_fresh_state(self, timeout: float) -> Any:
         with tracer.start_as_current_span("game_session.request_state"):
-            new_state = await self.room.request_state(timeout=timeout)
+            new_state = await self.driver.request_state(timeout=timeout)
             self._check_state_flags()
             async with self._state_lock:
                 self._state = new_state
@@ -155,6 +188,7 @@ class GameSession:
         with tracer.start_as_current_span("game_session.get_state"):
             self._check_state_flags()
             async with self._state_lock:
+                self._check_state_flags()
                 if self._state is not None and not self._state_stale:
                     return self._state
 
@@ -167,11 +201,18 @@ class GameSession:
             )
             try:
                 await self._request_fresh_state(timeout=10.0)
-            except (PhoenixChannelError, asyncio.TimeoutError) as exc:
+            except (
+                PlatformTransportError,
+                PlatformTimeoutError,
+                asyncio.TimeoutError,
+            ) as exc:
+                self._check_state_flags()
                 logger.error(
-                    "get_state: session_id=%s failed: %s", self.session_id, exc
+                    "get_state: session_id=%s failed: %s",
+                    self.session_id,
+                    type(exc).__name__,
                 )
-                raise SessionError(f"Could not fetch game state: {exc}") from exc
+                raise SessionError("Could not fetch game state") from exc
 
             self._check_state_flags()
             async with self._state_lock:
@@ -179,77 +220,110 @@ class GameSession:
 
     async def execute_action(self, action: GameAction, timeout: float = 15.0) -> Any:
         action_name = type(action).__name__
+        action_seat = getattr(action, "player_n", None)
+        attributes = {
+            "game.action.name": action_name,
+            "game.platform": self.platform,
+        }
+        if action_seat is not None:
+            attributes["game.seat"] = str(action_seat)
         with tracer.start_as_current_span(
             "game_session.execute_action",
-            attributes={"game.action.name": action_name},
-        ):
-            self._check_state_flags()
-            # Clear any previous action error before executing
-            self._action_error = None
-            payload = translate_action(action)
-            logger.info(
-                "execute_action: session_id=%s payload=%r", self.session_id, payload
-            )
+            attributes=attributes,
+        ) as span:
             try:
-                await self.room.execute_game_action(payload, timeout=timeout)
-                await self.room.wait_for_state_change(timeout=timeout)
                 self._check_state_flags()
-                new_state = await self._request_fresh_state(timeout=timeout)
-                # Check for action errors in game messages
-                self._check_action_messages(new_state)
+                self.driver.ensure_move_allowed()
+                # Clear any previous action error before executing
+                self._action_error = None
                 logger.info(
-                    "execute_action: session_id=%s -> state updated", self.session_id
-                )
-                await self._emit_history_state_event(new_state, action=action)
-                return new_state
-            except PhoenixChannelError as exc:
-                logger.error(
-                    "execute_action: session_id=%s rejected: %s", self.session_id, exc
-                )
-                raise SessionError(f"Action rejected by DragnCards: {exc}") from exc
-            except asyncio.TimeoutError as exc:
-                logger.warning(
-                    "execute_action: session_id=%s timed out, attempting state refresh",
+                    "execute_action: session_id=%s action=%s",
                     self.session_id,
+                    action_name,
                 )
                 try:
-                    recovery_timeout = min(timeout, 5.0)
-                    new_state = await self._request_fresh_state(
-                        timeout=recovery_timeout
-                    )
+                    await self.driver.execute_move(action, timeout=timeout)
+                    await self.driver.wait_for_move(timeout=timeout)
+                    self._check_state_flags()
+                    new_state = await self._request_fresh_state(timeout=timeout)
+                    # Check for action errors in game messages
                     self._check_action_messages(new_state)
                     logger.info(
-                        "execute_action: session_id=%s recovered via request_state",
+                        "execute_action: session_id=%s -> state updated",
                         self.session_id,
                     )
                     await self._emit_history_state_event(new_state, action=action)
+                    span.set_attribute("game.outcome", "succeeded")
                     return new_state
-                except (PhoenixChannelError, asyncio.TimeoutError) as recovery_exc:
-                    logger.error(
-                        "execute_action: session_id=%s recovery failed: %s",
+                except (PlatformTimeoutError, asyncio.TimeoutError) as exc:
+                    logger.warning(
+                        "execute_action: session_id=%s timed out, attempting state refresh",
                         self.session_id,
-                        recovery_exc,
                     )
-                raise SessionError(
-                    "Timed out waiting for state update after action"
-                ) from exc
+                    try:
+                        recovery_timeout = min(timeout, 5.0)
+                        new_state = await self._request_fresh_state(
+                            timeout=recovery_timeout
+                        )
+                        self._check_action_messages(new_state)
+                        logger.info(
+                            "execute_action: session_id=%s recovered via request_state",
+                            self.session_id,
+                        )
+                        await self._emit_history_state_event(new_state, action=action)
+                        span.set_attribute("game.outcome", "recovered")
+                        return new_state
+                    except (
+                        PlatformTransportError,
+                        PlatformTimeoutError,
+                        asyncio.TimeoutError,
+                    ) as recovery_exc:
+                        logger.error(
+                            "execute_action: session_id=%s recovery failed: %s",
+                            self.session_id,
+                            type(recovery_exc).__name__,
+                        )
+                    raise SessionError(
+                        "Timed out waiting for state update after action"
+                    ) from exc
+                except PlatformTransportError as exc:
+                    logger.error(
+                        "execute_action: session_id=%s rejected: %s",
+                        self.session_id,
+                        type(exc).__name__,
+                    )
+                    raise SessionError("Action rejected by the game platform") from exc
+            except (PlatformTimeoutError, asyncio.TimeoutError) as exc:
+                span.set_attribute("game.outcome", "failed")
+                raise
+            except PlatformTransportError as exc:
+                span.set_attribute("game.outcome", "failed")
+                raise
+            except Exception:
+                span.set_attribute("game.outcome", "failed")
+                raise
 
     def _check_action_messages(self, state: Any) -> None:
-        """Check game messages for action errors and populate _action_error if found."""
-        if not isinstance(state, dict):
-            return
-        game = state.get("game")
-        if not isinstance(game, dict):
-            return
-        messages = game.get("messages")
-        if not isinstance(messages, list):
-            return
-        for message in reversed(messages):
-            if not isinstance(message, str):
-                continue
-            if "ABORT:" in message or "Error in Marvel Champions triggered" in message:
-                self._action_error = message
-                break
+        """Ask the platform to inspect its state for a bad-game-state signal."""
+        try:
+            self.driver.raise_for_bad_game_state(state)
+        except BadGameStateError as exc:
+            # Keep the existing HTTP action-helper contract: the state is
+            # returned and the error is surfaced in the response's ``error``.
+            self._action_error = str(exc)
+
+    def check_bad_game_state(self, state: Any) -> None:
+        """Raise the platform's common bad-state error for manager call sites."""
+        self.driver.raise_for_bad_game_state(state)
+
+    def normalise_state(self, state: Any) -> Any:
+        """Normalise state below the session rather than in an HTTP router."""
+        try:
+            return self.driver.normalise_state(state, plugin_name=self.plugin_name)
+        except BadGameStateError:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise BadGameStateError("game state is corrupted or unavailable") from exc
 
     async def _emit_history_state_event(
         self, state: Any, *, action: GameAction | None = None
@@ -338,10 +412,10 @@ class GameSession:
             description=f"Loaded prebuilt deck {deck_id}",
             player_n=player_n,
         )
-        payload = translate_action(load_action)
         try:
-            await self.room.execute_game_action(payload, timeout=timeout)
-            await self.room.wait_for_state_change(timeout=timeout)
+            self.driver.ensure_move_allowed()
+            await self.driver.execute_move(load_action, timeout=timeout)
+            await self.driver.wait_for_move(timeout=timeout)
             self._check_state_flags()
             new_state = await self._request_fresh_state(timeout=timeout)
             self._check_action_messages(new_state)
@@ -349,9 +423,11 @@ class GameSession:
             # over a whole-deck deal. Best-effort: never breaks the deck load.
             await self._emit_history_state_event(new_state, action=load_action)
             return new_state
-        except PhoenixChannelError as exc:
-            raise SessionError(f"load_prebuilt_deck rejected: {exc}") from exc
-        except asyncio.TimeoutError as exc:
+        except PlatformTransportError as exc:
+            raise SessionError(
+                "load_prebuilt_deck rejected by the game platform"
+            ) from exc
+        except (PlatformTimeoutError, asyncio.TimeoutError) as exc:
             raise SessionError(
                 "Timed out waiting for state after load_prebuilt_deck"
             ) from exc
@@ -387,17 +463,13 @@ class GameSession:
 
         # Clear any previous action error before executing (mirrors execute_action).
         self._action_error = None
-        payload = {
-            "action": "set_game",
-            "options": {
-                "game": snapshot_doc.game,
-                "description": "Load game state snapshot",
-            },
-            "timestamp": int(time.time() * 1000),
-        }
+        self.driver.ensure_move_allowed()
+        payload = self.driver.build_set_game_payload(
+            snapshot_doc.game, timestamp=int(time.time() * 1000)
+        )
         try:
-            await self.room.execute_game_action(payload, timeout=timeout)
-            await self.room.wait_for_state_change(timeout=timeout)
+            await self.driver.execute_move(payload, timeout=timeout)
+            await self.driver.wait_for_move(timeout=timeout)
             self._check_state_flags()
             new_state = await self._request_fresh_state(timeout=timeout)
             self._check_action_messages(new_state)
@@ -406,9 +478,9 @@ class GameSession:
             # Best-effort: never breaks the load.
             await self._emit_history_state_event(new_state)
             return new_state
-        except PhoenixChannelError as exc:
-            raise SessionError(f"load_state rejected: {exc}") from exc
-        except asyncio.TimeoutError as exc:
+        except PlatformTransportError as exc:
+            raise SessionError("load_state rejected by the game platform") from exc
+        except (PlatformTimeoutError, asyncio.TimeoutError) as exc:
             raise SessionError("Timed out waiting for state after load_state") from exc
 
     async def reset_game(
@@ -421,7 +493,7 @@ class GameSession:
         # Clear any previous action error before executing (mirrors execute_action).
         self._action_error = None
         try:
-            await self.room.push_room_event(
+            await self.driver.push_event(
                 event, {"options": {"save?": save}}, timeout=timeout
             )
             new_state = await self._request_fresh_state(timeout=timeout)
@@ -433,10 +505,14 @@ class GameSession:
             await self._emit_history_state_event(new_state)
             logger.info("reset_game: session_id=%s -> state updated", self.session_id)
             return new_state
-        except PhoenixChannelError as exc:
-            logger.error("reset_game: session_id=%s rejected: %s", self.session_id, exc)
-            raise SessionError(f"reset_game rejected: {exc}") from exc
-        except asyncio.TimeoutError as exc:
+        except PlatformTransportError as exc:
+            logger.error(
+                "reset_game: session_id=%s rejected (%s)",
+                self.session_id,
+                type(exc).__name__,
+            )
+            raise SessionError("reset_game rejected by the game platform") from exc
+        except (PlatformTimeoutError, asyncio.TimeoutError) as exc:
             logger.error("reset_game: session_id=%s timed out", self.session_id)
             raise SessionError("Timed out waiting for state after reset") from exc
 
@@ -450,7 +526,7 @@ class GameSession:
         report failure, since the ``set_seat`` channel event is written to the
         socket without a reply being awaited.
         """
-        await self.room.set_seat(
+        await self.driver.set_seat(
             player_id=normalise_seat_id(player_id), user_id=user_id
         )
 
@@ -481,13 +557,11 @@ class GameSession:
                 # not necessarily the state that reflects the push.
                 try:
                     state = await self._request_fresh_state(timeout=timeout)
-                except (PhoenixChannelError, asyncio.TimeoutError) as exc:
+                except Exception as exc:
                     # A room that will not answer cannot confirm a seat. Report
                     # it as a failed claim rather than letting a transport error
                     # surface as an unhandled fault.
-                    raise SessionError(
-                        f"Could not confirm seat {player_id}: {exc}"
-                    ) from exc
+                    raise SessionError(f"Could not confirm seat {player_id}") from exc
                 if seat_held_by(state, player_id, user_id):
                     logger.info(
                         "claim_seat: session_id=%s seat=%s user_id=%s claimed",
@@ -506,7 +580,7 @@ class GameSession:
             )
 
     async def set_spectator(self, user_id: int, spectating: bool) -> None:
-        await self.room.set_spectator(user_id=user_id, spectating=spectating)
+        await self.driver.set_spectator(user_id=user_id, spectating=spectating)
 
     async def set_player_count(
         self,
@@ -527,10 +601,10 @@ class GameSession:
 
     async def close_room(self, timeout: float = 10.0) -> None:
         try:
-            await self.room.push_room_event("close_room", {"options": {}}, timeout)
-        except PhoenixChannelError as exc:
-            raise SessionError(f"close_room rejected: {exc}") from exc
-        except asyncio.TimeoutError as exc:
+            await self.driver.push_event("close_room", {"options": {}}, timeout)
+        except PlatformTransportError as exc:
+            raise SessionError("close_room rejected by the game platform") from exc
+        except (PlatformTimeoutError, asyncio.TimeoutError) as exc:
             raise SessionError("Timed out waiting for close_room ack") from exc
         finally:
             if self.on_close is not None:
@@ -541,20 +615,20 @@ class GameSession:
 
     async def send_alert(self, message: str, timeout: float = 10.0) -> None:
         try:
-            await self.room.push_room_event("send_alert", {"message": message}, timeout)
-        except PhoenixChannelError as exc:
-            raise SessionError(f"send_alert rejected: {exc}") from exc
-        except asyncio.TimeoutError as exc:
+            await self.driver.push_event("send_alert", {"message": message}, timeout)
+        except PlatformTransportError as exc:
+            raise SessionError("send_alert rejected by the game platform") from exc
+        except (PlatformTimeoutError, asyncio.TimeoutError) as exc:
             raise SessionError("Timed out waiting for send_alert ack") from exc
 
     async def save_replay(self, timeout: float = 10.0) -> None:
         timestamp = int(time.time() * 1000)
         try:
-            await self.room.push_room_event(
+            await self.driver.push_event(
                 "save_replay", {"options": {}, "timestamp": timestamp}, timeout
             )
-        except PhoenixChannelError as exc:
-            raise SessionError(f"save_replay rejected: {exc}") from exc
+        except PlatformTransportError as exc:
+            raise SessionError("save_replay rejected by the game platform") from exc
         except asyncio.TimeoutError as exc:
             raise SessionError("Timed out waiting for save_replay ack") from exc
 
@@ -571,10 +645,14 @@ class GameSession:
     def to_metadata(self) -> dict:
         return {
             "session_id": self.session_id,
-            "plugin_name": self.plugin_name,
-            "plugin_id": self.plugin_id,
+            "platform": self.platform,
             "room_slug": self.room_slug,
             "created_at": self.created_at.isoformat(),
             "frontend_url": None,
             "ephemeral": self.ephemeral,
+            **self.driver.session_metadata(
+                plugin_name=self.plugin_name,
+                plugin_id=self.plugin_id,
+                plugin_version=self.plugin_version,
+            ),
         }

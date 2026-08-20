@@ -24,6 +24,12 @@ docker compose up -d
 | Grafana            | http://localhost:3004           | —                          |
 | Login              | dev_user@example.com / password | —                          |
 
+Game Service also supports the optional `marvel-lcg` platform. Start the Marvel LCG
+Compose profile, set a non-empty `MARVEL_LCG_PASSWORD`, and configure
+`MARVEL_LCG_HTTP_URL` (normally `http://marvel-lcg:2345` inside Compose). DragnCards
+remains the default platform and uses typed actions; Marvel LCG sessions use
+enumerated option endpoints.
+
 The Swagger playground merges the OpenAPI document of **every** first-party service —
 game-service, agent-orchestrator, history-service and eval-service — into one index, and
 executes requests through the dashboard's `/api/proxy/<service>` routes. Which services it

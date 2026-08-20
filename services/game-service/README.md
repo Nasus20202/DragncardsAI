@@ -6,7 +6,10 @@ It does two things:
 - exposes an HTTP API for creating and controlling game sessions
 - exposes a focused subset of those capabilities over MCP so LLM clients can call tools directly
 
-The service talks to DragnCards over Phoenix Channels and keeps a local session pool.
+The service supports two platform drivers: DragnCards (the default) over Phoenix
+Channels, and the optional vendored `marvel-lcg` HTTP/render-frame platform. Each
+driver owns its transport and move surface; DragnCards exposes typed actions while
+Marvel LCG exposes enumerated options.
 
 ## Run
 
@@ -48,6 +51,19 @@ never applies to. Requests with no `Origin` are unaffected by this setting.
 **CORS is not authentication.** It stops a browser being used as a confused deputy
 for methods that require a preflight; it does not stop a non-browser client, which
 simply omits `Origin`. Requiring a credential is tracked separately as DRA-32.
+
+## Marvel LCG Platform
+
+Set `MARVEL_LCG_HTTP_URL` and a non-empty `MARVEL_LCG_PASSWORD` before starting
+the service. The Marvel LCG engine is available through the `marvel-lcg` Compose
+profile; when both containers share the Compose network, use
+`MARVEL_LCG_HTTP_URL=http://marvel-lcg:2345`. The client validates the engine
+version and authenticated cookies before using game endpoints.
+
+Create a Marvel session with `{"platform":"marvel-lcg"}`. Marvel sessions use
+`GET /games/{session_id}/options` and `POST /games/{session_id}/options/choose`;
+the generic typed-action routes are rejected for this platform. Option responses
+include stable prompt identity/version fields so stale choices are rejected.
 
 ## DragnCards Credential Cache
 

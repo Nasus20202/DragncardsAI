@@ -64,13 +64,21 @@ async def get_session_actions(
 ):
     logger.info("get_session_actions: session_id=%s", session_id)
     session = await manager.get_session(session_id)
-    actions, raw_ops = build_generic_action_catalog()
-    plugin_metadata = get_plugin_action_catalog(session.plugin_name)
+    catalog = session.driver.action_catalog()
+    if catalog.get("plugin_metadata") is None:
+        actions, raw_ops = build_generic_action_catalog()
+        plugin_metadata = get_plugin_action_catalog(session.plugin_name)
+        catalog = {
+            "actions": actions,
+            "raw_ops": raw_ops,
+            "load_groups": plugin_metadata.load_groups,
+            "plugin_metadata": plugin_metadata.to_dict(),
+        }
     return SessionActionsResponse(
         session_id=session_id,
-        plugin_name=session.plugin_name,
-        actions=actions,
-        raw_ops=raw_ops,
-        load_groups=plugin_metadata.load_groups,
-        plugin_metadata=plugin_metadata.to_dict(),
+        plugin_name=session.plugin_name or session.platform,
+        actions=catalog["actions"],
+        raw_ops=catalog["raw_ops"],
+        load_groups=catalog["load_groups"],
+        plugin_metadata=catalog["plugin_metadata"] or {},
     )

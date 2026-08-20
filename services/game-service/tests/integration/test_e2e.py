@@ -90,7 +90,7 @@ async def test_e2e_http_game_lifecycle(app, manager):
             assert state_resp.status_code == 200
             state_before = state_resp.json()["state"]
             assert state_before is not None
-            assert "roundNumber" in state_before  # simplified format
+            assert "playRound" in state_before  # simplified format
 
             # 3. Execute next_step
             action_resp = await client.post(
@@ -104,7 +104,7 @@ async def test_e2e_http_game_lifecycle(app, manager):
             assert state_after_resp.status_code == 200
             state_after = state_after_resp.json()["state"]
             assert state_after is not None
-            assert "roundNumber" in state_after  # simplified format
+            assert "playRound" in state_after  # simplified format
 
         finally:
             # 4. Delete
@@ -149,7 +149,7 @@ async def test_e2e_mcp_game_lifecycle(app, mcp):
                 assert state_resp.status_code == 200
                 state_data = state_resp.json()
                 assert state_data["session_id"] == session_id
-                assert "roundNumber" in state_data["state"]  # simplified format
+                assert "playRound" in state_data["state"]  # simplified format
 
                 # 3. Execute next_step
                 action_result = await client.call_tool(
@@ -163,7 +163,7 @@ async def test_e2e_mcp_game_lifecycle(app, mcp):
                 state_after_resp = await http_client.get(f"/games/{session_id}/state")
                 assert state_after_resp.status_code == 200
                 assert (
-                    "roundNumber" in state_after_resp.json()["state"]
+                    "playRound" in state_after_resp.json()["state"]
                 )  # simplified format
 
             finally:
@@ -215,15 +215,15 @@ async def test_e2e_concurrent_http_and_mcp(app, mcp, manager):
 
                 # Both should return valid state
                 assert http_state is not None
-                assert "roundNumber" in http_state  # simplified format
+                assert "playRound" in http_state  # simplified format
                 assert mcp_state is not None
-                assert "roundNumber" in mcp_state  # simplified format
+                assert "playRound" in mcp_state  # simplified format
 
                 # HTTP should still see state after the MCP action
                 after_resp = await http_client.get(f"/games/{session_id}/state")
                 assert after_resp.status_code == 200
                 after_state = after_resp.json()["state"]
-                assert "roundNumber" in after_state  # simplified format
+                assert "playRound" in after_state  # simplified format
 
             finally:
                 await manager.delete_session(session_id)

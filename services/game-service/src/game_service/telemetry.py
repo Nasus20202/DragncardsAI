@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from threading import Lock
 
@@ -24,6 +25,10 @@ DEFAULT_SERVICE_NAME = "game-service"
 DEFAULT_OTLP_ENDPOINT = "http://localhost:4318"
 DEFAULT_EXPORT_INTERVAL_MILLIS = 15_000
 _LOG_FIELDS = " trace_id=%(trace_id)s span_id=%(span_id)s service=%(service_name)s"
+_SENSITIVE_QUERY_PARAMETER = re.compile(
+    r"([?&](?:data|authToken|session_token|password|token)=)[^&\s]+",
+    re.IGNORECASE,
+)
 
 
 def _is_truthy(raw: str | None) -> bool:
@@ -85,6 +90,28 @@ _httpx_instrumented = False
 _logging_patched = False
 
 
+def _sanitize_httpx_span(span, request) -> None:
+    """Keep automatic HTTP spans free of query strings, bodies, and cookies."""
+    url = request.url
+    safe_url = f"{url.scheme}://{url.host}{url.path}"
+    span.set_attribute("http.url", safe_url)
+    span.set_attribute("url.full", safe_url)
+    span.set_attribute("http.target", url.path)
+    span.set_attribute("http.request.header.cookie", "<redacted>")
+
+
+def _sanitize_log_value(value):
+    if isinstance(value, str):
+        return _SENSITIVE_QUERY_PARAMETER.sub(r"\1<redacted>", value)
+    if value.__class__.__module__.startswith("httpx"):
+        return _sanitize_log_value(str(value))
+    if isinstance(value, tuple):
+        return tuple(_sanitize_log_value(item) for item in value)
+    if isinstance(value, list):
+        return [_sanitize_log_value(item) for item in value]
+    return value
+
+
 def _patch_logging(service_name: str) -> None:
     global _logging_patched
     if _logging_patched:
@@ -94,6 +121,8 @@ def _patch_logging(service_name: str) -> None:
 
     def record_factory(*args, **kwargs):
         record = previous_factory(*args, **kwargs)
+        record.msg = _sanitize_log_value(record.msg)
+        record.args = _sanitize_log_value(record.args)
         span_context = trace.get_current_span().get_span_context()
         if span_context.is_valid:
             record.trace_id = format(span_context.trace_id, "032x")
@@ -127,6 +156,7 @@ def setup_telemetry(
             return _runtime
 
         config = TelemetryConfig.from_env(default_service_name)
+        _patch_logging(config.service_name)
         if config.disabled:
             _runtime = TelemetryRuntime(config=config, enabled=False)
             return _runtime
@@ -162,10 +192,9 @@ def setup_telemetry(
         logging.getLogger().addHandler(logging_handler)
 
         if not _httpx_instrumented:
-            HTTPXClientInstrumentor().instrument()
+            HTTPXClientInstrumentor().instrument(request_hook=_sanitize_httpx_span)
             _httpx_instrumented = True
 
-        _patch_logging(config.service_name)
         _runtime = TelemetryRuntime(
             config=config,
             enabled=True,

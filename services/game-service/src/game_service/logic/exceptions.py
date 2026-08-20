@@ -41,3 +41,15 @@ class SnapshotValidationError(SessionError):
 
 class SessionLockedError(SessionError):
     """Raised when a session operation lock cannot be acquired in time."""
+
+
+class EnumeratedOptionError(SessionError):
+    """Raised when a platform option cannot be listed or submitted."""
+
+
+class PlatformTransportError(SessionError):
+    """Raised when a platform's live transport cannot complete an operation."""
+
+
+class PlatformTimeoutError(PlatformTransportError):
+    """Raised when a platform operation exceeds its caller-provided timeout."""

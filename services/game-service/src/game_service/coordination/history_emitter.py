@@ -161,6 +161,15 @@ class HistoryEmitter(Protocol):
         plugin_name: str | None = None,
     ) -> None: ...
 
+    async def emit_platform_event(
+        self,
+        *,
+        game_id: str,
+        platform: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None: ...
+
 
 class NullHistoryEmitter:
     """No-op emitter used when history ingestion is disabled."""
@@ -176,6 +185,16 @@ class NullHistoryEmitter:
         state: Any,
         action_args: dict[str, Any] | None = None,
         plugin_name: str | None = None,
+    ) -> None:
+        return None
+
+    async def emit_platform_event(
+        self,
+        *,
+        game_id: str,
+        platform: str,
+        event_type: str,
+        payload: dict[str, Any],
     ) -> None:
         return None
 
@@ -219,7 +238,9 @@ class ValkeyHistoryEmitter:
             return int(value)
         except Exception as exc:  # best-effort: never break the action
             logger.warning(
-                "history emit: INCR offset failed for game %s: %s", game_id, exc
+                "history emit: INCR offset failed for game %s (%s)",
+                game_id,
+                type(exc).__name__,
             )
             return None
 
@@ -239,6 +260,32 @@ class ValkeyHistoryEmitter:
             action_args=action_args,
             plugin_name=plugin_name,
         )
+        await self._publish(envelope)
+
+    async def emit_platform_event(
+        self,
+        *,
+        game_id: str,
+        platform: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Emit prompt/move/terminal observations, never raw render frames."""
+        producer_offset = await self.next_producer_offset(game_id)
+        if producer_offset is None:
+            return
+        envelope = {
+            "envelope_version": ENVELOPE_VERSION,
+            "event_id": str(uuid.uuid4()),
+            "game_id": game_id,
+            "platform": platform,
+            "actor": ACTOR,
+            "event_type": event_type,
+            "payload": payload,
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "idempotency_key": _idempotency_key(game_id, ACTOR, producer_offset),
+            "producer_offset": producer_offset,
+        }
         await self._publish(envelope)
 
     async def _publish(self, envelope: dict[str, Any]) -> None:

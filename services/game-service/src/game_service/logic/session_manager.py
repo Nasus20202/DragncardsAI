@@ -17,7 +17,6 @@ from typing import Any
 
 from game_service.dragncards.auth_cache import (
     DragnCardsAuthCache,
-    DragnCardsIdentity,
 )
 from game_service.dragncards.http_client import create_room
 from game_service.catalog.service import get_plugin_action_catalog, load_prebuilt_deck
@@ -39,9 +38,14 @@ from game_service.logic.seats import (
     seat_occupants,
     seats_to_claim,
 )
+from game_service.logic.platform import (
+    DRAGNCARDS_PLATFORM,
+    GamePlatform,
+    PlatformSlug,
+    DragnCardsPlatform,
+)
 from game_service.logic.session import GameSession
 from game_service.coordination.session_store import InMemorySessionStore, SessionStore
-from game_service.phoenix_client.client import PhoenixClient
 from game_service.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
@@ -77,28 +81,59 @@ class SessionManager:
 
     def __init__(
         self,
-        dragncards_http_url: str,
-        dragncards_ws_url: str,
-        email: str,
-        password: str,
-        plugin_registry: dict[str, dict],
+        platform_registry: dict[str, GamePlatform] | None = None,
+        plugin_registry: dict[str, dict] | None = None,
         session_store: SessionStore | None = None,
         history_emitter: HistoryEmitter | None = None,
         ephemeral_session_ttl_seconds: float = 1800.0,
         ephemeral_reaper_interval_seconds: float = 60.0,
         auth_cache: DragnCardsAuthCache | None = None,
+        platform: GamePlatform | None = None,
+        platforms: dict[str, GamePlatform] | None = None,
+        # Deprecated compatibility arguments. They are used to construct the
+        # DragnCards registry entry when callers have not moved to the seam yet.
+        dragncards_http_url: str | None = None,
+        dragncards_ws_url: str | None = None,
+        email: str | None = None,
+        password: str | None = None,
     ):
-        self._http_url = dragncards_http_url
-        self._ws_url = dragncards_ws_url
-        self._email = email
-        self._password = password
-        self._plugin_registry = plugin_registry
-        # An inert cache (no Valkey, or TTL 0) authenticates live on every call,
-        # which is exactly what this manager did before the cache existed — so a
-        # caller that passes nothing keeps the old behaviour.
-        self._auth_cache = auth_cache or DragnCardsAuthCache(
-            dragncards_http_url, email, password, ttl_seconds=0
-        )
+        self._plugin_registry = plugin_registry or {}
+        if platform_registry is None and platforms is not None:
+            platform_registry = platforms
+        if platform_registry is None and platform is not None:
+            platform_registry = {platform.slug: platform}
+        if platform_registry is None:
+            if dragncards_http_url is None:
+                dragncards_http_url = "http://localhost:4000"
+            if dragncards_ws_url is None:
+                dragncards_ws_url = "ws://localhost:4000/socket"
+            if email is None:
+                email = "dev@example.com"
+            if password is None:
+                password = "dev_password"
+            # An inert cache (no Valkey, or TTL 0) authenticates live on every
+            # call, matching the manager's pre-platform behaviour.
+            auth_cache = auth_cache or DragnCardsAuthCache(
+                dragncards_http_url, email, password, ttl_seconds=0
+            )
+            platform_registry = {
+                DRAGNCARDS_PLATFORM: DragnCardsPlatform(
+                    dragncards_http_url,
+                    dragncards_ws_url,
+                    email=email,
+                    password=password,
+                    auth_cache=auth_cache,
+                    create_room_fn=create_room,
+                )
+            }
+        self._platform_registry = platform_registry
+        dragncards = self._platform_registry.get(DRAGNCARDS_PLATFORM)
+        self._auth_cache = auth_cache or getattr(dragncards, "auth_cache", None)
+        # Read-only compatibility attributes for older diagnostic callers.
+        self._http_url = getattr(dragncards, "http_url", dragncards_http_url)
+        self._ws_url = getattr(dragncards, "ws_url", dragncards_ws_url)
+        self._email = getattr(dragncards, "email", email)
+        self._password = getattr(dragncards, "password", password)
         self._session_store = session_store or InMemorySessionStore()
         self._history_emitter = history_emitter or NullHistoryEmitter()
         self._sessions: dict[str, GameSession] = {}
@@ -125,38 +160,25 @@ class SessionManager:
             )
         return plugin_info
 
-    async def _credentials(self) -> DragnCardsIdentity:
-        """Resolve the DragnCards token and user id, reusing a cached pair.
+    def _get_platform(self, platform: str) -> GamePlatform:
+        driver = self._platform_registry.get(platform)
+        if driver is None:
+            available = list(self._platform_registry.keys())
+            raise SessionError(
+                f"Platform {platform!r} is not configured. Available: {available}"
+            )
+        return driver
 
-        Every path that bootstraps a room goes through here, so a single cached
-        credential serves session creation, attaching, and restore alike.
-        """
-        return await self._auth_cache.resolve()
+    def _new_platform(self, platform: str) -> GamePlatform:
+        driver = self._get_platform(platform)
+        factory = getattr(driver, "new_session", None)
+        return factory() if factory is not None else driver
 
-    async def _connect_room_channel(
-        self,
-        room_slug: str,
-        auth_token: str,
-        *,
-        identity: DragnCardsIdentity | None = None,
-    ) -> tuple[PhoenixClient, Any, Any]:
-        ws_client = PhoenixClient(self._ws_url, auth_token=auth_token)
-        await ws_client.connect()
-        channel = await ws_client.join(f"room:{room_slug}")
-        # DragnCards answers a join it will not serve with `room_unavailable`
-        # instead of a state, so when that has already arrived there is no point
-        # spending the full state timeout waiting for something that is not coming.
-        if channel.room_unavailable:
-            await self._on_room_unavailable(room_slug, identity)
-            return ws_client, channel, None
-        initial_state = await self._wait_for_initial_state(channel, room_slug)
-        if channel.room_unavailable:
-            await self._on_room_unavailable(room_slug, identity)
-        return ws_client, channel, initial_state
+    async def _credentials(self, platform: str = DRAGNCARDS_PLATFORM) -> Any:
+        """Resolve credentials through the selected platform driver."""
+        return await self._get_platform(platform).authenticate()
 
-    async def _on_room_unavailable(
-        self, room_slug: str, identity: DragnCardsIdentity | None
-    ) -> None:
+    async def _on_room_unavailable(self, room_slug: str, identity: Any | None) -> None:
         """React to DragnCards declining to serve a joined room's state.
 
         The room channel is the only place a DragnCards credential is checked on
@@ -186,42 +208,44 @@ class SessionManager:
             bool(identity and identity.cached),
         )
         if identity is not None and identity.cached:
-            await self._auth_cache.invalidate()
-
-    async def _wait_for_initial_state(self, channel: Any, room_slug: str) -> Any:
-        try:
-            return await channel.wait_for_state_update(timeout=15.0)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "No initial state received for room %s, will fetch on demand",
-                room_slug,
+            cache = self._auth_cache or getattr(
+                self._get_platform(DRAGNCARDS_PLATFORM), "auth_cache", None
             )
-            return None
+            if cache is not None:
+                await cache.invalidate()
 
     def _build_session(
         self,
         *,
         session_id: str,
-        plugin_name: str,
-        plugin_id: int,
+        plugin_name: str | None,
+        plugin_id: int | None,
         room_slug: str,
         created_at: datetime,
-        client: PhoenixClient,
-        channel: Any,
-        initial_state: Any,
+        client: Any = None,
+        channel: Any = None,
+        driver: GamePlatform | None = None,
+        platform: PlatformSlug = DRAGNCARDS_PLATFORM,
+        plugin_version: int | None = None,
+        initial_state: Any = None,
         ephemeral: bool = False,
     ) -> GameSession:
         session = GameSession(
             session_id=session_id,
             plugin_name=plugin_name,
             plugin_id=plugin_id,
+            plugin_version=plugin_version,
             room_slug=room_slug,
             created_at=created_at,
+            platform=platform,
+            driver=driver,
             client=client,
             channel=channel,
             initial_state=initial_state,
             on_close=lambda: self._remove_session(session_id),
-            history_emitter=self._history_emitter,
+            history_emitter=(
+                NullHistoryEmitter() if ephemeral else self._history_emitter
+            ),
             ephemeral=ephemeral,
         )
         return session
@@ -237,33 +261,59 @@ class SessionManager:
 
         return session
 
+    async def _teardown_failed_driver(
+        self, driver: GamePlatform, room_slug: str
+    ) -> None:
+        """Release a driver when bring-up failed before a session was stored."""
+        try:
+            await driver.teardown(room_slug)
+        except Exception as exc:
+            logger.warning(
+                "Failed to tear down an unregistered %s table: %s",
+                driver.slug,
+                type(exc).__name__,
+            )
+
     async def _restore_session(self, record: dict[str, Any]) -> GameSession:
         with tracer.start_as_current_span(
             "game_service.restore_session",
-            attributes={"game.plugin.name": record["plugin_name"]},
+            attributes={
+                "game.platform": record.get("platform", DRAGNCARDS_PLATFORM),
+                "game.plugin.name": record.get("plugin_name", ""),
+            },
         ):
-            plugin_name = record["plugin_name"]
-            plugin_info = self._plugin_registry.get(plugin_name)
-            if plugin_info is None:
+            platform = record.get("platform", DRAGNCARDS_PLATFORM)
+            plugin_name = record.get("plugin_name")
+            driver = self._new_platform(platform)
+            plugin_info = (
+                self._plugin_registry.get(plugin_name)
+                if driver.uses_plugin and plugin_name
+                else None
+            )
+            if driver.uses_plugin and plugin_info is None:
                 raise SessionError(
                     f"Cannot restore session {record['session_id']!r}: plugin {plugin_name!r} is not available"
                 )
 
-            identity = await self._credentials()
-            ws_client, channel, initial_state = await self._connect_room_channel(
-                record["room_slug"], identity.token, identity=identity
-            )
-            session = self._build_session(
-                session_id=record["session_id"],
-                plugin_name=plugin_name,
-                plugin_id=plugin_info["id"],
-                room_slug=record["room_slug"],
-                created_at=datetime.fromisoformat(record["created_at"]),
-                client=ws_client,
-                channel=channel,
-                initial_state=initial_state,
-                ephemeral=bool(record.get("ephemeral", False)),
-            )
+            try:
+                identity = await driver.authenticate()
+                await driver.attach_table(record["room_slug"], identity)
+                initial_state = await driver.connect(record["room_slug"], identity)
+                session = self._build_session(
+                    session_id=record["session_id"],
+                    plugin_name=plugin_name if driver.uses_plugin else None,
+                    plugin_id=(plugin_info or {}).get("id"),
+                    room_slug=record["room_slug"],
+                    created_at=datetime.fromisoformat(record["created_at"]),
+                    driver=driver,
+                    platform=platform,
+                    plugin_version=(plugin_info or {}).get("version"),
+                    initial_state=initial_state,
+                    ephemeral=bool(record.get("ephemeral", False)),
+                )
+            except Exception:
+                await self._teardown_failed_driver(driver, record["room_slug"])
+                raise
             await self._register_session(session, persist=False)
 
             logger.info(
@@ -326,10 +376,10 @@ class SessionManager:
                 return
             except Exception as exc:
                 logger.warning(
-                    "auto_seat: session_id=%s seat %s failed: %s",
+                    "auto_seat: session_id=%s seat %s failed (%s)",
                     session.session_id,
                     player_n,
-                    exc,
+                    type(exc).__name__,
                 )
 
         logger.info("auto_seat: session_id=%s no vacant seats", session.session_id)
@@ -353,7 +403,7 @@ class SessionManager:
         if state is None:
             return []
 
-        user_id = await self._own_user_id()
+        user_id = await self._own_user_id(session.platform)
         if user_id is None:
             logger.warning(
                 "claim_seats: session_id=%s could not resolve own user id",
@@ -367,10 +417,10 @@ class SessionManager:
                 await session.claim_seat(player_id=player_n, user_id=user_id)
             except Exception as exc:
                 logger.warning(
-                    "claim_seats: session_id=%s seat %s failed: %s",
+                    "claim_seats: session_id=%s seat %s failed (%s)",
                     session.session_id,
                     player_n,
-                    exc,
+                    type(exc).__name__,
                 )
                 continue
             claimed.append(player_n)
@@ -383,92 +433,112 @@ class SessionManager:
         )
         return claimed
 
-    async def _own_user_id(self) -> int | None:
-        """This service's DragnCards user id, asked of DragnCards.
+    async def _own_user_id(self, platform: str = DRAGNCARDS_PLATFORM) -> int | None:
+        """This service's platform identity, resolved through its driver.
 
         Deliberately not inferred from whoever already occupies a seat in the
         room: a human may be sitting there, and claiming the remaining seats for
         *them* would be worse than not claiming at all. The id comes from the
-        same cached credential every room-bootstrapping path uses, so asking for
-        it costs a login round-trip only when nothing is cached yet.
+        same platform credential every room-bootstrapping path uses, so asking for
+        it costs a login round-trip only when nothing is cached yet. Platforms
+        without a numeric identity simply decline automatic seat claiming.
         """
         try:
-            identity = await self._credentials()
-            return identity.user_id
+            identity = await self._credentials(platform)
+            user_id = getattr(identity, "user_id", None)
+            return user_id if isinstance(user_id, int) else None
         except Exception as exc:
-            logger.warning("Could not resolve own DragnCards user id: %s", exc)
+            logger.warning(
+                "Could not resolve own DragnCards user id (%s)", type(exc).__name__
+            )
             return None
 
     async def create_session(
-        self, plugin_name: str, *, ephemeral: bool = False
+        self,
+        plugin_name: str = "marvel-champions",
+        *,
+        platform: PlatformSlug = DRAGNCARDS_PLATFORM,
+        ephemeral: bool = False,
     ) -> GameSession:
         with tracer.start_as_current_span(
             "game_service.create_session",
             attributes={
+                "game.platform": platform,
                 "game.plugin.name": plugin_name,
                 "game.session.ephemeral": ephemeral,
             },
         ):
-            plugin_info = self._get_plugin_info(plugin_name)
-
-            identity = await self._credentials()
-
-            room = await create_room(
-                self._http_url,
-                identity.token,
-                user_id=identity.user_id,
-                plugin_id=plugin_info["id"],
-                plugin_version=plugin_info["version"],
-                plugin_name=plugin_info["name"],
+            driver = self._new_platform(platform)
+            plugin_info = (
+                self._get_plugin_info(plugin_name) if driver.uses_plugin else {}
             )
-            room_slug = room["slug"]
-            logger.info(
-                "Created DragnCards room %s for plugin %s", room_slug, plugin_name
-            )
+            room_slug = ""
+            try:
+                identity = await driver.authenticate()
+                room = await driver.create_table(identity, plugin_info)
+                room_slug = room["slug"]
+                logger.info("Created %s room %s", platform, room_slug)
+                initial_state = await driver.connect(room_slug, identity)
 
-            ws_client, channel, initial_state = await self._connect_room_channel(
-                room_slug, identity.token, identity=identity
-            )
-
-            session_id = str(uuid.uuid4())
-            session = self._build_session(
-                session_id=session_id,
-                plugin_name=plugin_name,
-                plugin_id=plugin_info["id"],
-                room_slug=room_slug,
-                created_at=datetime.now(timezone.utc),
-                client=ws_client,
-                channel=channel,
-                initial_state=initial_state,
-                ephemeral=ephemeral,
-            )
-            await self._register_session(session)
-            await self._auto_seat(session, identity.user_id)
+                session_id = str(uuid.uuid4())
+                session = self._build_session(
+                    session_id=session_id,
+                    plugin_name=plugin_name if driver.uses_plugin else None,
+                    plugin_id=plugin_info.get("id"),
+                    room_slug=room_slug,
+                    created_at=datetime.now(timezone.utc),
+                    driver=driver,
+                    platform=platform,
+                    plugin_version=plugin_info.get("version"),
+                    initial_state=initial_state,
+                    ephemeral=ephemeral,
+                )
+                await self._register_session(session)
+            except Exception:
+                await self._teardown_failed_driver(driver, room_slug)
+                raise
+            user_id = getattr(identity, "user_id", None)
+            if isinstance(user_id, int):
+                await self._auto_seat(session, user_id)
 
             logger.info("Session %s created (room=%s)", session_id, room_slug)
             return session
 
-    async def attach_session(self, plugin_name: str, room_slug: str) -> GameSession:
-        plugin_info = self._get_plugin_info(plugin_name)
+    async def attach_session(
+        self,
+        plugin_name: str = "marvel-champions",
+        room_slug: str = "",
+        *,
+        platform: PlatformSlug = DRAGNCARDS_PLATFORM,
+    ) -> GameSession:
+        driver = self._new_platform(platform)
+        plugin_info = self._get_plugin_info(plugin_name) if driver.uses_plugin else {}
+        try:
+            identity = await driver.authenticate()
+            await driver.attach_table(room_slug, identity)
+            initial_state = await driver.connect(room_slug, identity)
 
-        identity = await self._credentials()
-        ws_client, channel, initial_state = await self._connect_room_channel(
-            room_slug, identity.token, identity=identity
-        )
-
-        session_id = str(uuid.uuid4())
-        session = self._build_session(
-            session_id=session_id,
-            plugin_name=plugin_name,
-            plugin_id=plugin_info["id"],
-            room_slug=room_slug,
-            created_at=datetime.now(timezone.utc),
-            client=ws_client,
-            channel=channel,
-            initial_state=initial_state,
-        )
-        await self._register_session(session)
-        await self._auto_seat(session, identity.user_id)
+            session_id = str(uuid.uuid4())
+            session = self._build_session(
+                session_id=session_id,
+                plugin_name=plugin_name if driver.uses_plugin else None,
+                plugin_id=plugin_info.get("id"),
+                room_slug=room_slug,
+                created_at=datetime.now(timezone.utc),
+                driver=driver,
+                platform=platform,
+                plugin_version=plugin_info.get("version"),
+                initial_state=initial_state,
+            )
+            await self._register_session(session)
+        except Exception:
+            # Attaching never owns the existing table, so only detach the client;
+            # do not ask the platform to destroy somebody else's game.
+            await self._teardown_failed_driver(driver, room_slug)
+            raise
+        user_id = getattr(identity, "user_id", None)
+        if isinstance(user_id, int):
+            await self._auto_seat(session, user_id)
 
         logger.info("Session %s attached to existing room %s", session_id, room_slug)
         return session
@@ -624,13 +694,9 @@ class SessionManager:
                     exc,
                 )
         try:
-            await session.client.leave(f"room:{session.room_slug}")
+            await session.driver.teardown(session.room_slug)
         except Exception as exc:
-            logger.warning("Error leaving channel for session %s: %s", session_id, exc)
-        try:
-            await session.client.disconnect()
-        except Exception as exc:
-            logger.warning("Error disconnecting session %s: %s", session_id, exc)
+            logger.warning("Error tearing down session %s: %s", session_id, exc)
         await self._session_store.delete_session(session_id)
         logger.info("Session %s deleted", session_id)
 
@@ -640,6 +706,13 @@ class SessionManager:
         player_n = normalise_seat_id(player_n)
         async with self.session_operation_lock(session_id):
             session = await self.get_session(session_id)
+            if (
+                session.driver.move_surface != "typed_actions"
+                or session.plugin_name is None
+            ):
+                raise SessionError(
+                    "Prebuilt decks are only available on the DragnCards platform"
+                )
             deck = load_prebuilt_deck(deck_id, session.plugin_name)
             if deck is None:
                 raise SessionError(
@@ -660,14 +733,9 @@ class SessionManager:
                         game.get("messages"), list
                     ):
                         messages = game["messages"]
-                        for message in reversed(messages):
-                            if not isinstance(message, str):
-                                continue
-                            if (
-                                "ABORT:" in message
-                                or "Error in Marvel Champions triggered" in message
-                            ):
-                                raise SessionError(message)
+                        # The platform owns the upstream message vocabulary and
+                        # raises the same bad-state exception as normal actions.
+                        session.check_bad_game_state(after_state)
                         if game.get("loadedCardIds") or game.get("loadCardsHistory"):
                             return result
                 await asyncio.sleep(0.2)
@@ -709,6 +777,10 @@ class SessionManager:
     async def list_sessions(self) -> list[dict]:
         records = await self._session_store.list_sessions()
         return [dict(record) for record in records]
+
+    def platform_driver(self, platform: str) -> GamePlatform:
+        """Return the configured platform template for read-only catalog calls."""
+        return self._get_platform(platform)
 
     async def close_all(self) -> None:
         session_ids = list(self._sessions.keys())

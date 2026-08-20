@@ -19,6 +19,7 @@ from game_service.logic.session_manager import (
     AmbiguousSessionIdentifierError,
     SessionNotFoundError,
 )
+from game_service.logic.normalisers import DragnCardsNormaliser
 
 SESSION_UUID = "11111111-1111-1111-1111-111111111111"
 ROOM_SLUG = "lively-fog-1234"
@@ -57,6 +58,9 @@ def _make_manager() -> MagicMock:
             session.session_id = SESSION_UUID
             session.plugin_name = "marvel-champions"
             session.get_state = AsyncMock(return_value={"game": {"roundNumber": 1}})
+            session.normalise_state = MagicMock(
+                side_effect=DragnCardsNormaliser().normalise
+            )
             session.close_room = AsyncMock()
             return session
         raise SessionNotFoundError(f"Session {session_id!r} not found")

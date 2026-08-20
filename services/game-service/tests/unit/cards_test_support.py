@@ -30,6 +30,15 @@ def mock_session(plugin_name: str = "marvel-champions") -> MagicMock:
     session = MagicMock()
     session.session_id = SESSION_ID
     session.plugin_name = plugin_name
+    session.platform = "dragncards"
+    session.driver.action_catalog = MagicMock(
+        return_value={
+            "actions": [],
+            "raw_ops": [],
+            "load_groups": [],
+            "plugin_metadata": None,
+        }
+    )
     return session
 
 
