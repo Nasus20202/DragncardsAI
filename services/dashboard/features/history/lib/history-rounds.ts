@@ -105,8 +105,8 @@ function metaFromGameState(
   event: HistoryEvent,
   fallback: RoundMeta
 ): RoundMeta {
-  const game = asRecord(asRecord(event.payload.state)?.game ?? undefined);
-  if (!game) return fallback;
+  const state = asRecord(event.payload.state);
+  const game = asRecord(state?.game ?? undefined);
   const platform =
     event.platform === "marvel-lcg" || event.payload.platform === "marvel-lcg"
       ? "marvel-lcg"
@@ -115,8 +115,13 @@ function metaFromGameState(
         ? "dragncards"
         : fallback.platform;
   if (platform === "marvel-lcg") {
-    const rawRound = game.round_id;
-    const phase = normaliseMarvelPhase(game.phase);
+    // game-service emits the neutral projection for Marvel LCG. Keep the raw
+    // fields as a compatibility fallback for older recordings only.
+    const neutralRound = state?.playRound;
+    const neutralPhase = state?.phaseLabel ?? state?.phase;
+    const rawRound =
+      typeof neutralRound === "number" ? neutralRound : game?.round_id;
+    const phase = normaliseMarvelPhase(neutralPhase ?? game?.phase);
     return {
       round: typeof rawRound === "number" && rawRound > 0 ? rawRound : null,
       step: null,
@@ -124,6 +129,7 @@ function metaFromGameState(
       phase,
     };
   }
+  if (!game) return fallback;
   const rawRound = game.roundNumber;
   const rawStep = game.stepId;
   const step = rawStep != null ? String(rawStep) : fallback.step;

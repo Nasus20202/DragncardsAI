@@ -49,6 +49,28 @@ function agentEvent(seq: number): HistoryEvent {
   } as unknown as HistoryEvent;
 }
 
+function marvelEvent(
+  seq: number,
+  playRound: number,
+  phase: string,
+  phaseLabel = phase
+): HistoryEvent {
+  return {
+    seq,
+    event_id: `marvel-${seq}`,
+    game_id: "game-1",
+    platform: "marvel-lcg",
+    actor: "game-service",
+    event_type: "game_state",
+    payload: {
+      platform: "marvel-lcg",
+      state: { playRound, phase, phaseLabel },
+    },
+    occurred_at: "2026-07-28T10:00:00Z",
+    recorded_at: "2026-07-28T10:00:00Z",
+  } as unknown as HistoryEvent;
+}
+
 /**
  * A trimmed replica of a real recorded game (history game
  * 35128894-0cad-4b53-b195-d74b7428fe2c): setup happens at round 0 / step 0.0,
@@ -93,6 +115,18 @@ describe("phaseName", () => {
 });
 
 describe("buildMetaBySeq", () => {
+  it("uses the neutral Marvel state contract without incrementing playRound", () => {
+    const meta = buildMetaBySeq([
+      marvelEvent(1, 0, "setup", "Resolve Mulligans"),
+      marvelEvent(2, 1, "player", "Player 1 Turn"),
+      agentEvent(3),
+    ]);
+    expect(meta.get(1)).toMatchObject({ round: null, phase: "Resolve Mulligans", platform: "marvel-lcg" });
+    expect(meta.get(2)).toMatchObject({ round: null, platform: "marvel-lcg" });
+    expect(meta.get(3)).toMatchObject({ round: 1, phase: "Player 1 Turn", platform: "marvel-lcg" });
+    expect(meta.get(3)?.step).toBeNull();
+  });
+
   it("numbers the round in play as roundNumber + 1", () => {
     const meta = buildMetaBySeq(RECORDED_GAME);
     // roundNumber 0 at a play step is the FIRST round of play, not Setup.

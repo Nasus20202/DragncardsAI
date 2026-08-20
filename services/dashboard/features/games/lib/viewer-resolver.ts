@@ -20,7 +20,13 @@ export function resolveGameViewerUrl(
       : null;
   }
   if (platform === "marvel-lcg" && urls.marvelLcgBaseUrl) {
-    if (!seat) return new URL("/watch", urls.marvelLcgBaseUrl).toString();
+    // The engine's table page enters its true spectator/read-only mode through
+    // the explicit watch flag. Do not add a player index in this branch.
+    if (!seat) {
+      const url = new URL("/", urls.marvelLcgBaseUrl);
+      url.searchParams.set("watch", "1");
+      return url.toString();
+    }
     const match = /^player([1-4])$/.exec(seat);
     if (!match) return null;
     const url = new URL("/", urls.marvelLcgBaseUrl);
