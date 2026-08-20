@@ -81,7 +81,20 @@ services:
     # This profile is for deliberate local platform selection. Deployments
     # should omit the profile (and therefore publish no host port).
     ports:
-      - "${MARVEL_LCG_PORT:-4006}:2345"
+      - "127.0.0.1:${MARVEL_LCG_PORT:-4006}:2345"
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+      - /run/marvel-lcg:rw,noexec,nosuid,nodev,size=1m,uid=10001,gid=10001,mode=0700
+    depends_on:
+      marvel-lcg-init:
+        condition: service_completed_successfully
     environment:
       # No default is intentional: the entrypoint refuses an empty password.
       MARVEL_LCG_PASSWORD: ${MARVEL_LCG_PASSWORD:-password}
@@ -104,6 +117,25 @@ services:
     networks:
       - dragncards-shared
       - marvel-lcg-internal
+
+  # Existing named volumes are commonly root-owned from older images. This
+  # one-shot root helper makes upgrades safe without granting the game process
+  # root or adding write access to the read-only application tree.
+  marvel-lcg-init:
+    profiles: ["marvel-lcg"]
+    image: alpine:3.22
+    user: "0:0"
+    restart: "no"
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        mkdir -p /assets /replays /runtime &&
+        chown -R 10001:10001 /assets /replays /runtime
+    volumes:
+      - marvel-lcg-assets:/assets
+      - marvel-lcg-replays:/replays
+      - marvel-lcg-runtime:/runtime
 
 networks:
   dragncards-shared:

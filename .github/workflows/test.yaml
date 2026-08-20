@@ -70,6 +70,9 @@ jobs:
       - name: Run unit tests
         run: scripts/test.sh unit
 
+      - name: Check marvel-lcg infrastructure hardening
+        run: scripts/test-marvel-lcg-infrastructure.sh
+
       - name: Build Docker stack
         env:
           COMPOSE_PROFILES: marvel-lcg

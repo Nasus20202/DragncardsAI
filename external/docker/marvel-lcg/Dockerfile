@@ -13,10 +13,17 @@ RUN corepack enable && \
 
 FROM python:3.14.7-alpine
 
+ENV HOME=/tmp
+
 WORKDIR /app
 
 COPY external/marvel-lcg/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apk add --no-cache patch && \
+    pip install --no-cache-dir -r requirements.txt && \
+    addgroup -g 10001 marvel-lcg && \
+    adduser -D -u 10001 -G marvel-lcg \
+        -h /app -H -s /sbin/nologin marvel-lcg && \
+    install -d -o 10001 -g 10001 -m 0700 /run/marvel-lcg
 
 # Copy only runtime source from the submodule. In particular, do not copy its
 # asset cache, replay files, or runtime state into the image.
@@ -31,9 +38,15 @@ COPY external/marvel-lcg/build.py ./build.py
 COPY external/marvel-lcg/main.py ./main.py
 COPY --from=frontend /build/public/js ./public/js
 
+COPY external/docker/marvel-lcg/patches/0001-fail-closed-web-surface.patch /tmp/marvel-lcg-hardening.patch
+RUN patch --fuzz=0 -p1 < /tmp/marvel-lcg-hardening.patch && \
+    rm -f /tmp/marvel-lcg-hardening.patch
+
 COPY external/docker/marvel-lcg/entrypoint.sh /usr/local/bin/marvel-lcg-entrypoint
 RUN chmod 0755 /usr/local/bin/marvel-lcg-entrypoint
 
 EXPOSE 2345
+
+USER 10001:10001
 
 ENTRYPOINT ["/usr/local/bin/marvel-lcg-entrypoint"]
