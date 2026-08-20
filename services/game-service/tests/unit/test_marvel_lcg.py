@@ -131,13 +131,24 @@ class _RecordedSpan:
     def __init__(self, name, initial, sink):
         self.name = name
         self.attributes = dict(initial or {})
+        self.events: list[dict] = []
         self.sink = sink
 
     def __enter__(self):
         self.sink.append(self)
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, exc_type, exc_value, traceback):
+        if exc_value is not None:
+            self.events.append(
+                {
+                    "name": "exception",
+                    "attributes": {
+                        "exception.type": type(exc_value).__name__,
+                        "exception.message": str(exc_value),
+                    },
+                }
+            )
         return False
 
     def set_attribute(self, key, value):
@@ -404,6 +415,15 @@ async def test_submission_span_records_retry_cap_rejection_before_post(monkeypat
         "game.outcome": "failed",
         "error.type": "StuckPromptError",
     }
+    assert len(spans[0].events) == 1
+    exception_event = spans[0].events[0]
+    assert exception_event["name"] == "exception"
+    assert exception_event["attributes"] == {
+        "exception.type": "StuckPromptError",
+        "exception.message": "marvel-lcg prompt remained after 1 attempts",
+    }
+    assert "Pick one" not in exception_event["attributes"]["exception.message"]
+    assert "7" not in exception_event["attributes"]["exception.message"]
 
 
 async def test_repeated_identical_post_submission_frames_reach_retry_cap():

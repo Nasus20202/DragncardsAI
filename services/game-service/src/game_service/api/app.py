@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from game_service.api.exception_handlers import register_exception_handlers
+from game_service.api.request_limits import MaxBodySizeMiddleware
 from game_service.api.routers import cards as cards_router
 from game_service.api.routers import load_prebuilt_deck as load_prebuilt_deck_router
 from game_service.api.routers import prebuilt_sets as prebuilt_sets_router
@@ -42,6 +43,7 @@ logger = logging.getLogger(__name__)
 # does not break it, and this service's own /docs playground is same-origin and
 # therefore outside CORS entirely.
 DEFAULT_CORS_ALLOW_ORIGINS = "http://localhost:3001,http://127.0.0.1:3001"
+MAX_REQUEST_BODY_BYTES = 8 * 1024 * 1024
 
 
 def cors_allow_origins() -> list[str]:
@@ -63,6 +65,10 @@ def create_app(session_manager: SessionManager | None = None) -> FastAPI:
         description="HTTP REST API and MCP server for programmatic interaction with DragnCards games.",
     )
 
+    app.add_middleware(
+        MaxBodySizeMiddleware,
+        max_bytes=MAX_REQUEST_BODY_BYTES,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_allow_origins(),

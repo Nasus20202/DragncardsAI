@@ -623,8 +623,8 @@ class MarvelLcgPlatform:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise StuckPromptError(
-                    f"marvel-lcg prompt {previous.prompt_text!r} did not resolve; "
-                    f"attempted options={self._attempt_guard.attempted_options(previous)}"
+                    "marvel-lcg prompt did not resolve after "
+                    f"{self._attempt_guard.attempts(previous)} attempts"
                 )
             try:
                 frame = await socket.wait_for_frame(remaining)
