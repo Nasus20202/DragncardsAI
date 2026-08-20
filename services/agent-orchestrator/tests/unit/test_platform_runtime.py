@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from agent_orchestrator.runtime.platforms import (
     DEFAULT_PLATFORM,
+    MARVEL_LCG_CATALOG_TOOLS,
     PLATFORM_MARVEL_LCG,
     platform_tool_sets,
 )
@@ -23,6 +24,23 @@ def test_marvel_lcg_has_no_phase_advancing_tools_and_only_option_actions():
 
     assert tool_sets.phase_advancing == frozenset()
     assert tool_sets.seat_actions == frozenset({"choose_game_option"})
+
+
+def test_marvel_lcg_catalog_tools_are_not_turn_sensitive_actions():
+    tool_sets = platform_tool_sets(PLATFORM_MARVEL_LCG)
+
+    assert MARVEL_LCG_CATALOG_TOOLS.isdisjoint(tool_sets.phase_advancing)
+    assert MARVEL_LCG_CATALOG_TOOLS.isdisjoint(tool_sets.seat_actions)
+    for tool_name in MARVEL_LCG_CATALOG_TOOLS:
+        assert (
+            check_turn_authority(
+                caller_player_id="player1",
+                tool_name=tool_name,
+                phase="villain",
+                platform=PLATFORM_MARVEL_LCG,
+            )
+            is None
+        )
 
 
 def test_dragncards_legacy_tool_sets_remain_the_default():

@@ -15,6 +15,7 @@ from agent_orchestrator.runtime.session_modes import (
 )
 from agent_orchestrator.runtime.platforms import (
     DEFAULT_PLATFORM,
+    MARVEL_LCG_CATALOG_TOOLS,
     PLATFORM_MARVEL_LCG,
     normalize_platform,
 )
@@ -90,6 +91,7 @@ _NON_MUTATING_GAME_SERVICE_TOOLS = frozenset(
         "list_card_providers",
         "lookup_session_by_slug",
         "export_game_state_snapshot",
+        *MARVEL_LCG_CATALOG_TOOLS,
     }
 )
 
