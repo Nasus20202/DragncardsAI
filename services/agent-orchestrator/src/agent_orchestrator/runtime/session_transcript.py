@@ -12,6 +12,7 @@ from agent_orchestrator.runtime.personas import (
     persona_prompt_from_snapshot,
     session_persona_snapshot,
 )
+from agent_orchestrator.runtime.platforms import session_platform
 from agent_orchestrator.runtime.skills import SkillRegistry, enabled_skill_assignments
 from agent_orchestrator.runtime.system_prompts import build_system_prompt
 
@@ -187,6 +188,7 @@ class SessionTranscriptService:
                 persona_prompt=persona_prompt_from_snapshot(
                     session_persona_snapshot(session_obj)
                 ),
+                platform=session_platform(session_obj),
             )
             # A restored conversation is prepended to every request the session
             # sends, whether or not multi-turn memory is on, and compaction

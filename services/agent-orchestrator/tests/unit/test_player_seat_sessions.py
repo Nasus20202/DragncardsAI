@@ -14,6 +14,7 @@ import pytest
 from agent_orchestrator.runtime.builtin_tools import make_prompt_player_agent_handler
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.personas import SESSION_PERSONA_KEY
+from agent_orchestrator.runtime.platforms import PLATFORM_MARVEL_LCG
 from agent_orchestrator.runtime.player_agents import session_player_id
 from agent_orchestrator.runtime.session_modes import SESSION_MODE_ORCHESTRATED
 from agent_orchestrator.storage.repository import Repository
@@ -28,9 +29,14 @@ async def _table(
     *,
     mode: str = SESSION_MODE_ORCHESTRATED,
     persona: str | None = None,
+    platform: str | None = None,
 ):
     """An orchestrating session with one configured seat."""
-    session = await repo.create_session("table", {}, session_mode=mode)
+    session = await repo.create_session(
+        "table",
+        {"platform": platform} if platform is not None else {},
+        session_mode=mode,
+    )
     await repo.set_model_config(
         session.id,
         provider_id="openai",
@@ -111,6 +117,22 @@ async def test_later_prompt_reuses_the_seats_session(
     assert first_job is not None and second_job is not None
     assert first_job.id != second_job.id
     assert first_job.session_id == second_job.session_id
+
+
+@pytest.mark.asyncio
+async def test_a_marvel_lcg_platform_is_inherited_by_the_seat_session(
+    repository: Repository, live_event_bus: InMemoryLiveEventBus
+):
+    session = await _table(repository, platform=PLATFORM_MARVEL_LCG)
+    handle, _ = _handler(repository, live_event_bus, session.id)
+
+    result = await handle({"player_id": "player1", "prompt": "take your turn"})
+
+    child_job = await repository.get_job(_child_job_id(result))
+    assert child_job is not None
+    child_session = await repository.get_session(child_job.session_id)
+    assert child_session is not None
+    assert (child_session.metadata_json or {}).get("platform") == PLATFORM_MARVEL_LCG
 
 
 @pytest.mark.asyncio

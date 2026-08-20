@@ -22,9 +22,14 @@ from agent_orchestrator.runtime.compaction import (
 )
 from agent_orchestrator.runtime.context_estimate import estimate_request
 from agent_orchestrator.runtime.history_emitter import (
+    MarvelLcgOptionIdentity,
     SESSION_GAME_ID_KEY,
+    SESSION_PLATFORM_KEY,
     HistoryEventEmitter,
+    extract_game_id_from_arguments,
+    extract_game_id_from_result,
     extract_game_id,
+    extract_game_platform,
     is_game_id_source_tool,
     is_game_mutating_tool,
     restored_conversation_context,
@@ -37,6 +42,11 @@ from agent_orchestrator.runtime.personas import (
     persona_prompt_from_snapshot,
     session_persona_snapshot,
 )
+from agent_orchestrator.runtime.platforms import (
+    PLATFORM_MARVEL_LCG,
+    platform_tool_sets,
+    session_platform,
+)
 from agent_orchestrator.runtime.player_agents import (
     SeatIdentity,
     build_seat_inbox_message,
@@ -47,8 +57,7 @@ from agent_orchestrator.runtime.player_agents import (
 )
 from agent_orchestrator.runtime.seat_guard import SeatScopeViolation, check_seat_scope
 from agent_orchestrator.runtime.seat_turn_guard import (
-    PHASE_ADVANCING_TOOLS,
-    SEAT_ACTION_TOOLS,
+    PHASE_UNKNOWN,
     TurnAuthorityViolation,
     check_turn_authority,
 )
@@ -71,7 +80,6 @@ from agent_orchestrator.runtime.system_prompts import (
 from agent_orchestrator.runtime.tokens import (
     count_tokens_for_text,
     estimate_tokens_for_messages,
-    estimate_tokens_for_tools,
     extract_tokens_from_response,
 )
 from agent_orchestrator.runtime.truncation import is_output_truncated
@@ -81,6 +89,146 @@ from agent_orchestrator.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
 tracer = get_tracer(__name__)
+
+
+def _decoded_values(value: Any):
+    """Yield dictionaries/lists represented by an MCP tool result.
+
+    MCP results reach the prompt loop as JSON text nested inside the standard
+    ``content`` list. Keeping this decoder local to the runtime lets option
+    identity extraction consume both the normal wire shape and the compact
+    test/fake shape without treating model-supplied tool arguments as facts.
+    """
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except TypeError, ValueError:
+            return
+        if decoded != value:
+            yield from _decoded_values(decoded)
+        return
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _decoded_values(child)
+        return
+    if isinstance(value, list):
+        yield value
+        for child in value:
+            yield from _decoded_values(child)
+
+
+def _option_id(value: Any) -> str | int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (str, int)) and value != "":
+        return value
+    return None
+
+
+def _option_field(option: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in option:
+            return option[name]
+    return None
+
+
+def _tool_call_names(messages: list[dict[str, Any]]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            continue
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            call_id = tool_call.get("id")
+            function = tool_call.get("function")
+            name = function.get("name") if isinstance(function, dict) else None
+            if isinstance(call_id, str) and isinstance(name, str):
+                names[call_id] = name
+    return names
+
+
+def _is_list_game_options_tool(name: str | None) -> bool:
+    return name == "list_game_options" or bool(
+        name and name.endswith("_list_game_options")
+    )
+
+
+def _successful_tool_result_values(message: dict[str, Any]):
+    """Yield only data from a successful MCP tool result."""
+    raw_content = message.get("content")
+    decoded_content = next(iter(_decoded_values(raw_content)), None)
+    if isinstance(decoded_content, dict):
+        if decoded_content.get("is_error") is True:
+            return
+        result_content = decoded_content.get("content")
+        if result_content is not None:
+            yield from _decoded_values(result_content)
+            return
+    yield from _decoded_values(raw_content)
+
+
+def extract_marvel_lcg_option_identity(
+    *,
+    tool_name: str,
+    arguments: dict[str, Any],
+    messages: list[dict[str, Any]],
+) -> MarvelLcgOptionIdentity | None:
+    """Extract the producer's full identity for a submitted marvel-lcg option.
+
+    The model chooses an ``option_id``; its name and prompt event are facts from
+    the preceding successful ``list_game_options`` result. The result is matched
+    by tool-call id, and an identity is emitted only when all three producer
+    fields are present. The model's arguments alone can never supply metadata.
+    """
+    if tool_name != "choose_game_option":
+        return None
+    selected_id = _option_id(_option_field(arguments, "option_id", "optionId"))
+    if selected_id is None:
+        return None
+
+    tool_call_names = _tool_call_names(messages)
+    for message in reversed(messages):
+        if message.get("role") != "tool":
+            continue
+        tool_call_id = message.get("tool_call_id")
+        if not isinstance(tool_call_id, str) or not _is_list_game_options_tool(
+            tool_call_names.get(tool_call_id)
+        ):
+            continue
+        for value in _successful_tool_result_values(message):
+            if not isinstance(value, dict):
+                continue
+            options = _option_field(value, "options", "game_options", "gameOptions")
+            if not isinstance(options, list):
+                continue
+            for option in options:
+                if not isinstance(option, dict):
+                    continue
+                candidate_id = _option_id(
+                    _option_field(option, "option_id", "optionId", "id")
+                )
+                if candidate_id != selected_id:
+                    continue
+                name = _option_field(option, "name", "option_name", "optionName")
+                event = _option_field(option, "event", "event_name", "eventName")
+                if (
+                    isinstance(name, str)
+                    and name.strip()
+                    and isinstance(event, str)
+                    and event.strip()
+                ):
+                    return {
+                        "id": candidate_id,
+                        "name": name,
+                        "event": event,
+                    }
+    return None
+
 
 # Sent as a `user` message, because that is the position the manual "continue"
 # occupied — this feature automates that message and nothing else.
@@ -233,6 +381,7 @@ class PromptRunService:
                         self._skill_registry,
                         active_skills,
                         persona_prompt=persona_prompt_from_snapshot(persona_snapshot),
+                        platform=session_platform(session),
                     )
                 else:
                     system_prompt = build_system_prompt(
@@ -242,6 +391,7 @@ class PromptRunService:
                         # is never told about a name the spawn guard would refuse.
                         personas=allowed_subagent_personas(session),
                         persona_prompt=persona_prompt_from_snapshot(persona_snapshot),
+                        platform=session_platform(session),
                     )
                 all_registries = await self._repository.list_mcp_registries()
                 tool_definitions = await self._mcp_tool_catalog.list_session_tools(
@@ -284,6 +434,7 @@ class PromptRunService:
                     # to the durable game timeline as well as to this job.
                     history_emitter=self._history_emitter,
                     game_id=self._session_game_id(session),
+                    platform=session_platform(session),
                     subagent_wait_timeout_seconds=(
                         self._settings.subagent_wait_timeout_seconds
                     ),
@@ -653,10 +804,29 @@ class PromptRunService:
                         # `seat_identity` is None for the orchestrating job and for
                         # every chat-mode session, and those calls are unguarded.
                         if seat_identity is not None:
+                            platform = session_platform(session)
+                            definition = tool_mapping.get(tool_call.name)
+                            actual_tool_name = (
+                                definition.actual_name
+                                if definition is not None
+                                else tool_call.name
+                            )
+                            game_state = None
+                            if (
+                                platform == PLATFORM_MARVEL_LCG
+                                and actual_tool_name == "choose_game_option"
+                            ):
+                                game_id = self._session_game_id(session)
+                                if game_id is not None:
+                                    game_state = await self._read_game_state(
+                                        game_id, tool_mapping
+                                    )
                             violation = check_seat_scope(
                                 caller_player_id=seat_identity.player_id,
                                 tool_name=tool_call.name,
                                 arguments=tool_call.arguments,
+                                platform=platform,
+                                game_state=game_state,
                             )
                             if violation is not None:
                                 logger.warning(
@@ -692,6 +862,7 @@ class PromptRunService:
                                 seat_identity=seat_identity,
                                 exposed_tool_name=tool_call.name,
                                 tool_mapping=tool_mapping,
+                                platform=session_platform(session),
                             )
                             if detected is not None:
                                 turn_violation, round_number = detected
@@ -701,6 +872,7 @@ class PromptRunService:
                                     seat_identity=seat_identity,
                                     violation=turn_violation,
                                     round_number=round_number,
+                                    platform=session_platform(session),
                                 )
                         builtin = builtin_registry.get(tool_call.name)
                         if builtin is not None:
@@ -813,6 +985,13 @@ class PromptRunService:
                         # not change the game; do not record it as an agent move.
                         tool_failed = bool(result.get("is_error", False))
                         if captured_game_id is not None and not tool_failed:
+                            marvel_lcg_option = None
+                            if session_platform(session) == PLATFORM_MARVEL_LCG:
+                                marvel_lcg_option = extract_marvel_lcg_option_identity(
+                                    tool_name=tool_definition.actual_name,
+                                    arguments=tool_call.arguments,
+                                    messages=messages,
+                                )
                             self._emit_agent_move_event(
                                 game_id=captured_game_id,
                                 tool_definition=tool_definition,
@@ -820,6 +999,7 @@ class PromptRunService:
                                 reasoning=response.content or "",
                                 messages=messages,
                                 session=session,
+                                marvel_lcg_option=marvel_lcg_option,
                             )
 
                 await self._repository.update_job_tokens_used(
@@ -988,18 +1168,80 @@ class PromptRunService:
         existing = self._session_game_id(session)
 
         if is_game_id_source_tool(assignment, tool_name):
-            extracted = extract_game_id(
+            if result.get("is_error", False):
+                return None
+            argument_game_id = extract_game_id_from_arguments(
+                assignment=assignment,
+                arguments=arguments,
+            )
+            result_game_id = extract_game_id_from_result(
                 assignment=assignment,
                 tool_name=tool_name,
-                arguments=arguments,
                 result=result,
             )
-            if extracted and extracted != existing:
-                await self._persist_game_id(session, extracted)
+            if argument_game_id is not None and result_game_id is not None:
+                if argument_game_id != result_game_id:
+                    return None
+            if existing is not None and (
+                argument_game_id not in (None, existing)
+                or result_game_id not in (None, existing)
+            ):
+                return None
+            extracted = result_game_id or argument_game_id
+            if extracted:
+                await self._persist_game_id(
+                    session,
+                    extracted,
+                    platform=extract_game_platform(
+                        assignment=assignment,
+                        tool_name=tool_name,
+                        result=result,
+                        arguments=arguments,
+                        expected_game_id=extracted,
+                    ),
+                )
             # Session-creating tools are not themselves game moves.
             return None
 
         if not is_game_mutating_tool(assignment, tool_name):
+            if result.get("is_error", False):
+                return None
+
+            argument_game_id = extract_game_id_from_arguments(
+                assignment=assignment,
+                arguments=arguments,
+            )
+            result_game_id = extract_game_id_from_result(
+                assignment=assignment,
+                tool_name=tool_name,
+                result=result,
+            )
+            if argument_game_id is not None and result_game_id is not None:
+                if argument_game_id != result_game_id:
+                    return None
+            if existing is not None and (
+                argument_game_id not in (None, existing)
+                or result_game_id not in (None, existing)
+            ):
+                return None
+
+            # A follow-up session may begin with a read-only state call against
+            # a game that was created elsewhere. Capture its target before the
+            # next model round so a subsequent ``choose_game_option`` is guarded,
+            # identified, and stamped as marvel-lcg rather than using the legacy
+            # DragnCards default.
+            game_id = existing or result_game_id or argument_game_id
+            if game_id is None:
+                return None
+            platform = extract_game_platform(
+                assignment=assignment,
+                tool_name=tool_name,
+                result=result,
+                arguments=arguments,
+                expected_game_id=game_id,
+            )
+            if game_id != existing or platform is not None:
+                await self._persist_game_id(session, game_id, platform=platform)
             return None
 
         game_id = existing or extract_game_id(
@@ -1014,9 +1256,19 @@ class PromptRunService:
             await self._persist_game_id(session, game_id)
         return game_id
 
-    async def _persist_game_id(self, session: Any, game_id: str) -> None:
+    async def _persist_game_id(
+        self, session: Any, game_id: str, *, platform: str | None = None
+    ) -> None:
         metadata = dict(getattr(session, "metadata_json", None) or {})
-        metadata[SESSION_GAME_ID_KEY] = game_id
+        changed = False
+        if metadata.get(SESSION_GAME_ID_KEY) != game_id:
+            metadata[SESSION_GAME_ID_KEY] = game_id
+            changed = True
+        if platform is not None and metadata.get(SESSION_PLATFORM_KEY) != platform:
+            metadata[SESSION_PLATFORM_KEY] = platform
+            changed = True
+        if not changed:
+            return
         session.metadata_json = metadata
         try:
             await self._repository.update_session(session.id, metadata_json=metadata)
@@ -1074,6 +1326,7 @@ class PromptRunService:
             game_id=game_id,
             prompt=prompt,
             session_mode=session_mode(session),
+            platform=session_platform(session),
         )
         task = asyncio.create_task(coro)
         self._history_tasks.add(task)
@@ -1088,6 +1341,7 @@ class PromptRunService:
         reasoning: str,
         messages: list[dict[str, Any]],
         session: Any = None,
+        marvel_lcg_option: MarvelLcgOptionIdentity | None = None,
     ) -> None:
         """Fire-and-forget emission of an agent move/decision history event.
 
@@ -1113,6 +1367,8 @@ class PromptRunService:
             conversation_context=conversation_context,
             player=session_player_id(session) if session is not None else None,
             session_mode=session_mode(session),
+            platform=session_platform(session),
+            marvel_lcg_option=marvel_lcg_option,
         )
         task = asyncio.create_task(coro)
         self._history_tasks.add(task)
@@ -1714,6 +1970,7 @@ class PromptRunService:
         seat_identity: SeatIdentity,
         exposed_tool_name: str,
         tool_mapping: dict[str, Any],
+        platform: str,
     ) -> tuple[TurnAuthorityViolation, int | None] | None:
         """The turn-authority violation a seat's call commits, if any.
 
@@ -1725,15 +1982,16 @@ class PromptRunService:
         attached, or an unreadable step id means no finding, never a failed job.
 
         Returns ``(violation, round_number)`` so the finding records the round
-        the violation happened in, from the same state read.
+        the violation happened in, from the same neutral state read.
         """
         definition = tool_mapping.get(exposed_tool_name)
         if definition is None or definition.assignment_name != "game-service":
             return None
         tool_name = definition.actual_name
+        tool_sets = platform_tool_sets(platform)
         if (
-            tool_name not in PHASE_ADVANCING_TOOLS
-            and tool_name not in SEAT_ACTION_TOOLS
+            tool_name not in tool_sets.phase_advancing
+            and tool_name not in tool_sets.seat_actions
         ):
             return None
         game_id = self._session_game_id(session)
@@ -1745,16 +2003,20 @@ class PromptRunService:
         violation = check_turn_authority(
             caller_player_id=seat_identity.player_id,
             tool_name=tool_name,
-            step_id=step[0],
+            step_id=step["step_id"],
+            phase=step["phase"],
+            phase_label=step["phase_label"],
+            pending_seats=step["pending_seats"],
+            platform=platform,
         )
         if violation is None:
             return None
-        return violation, step[1]
+        return violation, step["round_number"]
 
     async def _read_game_step(
         self, game_id: str, tool_mapping: dict[str, Any]
-    ) -> tuple[str | None, int | None] | None:
-        """The current step id and round from game state, or ``None``.
+    ) -> dict[str, Any] | None:
+        """The neutral phase and opaque step data from game state, or ``None``.
 
         Uses the same game-service ``get_game_state`` tool the session already
         holds — the state-read mechanism that exists — rather than a second
@@ -1762,6 +2024,38 @@ class PromptRunService:
         the whole read best-effort: a game-service that cannot be reached
         degrades to no finding instead of failing the seat's job.
         """
+        state = await self._read_game_state(game_id, tool_mapping)
+        if state is None:
+            return None
+        step_id = state.get("stepId")
+        play_round = state.get("playRound")
+        phase = state.get("phase")
+        if not isinstance(phase, str):
+            phase = PHASE_UNKNOWN
+        pending_seats = state.get("pendingSeats")
+        if not isinstance(pending_seats, list):
+            pending_seats = None
+        return {
+            "step_id": step_id if step_id is not None else None,
+            "phase": phase,
+            "phase_label": (
+                state.get("phaseLabel")
+                if isinstance(state.get("phaseLabel"), str)
+                else None
+            ),
+            "pending_seats": pending_seats,
+            "round_number": (
+                play_round
+                if isinstance(play_round, int) and not isinstance(play_round, bool)
+                else None
+            ),
+        }
+
+    async def _read_game_state(
+        self, game_id: str, tool_mapping: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Read the neutral game state through the session's game-service tool."""
+
         state_tool = next(
             (
                 definition
@@ -1790,18 +2084,7 @@ class PromptRunService:
         if not isinstance(item, dict):
             return None
         state = item.get("state")
-        if not isinstance(state, dict):
-            return None
-        step_id = state.get("stepId")
-        round_number = state.get("roundNumber")
-        return (
-            step_id if step_id is not None else None,
-            (
-                round_number
-                if isinstance(round_number, int) and not isinstance(round_number, bool)
-                else None
-            ),
-        )
+        return state if isinstance(state, dict) else None
 
     async def _record_turn_authority_finding(
         self,
@@ -1811,6 +2094,7 @@ class PromptRunService:
         seat_identity: SeatIdentity,
         violation: TurnAuthorityViolation,
         round_number: int | None,
+        platform: str,
     ) -> None:
         """Record a detected turn-authority violation through the DRA-30 store.
 
@@ -1840,6 +2124,7 @@ class PromptRunService:
             finding=finding,
             history_emitter=self._history_emitter,
             game_id=game_id,
+            platform=platform,
         )
 
     async def _maybe_terminate_child_session(self, job: Job) -> None:

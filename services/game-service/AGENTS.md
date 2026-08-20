@@ -6,6 +6,9 @@ Read this file before making changes in `services/game-service/`.
 
 These instructions apply to the game-service and override the repository-level `AGENTS.md`.
 
+The service supports two platform drivers: `dragncards` and `marvel-lcg`. A session's
+platform is selected at creation, defaults to `dragncards`, and is immutable thereafter.
+
 ## Tech Stack
 
 - **Language**: Python 3.x with `uv` package manager
@@ -21,6 +24,38 @@ game-service/
   src/game_service/       # Main source code
   tests/                  # Unit and integration tests
 ```
+
+### Platform driver seam
+
+`GameSession` and `SessionManager` are platform-neutral. They hold a `GamePlatform` driver
+and delegate table creation, attachment, connection liveness, state retrieval, move
+execution, seat/spectator controls, error handling, and teardown to it. They must not
+construct a platform's wire payloads, inspect a platform's game-log text for errors, or
+branch on a platform slug to shape state. Each driver owns its `StateNormaliser`; callers
+receive one simplified state vocabulary with `playRound`, `phase`, `phaseLabel`, `players`,
+and `zones`, plus `pendingSeats` when that platform reports it.
+
+Platform facts belong below this seam:
+
+- **DragnCards** is the playtable driver. It uses Phoenix Channels, DragnLang, plugin
+  metadata, group/layout identifiers, and the existing typed action helpers. Its
+  DragnCards round counter is converted to the neutral play-round value in its normaliser.
+  The typed action and raw DragnLang surfaces are DragnCards-only.
+- **marvel-lcg** is the rules-enforcing driver. It creates a table over HTTP, opens the
+  render-frame WebSocket, and lists legal options before submitting a choice by option id,
+  targets, and resource payments. It maps neutral seats `player1`..`player4` to the
+  engine's `p=0`..`p=3` only at the transport edge. Its play round is already the neutral
+  play-round value, and its pending-seat list is turn authority. It has no DragnCards
+  plugin, group, layout, DragnLang, or typed-action vocabulary.
+
+The `marvel-lcg` integration credits the **Irefrixs Team**, the original authors of the
+`irefrixs/marvel-lcg` project, and uses the maintained `z00lus/marvel-lcg` Ronin Edition
+fork. The engine repository has no `LICENSE` file, so do not assume a general
+redistribution license; this integration relies on the developer's explicit written
+permission recorded in [issue #3](https://github.com/irefrixs/marvel-lcg/issues/3).
+`marvel-lcg` is a fan implementation of Marvel/FFG intellectual property, which this
+project does not claim to own. Card art is fetched from Cerebro at runtime and is never
+redistributed by this repository.
 
 ## Working Rules
 

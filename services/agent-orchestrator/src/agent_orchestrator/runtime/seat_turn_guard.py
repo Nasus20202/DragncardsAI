@@ -7,16 +7,12 @@ state, not a property of the arguments. That judgement is this module: a pure
 check over the tool name and the current step of the game, run at the seat's
 call site after the seat guard has passed.
 
-The check reads only the phase, never the acting player. The simplified game
-state's ``stepId`` classifies the phase — player steps ``1.1``/``1.2``, villain
-steps ``2.1``..``2.5``, beginning ``0.0``, end ``0.1`` — and the player phase is
-the only phase in which a seat holds any authority to act or to advance the
-game. *Which seat* holds the turn within the player phase is not a field
-anywhere in the state (root ``AGENTS.md``: "whose turn it is is not a field
-anywhere, and the orchestrating prompt tracks it"), so that slice stays the
-orchestrator's prompt-tracked judgement; this module enforces what state can
-prove, which is exactly the gap the orchestrator previously had to notice by
-hand.
+The check reads the neutral phase classification, never a platform's own step
+identifier. The player phase is the only phase in which a seat holds authority
+to act or to advance the game. On a platform that reports pending decisions,
+the pending-seat set is an additional source of turn authority. *Which seat*
+holds the turn on a platform that does not report it remains the orchestrator's
+prompt-tracked judgement; this module enforces what state can prove.
 
 The enforcement shape is DRA-62's option 3: detect after the fact and record a
 finding. The call is not refused — the seat guard's pre-dispatch gate is still
@@ -35,48 +31,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-# Tools that move the shared step marker. They belong to the coordinator: a seat
-# that calls one outside the player phase is advancing the game when no seat
-# holds the authority to do so.
-PHASE_ADVANCING_TOOLS = frozenset(
-    {"next_step", "prev_step", "player_end_phase", "villain_end_phase"}
+from agent_orchestrator.runtime.platforms import (
+    DEFAULT_PLATFORM,
+    PLATFORM_DRAGNCARDS,
+    platform_tool_sets,
 )
 
-# The game-mutating tools a seat plays with on its own turn. Called while the
-# board is outside the player phase, they are a seat acting out of turn.
-# `mulligan_draw_hand` is deliberately absent: it is the one action a seat
-# performs during setup (round 0, outside the player phase), so including it
-# would turn every game's opening into a finding. Lifecycle tools
-# (`create_game`, `load_prebuilt_deck`, `set_player_count_action`, ...) and
-# read-only tools (`get_game_state`, `search_cards_*`, ...) are absent for the
-# same reason: they are not "playing".
-SEAT_ACTION_TOOLS = frozenset(
-    {
-        "draw_card",
-        "move_card",
-        "set_card_property",
-        "exhaust_card",
-        "ready_card",
-        "flip_card",
-        "deal_encounter",
-        "draw_boost",
-        "shuffle_into_deck",
-        "zero_tokens",
-        "shadows_of_the_past",
-        "villain_encounter_phase",
-        "multiple_double_sided_villains",
-        "discard_minion",
-        "discard_side_scheme",
-        "modify_tokens",
-    }
-)
-
-# The step ids of the Marvel Champions phases, from the plugin's `steps.json`.
-# The player phase is the only phase where a seat acts; the villain phase
-# resolves; beginning and end of round belong to nobody.
-PLAYER_PHASE_STEPS = frozenset({"1.1", "1.2"})
-VILLAIN_PHASE_STEPS = frozenset({"2.1", "2.2", "2.3", "2.4", "2.5"})
-PASSIVE_PHASE_STEPS = frozenset({"0.0", "0.1"})
+# Backwards-compatible DragnCards exports. Runtime callers resolve these sets
+# through ``platform_tool_sets`` so one platform cannot classify another's
+# tools.
+PHASE_ADVANCING_TOOLS = platform_tool_sets(PLATFORM_DRAGNCARDS).phase_advancing
+SEAT_ACTION_TOOLS = platform_tool_sets(PLATFORM_DRAGNCARDS).seat_actions
 
 PHASE_PLAYER = "player"
 PHASE_VILLAIN = "villain"
@@ -110,11 +75,21 @@ class TurnAuthorityViolation:
     step_id: str | None
     phase: str
     kind: str
+    phase_label: str | None = None
+    pending_seats: tuple[str, ...] | None = None
 
     @property
     def message(self) -> str:
         """The violation text recorded against the seat, written to be read."""
-        phase_label = _PHASE_LABELS.get(self.phase, self.phase)
+        if self.pending_seats is not None and self.kind == VIOLATION_KIND_ACTION:
+            pending = ", ".join(self.pending_seats) or "no seat"
+            phase_label = self.phase_label or _PHASE_LABELS.get(self.phase, self.phase)
+            return (
+                f"Acted while the platform was not asking seat "
+                f"{self.caller_player_id}: called `{self.tool_name}` during "
+                f"{phase_label}, but the pending decision belongs to {pending}."
+            )
+        phase_label = self.phase_label or _PHASE_LABELS.get(self.phase, self.phase)
         step = f" (step {self.step_id})" if self.step_id is not None else ""
         if self.kind == VIOLATION_KIND_PHASE_ADVANCE:
             return (
@@ -150,48 +125,85 @@ def check_turn_authority(
     *,
     caller_player_id: str,
     tool_name: str,
-    step_id: Any,
+    step_id: Any = None,
+    phase: Any = None,
+    phase_label: str | None = None,
+    pending_seats: Any = None,
+    platform: Any = DEFAULT_PLATFORM,
 ) -> TurnAuthorityViolation | None:
     """The turn-authority violation this call commits, or ``None``.
 
-    ``step_id`` is the current step from the simplified game state (the
-    ``state.stepId`` of ``get_game_state``); ``tool_name`` is the *actual*
-    game-service tool name, without the registry prefix. Only the phase
-    classifies the call: an unknown or missing step id proves nothing and never
-    fires, so a board that cannot be read does not manufacture findings.
+    ``phase`` is the neutral classification from the simplified game state and
+    ``step_id`` is retained only as an opaque value for the finding text.
+    ``tool_name`` is the *actual* game-service tool name, without the registry
+    prefix. An unknown or missing classification proves nothing and never fires,
+    so a board that cannot be read does not manufacture findings. When
+    ``pending_seats`` is supplied, it is authoritative for seat-action tools;
+    the phase classification is only the fallback when that field is omitted.
     """
-    if tool_name not in PHASE_ADVANCING_TOOLS and tool_name not in SEAT_ACTION_TOOLS:
+    tool_sets = platform_tool_sets(platform)
+    if (
+        tool_name not in tool_sets.phase_advancing
+        and tool_name not in tool_sets.seat_actions
+    ):
         return None
-    phase = phase_of(step_id)
-    if phase in (PHASE_PLAYER, PHASE_UNKNOWN):
+    resolved_phase = phase if isinstance(phase, str) else PHASE_UNKNOWN
+    if resolved_phase not in {
+        PHASE_PLAYER,
+        PHASE_VILLAIN,
+        PHASE_PASSIVE,
+        "setup",
+        PHASE_UNKNOWN,
+    }:
+        resolved_phase = PHASE_UNKNOWN
+    normalized_pending = _normalize_pending_seats(pending_seats)
+    if (
+        normalized_pending is not None
+        and tool_name in tool_sets.seat_actions
+        and caller_player_id.strip().lower() not in normalized_pending
+    ):
+        return TurnAuthorityViolation(
+            caller_player_id=caller_player_id,
+            tool_name=tool_name,
+            step_id=None if step_id is None else str(step_id),
+            phase=resolved_phase,
+            kind=VIOLATION_KIND_ACTION,
+            phase_label=phase_label,
+            pending_seats=normalized_pending,
+        )
+    # A platform-provided pending decision is stronger than the broad phase
+    # label. A named seat may submit its legal option during setup, passive, or
+    # any other phase label while the prompt is pending.
+    if normalized_pending is not None and tool_name in tool_sets.seat_actions:
+        return None
+    if resolved_phase == PHASE_UNKNOWN:
+        return None
+    if resolved_phase == PHASE_PLAYER:
         return None
     return TurnAuthorityViolation(
         caller_player_id=caller_player_id,
         tool_name=tool_name,
         step_id=None if step_id is None else str(step_id),
-        phase=phase,
+        phase=resolved_phase,
         kind=(
             VIOLATION_KIND_PHASE_ADVANCE
-            if tool_name in PHASE_ADVANCING_TOOLS
+            if tool_name in tool_sets.phase_advancing
             else VIOLATION_KIND_ACTION
         ),
+        phase_label=phase_label,
+        pending_seats=normalized_pending,
     )
 
 
-def phase_of(step_id: Any) -> str:
-    """The phase the step id belongs to, or ``unknown``.
-
-    The raw engine writes the step id both as a string (``"1.1"``) and as an
-    integer (``0`` during setup), so the comparison is on the normalized string
-    and anything unrecognized — including the integer ``0`` — is ``unknown``.
-    """
-    if step_id is None:
-        return PHASE_UNKNOWN
-    step = str(step_id)
-    if step in PLAYER_PHASE_STEPS:
-        return PHASE_PLAYER
-    if step in VILLAIN_PHASE_STEPS:
-        return PHASE_VILLAIN
-    if step in PASSIVE_PHASE_STEPS:
-        return PHASE_PASSIVE
-    return PHASE_UNKNOWN
+def _normalize_pending_seats(value: Any) -> tuple[str, ...] | None:
+    if value is None or not isinstance(value, (list, tuple, set, frozenset)):
+        return None
+    return tuple(
+        sorted(
+            {
+                item.strip().lower()
+                for item in value
+                if isinstance(item, str) and item.strip()
+            }
+        )
+    )

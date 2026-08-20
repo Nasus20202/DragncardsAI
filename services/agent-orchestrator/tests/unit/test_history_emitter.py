@@ -11,17 +11,21 @@ from agent_orchestrator.integrations.bifrost import ChatResponse, ToolCall
 from agent_orchestrator.integrations.mcp.client import McpToolDefinition
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
 from agent_orchestrator.runtime.history_emitter import (
+    MARVEL_LCG_OPTION_PAYLOAD_KEY,
     HistoryEventEmitter,
     InMemoryHistoryEventBus,
     build_idempotency_key,
     extract_game_id,
+    extract_game_platform,
     is_game_mutating_tool,
 )
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.prompt_run import (
     PromptRunDependencies,
     PromptRunService,
+    extract_marvel_lcg_option_identity,
 )
+from agent_orchestrator.runtime.platforms import DEFAULT_PLATFORM, PLATFORM_MARVEL_LCG
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.db import create_engine, create_session_factory
@@ -29,14 +33,24 @@ from agent_orchestrator.storage.migrations import ensure_schema
 from agent_orchestrator.storage.repository import Repository
 
 GAME_ID = "11111111-1111-1111-1111-111111111111"
+OTHER_GAME_ID = "22222222-2222-2222-2222-222222222222"
 
 
 class GameServiceFakeMcp:
     """Fake game-service MCP: create_game returns a session id, mutating tools echo it."""
 
-    def __init__(self, error_tools: frozenset[str] | None = None) -> None:
+    def __init__(
+        self,
+        error_tools: frozenset[str] | None = None,
+        create_platform: str | None = None,
+        state_platform: str | None = None,
+        state_pending_seats: bool = False,
+    ) -> None:
         self.calls: list[dict] = []
         self._error_tools = error_tools or frozenset()
+        self._create_platform = create_platform
+        self._state_platform = state_platform
+        self._state_pending_seats = state_pending_seats
 
     async def list_tools(self, server_url, transport, headers=None):
         return [
@@ -46,8 +60,23 @@ class GameServiceFakeMcp:
                 input_schema={"type": "object", "properties": {}},
             ),
             McpToolDefinition(
+                name="get_game_state",
+                description="Read the current game state",
+                input_schema={"type": "object", "properties": {}},
+            ),
+            McpToolDefinition(
                 name="next_step",
                 description="Advance the game",
+                input_schema={"type": "object", "properties": {}},
+            ),
+            McpToolDefinition(
+                name="list_game_options",
+                description="List the current options",
+                input_schema={"type": "object", "properties": {}},
+            ),
+            McpToolDefinition(
+                name="choose_game_option",
+                description="Choose an option",
                 input_schema={"type": "object", "properties": {}},
             ),
         ]
@@ -58,6 +87,25 @@ class GameServiceFakeMcp:
         self.calls.append({"tool_name": tool_name, "arguments": arguments})
         if tool_name == "create_game":
             body = {"session": {"session_id": GAME_ID}}
+            if self._create_platform is not None:
+                body["session"]["platform"] = self._create_platform
+        elif tool_name == "get_game_state":
+            state = {"roundNumber": 1, "mode": "in progress"}
+            if self._state_platform is not None:
+                state["platform"] = self._state_platform
+            if self._state_pending_seats:
+                state["pendingSeats"] = ["player1"]
+            body = {"session_id": GAME_ID, "state": state}
+        elif tool_name == "list_game_options":
+            body = {
+                "options": [
+                    {
+                        "id": "option-7",
+                        "name": "Play",
+                        "event": "player_turn",
+                    }
+                ]
+            }
         else:
             body = {"session_id": GAME_ID, "ok": True}
         return {
@@ -165,6 +213,7 @@ def _make_service(repo, bifrost, mcp, skill_registry, history_emitter):
 def test_is_game_mutating_tool_distinguishes_reads_and_writes():
     assert is_game_mutating_tool("game-service", "next_step") is True
     assert is_game_mutating_tool("game-service", "get_game_state") is False
+    assert is_game_mutating_tool("game-service", "list_game_options") is False
     assert is_game_mutating_tool("game-service", "create_game") is False
     assert is_game_mutating_tool("other-mcp", "next_step") is False
 
@@ -184,6 +233,366 @@ def test_extract_game_id_from_create_game_result():
         )
         == GAME_ID
     )
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(
+                        {
+                            "session": {
+                                "session_id": GAME_ID,
+                                "platform": PLATFORM_MARVEL_LCG,
+                            }
+                        }
+                    ),
+                }
+            ]
+        },
+        {
+            "content": [
+                {
+                    "type": "json",
+                    "data": {
+                        "session_id": GAME_ID,
+                        "platform": PLATFORM_MARVEL_LCG,
+                    },
+                }
+            ]
+        },
+        {"session_id": GAME_ID, "platform": PLATFORM_MARVEL_LCG},
+    ],
+)
+def test_extract_game_platform_accepts_equivalent_lifecycle_result_shapes(result):
+    assert (
+        extract_game_platform(
+            assignment="game-service",
+            tool_name="create_game",
+            result=result,
+        )
+        == PLATFORM_MARVEL_LCG
+    )
+
+
+def test_extract_game_platform_preserves_legacy_no_platform_default():
+    result = {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps({"session": {"session_id": GAME_ID}}),
+            }
+        ]
+    }
+    assert (
+        extract_game_platform(
+            assignment="game-service",
+            tool_name="attach_game",
+            result=result,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "tool_name,result",
+    [
+        (
+            "get_game_state",
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {
+                                "session_id": GAME_ID,
+                                "state": {"platform": PLATFORM_MARVEL_LCG},
+                            }
+                        ),
+                    }
+                ]
+            },
+        ),
+        (
+            "lookup_session_by_slug",
+            {
+                "content": [
+                    {
+                        "type": "json",
+                        "data": {
+                            "session": {
+                                "session_id": GAME_ID,
+                                "platform": PLATFORM_MARVEL_LCG,
+                            }
+                        },
+                    }
+                ]
+            },
+        ),
+    ],
+)
+def test_extract_game_platform_discovers_marvel_from_read_only_results(
+    tool_name, result
+):
+    assert (
+        extract_game_platform(
+            assignment="game-service",
+            tool_name=tool_name,
+            arguments={"session_id": GAME_ID},
+            result=result,
+            expected_game_id=GAME_ID,
+        )
+        == PLATFORM_MARVEL_LCG
+    )
+
+
+def test_extract_game_platform_recognises_legacy_marvel_state_marker():
+    result = {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(
+                    {
+                        "session_id": GAME_ID,
+                        "state": {"pendingSeats": ["player1"]},
+                    }
+                ),
+            }
+        ]
+    }
+
+    assert (
+        extract_game_platform(
+            assignment="game-service",
+            tool_name="get_game_state",
+            arguments={"session_id": GAME_ID},
+            result=result,
+            expected_game_id=GAME_ID,
+        )
+        == PLATFORM_MARVEL_LCG
+    )
+
+
+def test_extract_game_platform_rejects_an_argument_id_conflicting_with_expected_id():
+    assert (
+        extract_game_platform(
+            assignment="game-service",
+            tool_name="list_game_options",
+            arguments={"session_id": OTHER_GAME_ID},
+            result={"content": [{"type": "text", "text": '{"options": []}'}]},
+            expected_game_id=GAME_ID,
+        )
+        is None
+    )
+
+
+def test_extract_game_platform_rejects_a_result_id_conflicting_with_expected_id():
+    result = {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(
+                    {
+                        "session_id": OTHER_GAME_ID,
+                        "platform": PLATFORM_MARVEL_LCG,
+                    }
+                ),
+            }
+        ]
+    }
+
+    assert (
+        extract_game_platform(
+            assignment="game-service",
+            tool_name="list_game_options",
+            arguments={"session_id": GAME_ID},
+            result=result,
+            expected_game_id=GAME_ID,
+        )
+        is None
+    )
+
+
+def _list_games_result(sessions: list[dict]) -> dict:
+    return {
+        "content": [
+            {
+                "type": "json",
+                "data": {"sessions": sessions},
+            }
+        ]
+    }
+
+
+def test_list_games_does_not_bind_platform_from_another_game_row():
+    result = _list_games_result(
+        [{"session_id": OTHER_GAME_ID, "platform": PLATFORM_MARVEL_LCG}]
+    )
+
+    assert (
+        extract_game_platform(
+            assignment="game-service",
+            tool_name="list_games",
+            result=result,
+            expected_game_id=GAME_ID,
+        )
+        is None
+    )
+
+
+def test_list_games_binds_platform_from_the_matching_row_in_mixed_results():
+    result = _list_games_result(
+        [
+            {"session_id": OTHER_GAME_ID, "platform": DEFAULT_PLATFORM},
+            {"session_id": GAME_ID, "platform": PLATFORM_MARVEL_LCG},
+        ]
+    )
+
+    assert (
+        extract_game_platform(
+            assignment="game-service",
+            tool_name="list_games",
+            result=result,
+            expected_game_id=GAME_ID,
+        )
+        == PLATFORM_MARVEL_LCG
+    )
+
+
+def test_list_games_matching_row_without_platform_keeps_legacy_default():
+    result = _list_games_result(
+        [
+            {"session_id": OTHER_GAME_ID, "platform": PLATFORM_MARVEL_LCG},
+            {"session_id": GAME_ID},
+        ]
+    )
+
+    assert (
+        extract_game_platform(
+            assignment="game-service",
+            tool_name="list_games",
+            result=result,
+            expected_game_id=GAME_ID,
+        )
+        is None
+    )
+
+
+def _source_result(game_id: str, platform: str | None = None) -> dict:
+    session = {"session_id": game_id}
+    if platform is not None:
+        session["platform"] = platform
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps({"session": session}),
+            }
+        ]
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["attach_game", "lookup_session_by_slug"])
+async def test_source_tool_initial_binding_keeps_platform_discovery(
+    repository, skill_registry, tool_name
+):
+    session = await _prepare_session(repository)
+    service = _make_service(
+        repository,
+        FakeBifrost([]),
+        GameServiceFakeMcp(),
+        skill_registry,
+        HistoryEventEmitter(bus=InMemoryHistoryEventBus()),
+    )
+
+    await service._capture_game_id(
+        session=session,
+        assignment="game-service",
+        tool_name=tool_name,
+        arguments={},
+        result=_source_result(GAME_ID, PLATFORM_MARVEL_LCG),
+    )
+
+    refreshed = await repository.get_session(session.id)
+    assert refreshed.metadata_json == {
+        "game_id": GAME_ID,
+        "platform": PLATFORM_MARVEL_LCG,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["attach_game", "lookup_session_by_slug"])
+async def test_bound_session_rejects_conflicting_source_tool_result(
+    repository, skill_registry, tool_name
+):
+    session = await _prepare_session(repository)
+    await repository.update_session(
+        session.id,
+        metadata_json={"game_id": GAME_ID, "platform": DEFAULT_PLATFORM},
+    )
+    session = await repository.get_session(session.id)
+    service = _make_service(
+        repository,
+        FakeBifrost([]),
+        GameServiceFakeMcp(),
+        skill_registry,
+        HistoryEventEmitter(bus=InMemoryHistoryEventBus()),
+    )
+
+    assert (
+        await service._capture_game_id(
+            session=session,
+            assignment="game-service",
+            tool_name=tool_name,
+            arguments={},
+            result=_source_result(OTHER_GAME_ID, PLATFORM_MARVEL_LCG),
+        )
+        is None
+    )
+
+    refreshed = await repository.get_session(session.id)
+    assert refreshed.metadata_json == {
+        "game_id": GAME_ID,
+        "platform": DEFAULT_PLATFORM,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["attach_game", "lookup_session_by_slug"])
+async def test_same_game_source_result_without_platform_keeps_legacy_default(
+    repository, skill_registry, tool_name
+):
+    session = await _prepare_session(repository)
+    await repository.update_session(
+        session.id,
+        metadata_json={"game_id": GAME_ID, "platform": DEFAULT_PLATFORM},
+    )
+    session = await repository.get_session(session.id)
+    service = _make_service(
+        repository,
+        FakeBifrost([]),
+        GameServiceFakeMcp(),
+        skill_registry,
+        HistoryEventEmitter(bus=InMemoryHistoryEventBus()),
+    )
+
+    await service._capture_game_id(
+        session=session,
+        assignment="game-service",
+        tool_name=tool_name,
+        arguments={},
+        result=_source_result(GAME_ID),
+    )
+
+    refreshed = await repository.get_session(session.id)
+    assert refreshed.metadata_json == {
+        "game_id": GAME_ID,
+        "platform": DEFAULT_PLATFORM,
+    }
 
 
 def test_extract_game_id_from_arguments():
@@ -229,6 +638,149 @@ def test_extract_game_id_ignores_nested_id_in_non_lifecycle_result():
         )
         == GAME_ID
     )
+
+
+def _option_result_messages(
+    options: list[dict], *, is_error: bool = False
+) -> list[dict]:
+    return [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "list-call",
+                    "function": {"name": "game-service_list_game_options"},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "list-call",
+            "content": json.dumps(
+                {
+                    "is_error": is_error,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps({"options": options}),
+                        }
+                    ],
+                }
+            ),
+        },
+    ]
+
+
+def test_extract_marvel_option_identity_uses_the_successful_list_result():
+    identity = extract_marvel_lcg_option_identity(
+        tool_name="choose_game_option",
+        arguments={"option_id": "option-7", "targets": [], "resources": {}},
+        messages=_option_result_messages(
+            [
+                {
+                    "id": "option-7",
+                    "name": "Play",
+                    "event": "player_turn",
+                }
+            ]
+        ),
+    )
+
+    assert identity == {
+        "id": "option-7",
+        "name": "Play",
+        "event": "player_turn",
+    }
+
+
+def test_extract_marvel_option_identity_does_not_invent_missing_producer_fields():
+    identity = extract_marvel_lcg_option_identity(
+        tool_name="choose_game_option",
+        arguments={
+            "option_id": "option-7",
+            "name": "Play",
+            "event": "player_turn",
+        },
+        messages=_option_result_messages([{"id": "option-7", "name": "Play"}]),
+    )
+
+    assert identity is None
+
+
+def test_extract_marvel_option_identity_ignores_failed_list_results():
+    identity = extract_marvel_lcg_option_identity(
+        tool_name="choose_game_option",
+        arguments={"option_id": "option-7"},
+        messages=_option_result_messages(
+            [
+                {
+                    "id": "option-7",
+                    "name": "Play",
+                    "event": "player_turn",
+                }
+            ],
+            is_error=True,
+        ),
+    )
+
+    assert identity is None
+
+
+def test_extract_marvel_option_identity_ignores_options_from_other_tools():
+    identity = extract_marvel_lcg_option_identity(
+        tool_name="choose_game_option",
+        arguments={"option_id": "option-7"},
+        messages=[
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "state-call",
+                        "function": {"name": "game-service_get_game_state"},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "state-call",
+                "content": json.dumps(
+                    {"options": [{"id": "option-7", "name": "Play", "event": "turn"}]}
+                ),
+            },
+        ],
+    )
+
+    assert identity is None
+
+
+def test_agent_move_matches_the_marvel_evaluator_option_contract():
+    envelope = HistoryEventEmitter.build_envelope(
+        game_id=GAME_ID,
+        intended_action="choose_game_option",
+        reasoning="choose the legal play",
+        arguments={"option_id": "option-7"},
+        conversation_context=[],
+        producer_offset=1,
+        platform=PLATFORM_MARVEL_LCG,
+        marvel_lcg_option={
+            "id": "option-7",
+            "name": "Play",
+            "event": "player_turn",
+        },
+    )
+
+    assert envelope["platform"] == PLATFORM_MARVEL_LCG
+    assert envelope["payload"][MARVEL_LCG_OPTION_PAYLOAD_KEY] == {
+        "id": "option-7",
+        "name": "Play",
+        "event": "player_turn",
+    }
+    assert "option_identity" not in envelope["payload"]
+    assert set(envelope["payload"][MARVEL_LCG_OPTION_PAYLOAD_KEY]) == {
+        "id",
+        "name",
+        "event",
+    }
 
 
 def test_idempotency_key_is_stable_and_offset_dependent():
@@ -296,7 +848,11 @@ async def test_concurrent_emissions_publish_in_offset_order():
 @pytest.mark.asyncio
 async def test_emits_agent_event_per_mutating_tool_call(repository, skill_registry):
     session = await _prepare_session(repository)
-    job = await repository.enqueue_prompt_job(
+    await repository.update_session(
+        session.id,
+        metadata_json={"platform": PLATFORM_MARVEL_LCG},
+    )
+    await repository.enqueue_prompt_job(
         session.id, prompt="play", metadata_json={}, max_attempts=1
     )
     claimed = await repository.claim_next_job()
@@ -340,6 +896,7 @@ async def test_emits_agent_event_per_mutating_tool_call(repository, skill_regist
     assert envelope["envelope_version"] == 1
     assert envelope["actor"] == "agent"
     assert envelope["game_id"] == GAME_ID
+    assert envelope["platform"] == PLATFORM_MARVEL_LCG
     assert envelope["producer_offset"] == 1
     assert "event_id" in envelope and "occurred_at" in envelope
     assert envelope["idempotency_key"] == build_idempotency_key(GAME_ID, "agent", 1)
@@ -360,6 +917,252 @@ async def test_emits_agent_event_per_mutating_tool_call(repository, skill_regist
     # game_id captured and persisted on the session for reuse across moves.
     refreshed = await repository.get_session(session.id)
     assert refreshed.metadata_json["game_id"] == GAME_ID
+
+
+@pytest.mark.asyncio
+async def test_option_listing_is_not_a_move_and_choice_records_its_identity(
+    repository, skill_registry
+):
+    session = await _prepare_session(repository)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
+    claimed = await repository.claim_next_job()
+    assert job is not None and claimed is not None
+
+    bus = InMemoryHistoryEventBus()
+    service = _make_service(
+        repository,
+        FakeBifrost(
+            responses=[
+                ChatResponse(
+                    content="create",
+                    tool_calls=[
+                        ToolCall(id="t1", name="game-service_create_game", arguments={})
+                    ],
+                    raw={},
+                ),
+                ChatResponse(
+                    content="inspect options",
+                    tool_calls=[
+                        ToolCall(
+                            id="t2",
+                            name="game-service_list_game_options",
+                            arguments={},
+                        )
+                    ],
+                    raw={},
+                ),
+                ChatResponse(
+                    content="choose option-7",
+                    tool_calls=[
+                        ToolCall(
+                            id="t3",
+                            name="game-service_choose_game_option",
+                            arguments={"option_id": "option-7"},
+                        )
+                    ],
+                    raw={},
+                ),
+                ChatResponse(content="finished", tool_calls=[], raw={}),
+            ]
+        ),
+        GameServiceFakeMcp(create_platform=PLATFORM_MARVEL_LCG),
+        skill_registry,
+        HistoryEventEmitter(bus=bus),
+    )
+
+    await service.run(claimed)
+
+    assert len(bus.events) == 1
+    event = bus.events[0]
+    assert event["platform"] == PLATFORM_MARVEL_LCG
+    assert event["payload"]["intended_action"] == "choose_game_option"
+    assert event["payload"][MARVEL_LCG_OPTION_PAYLOAD_KEY] == {
+        "id": "option-7",
+        "name": "Play",
+        "event": "player_turn",
+    }
+    refreshed = await repository.get_session(session.id)
+    assert refreshed.metadata_json["game_id"] == GAME_ID
+    assert refreshed.metadata_json["platform"] == PLATFORM_MARVEL_LCG
+
+
+@pytest.mark.asyncio
+async def test_read_only_state_binds_marvel_before_a_subsequent_option_choice(
+    repository, skill_registry
+):
+    session = await _prepare_session(repository)
+    await repository.update_session(session.id, metadata_json={"game_id": GAME_ID})
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="continue this game", metadata_json={}, max_attempts=1
+    )
+    claimed = await repository.claim_next_job()
+    assert job is not None and claimed is not None
+
+    bus = InMemoryHistoryEventBus()
+    mcp = GameServiceFakeMcp(state_pending_seats=True)
+    service = _make_service(
+        repository,
+        FakeBifrost(
+            responses=[
+                ChatResponse(
+                    content="inspect the existing game",
+                    tool_calls=[
+                        ToolCall(
+                            id="t1",
+                            name="game-service_get_game_state",
+                            arguments={"session_id": GAME_ID},
+                        )
+                    ],
+                    raw={},
+                ),
+                ChatResponse(
+                    content="inspect options",
+                    tool_calls=[
+                        ToolCall(
+                            id="t2",
+                            name="game-service_list_game_options",
+                            arguments={"session_id": GAME_ID},
+                        )
+                    ],
+                    raw={},
+                ),
+                ChatResponse(
+                    content="choose option-7",
+                    tool_calls=[
+                        ToolCall(
+                            id="t3",
+                            name="game-service_choose_game_option",
+                            arguments={"session_id": GAME_ID, "option_id": "option-7"},
+                        )
+                    ],
+                    raw={},
+                ),
+                ChatResponse(content="finished", tool_calls=[], raw={}),
+            ]
+        ),
+        mcp,
+        skill_registry,
+        HistoryEventEmitter(bus=bus),
+    )
+
+    await service.run(claimed)
+
+    assert [call["tool_name"] for call in mcp.calls] == [
+        "get_game_state",
+        "list_game_options",
+        "choose_game_option",
+    ]
+    move_events = [event for event in bus.events if event["event_type"] == "agent_move"]
+    assert len(move_events) == 1
+    move = move_events[0]
+    assert move["platform"] == PLATFORM_MARVEL_LCG
+    assert move["payload"]["intended_action"] == "choose_game_option"
+    assert move["payload"][MARVEL_LCG_OPTION_PAYLOAD_KEY] == {
+        "id": "option-7",
+        "name": "Play",
+        "event": "player_turn",
+    }
+    refreshed = await repository.get_session(session.id)
+    assert refreshed.metadata_json == {
+        "game_id": GAME_ID,
+        "platform": PLATFORM_MARVEL_LCG,
+    }
+
+
+@pytest.mark.asyncio
+async def test_read_only_other_game_cannot_rebind_bound_session_platform(
+    repository, skill_registry
+):
+    session = await _prepare_session(repository)
+    await repository.update_session(
+        session.id,
+        metadata_json={"game_id": GAME_ID, "platform": DEFAULT_PLATFORM},
+    )
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="inspect another game", metadata_json={}, max_attempts=1
+    )
+    claimed = await repository.claim_next_job()
+    assert job is not None and claimed is not None
+
+    service = _make_service(
+        repository,
+        FakeBifrost(
+            responses=[
+                ChatResponse(
+                    content="inspect options",
+                    tool_calls=[
+                        ToolCall(
+                            id="t1",
+                            name="game-service_list_game_options",
+                            arguments={"session_id": OTHER_GAME_ID},
+                        )
+                    ],
+                    raw={},
+                ),
+                ChatResponse(content="finished", tool_calls=[], raw={}),
+            ]
+        ),
+        GameServiceFakeMcp(),
+        skill_registry,
+        HistoryEventEmitter(bus=InMemoryHistoryEventBus()),
+    )
+
+    await service.run(claimed)
+
+    refreshed = await repository.get_session(session.id)
+    assert refreshed.metadata_json == {
+        "game_id": GAME_ID,
+        "platform": DEFAULT_PLATFORM,
+    }
+
+
+@pytest.mark.asyncio
+async def test_legacy_lifecycle_result_keeps_dragncards_default(
+    repository, skill_registry
+):
+    session = await _prepare_session(repository)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
+    claimed = await repository.claim_next_job()
+    assert job is not None and claimed is not None
+
+    bus = InMemoryHistoryEventBus()
+    service = _make_service(
+        repository,
+        FakeBifrost(
+            responses=[
+                ChatResponse(
+                    content="create",
+                    tool_calls=[
+                        ToolCall(id="t1", name="game-service_create_game", arguments={})
+                    ],
+                    raw={},
+                ),
+                ChatResponse(
+                    content="advance",
+                    tool_calls=[
+                        ToolCall(id="t2", name="game-service_next_step", arguments={})
+                    ],
+                    raw={},
+                ),
+                ChatResponse(content="finished", tool_calls=[], raw={}),
+            ]
+        ),
+        GameServiceFakeMcp(),
+        skill_registry,
+        HistoryEventEmitter(bus=bus),
+    )
+
+    await service.run(claimed)
+
+    assert len(bus.events) == 1
+    assert bus.events[0]["platform"] == DEFAULT_PLATFORM
+    refreshed = await repository.get_session(session.id)
+    assert refreshed.metadata_json["game_id"] == GAME_ID
+    assert "platform" not in refreshed.metadata_json
 
 
 @pytest.mark.asyncio

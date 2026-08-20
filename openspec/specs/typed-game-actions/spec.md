@@ -2,7 +2,13 @@
 
 (Generated from delta: typed-game-actions)
 
-## ADDED Requirements
+## Purpose
+
+This capability defines the explicitly written, validated game-action helpers exposed by
+game-service. The typed action vocabulary and its raw DragnLang fallback describe the
+DragnCards move surface; a rules-enforcing platform uses its own enumerated-option surface.
+
+## Requirements
 
 ### Requirement: Typed action helpers are exposed
 The Game Service SHALL expose a typed helper function for each action type returned by the session action catalog, with an explicit request model and response model per action, implemented as explicitly written functions (not dynamically generated).

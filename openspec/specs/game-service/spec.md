@@ -815,7 +815,11 @@ A seat already held by a different user SHALL be left alone, because that user i
 
 ### Requirement: A field the service does not define is refused, not discarded
 
-Every request body on a game-service mutation endpoint SHALL reject a key the model does not declare as a `422` response naming the key, and SHALL NOT apply any part of the request. Refusing SHALL mean the request body fails to parse, so a field that the service has never heard of is the field the caller sees named in the error — not a `200 OK` with the field silently discarded.
+Every request body on a game-service mutation endpoint SHALL
+reject a key the model does not declare as a `422` response naming the key, and SHALL NOT apply
+any part of the request. Refusing SHALL mean the request body fails to parse, so a field that
+the service has never heard of is the field the caller sees named in the error — not a `200 OK`
+with the field silently discarded.
 
 The check SHALL be applied at the model level (`extra="forbid"`) so the OpenAPI exporter propagates `additionalProperties: false` on every reachable request-body schema, and the same check SHALL cover every action model behind the `ActionRequest` discriminated union (the 26 action models in `logic/actions.py`, including the nested `LoadCardItem`) and every helper-endpoint request model (`CreateGameRequest`, `AttachGameRequest`, `ResetGameRequest`, `SetSeatRequest`, `SetSpectatorRequest`, `SendAlertRequest`, `SetPlayerCountRequest`). A mistyped argument to `move_card` MUST NOT execute a *different, legal* move under the dropped-argument default — that is the worse failure mode (no error surfaced, the game just goes wrong).
 

@@ -22,6 +22,7 @@ from agent_orchestrator.runtime.personas import (
     resolve_persona,
     subagent_refusal_message,
 )
+from agent_orchestrator.runtime.platforms import DEFAULT_PLATFORM, session_platform
 from agent_orchestrator.runtime.player_agents import (
     SESSION_ORCHESTRATOR_ID_KEY,
     SESSION_PLAYER_ID_KEY,
@@ -953,6 +954,9 @@ def make_prompt_player_agent_handler(
         game_id = parent_metadata.get(SESSION_GAME_ID_KEY)
         if isinstance(game_id, str) and game_id:
             child_metadata[SESSION_GAME_ID_KEY] = game_id
+        parent_platform = session_platform(parent_session)
+        if parent_platform != DEFAULT_PLATFORM:
+            child_metadata["platform"] = parent_platform
 
         skills: list[str] | None = resolved.skills
         model_config: Any = resolved
@@ -1207,8 +1211,7 @@ def validate_ask_user_arguments(arguments: dict[str, Any]) -> AskUserChoices:
     if len(question) > MAX_ASK_USER_QUESTION_LENGTH:
         return AskUserChoices(
             error=(
-                "question must be at most "
-                f"{MAX_ASK_USER_QUESTION_LENGTH} characters."
+                f"question must be at most {MAX_ASK_USER_QUESTION_LENGTH} characters."
             )
         )
 
@@ -1527,6 +1530,7 @@ async def _announce_illegal_action_finding(
     finding: Any,
     history_emitter: Any | None = None,
     game_id: str | None = None,
+    platform: str = DEFAULT_PLATFORM,
 ) -> None:
     """Record a finding on the orchestrating job's timeline, live and durably.
 
@@ -1578,6 +1582,7 @@ async def _announce_illegal_action_finding(
         status=finding.status,
         resolution_note=finding.resolution_note,
         round_number=finding.round_number,
+        platform=platform,
     )
 
 
@@ -1696,6 +1701,7 @@ def make_report_illegal_action_handler(
     job: Any,
     history_emitter: Any | None = None,
     game_id: str | None = None,
+    platform: str = DEFAULT_PLATFORM,
 ) -> BuiltinHandler:
     """Return a report_illegal_action handler bound to the orchestrating job.
 
@@ -1772,6 +1778,7 @@ def make_report_illegal_action_handler(
             finding=finding,
             history_emitter=history_emitter,
             game_id=game_id,
+            platform=platform,
         )
         return _text_result(
             json.dumps(
@@ -1800,6 +1807,7 @@ def make_resolve_illegal_action_handler(
     job: Any,
     history_emitter: Any | None = None,
     game_id: str | None = None,
+    platform: str = DEFAULT_PLATFORM,
 ) -> BuiltinHandler:
     """Return a resolve_illegal_action handler bound to the orchestrating job.
 
@@ -1853,6 +1861,7 @@ def make_resolve_illegal_action_handler(
             finding=resolved,
             history_emitter=history_emitter,
             game_id=game_id,
+            platform=platform,
         )
         return _text_result(
             json.dumps(
@@ -1920,6 +1929,7 @@ def build_builtin_registry(
     session_orchestrated: bool = False,
     history_emitter: Any | None = None,
     game_id: str | None = None,
+    platform: str = DEFAULT_PLATFORM,
     subagent_wait_timeout_seconds: float = DEFAULT_SUBAGENT_WAIT_TIMEOUT_SECONDS,
     subagent_wait_poll_interval_seconds: float = (
         DEFAULT_SUBAGENT_WAIT_POLL_INTERVAL_SECONDS
@@ -2325,6 +2335,7 @@ def build_builtin_registry(
                         job=job,
                         history_emitter=history_emitter,
                         game_id=game_id,
+                        platform=platform,
                     ),
                 )
             )
@@ -2348,8 +2359,7 @@ def build_builtin_registry(
                             "finding_id": {
                                 "type": "string",
                                 "description": (
-                                    "The finding_id returned by "
-                                    "report_illegal_action."
+                                    "The finding_id returned by report_illegal_action."
                                 ),
                             },
                             "resolution_note": {
@@ -2370,6 +2380,7 @@ def build_builtin_registry(
                         job=job,
                         history_emitter=history_emitter,
                         game_id=game_id,
+                        platform=platform,
                     ),
                 )
             )

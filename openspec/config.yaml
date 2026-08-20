@@ -3,14 +3,14 @@ schema: spec-driven
 context: |
   ## Project: DragnCardsAI
 
-  An LLM-powered bot that plays card games on the DragnCards platform.
-  The first target game is Marvel Champions (a cooperative card game).
+  An LLM-powered bot that plays Marvel Champions, a cooperative card game, on either
+  the DragnCards playtable or the rules-enforcing marvel-lcg engine.
 
   ## Goal
 
-  Build an AI agent that can observe and act within a DragnCards game,
-  starting with solo Marvel Champions. The system is designed to eventually
-  support full game play: hero selection, deck loading, turn-by-turn decisions.
+  Build an AI agent that can observe and act within a Marvel Champions game on either
+  supported platform. The system supports full game play: hero selection, deck loading,
+  turn-by-turn decisions, and platform-specific move surfaces.
 
   ## Architecture
 
@@ -22,21 +22,33 @@ context: |
   (Python/FastAPI)                            │
        │                               ┌──────┴──────┐
        ▼                               ▼             ▼
-  Game Service  ──HTTP──▶  DragnCards  lmstudio-proxy  External AI Providers
-  (Python)       WebSocket  Backend    (socat)          (OpenAI, Gemini, …)
-       │          (Elixir)     │            │
-       ▼                       ▼            ▼
-   Valkey              PostgreSQL      LM Studio
-  (events)                           (host:1234)
+   Game Service ──platform drivers──▶ DragnCards  lmstudio-proxy  External AI Providers
+   (Python)                          (Phoenix)    (socat)          (OpenAI, Gemini, …)
+       │                                  │            │
+       ├──HTTP/JSON + render WebSocket──▶ marvel-lcg  ▼
+       ▼                                             LM Studio
+    Valkey                                         (host:1234)
+   (events)
   ```
 
   ## Components
 
   - **game-service** (`services/game-service/`): Python service (FastAPI + MCP SDK).
-    Connects to DragnCards via Phoenix Channels WebSocket. Exposes:
-    - HTTP REST API: session lifecycle, state queries, action execution
-    - MCP tools/resources: same capabilities for LLM clients
-    Both interfaces share a single `SessionManager` and WebSocket session pool.
+    Selects a platform driver per session and exposes one neutral session, state, and
+    history surface. The DragnCards driver uses Phoenix Channels; the marvel-lcg driver
+    uses HTTP/JSON plus its render-frame WebSocket. Exposes:
+    - HTTP REST API: session lifecycle, state queries, and platform-appropriate moves
+    - MCP tools/resources: the same capabilities for LLM clients
+    Both interfaces share a single `SessionManager` and platform-driver session pool.
+  - **marvel-lcg engine**: The rules-enforcing Marvel Champions engine used by the
+    `marvel-lcg` driver. It enumerates legal options instead of accepting arbitrary
+    DragnLang. This integration credits the **Irefrixs Team**, the original authors of
+    `irefrixs/marvel-lcg`, and uses the maintained `z00lus/marvel-lcg` Ronin Edition fork.
+    The engine repository has no `LICENSE` file; this integration relies on the developer's
+    explicit written permission recorded in [issue #3](https://github.com/irefrixs/marvel-lcg/issues/3).
+    It is a fan implementation of Marvel/FFG intellectual property, and this repository
+    does not claim ownership of that intellectual property. Card art is fetched from
+    Cerebro at runtime and never redistributed here.
   - **agent-orchestrator** (`services/agent-orchestrator/`): Python/FastAPI service.
     Manages LLM sessions, job queues, skill assignment, and MCP wiring. Persists
     state in a dedicated PostgreSQL and fans out SSE events via Valkey. It is both
@@ -70,11 +82,12 @@ context: |
     connections to the host machine's LM Studio server (default host port 1234).
     Eliminates the need for `host.docker.internal` in any service config.
   - **DragnCards backend** (`external/dragncards/backend/`): Upstream Elixir/Phoenix app,
-    tracked as a git submodule. Manages all game state, DragnLang automation, phase/round logic.
+    tracked as a git submodule. Manages the DragnCards platform's game state, DragnLang
+    automation, and phase/round logic.
     Runs in Docker. We never modify it.
-  - **Marvel Champions plugin** (`external/dragncards-mc-plugin/`): Upstream Rust CLI,
-    tracked as a git submodule. Built as a multi-stage Docker image. Produces TSV + JSON
-    artifacts mounted into the backend.
+  - **Marvel Champions plugin** (`external/dragncards-mc-plugin/`): Upstream Rust CLI for
+    the DragnCards platform, tracked as a git submodule. Built as a multi-stage Docker image.
+    Produces TSV + JSON artifacts mounted into the backend.
   - **External Docker config** (`external/docker/`): Dockerfiles and compose file for
     DragnCards backend, frontend, and mc-plugin.
 
@@ -88,14 +101,19 @@ context: |
 
   ## Key Protocols
 
-  - **Phoenix Channels wire format**: `[join_ref, ref, topic, event, payload]`
-  - **Auth**: POST /api/v1/session → bearer token; passed as `authToken` query param on WebSocket URL
-  - **Room channel**: topic `room:<slug>`; join triggers `current_state` broadcast
-  - **Game actions**: push `game_action` with DragnLang payload `{"action": [...], "options": {"description": "..."}, "timestamp": <ms>}`
-  - **State events**: `current_state` (full), `state_update` (delta, marks state stale), `send_update` (legacy alias)
-  - **State request**: push `request_state` → server broadcasts `current_state`
+  - **DragnCards Phoenix Channels wire format**: `[join_ref, ref, topic, event, payload]`
+  - **DragnCards auth**: POST /api/v1/session → bearer token; passed as `authToken` query param on the WebSocket URL
+  - **DragnCards room channel**: topic `room:<slug>`; join triggers `current_state` broadcast
+  - **DragnCards game actions**: push `game_action` with a DragnLang payload
+    `{"action": [...], "options": {"description": "..."}, "timestamp": <ms>}`
+  - **DragnCards state events**: `current_state` (full), `state_update` (delta, marks state stale),
+    `send_update` (legacy alias)
+  - **DragnCards state request**: push `request_state` → server broadcasts `current_state`
+  - **marvel-lcg transport**: authenticate over HTTP, fetch the version cookie, create a table,
+    then use HTTP/JSON plus `WS /ws?p=<seat>` render frames; ask for legal options and submit a
+    selected option by id with targets and resource payments.
 
-  ## DragnLang Actions (known)
+  ## DragnLang Actions (DragnCards only)
 
   - `["NEXT_STEP"]` / `["PREV_STEP"]` — advance/rewind game phase
   - `["DRAW_CARD", player_n, count]` — draw cards

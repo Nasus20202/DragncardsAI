@@ -142,6 +142,8 @@ The non-strategic action taxonomy SHALL be resolved per PLATFORM, because the tw
 
 For a platform whose moves are enumerated option choices, classification SHALL key on that platform's own option identity — the option's identifier together with its name and the event the prompt belonged to — and SHALL NOT key on the option's name alone, because an option name is not unique: a single verified prompt returned three options, two of them named `Play`, distinguishable only by their identifiers. A taxonomy keyed on the name would classify two different moves as one.
 
+The producer SHALL carry that identity as the additive `payload.marvel_lcg_option` object with exactly `{id, name, event}`. `id` SHALL be the identifier selected from the successful `list_game_options` result, and `name` and `event` SHALL be copied from that same result; the producer SHALL omit the object when any field is unavailable. `option_identity` is not the producer field name.
+
 The configured skip set SHALL be per platform, and one platform's names SHALL NOT be applied to another platform's moves: a DragnCards tool name SHALL never match a marvel-lcg move and a marvel-lcg option identity SHALL never match a DragnCards action. The existing rule that an action outside the configured set — including any the service does not recognise — is EVALUATED rather than skipped SHALL hold for every platform, so a platform whose taxonomy is incomplete over-evaluates rather than silently skipping real decisions.
 
 Declining an enumerated prompt (submitting the decline option) SHALL be treated as a gradeable decision rather than as plumbing, because choosing to take no option is a play a player can get wrong.
