@@ -1,0 +1,42 @@
+# Marvel Champions Digital: Ronin Edition
+# Build from the pinned external/marvel-lcg submodule with the repository root
+# as the Docker build context. Card art is deliberately not copied into this
+# image; the platform downloads it into the runtime asset volume on demand.
+
+FROM node:22-bookworm-slim AS frontend
+
+WORKDIR /build
+COPY external/marvel-lcg/public/js ./public/js
+
+RUN corepack enable && \
+    pnpm dlx --package=typescript tsc --project public/js/tsconfig.json
+
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+COPY external/marvel-lcg/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy only runtime source from the submodule. In particular, do not copy its
+# asset cache, replay files, or runtime state into the image.
+COPY external/marvel-lcg/core ./core
+COPY external/marvel-lcg/cards ./cards
+COPY external/marvel-lcg/data ./data
+COPY external/marvel-lcg/deck ./deck
+COPY external/marvel-lcg/engine ./engine
+COPY external/marvel-lcg/game ./game
+COPY external/marvel-lcg/public ./public
+COPY external/marvel-lcg/build.py ./build.py
+COPY external/marvel-lcg/main.py ./main.py
+COPY --from=frontend /build/public/js ./public/js
+
+COPY external/docker/marvel-lcg/entrypoint.sh /usr/local/bin/marvel-lcg-entrypoint
+RUN chmod 0755 /usr/local/bin/marvel-lcg-entrypoint
+
+EXPOSE 2345
+
+ENTRYPOINT ["/usr/local/bin/marvel-lcg-entrypoint"]

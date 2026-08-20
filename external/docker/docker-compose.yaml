@@ -70,10 +70,51 @@ services:
     networks:
       - dragncards-shared
 
+  marvel-lcg:
+    profiles: ["marvel-lcg"]
+    image: ${MARVEL_LCG_IMAGE:-dragncardsai-marvel-lcg:latest}
+    pull_policy: ${IMAGE_PULL_POLICY:-never}
+    build:
+      context: ../..
+      dockerfile: external/docker/marvel-lcg/Dockerfile
+    restart: unless-stopped
+    # This profile is for deliberate local platform selection. Deployments
+    # should omit the profile (and therefore publish no host port).
+    ports:
+      - "${MARVEL_LCG_PORT:-4006}:2345"
+    environment:
+      # No default is intentional: the entrypoint refuses an empty password.
+      MARVEL_LCG_PASSWORD: ${MARVEL_LCG_PASSWORD:-}
+    volumes:
+      - marvel-lcg-assets:/app/assets
+      - marvel-lcg-replays:/app/replays
+      - marvel-lcg-runtime:/app/runtime
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:2345/get_version', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      start_period: 15s
+      retries: 12
+    networks:
+      - dragncards-shared
+      - marvel-lcg-internal
+
 networks:
   dragncards-shared:
     name: dragncards-shared
+  marvel-lcg-internal:
+    name: marvel-lcg-internal
+    internal: true
 
 volumes:
   dragncards-postgres-data:
   dragncards-mc-plugin-data:
+  marvel-lcg-assets:
+  marvel-lcg-replays:
+  marvel-lcg-runtime:
