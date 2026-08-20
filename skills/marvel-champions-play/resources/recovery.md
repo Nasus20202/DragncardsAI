@@ -106,3 +106,16 @@ End every turn with a short report containing:
 4. Any `error` you hit and whether you recovered from it.
 
 Then stop. Do not advance the step, do not refill your hand, do not act for anyone else.
+
+### Finding recovery or unreliable state
+
+When the prompt carries an active finding, this is **not** an ordinary turn report. Report the
+`finding_id`, the undo calls in order, and the relevant card locations or token values observed in
+the read that confirms the undo. Then stop: do not play cards or use basic powers until a later
+normal prompt no longer carries that finding. If `list_my_illegal_actions` still lists that same id,
+state that result and do not repeat the undo.
+
+When the current state contradicts the prompt about phase, a relevant card location, or a key board
+total — or lacks information required for an intended action — report both conflicting values or the
+missing information and take no mutating action. A `HIDDEN` placeholder, a previous report, or
+conservative guess is not evidence that makes the action safe.

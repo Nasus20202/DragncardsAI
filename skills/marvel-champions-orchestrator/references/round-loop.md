@@ -44,15 +44,15 @@ inside a `spawn_subagent`, never directly in the orchestrator job.
 | # | Round step (rules)               | Who acts       | Tools                                                                                   |
 | - | -------------------------------- | -------------- | ----------------------------------------------------------------------------------------- |
 | 1 | Player phase begins              | Orchestrator   | none — bookkeeping only; log round number and first player                              |
-| 2 | Each player takes a turn         | **Player agent** per seat, orchestrator schedules | `prompt_player_agent` → `wait_for_subagent` per seat, in player order. The seat itself uses `move_card`, `exhaust_card`, `ready_card`, `flip_card`, `modify_tokens`, `draw_card`, `shuffle_into_deck`, `set_card_property` on its own cards |
-| 3 | Player phase ends                | Orchestrator   | `player_end_phase` (discard to hand size, draw up, ready all). Optional extra discards are a seat decision |
-| 4 | Villain phase begins             | Orchestrator   | implied by `player_end_phase`; verify with a delegated state read if uncertain           |
+| 2 | Each player takes a turn         | **Player agent** per seat, orchestrator schedules | `prompt_player_agent` → `wait_for_subagent` per seat, in player order. The seat itself uses `move_card`, `exhaust_card`, `ready_card`, `flip_card`, `modify_tokens`, `draw_card`, `shuffle_into_deck`, `set_card_property` on its own cards. A recovery-only invocation is not a player turn: after resolving a finding from a completed report, continue with the next seat; do not replay the recovered seat's ordinary turn. |
+| 3 | Player phase ends                | Orchestrator   | `player_end_phase` (discard to hand size, draw up, ready all), then a delegated checkpoint. Optional extra discards are a seat decision |
+| 4 | Villain phase begins             | Orchestrator   | use the checkpoint from step 3 to confirm the phase before performing villain work; reconcile once or abort on conflict |
 | 5 | Place threat on main scheme      | Orchestrator   | `modify_tokens` on the main scheme with `threat` = acceleration field + 1 per acceleration icon + 1 per acceleration token |
 | 6 | Villain and minions activate     | Orchestrator, with **player decisions delegated** | `draw_boost` per villain activation; `flip_card` to reveal the boost; `modify_tokens` for damage or threat; `exhaust_card` for a defender; `ready_card`/`zero_tokens` as cleanup |
-| 7 | Deal encounter cards             | Orchestrator   | `villain_encounter_phase` (deals facedown to all players), or `deal_encounter` per player plus one per hazard icon in player order |
-| 8 | Reveal and resolve encounter     | Orchestrator, with **player decisions delegated** | `flip_card` / `set_card_property` to reveal; `move_card` to place by card type; `modify_tokens` for starting threat; `shadows_of_the_past`, `discard_minion`, `discard_side_scheme` for the named encounter effects |
-| 9 | Pass the first player token      | Orchestrator   | bookkeeping; `villain_end_phase` closes the phase and returns to the player phase        |
-| 10| End the round                    | Orchestrator   | emit the round summary, check win/loss, increment round, return to step 1                |
+| 7 | Deal encounter cards             | Orchestrator   | `villain_encounter_phase` (deals facedown to all players), or `deal_encounter` per player plus one per hazard icon in player order; record each dealt card as a pending queue entry |
+| 8 | Reveal and resolve encounter     | Orchestrator, with **player decisions delegated** | For each pending entry in player order: `flip_card` / `set_card_property` to reveal; `move_card` to place by card type; `modify_tokens` for starting threat; `shadows_of_the_past`, `discard_minion`, `discard_side_scheme` for named effects; remove the entry only after its effect resolves |
+| 9 | Verify, then pass the first player token | Orchestrator | delegated compact state checkpoint after the queue is empty; abort if it cannot account for a dealt facedown encounter or required effect; only then use `villain_end_phase`, take another delegated checkpoint, and do bookkeeping |
+| 10| End the round                    | Orchestrator   | reconcile the post-`villain_end_phase` checkpoint, emit the round summary from it, check win/loss, increment round, return to step 1 |
 
 ---
 
@@ -77,6 +77,14 @@ For each player, in player order:
 
 ## Step 8 in detail — reveal by card type
 
+Treat the entries recorded at step 7 as a queue. Reveal and resolve one entry completely before
+moving to the next. `HIDDEN` placeholders in other deck groups are not encounter entries and are
+never action targets; an entry remains pending until its own revealed card and required effects are
+accounted for. **Surge creates a new pending entry** for the same revealing seat; append it in
+revealing-seat order and resolve it by the same procedure before the queue can be empty. If a
+checkpoint after the queue is empty leaves a dealt facedown encounter or effect unexplained, abort
+with that checkpoint rather than advancing the phase.
+
 | Card type    | Placement                                                    | Then                                             |
 | ------------ | -------------------------------------------------------------- | ------------------------------------------------ |
 | Minion       | `move_card` into the revealing seat's play area, engaged      | resolve When Revealed                            |
@@ -86,7 +94,9 @@ For each player, in player order:
 | Environment  | `move_card` into the villain area                             | resolve When Revealed                            |
 | Obligation   | goes to the indicated player's area                           | **that seat resolves it** — delegate the decision |
 
-- **Surge** — the revealing seat immediately reveals one additional encounter card.
+- **Surge** — add one additional encounter card for the revealing seat to the pending queue, then
+  reveal and resolve it before moving on. Never treat Surge as an untracked shortcut around the
+  queue.
 - A revealed card whose ability specifies "Hero" or "Alter-Ego" resolves only if the **revealing
   player** is in that form.
 - Any choice that belongs to the revealing player is delegated to that seat. Any choice the rules

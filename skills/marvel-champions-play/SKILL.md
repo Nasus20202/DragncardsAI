@@ -98,6 +98,12 @@ issuing the next call.
 Load `resources/reading-state.md` whenever a field surprises you. *Confirmed when* you can
 state each of those values; if not, you have not read enough to act.
 
+Compare this read with the prompt before acting. If it contradicts the prompt's phase, a relevant
+card location, or a key board total, take **no mutating action**: report the conflicting facts and
+stop. `HIDDEN` entries, a previous report, and stale prompt prose do not establish a card's identity
+or location. If information required for an action is unavailable, report what is missing instead of
+guessing or choosing inaction merely because the board feels uncertain.
+
 **2. Price your hand.** The state gives card *names* only — no costs, icons, or text. Call
 `search_cards_marvel_champions(name=...)` for each unfamiliar card, match on `database_id`
 == the state card's `id`, and read `cost`, `resource`, `attack`, `thwart`, `defense`,
@@ -166,11 +172,13 @@ Take the first rung that applies; do not skip down.
 The coordinating agent records a **finding** against a seat once it has read game state and
 confirmed the seat's action broke the rules. It states the violation and the concrete undo.
 
-- An open finding against you is presented at the **start of every turn** until it is
-  closed. Do the stated undo with your own tools *before* any new action, and say in your
-  report that you did.
+- An open finding against you is a **recovery-only invocation**, not a normal turn. Identify its
+  `finding_id`, do the stated undo with your own tools, read state to confirm the relevant result,
+  and report the identifier and observed board. Do not play cards, use a basic power, or plan a
+  normal turn after the undo; wait for a later prompt that no longer carries the finding.
 - `list_my_illegal_actions` re-reads them mid-turn — read-only, and only the findings open
-  against *your* seat.
+  against *your* seat. If it still lists the same identifier after you confirmed the undo, report
+  that fact and stop; do not repeat the undo.
 - You cannot close one. Only the orchestrator resolves a finding, after reading game state
   and seeing the undo there. Your saying you undid it is a claim it will check, not the
   check.

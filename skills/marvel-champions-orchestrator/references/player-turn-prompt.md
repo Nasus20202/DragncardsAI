@@ -6,6 +6,10 @@ A player agent is a subagent. It has **no memory of previous turns and no conver
 Every prompt must be fully self-contained: everything the seat needs to decide its turn has to be
 in the prompt text. If a fact is not in the prompt, the seat does not know it.
 
+The orchestrator fills ordinary prompts from the latest verified state checkpoint, never from a
+seat's previous report. If that checkpoint conflicts with the prior verified board, the orchestrator
+must reconcile it with one fresh read or abort before prompting a seat.
+
 **Use the same template for every seat, every round.** Two differently configured agents must
 receive identical information in identical structure — a fair comparison requires identical inputs.
 Never give one seat richer board detail, extra hints, or tactical suggestions.
@@ -15,6 +19,8 @@ Never give one seat richer board detail, extra hints, or tactical suggestions.
 ## Turn prompt template
 
 Fill every placeholder. Do not omit a section; write `none` where a section is empty.
+Use this template only when the seat has no active finding. A finding gets the recovery-only
+template below; never combine recovery and ordinary play in one prompt.
 
 ```
 You are playing Marvel Champions on DragnCards as a single hero. Load the skill
@@ -99,6 +105,44 @@ A seat that legitimately does nothing still reports: `ACTIONS: none`, a reason, 
 
 ---
 
+## Recovery-only finding prompt
+
+Use this instead of the turn template when an open finding must be corrected. Include exactly one
+open finding identified by the `finding_id` returned by `report_illegal_action`. The seat must not
+receive normal-play instructions until the orchestrator has verified and resolved that identifier.
+This recovery-only invocation neither grants nor consumes a player turn. If it follows the seat's
+completed turn report, the orchestrator continues to the next seat; this seat receives its next
+normal-play prompt only in its ordinary later seat-loop pass.
+
+```
+Marvel Champions — required recovery. You are <player1|...>, playing <Hero Name>.
+session_id: <uuid>. Round <N>.
+
+ACTIVE FINDING
+  finding_id: <id>
+  Violation: <concrete observed violation>
+  Required undo: <concrete reversible actions>
+  Verified board before recovery: <compact relevant checkpoint facts>
+
+REQUIRED ACTION
+  Perform only the stated undo on your own cards. Read game state after it and verify the listed
+  card locations or token values. Do not play cards, use a basic power, plan a normal turn, or
+  advance a phase.
+
+RETURN FORMAT
+  FINDING RECOVERY:
+  finding_id=<id>
+  ACTIONS: <undo calls in order>
+  OBSERVED BOARD: <the relevant card locations and token values after the undo>
+  RECOVERY COMPLETE
+```
+
+If `list_my_illegal_actions` still lists this identifier after the undo, report it in `OBSERVED
+BOARD` and stop. Do not repeat the undo and do not start a conservative normal turn; only the
+orchestrator can verify and resolve the finding.
+
+---
+
 ## Mid-villain-phase decision prompt
 
 Use this shorter template whenever the villain phase produces a decision that belongs to a specific
@@ -151,6 +195,6 @@ abort per SKILL.md — do not pick the option yourself.
 - **No carry-over.** Do not include a seat's previous turn report in the next turn's prompt. The
   board summary already reflects its consequences, and including it would give a seat with a longer
   history an advantage over one without.
-- **Facts only.** Everything in the BOARD and YOUR HERO sections must come from the actual game
-  state (read via a subagent) or from an action you or a seat verifiably took this round. Never
-  estimate a hit point total or a threat count.
+- **Facts only.** Everything in the BOARD and YOUR HERO sections must come from the latest verified
+  game-state checkpoint (read via a subagent). Never estimate or extrapolate a hit point total,
+  threat count, phase, or card location from a seat report.
