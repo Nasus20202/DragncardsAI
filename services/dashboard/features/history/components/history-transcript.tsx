@@ -773,20 +773,20 @@ const TranscriptEvent = memo(function TranscriptEvent({
                   user usually wants -- just looking at the board -- was below two
                   controls that change a game.
                 */}
-                  <BoardOpenControl
+                <BoardOpenControl
                   gameId={board.gameId}
                   selectedSeq={event.seq}
                   isOpening={board.isOpening}
                   error={board.error}
                   isOpen={board.isOpen}
-                   onOpen={board.onOpen}
-                   platform={platform}
+                  onOpen={board.onOpen}
+                  platform={platform}
                 />
                 <RestoreControl
                   targetSeq={event.seq}
                   onRestore={onRestore}
                   frontendUrl={frontendUrl}
-                   platform={platform}
+                  platform={platform}
                 />
               </div>
             )}

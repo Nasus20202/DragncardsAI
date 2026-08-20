@@ -12,10 +12,7 @@ interface DragnCardsIframeProps {
   urls: ViewerUrls;
 }
 
-export function DragnCardsIframe({
-  game,
-  urls,
-}: DragnCardsIframeProps) {
+export function DragnCardsIframe({ game, urls }: DragnCardsIframeProps) {
   const src = resolveGameViewerUrl(game, urls);
   if (!src) {
     return (

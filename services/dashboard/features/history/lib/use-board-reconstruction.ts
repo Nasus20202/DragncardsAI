@@ -178,7 +178,11 @@ export function useBoardReconstruction(
   const open = useCallback(async () => {
     if (!gameId || selectedSeq === null) return;
     if (platform !== "dragncards") {
-      setFailure({ gameId, seq: selectedSeq, message: "This platform cannot be rewound into a throwaway copy." });
+      setFailure({
+        gameId,
+        seq: selectedSeq,
+        message: "This platform cannot be rewound into a throwaway copy.",
+      });
       return;
     }
     setFailure(null);

@@ -46,8 +46,8 @@ export function GamesSessionList({
             <div className="flex flex-col items-start">
               <span className="font-bold text-sm">
                 {game.platform === "marvel-lcg"
-                  ? game.game_id ?? game.id
-                  : game.room_slug ?? game.id}
+                  ? (game.game_id ?? game.id)
+                  : (game.room_slug ?? game.id)}
               </span>
               <span className="text-xs text-default-500">
                 {game.platform === "marvel-lcg" ? "Marvel LCG" : game.plugin}
