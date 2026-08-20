@@ -8,6 +8,7 @@ import httpx
 from game_service.api.app import create_app
 from game_service.logic.session_manager import SessionNotFoundError
 from game_service.logic.snapshots import GameStateSnapshot
+from game_service.logic.normalisers import DragnCardsNormaliser
 
 SESSION_ID = "test-session-id"
 UNKNOWN_ID = "00000000-0000-0000-0000-000000000000"
@@ -17,6 +18,15 @@ def mock_session(**kwargs) -> MagicMock:
     session = MagicMock()
     session.session_id = SESSION_ID
     session.plugin_name = "marvel-champions"
+    session.driver.move_surface = "typed_actions"
+    session.driver.action_catalog = MagicMock(
+        return_value={
+            "actions": [],
+            "raw_ops": [],
+            "load_groups": [],
+            "plugin_metadata": None,
+        }
+    )
     session.reset_game = AsyncMock(return_value={"game": {"stepId": 0}})
     session.set_seat = AsyncMock()
     session.claim_seat = AsyncMock()
@@ -39,6 +49,14 @@ def mock_session(**kwargs) -> MagicMock:
         return_value={"player1": {"player_n": "player1", "prompt": "choose"}}
     )
     session.get_state = AsyncMock(return_value={"game": {"roundNumber": 1}})
+    dragncards_normaliser = DragnCardsNormaliser()
+
+    def normalise_state(state):
+        if session.plugin_name != "marvel-champions":
+            return state
+        return dragncards_normaliser.normalise(state, plugin_name=session.plugin_name)
+
+    session.normalise_state = MagicMock(side_effect=normalise_state)
     session.load_prebuilt_deck = AsyncMock(return_value=None)
     for key, value in kwargs.items():
         setattr(session, key, value)

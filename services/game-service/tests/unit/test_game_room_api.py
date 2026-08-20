@@ -175,7 +175,8 @@ async def test_set_player_count_200():
     assert response.status_code == 200
     body = response.json()
     assert body["session_id"] == SESSION_ID
-    assert "roundNumber" in body["state"]  # simplified format
+    assert "playRound" in body["state"]  # simplified format
+    assert "roundNumber" not in body["state"]
     session.set_player_count.assert_awaited_once_with(
         num_players=2, layout_id="standard2Player"
     )

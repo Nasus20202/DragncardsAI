@@ -42,6 +42,11 @@ def create_mcp_server(session_manager, fastapi_app) -> FastMCP:
     produces a better read surface than a tool call.
     """
     logger.info("Initializing MCP server from FastAPI OpenAPI schema")
+    configured_platforms = getattr(session_manager, "_platform_registry", None)
+    marvel_lcg_enabled = (
+        isinstance(configured_platforms, dict) and "marvel-lcg" in configured_platforms
+    )
+    option_route_type = MCPType.TOOL if marvel_lcg_enabled else MCPType.EXCLUDE
     return FastMCP.from_fastapi(
         app=fastapi_app,
         name="game-service",
@@ -74,6 +79,15 @@ def create_mcp_server(session_manager, fastapi_app) -> FastMCP:
             RouteMap(pattern=r"^/games/[^/]+/actions/raw$", mcp_type=MCPType.EXCLUDE),
             RouteMap(
                 pattern=r"^/games/[^/]+/load-prebuilt-deck$", mcp_type=MCPType.TOOL
+            ),
+            # Enumerated-option and platform catalog calls are agent-facing
+            # tools, not resources: their results are decision/catalog context.
+            RouteMap(pattern=r"^/games/[^/]+/options$", mcp_type=option_route_type),
+            RouteMap(
+                pattern=r"^/games/[^/]+/options/choose$", mcp_type=option_route_type
+            ),
+            RouteMap(
+                pattern=r"^/marvel-lcg/(scenarios|decks)$", mcp_type=option_route_type
             ),
         ],
     )

@@ -95,7 +95,7 @@ def test_setup_telemetry_configures_otlp_log_export(monkeypatch):
     monkeypatch.setattr(
         telemetry.HTTPXClientInstrumentor,
         "instrument",
-        lambda self: None,
+        lambda self, **kwargs: None,
     )
     monkeypatch.setattr(
         telemetry.logging, "getLogger", lambda *args, **kwargs: root_logger
@@ -116,3 +116,21 @@ def test_setup_telemetry_configures_otlp_log_export(monkeypatch):
     telemetry.shutdown_telemetry()
     telemetry._httpx_instrumented = False
     telemetry._logging_patched = False
+
+
+def test_httpx_span_hook_removes_query_and_cookie_data():
+    span = MagicMock()
+    request = SimpleNamespace(
+        url=SimpleNamespace(
+            scheme="https",
+            host="engine",
+            path="/new",
+        )
+    )
+
+    telemetry._sanitize_httpx_span(span, request)
+
+    span.set_attribute.assert_any_call("http.url", "https://engine/new")
+    span.set_attribute.assert_any_call("url.full", "https://engine/new")
+    span.set_attribute.assert_any_call("http.target", "/new")
+    span.set_attribute.assert_any_call("http.request.header.cookie", "<redacted>")

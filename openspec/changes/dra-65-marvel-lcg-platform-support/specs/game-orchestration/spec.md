@@ -122,6 +122,10 @@ The round number the orchestrator reports SHALL be the neutral `playRound` carri
 - **THEN** the orchestrator SHALL observe the villain phase resolving in game state and SHALL issue no activation, encounter-dealing, or phase-advancing call
 - **AND** it SHALL wait for the platform to ask a seat again rather than advancing the round
 
+#### Scenario: Villain phase is run by the orchestrator
+- **WHEN** every seat of a DragnCards session has completed its turn and the player phase has ended
+- **THEN** the orchestrator SHALL resolve the villain phase through game-service tools, including villain and minion activations against each player and the dealing and revealing of encounter cards
+
 #### Scenario: First player marker passes each round
 - **WHEN** the villain phase completes
 - **THEN** the orchestrator SHALL pass the first player marker to the next player before beginning the following round on a platform that does not pass it itself, and SHALL observe the pass in game state on a platform that does

@@ -26,6 +26,8 @@ services:
       HISTORY_VALKEY_URL: ${GAME_SERVICE_HISTORY_VALKEY_URL:-redis://agent-orchestrator-valkey:6379/0}
       BOT_EMAIL: ${BOT_EMAIL:-dev_user@example.com}
       BOT_PASSWORD: ${BOT_PASSWORD:-password}
+      MARVEL_LCG_HTTP_URL: ${MARVEL_LCG_HTTP_URL:-http://marvel-lcg:2345}
+      MARVEL_LCG_PASSWORD: ${MARVEL_LCG_PASSWORD:-change-me}
       HTTP_HOST: ${GAME_SERVICE_HTTP_HOST:-0.0.0.0}
       HTTP_PORT: ${GAME_SERVICE_HTTP_PORT:-8000}
       # Browser CORS allowlist. This port is published on the host, so a wildcard

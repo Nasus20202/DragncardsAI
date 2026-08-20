@@ -26,7 +26,6 @@ from pydantic import ConfigDict, Field
 from pydantic import field_validator
 import re
 
-from game_service.catalog.providers.marvel_champions import plugin_metadata
 from game_service.api.enums import GroupId
 from game_service.schemas.base import StrictRequest
 

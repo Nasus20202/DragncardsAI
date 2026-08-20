@@ -29,7 +29,8 @@ from game_service.coordination.history_emitter import (
     build_history_emitter,
     build_state_envelope,
 )
-from game_service.logic.actions import NextStepAction
+from game_service.logic.actions import DrawCardAction, NextStepAction
+import game_service.logic.session as session_module
 
 from .session_manager_test_support import make_session
 
@@ -91,6 +92,30 @@ class NoOffsetHistoryEmitter:
         self, *, game_id, producer_offset, state, action_args=None, plugin_name=None
     ) -> None:  # pragma: no cover - must never be reached
         self.events.append({"game_id": game_id})
+
+
+class _RecordedSpan:
+    def __init__(self, name, initial, sink):
+        self.name = name
+        self.attributes = dict(initial or {})
+        sink.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def set_attribute(self, key, value):
+        self.attributes[key] = value
+
+
+class _RecordedTracer:
+    def __init__(self):
+        self.spans = []
+
+    def start_as_current_span(self, name, attributes=None):
+        return _RecordedSpan(name, attributes, self.spans)
 
 
 def _arm_successful_action(session, state) -> None:
@@ -197,6 +222,27 @@ async def test_execute_action_emits_one_event_with_game_id_and_status():
     # The session plugin slug rides on every state event so a branchable
     # restore can materialize a fresh session even without a snapshot.
     assert event["plugin_name"] == "marvel-champions"
+
+
+async def test_dragncards_action_span_has_safe_platform_seat_and_outcome(monkeypatch):
+    recorded = _RecordedTracer()
+    monkeypatch.setattr(session_module, "tracer", recorded)
+    session = make_session()
+    state = {"game": {"mode": "in progress"}}
+    _arm_successful_action(session, state)
+
+    await session.execute_action(DrawCardAction(player_n="player2"))
+
+    spans = [
+        span for span in recorded.spans if span.name == "game_session.execute_action"
+    ]
+    assert len(spans) == 1
+    assert spans[0].attributes == {
+        "game.action.name": "DrawCardAction",
+        "game.platform": "dragncards",
+        "game.seat": "player2",
+        "game.outcome": "succeeded",
+    }
 
 
 async def test_producer_offset_increments_per_action():

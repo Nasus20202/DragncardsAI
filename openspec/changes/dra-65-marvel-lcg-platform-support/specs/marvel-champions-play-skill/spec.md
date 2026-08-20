@@ -72,6 +72,10 @@ The skill SHALL state that the projection names the platform the state came from
 - **WHEN** the skill explains how to determine a hero's remaining hit points
 - **THEN** it SHALL instruct the agent to subtract the `damage` token count on the identity card from the projected identity hit points where the platform harness reference states the projected value is a maximum
 
+#### Scenario: Remaining villain hit points are derived, not read
+- **WHEN** the skill explains how to determine the villain's remaining hit points
+- **THEN** it SHALL instruct the agent to subtract the `damage` token count on the villain card from the projected villain hit points where the platform harness reference states the projected value is a stage total
+
 #### Scenario: The play round is read, not computed
 - **WHEN** the skill explains how to determine which round is being played
 - **THEN** it SHALL instruct the agent to read `playRound` as the round being played
@@ -99,12 +103,20 @@ The platform's own zone names, the identifiers used to address a zone, and the s
 - **WHEN** the skill describes the zone holding a seat's engaged enemies
 - **THEN** it SHALL state that the zone holds enemies engaged with that seat, side schemes dealt to that seat, and any facedown cards the platform places there
 
+#### Scenario: Engaged group contents are explained
+- **WHEN** the skill describes the zone holding a seat's engaged enemies
+- **THEN** it SHALL state that the neutral zone holds enemies engaged with that seat, side schemes dealt to that seat, and any facedown cards the platform places there
+
 #### Scenario: Zone naming is deferred to the platform reference
 - **WHEN** the skill describes addressing a zone in a tool call
 - **THEN** it SHALL direct the agent to the platform harness reference for the identifiers that platform uses
 - **AND** the skill body SHALL name no platform's zone identifier
 
 #### Scenario: Card side changes on move are explained where they exist
+- **WHEN** the platform harness reference describes moving a card into a deck zone on a platform that permits it
+- **THEN** it SHALL state which side the card shows afterwards and whether the platform does it automatically
+
+#### Scenario: Card side changes on move are explained
 - **WHEN** the platform harness reference describes moving a card into a deck zone on a platform that permits it
 - **THEN** it SHALL state which side the card shows afterwards and whether the platform does it automatically
 
@@ -116,6 +128,11 @@ The two platforms do not share a move surface and SHALL NOT be given a shared re
 #### Scenario: Cost payment is an explicit step where nothing checks it
 - **WHEN** the DragnCards harness reference describes playing a card with a printed cost
 - **THEN** it SHALL instruct the agent to discard one card per resource generated from its own hand before moving the played card into play
+- **AND** it SHALL state that the harness does not validate that the cost was paid
+
+#### Scenario: Cost payment is an explicit step
+- **WHEN** the skill describes playing a card with a printed cost on a platform that does not validate payment
+- **THEN** it SHALL direct the agent to the platform reference, where payment is an explicit discard step before the card is moved into play
 - **AND** it SHALL state that the harness does not validate that the cost was paid
 
 #### Scenario: Cost payment is part of the option where the engine checks it
@@ -130,6 +147,14 @@ The two platforms do not share a move surface and SHALL NOT be given a shared re
 - **WHEN** each harness reference describes a basic attack
 - **THEN** the DragnCards reference SHALL give the exhaust and the damage-token change as ordered calls
 - **AND** the marvel-lcg reference SHALL give the attack as an enumerated option chosen with its target selected within the option's range
+
+#### Scenario: Attack is an exhaust plus a token change
+- **WHEN** the DragnCards harness reference describes a basic attack
+- **THEN** it SHALL give the exhaust and the damage-token change as ordered calls
+
+#### Scenario: Thwart removes threat tokens
+- **WHEN** the DragnCards harness reference describes a basic thwart
+- **THEN** it SHALL give the exhaust and the negative threat-token change as ordered calls
 
 ### Requirement: The skill states which guardrails are enforced by the server and which are not
 The skill SHALL state which guardrails hold, and SHALL distinguish three kinds: the seat-scope refusals the orchestrator applies before a tool runs, which hold on every platform; the rules of play, whose enforcement is a property of the platform; and the turn authority, which is a property of the platform. It SHALL state that the agent reads its platform harness reference to learn which rules of play are enforced, and SHALL forbid assuming either answer.

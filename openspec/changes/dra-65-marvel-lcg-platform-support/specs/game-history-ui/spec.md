@@ -16,7 +16,7 @@ For a `marvel-lcg` event the phase SHALL be taken from the platform's own `phase
 
 Because a `game-service` history event embeds the state **after** its action was applied, each `game-service` event SHALL be attributed to the round and step it acted **from** (the state before that action), with the observed post-action state carried forward to subsequent events. Events from other actors SHALL keep inheriting the latest observed state. Consequently the move that closes a round SHALL fall inside the round it closed, not at the start of the next round. This attribution rule is platform-neutral and SHALL apply to both platforms.
 
-#### Scenario: The first DragnCards round of play is Round 1, not Setup
+#### Scenario: The first round of play is Round 1, not Setup
 
 - **WHEN** the transcript renders `dragncards` events whose state reports `roundNumber` 0 in a player or villain step
 - **THEN** those events SHALL be grouped under "Round 1", and only the pre-state events and the `roundNumber` 0 / step `0.0` band SHALL be labelled "Setup"
@@ -144,6 +144,18 @@ The dashboard SHALL take the reconstruction's viewer target from the restore res
 #### Scenario: A reused board shows the newly selected moment
 - **WHEN** a retained session is re-pointed at a different event
 - **THEN** the embedded board SHALL show the state at the newly selected event, carrying nothing over from the moment it previously showed
+
+#### Scenario: A second moment of the same game reuses the open room
+- **WHEN** the user has a reconstruction open, selects a different event of the same game, and opens the board again
+- **THEN** the dashboard SHALL restore into the session it already holds, SHALL embed the same viewer, and SHALL NOT create a second game
+
+#### Scenario: The room comes from the restore response
+- **WHEN** a restore for a reconstruction reports the new session's viewer target
+- **THEN** the dashboard SHALL embed that target without listing the live sessions, falling back to the session list only when no target is reported
+
+#### Scenario: A reused session does not re-resolve its room
+- **WHEN** a restore reuses a retained session and therefore reports no newly created target
+- **THEN** the dashboard SHALL embed the target it already recorded for that session and SHALL NOT list the live sessions
 
 #### Scenario: Moving the selection clears the board but keeps the session
 - **WHEN** the user changes the selected event while a reconstruction is displayed

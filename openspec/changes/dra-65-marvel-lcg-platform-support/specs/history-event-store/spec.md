@@ -202,6 +202,11 @@ The service SHALL always write the current version on export. A bundle of the cu
 - **WHEN** a bundle declaring format version 1 contains a `blob` record
 - **THEN** the service SHALL answer `400` naming the line, because version 1 did not define that record kind
 
+#### Scenario: A version 1 bundle may not contain blobs
+
+- **WHEN** a bundle declaring format version 1 contains a `blob` record
+- **THEN** the service SHALL answer `400` naming the line, because version 1 did not define that record kind
+
 ## ADDED Requirements
 
 ### Requirement: Platform is a stored column, defaulted, and part of every game-scoped key

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-from game_service.api.routers.game_state import (
-    _simplify_marvel_state,
+from game_service.logic.normalisers import (
     _get_step_description,
+    simplify_dragncards_marvel_state,
 )
 from game_service.logic.session_manager import BadGameStateError, StateUnavailableError
 
@@ -24,7 +24,8 @@ async def test_get_game_state_200():
     body = response.json()
     assert body["session_id"] == SESSION_ID
     # Simplified format has flat keys (not nested under 'game')
-    assert body["state"]["roundNumber"] == 1
+    assert body["state"]["playRound"] == 2
+    assert "roundNumber" not in body["state"]
     assert "game" not in body["state"]
 
 
@@ -74,7 +75,8 @@ async def test_load_snapshot_200():
         )
     assert response.status_code == 200
     session.load_state.assert_awaited_once()
-    assert response.json()["state"]["roundNumber"] == 2
+    assert response.json()["state"]["playRound"] == 3
+    assert "roundNumber" not in response.json()["state"]
 
 
 async def test_load_snapshot_validation_error_returns_400():
@@ -135,10 +137,11 @@ def test_simplify_marvel_state_extracts_essential_fields():
             },
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
     result_dict = result.model_dump() if hasattr(result, "model_dump") else result
 
-    assert result_dict["roundNumber"] == 3
+    assert result_dict["playRound"] == 4
+    assert "roundNumber" not in result_dict
     assert result_dict["mode"] == "villain"
     assert result_dict["villainHitPoints"] == 8
     assert result_dict["stepId"] == "1.1"
@@ -195,7 +198,7 @@ def test_simplify_marvel_state_without_step_id():
             "cardById": {},
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
     result_dict = result.model_dump() if hasattr(result, "model_dump") else result
 
     assert result_dict["stepId"] is None
@@ -231,7 +234,7 @@ def test_simplify_marvel_state_filters_tucked_attachments():
             },
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
     result_dict = result.model_dump() if hasattr(result, "model_dump") else result
 
     # Only parent card appears, attachment is tucked (stackId differs from card_id)
@@ -268,7 +271,7 @@ def test_simplify_marvel_state_includes_stack_size():
             },
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
     result_dict = result.model_dump() if hasattr(result, "model_dump") else result
 
     # Both cards share the same stackId, only one card appears with stack size 2
@@ -305,7 +308,7 @@ def test_simplify_marvel_state_hides_facedown_cards():
             },
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
     result_dict = result.model_dump() if hasattr(result, "model_dump") else result
 
     # Facedown card (Side A with rotation) shows only stack size with name HIDDEN
@@ -344,7 +347,7 @@ def test_simplify_marvel_state_shows_exhausted_cards():
             },
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
     result_dict = result.model_dump() if hasattr(result, "model_dump") else result
 
     # Exhausted card (Side B) remains visible
@@ -393,7 +396,7 @@ def test_simplify_marvel_state_hides_facedown_stacked_cards():
             },
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
     result_dict = result.model_dump() if hasattr(result, "model_dump") else result
 
     # Both cards facedown, shows HIDDEN with stack size 2
@@ -427,7 +430,7 @@ def test_simplify_marvel_state_masks_id_for_player_encounter_cards():
             },
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
     result_dict = result.model_dump() if hasattr(result, "model_dump") else result
 
     # Player card merged into HIDDEN
@@ -481,7 +484,7 @@ def test_simplify_marvel_state_merges_unknown_cards_in_zone():
             },
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
     result_dict = result.model_dump() if hasattr(result, "model_dump") else result
 
     # Two facedown cards merged into one HIDDEN entry
@@ -543,7 +546,7 @@ def test_simplify_marvel_state_merges_mixed_unknown_cards():
             },
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
     result_dict = result.model_dump() if hasattr(result, "model_dump") else result
 
     # Exhausted card is visible, player/encounter cards merged into HIDDEN
@@ -577,7 +580,8 @@ async def test_get_game_state_simplified_200():
     assert response.status_code == 200
     body = response.json()
     # Simplified format has flat keys
-    assert body["state"]["roundNumber"] == 1
+    assert body["state"]["playRound"] == 2
+    assert "roundNumber" not in body["state"]
     assert "game" not in body["state"]  # not nested under 'game'
 
 
@@ -624,7 +628,7 @@ def test_simplify_marvel_state_hides_default_values():
             },
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
 
     card = result["zones"]["player1Hand"][0]
     # Only the four always-present fields are emitted.
@@ -665,7 +669,7 @@ def test_simplify_marvel_state_keeps_non_default_token_counters():
             },
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
 
     card = result["zones"]["player1Play1"][0]
     assert card["tokens"] == {"damage": 3}
@@ -696,7 +700,7 @@ def test_simplify_marvel_state_hidden_entry_has_only_name_and_stack_size():
             },
         }
     }
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
 
     hidden = result["zones"]["sharedEncounterDeck"][0]
     assert hidden == {"name": "HIDDEN", "stackSize": 1}
@@ -803,7 +807,7 @@ def test_simplify_marvel_state_payload_fits_mcp_limit():
         }
     }
 
-    result = _simplify_marvel_state(raw)
+    result = simplify_dragncards_marvel_state(raw)
     payload = json.dumps(result, separators=(",", ":")).encode()
     # Compact format must keep the body well under 1/4 of the 1 MiB limit
     # so even larger custom-content tables stay well under the cap.

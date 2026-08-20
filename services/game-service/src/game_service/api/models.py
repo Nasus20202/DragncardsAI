@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from game_service.api.enums import LayoutId, PlayerN, SeatId
 
 from game_service.logic.actions import GameAction
+from game_service.logic.platform import DRAGNCARDS_PLATFORM, MoveSurface, PlatformSlug
 from game_service.logic.snapshots import GameStateSnapshot
 from game_service.schemas.base import StrictRequest
 
@@ -19,6 +20,10 @@ from game_service.schemas.base import StrictRequest
 
 
 class CreateGameRequest(StrictRequest):
+    platform: PlatformSlug = Field(
+        default=DRAGNCARDS_PLATFORM,
+        description="Game platform to use for the session",
+    )
     plugin_name: str = Field(
         default="marvel-champions",
         description="Plugin identifier to use for the new game session",
@@ -35,6 +40,10 @@ class CreateGameRequest(StrictRequest):
 
 
 class AttachGameRequest(StrictRequest):
+    platform: PlatformSlug = Field(
+        default=DRAGNCARDS_PLATFORM,
+        description="Game platform hosting the existing game",
+    )
     plugin_name: str = Field(
         default="marvel-champions",
         description="Plugin identifier for the existing room",
@@ -60,8 +69,12 @@ ActionRequest = Annotated[
 
 class SessionMetadata(BaseModel):
     session_id: str
-    plugin_name: str
-    plugin_id: int
+    platform: PlatformSlug = DRAGNCARDS_PLATFORM
+    # These fields belong to the DragnCards platform. They remain present for
+    # DragnCards responses, while a platform without plugins may leave them null.
+    plugin_name: str | None = None
+    plugin_id: int | None = None
+    plugin_version: int | None = None
     room_slug: str
     created_at: str  # ISO-8601
     frontend_url: str | None = None
@@ -111,11 +124,17 @@ class SimplifiedGameState(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    roundNumber: int = 0
+    playRound: int | None = None
     mode: str = "unknown"
     villainHitPoints: int = 0
     stepId: str | int | None = None
     stepDescription: str | None = None
+    phase: Literal["setup", "player", "villain", "passive", "unknown"] = "unknown"
+    phaseLabel: str | None = None
+    # A platform that does not expose pending seats omits this field entirely.
+    pendingSeats: list[str] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     players: dict[str, dict[str, int]] = Field(default_factory=dict)
     zones: dict[str, list[SimplifiedCard]] = Field(default_factory=dict)
 
@@ -144,6 +163,39 @@ class DeleteGameResponse(BaseModel):
 class LoadPrebuiltDeckResponse(BaseModel):
     session_id: str
     success: Literal[True] = True
+
+
+class ChooseGameOptionRequest(StrictRequest):
+    """One neutral option choice; the driver translates it to ``POST /post``."""
+
+    player_n: SeatId = "player1"
+    option_id: int | str | None = None
+    targets: list[int | str] = Field(default_factory=list)
+    resources: list[int | str] = Field(default_factory=list)
+    decline: bool = False
+    prompt_id: str = Field(
+        ...,
+        description="Prompt signature returned by the preceding options read",
+    )
+    prompt_version: int = Field(
+        ...,
+        description="Prompt version returned by the preceding options read",
+    )
+
+
+class ChooseGameOptionResponse(BaseModel):
+    session_id: str
+    player_n: SeatId
+    option_id: int | str
+    resolved: bool
+
+
+class MarvelLcgScenariosResponse(BaseModel):
+    scenarios: list[str]
+
+
+class MarvelLcgDecksResponse(BaseModel):
+    decks: list[str]
 
 
 class HealthResponse(BaseModel):
@@ -387,6 +439,12 @@ class PluginPlayerCountLayout(BaseModel):
 
 
 class PluginActionCatalogMetadata(BaseModel):
+    platform: PlatformSlug | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    move_surface: MoveSurface | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     named_action_lists: list[PluginNamedActionList] = Field(default_factory=list)
     hotkeys: list[PluginHotkey] = Field(default_factory=list)
     touch_bar: list[PluginTouchBarAction] = Field(default_factory=list)

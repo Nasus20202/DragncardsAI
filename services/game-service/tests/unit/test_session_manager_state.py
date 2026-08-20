@@ -49,6 +49,17 @@ async def test_get_state_raises_state_unavailable_error():
         await session.get_state()
 
 
+async def test_state_unavailability_does_not_return_cached_ready_state():
+    session = make_session()
+    session._state = {"ready": True}
+
+    session._on_state_unavailable({"reason": "render socket reconnect exhausted"})
+
+    assert session._state_stale
+    with pytest.raises(StateUnavailableError):
+        await session.get_state()
+
+
 async def test_get_state_fetches_fresh_state_without_deadlocking():
     session = make_session()
     session.channel.push = AsyncMock(return_value={})

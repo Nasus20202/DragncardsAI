@@ -41,10 +41,10 @@ async def create_game(
     )
     try:
         session = await manager.create_session(
-            body.plugin_name, ephemeral=body.ephemeral
+            body.plugin_name, platform=body.platform, ephemeral=body.ephemeral
         )
     except SessionError as exc:
-        logger.warning("create_game failed: %s", exc)
+        logger.warning("create_game failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     logger.info("create_game: session_id=%s created", session.session_id)
     return CreateGameResponse(session=SessionMetadata(**session.to_metadata()))
@@ -65,9 +65,11 @@ async def attach_game(
         "attach_game: plugin_name=%r room_slug=%r", body.plugin_name, body.room_slug
     )
     try:
-        session = await manager.attach_session(body.plugin_name, body.room_slug)
+        session = await manager.attach_session(
+            body.plugin_name, body.room_slug, platform=body.platform
+        )
     except SessionError as exc:
-        logger.warning("attach_game failed: %s", exc)
+        logger.warning("attach_game failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     logger.info(
         "attach_game: session_id=%s attached to room %s",

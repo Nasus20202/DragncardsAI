@@ -179,6 +179,11 @@ behavior. Adding the second platform SHALL add an Adapter, and SHALL NOT add a b
 - **THEN** that knowledge SHALL be owned by the marvel-lcg Adapter behind the same Seam
 - **AND** SHALL NOT appear in any module above the Seam
 
+#### Scenario: HTTP and MCP adapters share room semantics
+- **WHEN** a caller uses HTTP or MCP to observe state, execute an action, or invoke room control for the same session
+- **THEN** both adapters SHALL delegate through the same driver Module Interface
+- **AND** SHALL observe the same state-freshness, recovery, and table-side error semantics
+
 #### Scenario: The session holds a driver, not a platform client
 - **WHEN** the session object and the session pool are inspected
 - **THEN** neither SHALL be typed on a Phoenix client, channel, or room type, nor on any marvel-lcg client type
@@ -201,6 +206,10 @@ Each normaliser SHALL honour its platform's per-seat visibility model, so that a
 #### Scenario: Get current game state via HTTP
 - **WHEN** a client sends `GET /games/{id}/state`
 - **THEN** the Game Service SHALL return the current game state including all card groups (hand, deck, play area, discard, etc.), card properties, player state, round/phase information, and any game counters
+
+#### Scenario: Get simplified state for Marvel Champions via HTTP
+- **WHEN** a client sends `GET /games/{id}/state` for a Marvel Champions session
+- **THEN** the Game Service SHALL return the platform-neutral simplified representation, including the play round, phase, player state, and visible zones without exposing the platform's raw state vocabulary
 
 #### Scenario: Get current game state via MCP
 - **WHEN** an MCP client invokes the `get_game_state` tool with a session ID
