@@ -172,7 +172,19 @@ class SessionManager:
     def _new_platform(self, platform: str) -> GamePlatform:
         driver = self._get_platform(platform)
         factory = getattr(driver, "new_session", None)
-        return factory() if factory is not None else driver
+        session_driver = factory() if factory is not None else driver
+        # The manager owns the cache lifecycle. The integration/bootstrap path
+        # may install the Valkey-backed cache after the platform registry has
+        # been constructed, so make each fresh DragnCards driver use the current
+        # manager cache without sharing its transport or mutating the registry
+        # driver. Other platforms must never receive DragnCards credentials.
+        if (
+            platform == DRAGNCARDS_PLATFORM
+            and self._auth_cache is not None
+            and isinstance(session_driver, DragnCardsPlatform)
+        ):
+            session_driver.auth_cache = self._auth_cache
+        return session_driver
 
     async def _credentials(self, platform: str = DRAGNCARDS_PLATFORM) -> Any:
         """Resolve credentials through the selected platform driver."""

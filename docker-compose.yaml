@@ -27,7 +27,7 @@ services:
       # Required only when the marvel-lcg compose profile is selected. Keep the
       # value outside committed files; the platform container refuses an empty
       # password.
-      MARVEL_LCG_PASSWORD: ${MARVEL_LCG_PASSWORD:-}
+      MARVEL_LCG_PASSWORD: ${MARVEL_LCG_PASSWORD:-password}
       BOT_EMAIL: ${BOT_EMAIL:-dev_user@example.com}
       BOT_PASSWORD: ${BOT_PASSWORD:-password}
       MARVEL_LCG_HTTP_URL: ${MARVEL_LCG_HTTP_URL:-http://marvel-lcg:2345}

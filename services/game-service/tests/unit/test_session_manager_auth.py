@@ -153,6 +153,24 @@ async def test_two_sessions_authenticate_once(stub_dragncards):
 
 
 @pytest.mark.asyncio
+async def test_manager_cache_replacement_reaches_fresh_platform_drivers(
+    stub_dragncards,
+):
+    """A cache installed after construction still serves every DragnCards room."""
+    manager = _manager()
+    manager._auth_cache = DragnCardsAuthCache(URL, EMAIL, PASSWORD, valkey=FakeValkey())
+
+    first = await manager.create_session("marvel-champions", ephemeral=True)
+    second = await manager.create_session("marvel-champions", ephemeral=True)
+
+    assert first.session_id != second.session_id
+    assert stub_dragncards["rooms"] == 2
+    assert stub_dragncards["token"] == 1
+    assert stub_dragncards["profile"] == 1
+    assert FakeClient.presented_tokens == [TOKEN, TOKEN]
+
+
+@pytest.mark.asyncio
 async def test_attach_shares_the_cached_credential(stub_dragncards):
     manager = _manager(FakeValkey())
 
