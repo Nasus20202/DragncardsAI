@@ -40,9 +40,12 @@ fi
 # first-party route. The upstream submodule is intentionally excluded from this
 # check because it owns that endpoint; only our application surfaces matter.
 FIRST_PARTY_SOURCE=(services/game-service/src services/dashboard/app services/dashboard/features)
-if git grep -nE "['\"]/debug|[?&](cheat|show|replay)=" -- "${FIRST_PARTY_SOURCE[@]}" >/dev/null 2>&1; then
+# The Marvel HTTP client names forbidden paths only to reject them. Exclude that
+# defensive allowlist check while scanning for code that could compose a route.
+SAFE_PATH_VALIDATOR=services/game-service/src/game_service/marvel_lcg/client.py
+if git grep -nE "['\"]/debug|[?&](cheat|show|replay)=" -- "${FIRST_PARTY_SOURCE[@]}" ":(exclude)$SAFE_PATH_VALIDATOR" >/dev/null 2>&1; then
     printf '%s\n' 'a first-party surface contains a marvel-lcg debug/cheat URL' >&2
-    git grep -nE "['\"]/debug|[?&](cheat|show|replay)=" -- "${FIRST_PARTY_SOURCE[@]}" >&2
+    git grep -nE "['\"]/debug|[?&](cheat|show|replay)=" -- "${FIRST_PARTY_SOURCE[@]}" ":(exclude)$SAFE_PATH_VALIDATOR" >&2
     exit 1
 fi
 
