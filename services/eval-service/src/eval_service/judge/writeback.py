@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from eval_service.judge.config import ResolvedJudgeConfig
 from eval_service.schemas.verdict import VerdictPayload
+from eval_service.schemas.history import PLATFORM_DRAGNCARDS, Platform
 
 ENVELOPE_VERSION = 1
 ACTOR = "evaluator"
@@ -51,6 +52,7 @@ def verdict_idempotency_key(
     evaluator_version: str,
     config: ResolvedJudgeConfig | None = None,
     player: str | None = None,
+    platform: Platform = PLATFORM_DRAGNCARDS,
 ) -> str:
     """sha256(game_id|target_seq|scope|player|evaluator_version|config_digest).
 
@@ -66,6 +68,8 @@ def verdict_idempotency_key(
         f"{game_id}|{target_seq}|{scope}|{player or ''}|{evaluator_version}"
         f"|{judge_config_digest(config)}"
     )
+    if platform != PLATFORM_DRAGNCARDS:
+        raw += f"|{platform}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -73,6 +77,7 @@ def build_verdict_envelope(
     game_id: str,
     verdict: VerdictPayload,
     config: ResolvedJudgeConfig | None = None,
+    platform: Platform = PLATFORM_DRAGNCARDS,
 ) -> dict:
     """Build the ``evaluator`` history envelope carrying a verdict payload.
 
@@ -92,6 +97,7 @@ def build_verdict_envelope(
         "actor": ACTOR,
         "event_type": EVENT_TYPE,
         "payload": verdict.model_dump(),
+        "platform": platform,
         "occurred_at": datetime.now(timezone.utc).isoformat(),
         "idempotency_key": verdict_idempotency_key(
             game_id,
@@ -100,5 +106,6 @@ def build_verdict_envelope(
             verdict.evaluator.evaluator_version,
             config,
             verdict.player,
+            platform,
         ),
     }

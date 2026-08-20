@@ -11,6 +11,7 @@ from eval_service.judge.assembly import (
     NeighbourMove,
     RoundInput,
 )
+from eval_service.schemas.history import PLATFORM_DRAGNCARDS, Platform
 from eval_service.judge.events import SESSION_MODE_ORCHESTRATED
 from eval_service.judge.rounds import round_label
 from eval_service.judge.skill_resources import LoadedReference
@@ -81,11 +82,29 @@ def _mode_note(session_mode: str) -> str:
     return ORCHESTRATED_MODE_NOTE
 
 
+def _platform_note(platform: Platform) -> str:
+    """Explain platform-specific legality semantics without changing DragnCards prompts."""
+    if platform == PLATFORM_DRAGNCARDS:
+        return ""
+    return (
+        "This move came from the marvel-lcg rules-enforcing engine. The submitted "
+        "choice was legal within the enumerated option set; grade rules_legality "
+        "as the quality of that choice, not whether the engine accepted it.\n\n"
+    )
+
+
 def _json(value: Any) -> str:
     return canonical_json(value)
 
 
-def _state_json(value: Any, max_chars: int, *, label: str) -> str:
+def _state_json(
+    value: Any,
+    max_chars: int,
+    *,
+    label: str,
+    platform: Platform = PLATFORM_DRAGNCARDS,
+    player: str | None = None,
+) -> str:
     """Render a per-event state for the prompt: project first, then bound.
 
     State is by far the largest content in a judge prompt. It is projected down to
@@ -93,7 +112,7 @@ def _state_json(value: Any, max_chars: int, *, label: str) -> str:
     ``max_chars`` remains as a backstop for a state shape the projection does not
     recognise, or a projection that is somehow still oversized.
     """
-    return render_state(value, max_chars, label=label)
+    return render_state(value, max_chars, label=label, platform=platform, player=player)
 
 
 def _system_content(
@@ -164,15 +183,16 @@ def build_move_messages(
     """Build a fresh, self-contained judge prompt for a single move."""
     user = (
         f"{_mode_note(move.session_mode)}"
+        f"{_platform_note(move.platform)}"
         f"Evaluate this single agent move (seq {move.target_seq}){_round_scope(move)}.\n"
         "The move is one action of that round's play; grade it as its step of "
         "that play, not as a play in its own right.\n\n"
-        f"Prior game state:\n{_state_json(move.prior_state, max_state_chars, label='prior')}\n\n"
+        f"Prior game state:\n{_state_json(move.prior_state, max_state_chars, label='prior', platform=move.platform, player=move.player)}\n\n"
         f"{_neighbour_block(move.context_before, max_context_reasoning_chars, direction='before')}"
         f"Intended action: {_json(move.intended_action)}\n"
         f"Action arguments: {_json(move.arguments)}\n"
         f"Agent's stated reasoning: {_json(move.reasoning)}\n\n"
-        f"Resulting game state:\n{_state_json(move.resulting_state, max_state_chars, label='resulting')}\n"
+        f"Resulting game state:\n{_state_json(move.resulting_state, max_state_chars, label='resulting', platform=move.platform, player=move.player)}\n"
         f"{_neighbour_block(move.context_after, max_context_reasoning_chars, direction='after')}"
     )
     return [
@@ -292,12 +312,13 @@ def build_round_messages(
     )
     user = (
         f"{_mode_note(rnd.session_mode)}"
+        f"{_platform_note(rnd.platform)}"
         f"Evaluate this whole round{who} ({round_label(rnd.round_number)}, "
         f"seqs {rnd.from_seq}-{rnd.to_seq}) as a unit.\n\n"
         f"{_child_context_block(rnd.child_verdicts, 'move', max_child_rationale_chars, max_round_moves)}"
         f"{_illegal_action_block(rnd.illegal_actions, rnd.player)}"
         f"{moves_label}:\n{moves_text}\n\n"
-        f"Game state at round close:\n{_state_json(rnd.closing_state, max_state_chars, label='closing')}\n"
+        f"Game state at round close:\n{_state_json(rnd.closing_state, max_state_chars, label='closing', platform=rnd.platform, player=rnd.player)}\n"
     )
     return [
         {
@@ -326,10 +347,11 @@ def build_game_messages(
     who = f" for {game.player}" if game.player else ""
     user = (
         f"{_mode_note(game.session_mode)}"
+        f"{_platform_note(game.platform)}"
         f"Evaluate this whole game{who} (seqs {game.from_seq}-{game.to_seq}) as a "
         f"unit, judging how well this player played across the whole game.\n\n"
         f"{_child_context_block(game.child_verdicts, 'round', max_child_rationale_chars, max_round_moves)}"
-        f"Final game state:\n{_state_json(game.closing_state, max_state_chars, label='final')}\n"
+        f"Final game state:\n{_state_json(game.closing_state, max_state_chars, label='final', platform=game.platform, player=game.player)}\n"
     )
     return [
         {

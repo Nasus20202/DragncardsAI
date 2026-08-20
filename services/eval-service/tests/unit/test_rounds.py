@@ -10,6 +10,7 @@ from eval_service.judge.rounds import (
 )
 from eval_service.runtime.rounds import RoundsService
 from eval_service.runtime.requests import GameNotFoundError
+from eval_service.schemas.history import PLATFORM_MARVEL_LCG
 from tests.unit.conftest import FakeHistoryClient, agent_event, make_event, state_event
 
 
@@ -138,3 +139,89 @@ async def test_rounds_service_tolerates_a_raw_nested_state():
     # raw roundNumber 2 -> round of play 3. The terminal seq-3 event is the same
     # event that closed the round, so it does not also open an empty final one.
     assert [r.label for r in rounds] == ["Round 3"]
+
+
+@pytest.mark.asyncio
+async def test_rounds_service_lists_marvel_round_id_as_round_of_play():
+    def state(seq: int, round_id: int, *, status: str = "in progress"):
+        return make_event(
+            game_id="marvel-list",
+            seq=seq,
+            actor="game-service",
+            event_type="game_state",
+            payload={"state": {"round_id": round_id}, "status": status},
+        ).model_copy(update={"platform": PLATFORM_MARVEL_LCG})
+
+    move = agent_event(game_id="marvel-list", seq=2).model_copy(
+        update={"platform": PLATFORM_MARVEL_LCG}
+    )
+    service = RoundsService(
+        history=FakeHistoryClient(
+            {"marvel-list": [state(1, 1), move, state(3, 2, status="win")]}
+        )
+    )
+
+    rounds = (await service.list_rounds("marvel-list", PLATFORM_MARVEL_LCG)).rounds
+    assert [(item.round_number, item.label) for item in rounds] == [(1, "Round 1")]
+
+
+@pytest.mark.asyncio
+async def test_rounds_service_does_not_list_marvel_setup_as_a_selectable_round():
+    def state(seq: int, play_round: int, *, status: str = "in progress"):
+        return make_event(
+            game_id="marvel-setup-list",
+            seq=seq,
+            actor="game-service",
+            event_type="game_state",
+            payload={"state": {"playRound": play_round}, "status": status},
+        ).model_copy(update={"platform": PLATFORM_MARVEL_LCG})
+
+    events = [
+        state(1, 0),
+        state(2, 1),
+        agent_event(game_id="marvel-setup-list", seq=3).model_copy(
+            update={"platform": PLATFORM_MARVEL_LCG}
+        ),
+        state(4, 2),
+        agent_event(game_id="marvel-setup-list", seq=5).model_copy(
+            update={"platform": PLATFORM_MARVEL_LCG}
+        ),
+        state(6, 2, status="win"),
+    ]
+    service = RoundsService(history=FakeHistoryClient({"marvel-setup-list": events}))
+
+    rounds = (
+        await service.list_rounds("marvel-setup-list", PLATFORM_MARVEL_LCG)
+    ).rounds
+
+    assert [(item.round_number, item.label) for item in rounds] == [
+        (1, "Round 1"),
+        (2, "Round 2"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rounds_service_lists_no_rounds_for_setup_only_history():
+    def state(seq: int, *, status: str):
+        return make_event(
+            game_id="marvel-setup-only-list",
+            seq=seq,
+            actor="game-service",
+            event_type="game_state",
+            payload={"state": {"playRound": 0}, "status": status},
+        ).model_copy(update={"platform": PLATFORM_MARVEL_LCG})
+
+    service = RoundsService(
+        history=FakeHistoryClient(
+            {
+                "marvel-setup-only-list": [
+                    state(1, status="in progress"),
+                    state(2, status="win"),
+                ]
+            }
+        )
+    )
+
+    assert (
+        await service.list_rounds("marvel-setup-only-list", PLATFORM_MARVEL_LCG)
+    ).rounds == []

@@ -77,6 +77,9 @@ class EvaluationRequestRow(Base):
 
     request_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     game_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="dragncards", index=True
+    )
     scope: Mapped[str] = mapped_column(String(16), nullable=False)
     selection_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     force: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -107,6 +110,7 @@ class EvaluatedTargetRow(Base):
     __table_args__ = (
         UniqueConstraint(
             "game_id",
+            "platform",
             "target_seq",
             "scope",
             "player",
@@ -119,6 +123,9 @@ class EvaluatedTargetRow(Base):
         String(64), ForeignKey("evaluation_requests.request_id"), nullable=False
     )
     game_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="dragncards", index=True
+    )
     target_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     scope: Mapped[str] = mapped_column(String(16), nullable=False)
     # Player this target scores (e.g. ``player1``); ``''`` when unattributed.

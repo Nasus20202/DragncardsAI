@@ -27,6 +27,7 @@ from history_service.schemas.transfer import (
     BundleSnapshot,
     omitted_payload_fields_for,
 )
+from history_service.schemas.envelope import PLATFORM_DRAGNCARDS, Platform
 from history_service.storage.repository import Repository
 
 # How many rows one database read pulls while streaming an export. Bounds the
@@ -88,19 +89,21 @@ def _payload_for_mode(
     }
 
 
-async def resolve_plugin_name(repo: Repository, game_id: str) -> str | None:
+async def resolve_plugin_name(
+    repo: Repository, game_id: str, platform: Platform = PLATFORM_DRAGNCARDS
+) -> str | None:
     """The plugin slug recorded for a game, if any.
 
     Recorded on both snapshot documents and every game-state event payload;
     mirrors the preference order ``RestoreService._resolve_plugin_name`` uses.
     Best-effort — a game with neither simply exports ``null``.
     """
-    snapshots = await repo.list_snapshots(game_id, limit=1)
+    snapshots = await repo.list_snapshots(game_id, platform=platform, limit=1)
     if snapshots:
         candidate = snapshots[0].snapshot.get("plugin_name")
         if isinstance(candidate, str) and candidate:
             return candidate
-    earliest = await repo.get_earliest_state_event(game_id)
+    earliest = await repo.get_earliest_state_event(game_id, platform)
     if earliest is not None:
         candidate = earliest.payload.get("plugin_name")
         if isinstance(candidate, str) and candidate:
@@ -109,7 +112,11 @@ async def resolve_plugin_name(repo: Repository, game_id: str) -> str | None:
 
 
 async def iter_export_lines(
-    repo: Repository, game_id: str, *, mode: BundleMode = "full"
+    repo: Repository,
+    game_id: str,
+    *,
+    mode: BundleMode = "full",
+    platform: Platform = PLATFORM_DRAGNCARDS,
 ) -> AsyncIterator[str]:
     """Stream a game's whole recorded history as NDJSON lines.
 
@@ -124,9 +131,9 @@ async def iter_export_lines(
     convention. Import rejects such a bundle, so the emptiness is still caught
     loudly at the point where it would matter.
     """
-    event_count = await repo.count_events_since_seq(game_id, 0)
-    snapshot_count = await repo.count_snapshots(game_id)
-    plugin_name = await resolve_plugin_name(repo, game_id)
+    event_count = await repo.count_events_since_seq(game_id, 0, platform)
+    snapshot_count = await repo.count_snapshots(game_id, platform)
+    plugin_name = await resolve_plugin_name(repo, game_id, platform)
 
     yield _dump_line(
         BundleHeader(
@@ -134,6 +141,7 @@ async def iter_export_lines(
             format=BUNDLE_FORMAT,
             format_version=BUNDLE_FORMAT_VERSION,
             game_id=game_id,
+            platform=platform,
             plugin_name=plugin_name,
             exported_at=datetime.now(timezone.utc),
             event_count=event_count,
@@ -151,7 +159,7 @@ async def iter_export_lines(
     after_seq = 0
     while True:
         events = await repo.list_events(
-            game_id, after_seq=after_seq, limit=EXPORT_PAGE_SIZE
+            game_id, platform=platform, after_seq=after_seq, limit=EXPORT_PAGE_SIZE
         )
         if not events:
             break
@@ -160,6 +168,9 @@ async def iter_export_lines(
             # The target game is chosen at import time; a per-line copy of the
             # source id would only be a second, conflicting source of truth.
             record.pop("game_id", None)
+            # Version 2 declares platform once in the header. Repeating it on
+            # every event would create a second source of truth.
+            record.pop("platform", None)
             record["kind"] = "event"
             payload = _payload_for_mode(event.event_type, record["payload"], mode)
             record["payload"], blobs = writer.encode(
@@ -175,13 +186,18 @@ async def iter_export_lines(
     after_snapshot_seq = 0
     while True:
         snapshots = await repo.list_snapshots(
-            game_id, after_seq=after_snapshot_seq, limit=EXPORT_PAGE_SIZE
+            game_id,
+            platform=platform,
+            after_seq=after_snapshot_seq,
+            limit=EXPORT_PAGE_SIZE,
         )
         if not snapshots:
             break
         for snapshot in snapshots:
             record = snapshot.model_dump()
             record.pop("game_id", None)
+            # The header is the sole platform field in a version-2 export.
+            record.pop("platform", None)
             record["kind"] = "snapshot"
             record["snapshot"], blobs = writer.encode(
                 record["snapshot"],

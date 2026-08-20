@@ -152,6 +152,7 @@ _PERMITTED_SPAN_ATTRIBUTES = {
     "eval.target_seq",
     "eval.events_considered",
     "eval.outcome",
+    "eval.platform",
     "game.id",
 }
 
@@ -213,6 +214,7 @@ async def test_worker_emits_one_evaluate_target_span_per_graded_target(
     assert attributes["eval.scope"] == "move"
     assert attributes["eval.request_id"] == resp.request_id
     assert attributes["eval.outcome"] == "evaluated"
+    assert attributes["eval.platform"] == "dragncards"
     assert set(attributes) <= _PERMITTED_SPAN_ATTRIBUTES
 
 

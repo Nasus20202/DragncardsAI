@@ -71,8 +71,8 @@ async def test_snapshot_taken_after_interval(repository):
     # Patch list_snapshots to return a backdated copy for the cadence check.
     original = repository.list_snapshots
 
-    async def patched(game_id):
-        items = await original(game_id)
+    async def patched(game_id, *, platform="dragncards"):
+        items = await original(game_id, platform=platform)
         for item in items:
             item.created_at = item.created_at - timedelta(seconds=120)
         return items

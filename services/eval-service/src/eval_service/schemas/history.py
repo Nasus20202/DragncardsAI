@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+PLATFORM_DRAGNCARDS = "dragncards"
+PLATFORM_MARVEL_LCG = "marvel-lcg"
+Platform = Literal["dragncards", "marvel-lcg"]
 
 
 class StoredEvent(BaseModel):
@@ -17,6 +21,7 @@ class StoredEvent(BaseModel):
 
     event_id: str
     game_id: str
+    platform: Platform = PLATFORM_DRAGNCARDS
     seq: int
     envelope_version: int
     actor: str

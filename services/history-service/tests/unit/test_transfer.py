@@ -272,6 +272,7 @@ async def test_export_streams_a_readable_ndjson_bundle(client):
     assert records[0]["format"] == BUNDLE_FORMAT
     assert records[0]["format_version"] == BUNDLE_FORMAT_VERSION
     assert records[0]["game_id"] == "g1"
+    assert records[0]["platform"] == "dragncards"
     assert records[0]["plugin_name"] == "mc"
     assert records[0]["event_count"] == 5
     assert records[-1]["kind"] == "footer"
@@ -280,13 +281,36 @@ async def test_export_streams_a_readable_ndjson_bundle(client):
 
     events = [r for r in records if r["kind"] == "event"]
     assert [e["seq"] for e in events] == [1, 2, 3, 4, 5]
+    assert all(
+        set(event)
+        == {
+            "actor",
+            "envelope_version",
+            "event_id",
+            "event_type",
+            "idempotency_key",
+            "kind",
+            "occurred_at",
+            "payload",
+            "producer_offset",
+            "recorded_at",
+            "seq",
+        }
+        for event in events
+    )
     # The target game is chosen at import time, so no line carries a game id.
     assert all("game_id" not in e for e in events)
+    assert all("platform" not in e for e in events)
     # Payloads survive verbatim.
     assert events[0]["payload"]["state"]["game"]["lastCard"] == "c0"
 
     snapshots = [r for r in records if r["kind"] == "snapshot"]
     assert snapshots, "the seeded cadence should have produced snapshots"
+    assert all(
+        set(snapshot) == {"created_at", "kind", "snapshot", "snapshot_at_seq"}
+        for snapshot in snapshots
+    )
+    assert all("platform" not in snapshot for snapshot in snapshots)
     assert [s["snapshot_at_seq"] for s in snapshots] == sorted(
         s["snapshot_at_seq"] for s in snapshots
     )

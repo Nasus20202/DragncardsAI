@@ -17,6 +17,7 @@ from history_service.runtime.transfer import (
     bundle_filename,
     iter_export_lines,
 )
+from history_service.schemas.envelope import PLATFORM_DRAGNCARDS, Platform
 from history_service.schemas.transfer import (
     BUNDLE_MEDIA_TYPE,
     BundleMode,
@@ -65,6 +66,7 @@ router = APIRouter(tags=["transfer"])
 async def export_game(
     game_id: GameIdPath,
     mode: BundleModeQuery = "full",
+    platform: Platform = Query(default=PLATFORM_DRAGNCARDS),
     repo: Repository = Depends(get_repository),
 ) -> StreamingResponse:
     """Stream the game's complete recorded history as NDJSON.
@@ -94,7 +96,7 @@ async def export_game(
     what fails loudly.
     """
     return StreamingResponse(
-        iter_export_lines(repo, game_id, mode=mode),
+        iter_export_lines(repo, game_id, mode=mode, platform=platform),
         media_type=BUNDLE_MEDIA_TYPE,
         headers={
             "content-disposition": (
@@ -169,7 +171,9 @@ async def import_game(
         # The caller's choice when given; a minted id when asked for; else the
         # bundle's own. A uuid4 cannot collide, so as_new never 409s.
         target_game_id = game_id or (str(uuid.uuid4()) if as_new else header.game_id)
-        result = await repo.import_game_history(target_game_id, reader.records())
+        result = await repo.import_game_history(
+            target_game_id, reader.records(), platform=header.platform
+        )
     except BundleTooLargeError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     except BundleError as exc:

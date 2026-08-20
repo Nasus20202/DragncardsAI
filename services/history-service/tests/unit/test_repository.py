@@ -31,6 +31,28 @@ async def test_independent_sequences_across_games(repository):
 
 
 @pytest.mark.asyncio
+async def test_platform_scopes_sequence_and_idempotency(repository):
+    dragncards = make_envelope("shared", producer_offset=0)
+    marvel = dragncards.model_copy(update={"platform": "marvel-lcg"})
+
+    first = await repository.commit_event(dragncards)
+    second = await repository.commit_event(marvel)
+    duplicate = await repository.commit_event(dragncards)
+
+    assert first.event.seq == second.event.seq == 1
+    assert first.event.platform == "dragncards"
+    assert second.event.platform == "marvel-lcg"
+    assert duplicate.inserted is False
+    assert [event.platform for event in await repository.list_events("shared")] == [
+        "dragncards"
+    ]
+    assert [
+        event.platform
+        for event in await repository.list_events("shared", platform="marvel-lcg")
+    ] == ["marvel-lcg"]
+
+
+@pytest.mark.asyncio
 async def test_duplicate_stored_once_without_consuming_seq(repository):
     first = await repository.commit_event(make_envelope("g1", producer_offset=0))
     dup = await repository.commit_event(make_envelope("g1", producer_offset=0))

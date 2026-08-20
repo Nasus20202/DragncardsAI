@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from eval_service.judge.state_view import project_state, render_state
+from eval_service.schemas.history import PLATFORM_MARVEL_LCG
 
 
 def _raw_state(*, deltas_entries: int = 400) -> dict:
@@ -214,3 +215,236 @@ def test_projection_remains_bounded_by_the_char_cap(caplog):
 
 def test_missing_state_renders_as_null():
     assert render_state(None, 20_000, label="prior") == "null"
+
+
+def test_marvel_native_projection_uses_graded_seat_visibility():
+    state = {
+        "round_id": 1,
+        "phase": "Player 1 Turn",
+        "players": [
+            {
+                "hand_cards": [
+                    {
+                        "id": 1,
+                        "card_id": "secret-card",
+                        "name": "Secret Card",
+                        "card_type": "ally",
+                        "visible_for_players": [1],
+                    }
+                ]
+            }
+        ],
+        "area_villain": [
+            {
+                "id": 2,
+                "card_id": "rhino",
+                "name": "Rhino",
+                "card_type": "villain",
+                "visible_for_players": [0],
+            }
+        ],
+    }
+
+    projected = project_state(state, PLATFORM_MARVEL_LCG, player="player1")
+    rendered = json.dumps(projected, sort_keys=True)
+
+    assert projected["playRound"] == 1
+    assert projected["phase"] == "player"
+    assert projected["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
+    assert projected["zones"]["sharedVillain"][0]["name"] == "Rhino"
+    assert "Secret Card" not in rendered
+
+
+def test_marvel_native_projection_hides_seat_scoped_cards_without_a_graded_seat():
+    state = {
+        "round_id": 1,
+        "players": [
+            {
+                "hand_cards": [
+                    {
+                        "id": 1,
+                        "card_id": "secret-card",
+                        "name": "Secret Card",
+                        "visible_for_players": [0],
+                    }
+                ]
+            }
+        ],
+    }
+
+    projected = project_state(state, PLATFORM_MARVEL_LCG)
+    assert projected["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
+
+
+def test_marvel_native_projection_treats_empty_visibility_as_private():
+    state = {
+        "round_id": 1,
+        "players": [
+            {
+                "hand_cards": [
+                    {
+                        "id": 1,
+                        "card_id": "private-card",
+                        "name": "Private Card",
+                        "visible_for_players": [],
+                    }
+                ]
+            }
+        ],
+    }
+
+    projected = project_state(state, PLATFORM_MARVEL_LCG, player="player1")
+
+    assert projected["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
+    assert "Private Card" not in json.dumps(projected, sort_keys=True)
+
+
+def test_marvel_native_projection_suppresses_every_buried_card_object():
+    state = {
+        "round_id": 1,
+        "players": [
+            {
+                "hand_cards": [
+                    {
+                        "id": "top",
+                        "card_id": "top-card",
+                        "name": "Visible Top",
+                        "down_card_ids": [{"id": "buried", "card_id": "buried-card"}],
+                    },
+                    {
+                        "id": "buried",
+                        "card_id": "buried-card",
+                        "name": "Buried Secret",
+                    },
+                ]
+            }
+        ],
+    }
+
+    projected = project_state(state, PLATFORM_MARVEL_LCG, player="player1")
+
+    assert projected["zones"]["player1Hand"] == [
+        {"id": "top-card", "instanceId": "top", "name": "Visible Top", "stackSize": 1},
+        {"name": "HIDDEN", "stackSize": 1},
+    ]
+    assert "Buried Secret" not in json.dumps(projected, sort_keys=True)
+
+
+def test_marvel_native_projection_puts_buried_count_in_visible_parents_zone():
+    state = {
+        "round_id": 1,
+        "players": [
+            {
+                "hand_cards": [
+                    {
+                        "id": "top",
+                        "card_id": "shared-definition",
+                        "name": "Visible Top",
+                        "down_card_ids": [
+                            {"id": "buried", "card_id": "shared-definition"},
+                            "buried",
+                        ],
+                    }
+                ]
+            }
+        ],
+        "area_villain": [
+            {
+                "id": "buried",
+                "card_id": "shared-definition",
+                "name": "Buried Secret",
+            },
+            {
+                "id": "unrelated",
+                "card_id": "shared-definition",
+                "name": "Visible Copy",
+            },
+        ],
+    }
+
+    projected = project_state(state, PLATFORM_MARVEL_LCG, player="player1")
+
+    assert projected["zones"]["player1Hand"] == [
+        {
+            "id": "shared-definition",
+            "instanceId": "top",
+            "name": "Visible Top",
+            "stackSize": 1,
+        },
+        {"name": "HIDDEN", "stackSize": 1},
+    ]
+    assert projected["zones"]["sharedVillain"] == [
+        {
+            "id": "shared-definition",
+            "instanceId": "unrelated",
+            "name": "Visible Copy",
+            "stackSize": 1,
+        }
+    ]
+    rendered = json.dumps(projected, sort_keys=True)
+    assert "Buried Secret" not in rendered
+
+
+def test_marvel_native_projection_counts_buried_cards_under_an_invisible_parent():
+    state = {
+        "round_id": 1,
+        "players": [
+            {
+                "hand_cards": [
+                    {
+                        "id": "top",
+                        "card_id": "top-card",
+                        "name": "Secret Parent",
+                        "visible_for_players": [],
+                        "down_card_ids": ["buried"],
+                    }
+                ]
+            }
+        ],
+        "area_villain": [
+            {"id": "buried", "card_id": "buried-card", "name": "Buried Secret"}
+        ],
+    }
+
+    projected = project_state(state, PLATFORM_MARVEL_LCG, player="player1")
+
+    assert projected["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 2}]
+    assert "sharedVillain" not in projected["zones"]
+    rendered = json.dumps(projected, sort_keys=True)
+    assert "Secret Parent" not in rendered
+    assert "Buried Secret" not in rendered
+
+
+def test_marvel_normalised_projection_does_not_reintroduce_hidden_card_names():
+    state = {
+        "playRound": 1,
+        "phase": "player",
+        "phaseLabel": "Player 1 Turn",
+        "players": {"player1": {"handSize": 6}},
+        "zones": {
+            "player1Hand": [
+                {"name": "HIDDEN", "stackSize": 2, "id": "secret"},
+                {"name": "Backflip", "id": "visible", "type": "event"},
+            ]
+        },
+    }
+
+    projected = project_state(state, PLATFORM_MARVEL_LCG, player="player1")
+    assert projected["zones"]["player1Hand"] == [
+        {"name": "Backflip", "id": "visible", "type": "event"},
+        {"name": "HIDDEN", "stackSize": 2},
+    ]
+    assert "secret" not in json.dumps(projected, sort_keys=True)
+
+
+def test_unrecognised_marvel_shape_never_uses_a_raw_visibility_bypass():
+    state = {"future_field": "secret-card-name"}
+    assert project_state(state, PLATFORM_MARVEL_LCG, player="player1") is None
+    rendered = render_state(
+        state, 100, label="prior", platform=PLATFORM_MARVEL_LCG, player="player1"
+    )
+    assert json.loads(rendered) == {
+        "platform": PLATFORM_MARVEL_LCG,
+        "state": "unavailable",
+    }
+    assert "secret-card-name" not in rendered

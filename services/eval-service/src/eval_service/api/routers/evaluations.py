@@ -36,6 +36,7 @@ from eval_service.schemas.api import (
     RoundListResponse,
 )
 from eval_service.storage.models import NON_TERMINAL_STATUSES
+from eval_service.schemas.history import PLATFORM_DRAGNCARDS, Platform
 from eval_service.storage.repository import Repository
 
 router = APIRouter(tags=["evaluations"])
@@ -144,6 +145,7 @@ async def delete_evaluation(
 )
 async def list_game_rounds(
     game_id: str = Depends(validate_game_id),
+    platform: Platform = Query(default=PLATFORM_DRAGNCARDS),
     service: RoundsService = Depends(get_rounds_service),
 ) -> RoundListResponse:
     """The rounds the eval-service detects for a game.
@@ -156,7 +158,7 @@ async def list_game_rounds(
     between the two.
     """
     try:
-        return await service.list_rounds(game_id)
+        return await service.list_rounds(game_id, platform)
     except GameNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -178,7 +180,7 @@ async def create_evaluation(
     except GameNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RequestError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     if worker is not None and response.created_count:
         worker.notify()
     return response

@@ -69,14 +69,17 @@ class EventRow(Base):
     __tablename__ = "events"
     __table_args__ = (
         UniqueConstraint(
-            "game_id", "idempotency_key", name="uq_events_game_idempotency"
+            "game_id", "platform", "idempotency_key", name="uq_events_game_idempotency"
         ),
-        UniqueConstraint("game_id", "seq", name="uq_events_game_seq"),
+        UniqueConstraint("game_id", "platform", "seq", name="uq_events_game_seq"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     event_id: Mapped[str] = mapped_column(String(64), nullable=False)
     game_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="dragncards", index=True
+    )
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     envelope_version: Mapped[int] = mapped_column(Integer, nullable=False)
     actor: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -95,11 +98,16 @@ class SnapshotRow(Base):
 
     __tablename__ = "snapshots"
     __table_args__ = (
-        UniqueConstraint("game_id", "snapshot_at_seq", name="uq_snapshots_game_seq"),
+        UniqueConstraint(
+            "game_id", "platform", "snapshot_at_seq", name="uq_snapshots_game_seq"
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     game_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="dragncards", index=True
+    )
     snapshot_at_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
     snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

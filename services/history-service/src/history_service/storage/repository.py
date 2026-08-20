@@ -18,6 +18,8 @@ from sqlalchemy.types import Text
 from history_service.schemas.envelope import (
     AGENT_EVENT_TYPES_WITHOUT_CONTEXT,
     EventEnvelope,
+    PLATFORM_DRAGNCARDS,
+    Platform,
     StoredEvent,
     StoredSnapshot,
 )
@@ -42,6 +44,7 @@ class GameHistorySummary:
     event_count: int
     first_recorded_at: datetime
     last_recorded_at: datetime
+    platform: Platform = PLATFORM_DRAGNCARDS
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,7 @@ class DeletionResult:
     game_id: str
     deleted_events: int
     deleted_snapshots: int
+    platform: Platform = PLATFORM_DRAGNCARDS
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,7 @@ class ImportResult:
     imported_snapshots: int
     first_seq: int | None
     last_seq: int | None
+    platform: Platform = PLATFORM_DRAGNCARDS
 
 
 class GameHistoryExistsError(Exception):
@@ -91,22 +96,28 @@ IMPORT_INSERT_CHUNK = 100
 #: learn which kind of play it is looking at.
 TIMELINE_OMITTED_PAYLOAD_KEYS = ("state", "conversation_context")
 
-#: The two scalars kept out of the omitted ``state``: they are what the round and
-#: phase labels are derived from (DragnCards ``roundNumber`` counts *completed*
-#: rounds and ``stepId`` is a dotted Marvel Champions step id). They are read as
-#: text and re-attached under ``payload["state"]["game"]``, i.e. a projection of
-#: the recorded state with its shape preserved, never a substitute for it.
+#: The metadata kept out of the omitted ``state``. The paths are platform-native:
+#: DragnCards uses ``state.game.roundNumber``/``stepId`` while the normalized
+#: marvel-lcg state uses ``state.playRound``/``phase``/``phaseLabel``. The
+#: projection is deliberately small and never brings a card list into a timeline.
 _STATE_ROUND_PATH = ("state", "game", "roundNumber")
 _STATE_STEP_PATH = ("state", "game", "stepId")
+_MARVEL_ROUND_PATH = ("state", "playRound")
+_MARVEL_NATIVE_ROUND_PATH = ("state", "round_id")
+_MARVEL_WORLD_ROUND_PATH = ("state", "world", "round_id")
+_MARVEL_PHASE_PATH = ("state", "phase")
+_MARVEL_WORLD_PHASE_PATH = ("state", "world", "phase")
+_MARVEL_PHASE_LABEL_PATH = ("state", "phaseLabel")
+_MARVEL_STEP_DESCRIPTION_PATH = ("state", "stepDescription")
 
 
-def _advisory_lock_key(game_id: str) -> int:
+def _advisory_lock_key(game_id: str, platform: Platform = PLATFORM_DRAGNCARDS) -> int:
     """Map a game id onto a signed 64-bit advisory lock key.
 
     The per-game key serializes ``seq`` assignment for one game while leaving
     other games free to proceed concurrently across replicas.
     """
-    digest = zlib.crc32(game_id.encode("utf-8"))
+    digest = zlib.crc32(f"{game_id}\0{platform}".encode("utf-8"))
     # Spread to 64-bit signed range expected by pg_advisory_xact_lock(bigint).
     return digest - 0x8000_0000
 
@@ -133,22 +144,32 @@ class Repository:
                 if dialect == "postgresql":
                     await session.execute(
                         text("SELECT pg_advisory_xact_lock(:key)"),
-                        {"key": _advisory_lock_key(envelope.game_id)},
+                        {
+                            "key": _advisory_lock_key(
+                                envelope.game_id, envelope.platform
+                            )
+                        },
                     )
 
                 existing = await self._get_by_idempotency(
-                    session, envelope.game_id, envelope.idempotency_key
+                    session,
+                    envelope.game_id,
+                    envelope.idempotency_key,
+                    envelope.platform,
                 )
                 if existing is not None:
                     return CommitResult(
                         event=_to_stored_event(existing), inserted=False
                     )
 
-                next_seq = await self._next_seq(session, envelope.game_id)
+                next_seq = await self._next_seq(
+                    session, envelope.game_id, envelope.platform
+                )
                 recorded_at = utc_now()
                 values = {
                     "event_id": envelope.event_id,
                     "game_id": envelope.game_id,
+                    "platform": envelope.platform,
                     "seq": next_seq,
                     "envelope_version": envelope.envelope_version,
                     "actor": envelope.actor,
@@ -169,7 +190,7 @@ class Repository:
                     else sqlite_insert(EventRow)
                 )
                 insert_stmt = insert_stmt.values(**values).on_conflict_do_nothing(
-                    index_elements=["game_id", "idempotency_key"]
+                    index_elements=["game_id", "platform", "idempotency_key"]
                 )
                 result = await session.execute(insert_stmt)
 
@@ -179,6 +200,7 @@ class Repository:
             stored = StoredEvent(
                 event_id=envelope.event_id,
                 game_id=envelope.game_id,
+                platform=envelope.platform,
                 seq=next_seq,
                 envelope_version=envelope.envelope_version,
                 actor=envelope.actor,
@@ -194,15 +216,17 @@ class Repository:
         # A concurrent insert won the race after our existence check; re-read.
         async with self._session_factory() as session:
             existing = await self._get_by_idempotency(
-                session, envelope.game_id, envelope.idempotency_key
+                session, envelope.game_id, envelope.idempotency_key, envelope.platform
             )
         assert existing is not None
         return CommitResult(event=_to_stored_event(existing), inserted=False)
 
-    async def _next_seq(self, session: AsyncSession, game_id: str) -> int:
+    async def _next_seq(
+        self, session: AsyncSession, game_id: str, platform: Platform
+    ) -> int:
         result = await session.execute(
             select(EventRow.seq)
-            .where(EventRow.game_id == game_id)
+            .where(EventRow.game_id == game_id, EventRow.platform == platform)
             .order_by(EventRow.seq.desc())
             .limit(1)
         )
@@ -210,11 +234,16 @@ class Repository:
         return 1 if latest is None else latest + 1
 
     async def _get_by_idempotency(
-        self, session: AsyncSession, game_id: str, idempotency_key: str
+        self,
+        session: AsyncSession,
+        game_id: str,
+        idempotency_key: str,
+        platform: Platform,
     ) -> EventRow | None:
         result = await session.execute(
             select(EventRow).where(
                 EventRow.game_id == game_id,
+                EventRow.platform == platform,
                 EventRow.idempotency_key == idempotency_key,
             )
         )
@@ -222,22 +251,30 @@ class Repository:
 
     # -- event reads --------------------------------------------------------
 
-    async def get_latest_seq(self, game_id: str) -> int | None:
+    async def get_latest_seq(
+        self, game_id: str, platform: Platform = PLATFORM_DRAGNCARDS
+    ) -> int | None:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(EventRow.seq)
-                .where(EventRow.game_id == game_id)
+                .where(EventRow.game_id == game_id, EventRow.platform == platform)
                 .order_by(EventRow.seq.desc())
                 .limit(1)
             )
             return result.scalar_one_or_none()
 
-    async def count_events_since_seq(self, game_id: str, since_seq: int) -> int:
+    async def count_events_since_seq(
+        self, game_id: str, since_seq: int, platform: Platform = PLATFORM_DRAGNCARDS
+    ) -> int:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(func.count())
                 .select_from(EventRow)
-                .where(EventRow.game_id == game_id, EventRow.seq > since_seq)
+                .where(
+                    EventRow.game_id == game_id,
+                    EventRow.platform == platform,
+                    EventRow.seq > since_seq,
+                )
             )
             return result.scalar_one()
 
@@ -245,13 +282,18 @@ class Repository:
         self,
         game_id: str,
         *,
+        platform: Platform = PLATFORM_DRAGNCARDS,
         after_seq: int = 0,
         limit: int = 100,
     ) -> list[StoredEvent]:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(EventRow)
-                .where(EventRow.game_id == game_id, EventRow.seq > after_seq)
+                .where(
+                    EventRow.game_id == game_id,
+                    EventRow.platform == platform,
+                    EventRow.seq > after_seq,
+                )
                 .order_by(EventRow.seq.asc())
                 .limit(limit)
             )
@@ -261,6 +303,7 @@ class Repository:
         self,
         game_id: str,
         *,
+        platform: Platform = PLATFORM_DRAGNCARDS,
         after_seq: int = 0,
         limit: int = 100,
     ) -> list[StoredEvent]:
@@ -286,6 +329,7 @@ class Repository:
                 select(
                     EventRow.event_id,
                     EventRow.game_id,
+                    EventRow.platform,
                     EventRow.seq,
                     EventRow.envelope_version,
                     EventRow.actor,
@@ -295,16 +339,24 @@ class Repository:
                     EventRow.idempotency_key,
                     EventRow.producer_offset,
                     _pruned_payload(dialect).label("payload"),
-                    _json_text_path(_STATE_ROUND_PATH).label("round_number"),
-                    _json_text_path(_STATE_STEP_PATH).label("step_id"),
+                    _timeline_round_expression(platform).label("round_number"),
+                    _timeline_step_expression(platform).label("step_id"),
+                    _timeline_phase_expression(platform).label("phase"),
+                    _timeline_phase_label_expression(platform).label("phase_label"),
                 )
-                .where(EventRow.game_id == game_id, EventRow.seq > after_seq)
+                .where(
+                    EventRow.game_id == game_id,
+                    EventRow.platform == platform,
+                    EventRow.seq > after_seq,
+                )
                 .order_by(EventRow.seq.asc())
                 .limit(limit)
             )
             return [_summary_to_stored_event(row) for row in result.all()]
 
-    async def list_games(self) -> list[GameHistorySummary]:
+    async def list_games(
+        self, platform: Platform | None = None
+    ) -> list[GameHistorySummary]:
         """Summarize every game with recorded history in one grouped query.
 
         Uses a single ``GROUP BY game_id`` aggregation (count + min/max of
@@ -312,19 +364,23 @@ class Repository:
         avoiding any per-game fan-out. Ordered by most recent activity.
         """
         async with self._session_factory() as session:
+            conditions = [EventRow.platform == platform] if platform else []
             result = await session.execute(
                 select(
                     EventRow.game_id,
+                    EventRow.platform,
                     func.count().label("event_count"),
                     func.min(EventRow.recorded_at).label("first_recorded_at"),
                     func.max(EventRow.recorded_at).label("last_recorded_at"),
                 )
-                .group_by(EventRow.game_id)
+                .where(*conditions)
+                .group_by(EventRow.game_id, EventRow.platform)
                 .order_by(func.max(EventRow.recorded_at).desc())
             )
             return [
                 GameHistorySummary(
                     game_id=row.game_id,
+                    platform=row.platform,
                     event_count=row.event_count,
                     first_recorded_at=_as_utc(row.first_recorded_at),
                     last_recorded_at=_as_utc(row.last_recorded_at),
@@ -336,6 +392,7 @@ class Repository:
         self,
         game_id: str,
         *,
+        platform: Platform = PLATFORM_DRAGNCARDS,
         low_exclusive: int,
         high_inclusive: int,
         actor: str | None = None,
@@ -368,6 +425,7 @@ class Repository:
         async with self._session_factory() as session:
             conditions = [
                 EventRow.game_id == game_id,
+                EventRow.platform == platform,
                 EventRow.seq > low_exclusive,
                 EventRow.seq <= high_inclusive,
             ]
@@ -378,7 +436,9 @@ class Repository:
             )
             return [_to_stored_event(row) for row in result.scalars().all()]
 
-    async def get_earliest_state_event(self, game_id: str) -> StoredEvent | None:
+    async def get_earliest_state_event(
+        self, game_id: str, platform: Platform = PLATFORM_DRAGNCARDS
+    ) -> StoredEvent | None:
         """The first game-state event for a game (the branch's plugin source).
 
         Game-state events carry the session ``plugin_name``, so the earliest one
@@ -390,6 +450,7 @@ class Repository:
                 select(EventRow)
                 .where(
                     EventRow.game_id == game_id,
+                    EventRow.platform == platform,
                     EventRow.actor == "game-service",
                 )
                 .order_by(EventRow.seq.asc())
@@ -399,7 +460,7 @@ class Repository:
             return _to_stored_event(row) if row is not None else None
 
     async def get_latest_state_event_at_or_before(
-        self, game_id: str, target_seq: int
+        self, game_id: str, target_seq: int, platform: Platform = PLATFORM_DRAGNCARDS
     ) -> StoredEvent | None:
         """The most recent game-state event at/<= ``target_seq``.
 
@@ -412,6 +473,7 @@ class Repository:
                 select(EventRow)
                 .where(
                     EventRow.game_id == game_id,
+                    EventRow.platform == platform,
                     EventRow.actor == "game-service",
                     EventRow.seq <= target_seq,
                 )
@@ -422,7 +484,7 @@ class Repository:
             return _to_stored_event(row) if row is not None else None
 
     async def get_latest_agent_event_at_or_before(
-        self, game_id: str, target_seq: int
+        self, game_id: str, target_seq: int, platform: Platform = PLATFORM_DRAGNCARDS
     ) -> StoredEvent | None:
         """The latest agent event that could carry a conversation to rebuild.
 
@@ -437,6 +499,7 @@ class Repository:
                 select(EventRow)
                 .where(
                     EventRow.game_id == game_id,
+                    EventRow.platform == platform,
                     EventRow.actor == "agent",
                     EventRow.event_type.notin_(AGENT_EVENT_TYPES_WITHOUT_CONTEXT),
                     EventRow.seq <= target_seq,
@@ -450,7 +513,11 @@ class Repository:
     # -- snapshots ----------------------------------------------------------
 
     async def write_snapshot(
-        self, game_id: str, snapshot_at_seq: int, snapshot: dict[str, Any]
+        self,
+        game_id: str,
+        snapshot_at_seq: int,
+        snapshot: dict[str, Any],
+        platform: Platform = PLATFORM_DRAGNCARDS,
     ) -> StoredSnapshot:
         async with self._session_factory() as session:
             async with session.begin():
@@ -463,24 +530,30 @@ class Repository:
                 )
                 insert_stmt = insert_stmt.values(
                     game_id=game_id,
+                    platform=platform,
                     snapshot_at_seq=snapshot_at_seq,
                     snapshot_json=snapshot,
                     created_at=created_at,
-                ).on_conflict_do_nothing(index_elements=["game_id", "snapshot_at_seq"])
+                ).on_conflict_do_nothing(
+                    index_elements=["game_id", "platform", "snapshot_at_seq"]
+                )
                 await session.execute(insert_stmt)
         return StoredSnapshot(
             game_id=game_id,
+            platform=platform,
             snapshot_at_seq=snapshot_at_seq,
             snapshot=snapshot,
             created_at=created_at,
         )
 
-    async def count_snapshots(self, game_id: str) -> int:
+    async def count_snapshots(
+        self, game_id: str, platform: Platform = PLATFORM_DRAGNCARDS
+    ) -> int:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(func.count())
                 .select_from(SnapshotRow)
-                .where(SnapshotRow.game_id == game_id)
+                .where(SnapshotRow.game_id == game_id, SnapshotRow.platform == platform)
             )
             return result.scalar_one()
 
@@ -488,6 +561,7 @@ class Repository:
         self,
         game_id: str,
         *,
+        platform: Platform = PLATFORM_DRAGNCARDS,
         after_seq: int = 0,
         limit: int | None = None,
     ) -> list[StoredSnapshot]:
@@ -503,6 +577,7 @@ class Repository:
                 select(SnapshotRow)
                 .where(
                     SnapshotRow.game_id == game_id,
+                    SnapshotRow.platform == platform,
                     SnapshotRow.snapshot_at_seq > after_seq,
                 )
                 .order_by(SnapshotRow.snapshot_at_seq.asc())
@@ -513,13 +588,14 @@ class Repository:
             return [_to_stored_snapshot(row) for row in result.scalars().all()]
 
     async def get_latest_snapshot_at_or_before(
-        self, game_id: str, target_seq: int
+        self, game_id: str, target_seq: int, platform: Platform = PLATFORM_DRAGNCARDS
     ) -> StoredSnapshot | None:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(SnapshotRow)
                 .where(
                     SnapshotRow.game_id == game_id,
+                    SnapshotRow.platform == platform,
                     SnapshotRow.snapshot_at_seq <= target_seq,
                 )
                 .order_by(SnapshotRow.snapshot_at_seq.desc())
@@ -534,6 +610,7 @@ class Repository:
         self,
         game_id: str,
         records: AsyncIterator[BundleEvent | BundleSnapshot],
+        platform: Platform = PLATFORM_DRAGNCARDS,
     ) -> ImportResult:
         """Persist a validated bundle under ``game_id`` in one transaction.
 
@@ -562,10 +639,14 @@ class Repository:
                     if session.bind.dialect.name == "postgresql":
                         await session.execute(
                             text("SELECT pg_advisory_xact_lock(:key)"),
-                            {"key": _advisory_lock_key(game_id)},
+                            {"key": _advisory_lock_key(game_id, platform)},
                         )
                     existing = await session.execute(
-                        select(EventRow.seq).where(EventRow.game_id == game_id).limit(1)
+                        select(EventRow.seq)
+                        .where(
+                            EventRow.game_id == game_id, EventRow.platform == platform
+                        )
+                        .limit(1)
                     )
                     if existing.scalar_one_or_none() is not None:
                         raise GameHistoryExistsError(
@@ -584,6 +665,7 @@ class Repository:
                                 {
                                     "event_id": record.event_id,
                                     "game_id": game_id,
+                                    "platform": platform,
                                     "seq": record.seq,
                                     "envelope_version": record.envelope_version,
                                     "actor": record.actor,
@@ -610,6 +692,7 @@ class Repository:
                             snapshot_values.append(
                                 {
                                     "game_id": game_id,
+                                    "platform": platform,
                                     "snapshot_at_seq": record.snapshot_at_seq,
                                     "snapshot_json": record.snapshot,
                                     "created_at": record.created_at,
@@ -637,6 +720,7 @@ class Repository:
 
         return ImportResult(
             game_id=game_id,
+            platform=platform,
             imported_events=imported_events,
             imported_snapshots=imported_snapshots,
             first_seq=first_seq,
@@ -645,7 +729,9 @@ class Repository:
 
     # -- deletion -----------------------------------------------------------
 
-    async def delete_game_history(self, game_id: str) -> DeletionResult:
+    async def delete_game_history(
+        self, game_id: str, platform: Platform = PLATFORM_DRAGNCARDS
+    ) -> DeletionResult:
         """Purge all history for a game (events + snapshots) in one transaction.
 
         Per-game producer-offset bookkeeping lives on the ``producer_offset``
@@ -657,13 +743,18 @@ class Repository:
         async with self._session_factory() as session:
             async with session.begin():
                 events_result = await session.execute(
-                    delete(EventRow).where(EventRow.game_id == game_id)
+                    delete(EventRow).where(
+                        EventRow.game_id == game_id, EventRow.platform == platform
+                    )
                 )
                 snapshots_result = await session.execute(
-                    delete(SnapshotRow).where(SnapshotRow.game_id == game_id)
+                    delete(SnapshotRow).where(
+                        SnapshotRow.game_id == game_id, SnapshotRow.platform == platform
+                    )
                 )
         return DeletionResult(
             game_id=game_id,
+            platform=platform,
             deleted_events=events_result.rowcount or 0,
             deleted_snapshots=snapshots_result.rowcount or 0,
         )
@@ -700,6 +791,43 @@ def _json_text_path(path: tuple[str, ...]) -> ColumnElement[Any]:
     for key in path:
         expression = expression[key]
     return expression.as_string()
+
+
+def _coalesce_json_paths(paths: tuple[tuple[str, ...], ...]) -> ColumnElement[Any]:
+    return func.coalesce(*(_json_text_path(path) for path in paths))
+
+
+def _timeline_round_expression(platform: Platform) -> ColumnElement[Any]:
+    if platform == PLATFORM_DRAGNCARDS:
+        return _json_text_path(_STATE_ROUND_PATH)
+    return _coalesce_json_paths(
+        (_MARVEL_ROUND_PATH, _MARVEL_NATIVE_ROUND_PATH, _MARVEL_WORLD_ROUND_PATH)
+    )
+
+
+def _timeline_step_expression(platform: Platform) -> ColumnElement[Any]:
+    if platform == PLATFORM_DRAGNCARDS:
+        return _json_text_path(_STATE_STEP_PATH)
+    return literal(None)
+
+
+def _timeline_phase_expression(platform: Platform) -> ColumnElement[Any]:
+    if platform == PLATFORM_DRAGNCARDS:
+        return literal(None)
+    return _coalesce_json_paths((_MARVEL_PHASE_PATH, _MARVEL_WORLD_PHASE_PATH))
+
+
+def _timeline_phase_label_expression(platform: Platform) -> ColumnElement[Any]:
+    if platform == PLATFORM_DRAGNCARDS:
+        return literal(None)
+    return _coalesce_json_paths(
+        (
+            _MARVEL_PHASE_LABEL_PATH,
+            _MARVEL_STEP_DESCRIPTION_PATH,
+            _MARVEL_PHASE_PATH,
+            _MARVEL_WORLD_PHASE_PATH,
+        )
+    )
 
 
 def _as_json_object(value: Any) -> dict[str, Any]:
@@ -745,16 +873,30 @@ def _summary_to_stored_event(row: Any) -> StoredEvent:
     payload = _as_json_object(row.payload)
     round_number = _as_round_number(row.round_number)
     step_id = None if row.step_id is None else str(row.step_id)
-    if round_number is not None or step_id is not None:
-        game: dict[str, Any] = {}
+    if row.platform == PLATFORM_DRAGNCARDS:
+        if round_number is not None or step_id is not None:
+            game: dict[str, Any] = {}
+            if round_number is not None:
+                game["roundNumber"] = round_number
+            if step_id is not None:
+                game["stepId"] = step_id
+            payload["state"] = {"game": game}
+    else:
+        state: dict[str, Any] = {}
         if round_number is not None:
-            game["roundNumber"] = round_number
-        if step_id is not None:
-            game["stepId"] = step_id
-        payload["state"] = {"game": game}
+            state["playRound"] = round_number
+        phase = getattr(row, "phase", None)
+        if phase is not None:
+            state["phase"] = str(phase)
+        phase_label = getattr(row, "phase_label", None)
+        if phase_label is not None:
+            state["phaseLabel"] = str(phase_label)
+        if state:
+            payload["state"] = state
     return StoredEvent(
         event_id=row.event_id,
         game_id=row.game_id,
+        platform=row.platform,
         seq=row.seq,
         envelope_version=row.envelope_version,
         actor=row.actor,
@@ -786,6 +928,7 @@ def _to_stored_event(row: EventRow) -> StoredEvent:
     return StoredEvent(
         event_id=row.event_id,
         game_id=row.game_id,
+        platform=row.platform,
         seq=row.seq,
         envelope_version=row.envelope_version,
         actor=row.actor,
@@ -801,6 +944,7 @@ def _to_stored_event(row: EventRow) -> StoredEvent:
 def _to_stored_snapshot(row: SnapshotRow) -> StoredSnapshot:
     return StoredSnapshot(
         game_id=row.game_id,
+        platform=row.platform,
         snapshot_at_seq=row.snapshot_at_seq,
         snapshot=row.snapshot_json,
         created_at=row.created_at,

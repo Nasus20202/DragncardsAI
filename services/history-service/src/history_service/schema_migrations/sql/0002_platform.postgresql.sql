@@ -1,0 +1,16 @@
+ALTER TABLE events ADD COLUMN platform VARCHAR(32) NOT NULL DEFAULT 'dragncards';
+ALTER TABLE snapshots ADD COLUMN platform VARCHAR(32) NOT NULL DEFAULT 'dragncards';
+ALTER TABLE events DROP CONSTRAINT uq_events_game_idempotency;
+ALTER TABLE events DROP CONSTRAINT uq_events_game_seq;
+ALTER TABLE snapshots DROP CONSTRAINT uq_snapshots_game_seq;
+ALTER TABLE events ADD CONSTRAINT uq_events_game_idempotency UNIQUE (game_id, platform, idempotency_key);
+ALTER TABLE events ADD CONSTRAINT uq_events_game_seq UNIQUE (game_id, platform, seq);
+ALTER TABLE snapshots ADD CONSTRAINT uq_snapshots_game_seq UNIQUE (game_id, platform, snapshot_at_seq);
+DROP INDEX ix_events_game_id;
+DROP INDEX ix_events_game_seq;
+DROP INDEX ix_snapshots_game_id;
+DROP INDEX ix_snapshots_game_seq;
+CREATE INDEX ix_events_game_id ON events (game_id, platform);
+CREATE INDEX ix_events_game_seq ON events (game_id, platform, seq);
+CREATE INDEX ix_snapshots_game_id ON snapshots (game_id, platform);
+CREATE INDEX ix_snapshots_game_seq ON snapshots (game_id, platform, snapshot_at_seq);

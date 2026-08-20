@@ -22,7 +22,7 @@ from eval_service.schemas.api import (
     Selection,
     TargetSummary,
 )
-from eval_service.schemas.history import StoredEvent
+from eval_service.schemas.history import PLATFORM_DRAGNCARDS, Platform, StoredEvent
 from eval_service.storage.repository import Repository
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,13 @@ class PlannedTarget:
 
 
 class RequestError(Exception):
-    """Client-correctable request error (maps to 400)."""
+    """Client-correctable request error."""
+
+    status_code = 400
+
+
+class PlatformMismatchError(RequestError):
+    status_code = 422
 
 
 class GameNotFoundError(Exception):
@@ -88,9 +94,35 @@ class RequestService:
             raise RequestError(str(exc)) from exc
         judge_config = resolved.to_json()
 
-        events = await self._history.list_all_events(game_id)
+        requested_platform = body.platform
+        platform: Platform = requested_platform or PLATFORM_DRAGNCARDS
+        resolver = getattr(self._history, "recorded_platforms", None)
+        known_platforms = await resolver(game_id) if resolver is not None else set()
+        if (
+            requested_platform is not None
+            and known_platforms
+            and requested_platform not in known_platforms
+        ):
+            raise PlatformMismatchError(
+                f"requested platform {requested_platform!r} is not recorded for "
+                f"game {game_id!r}"
+            )
+        if requested_platform is None:
+            if len(known_platforms) == 1:
+                platform = next(iter(known_platforms))
+        try:
+            events = await self._history.list_all_events(game_id, platform)
+        except TypeError:
+            events = await self._history.list_all_events(game_id)
         if not events:
             raise GameNotFoundError(f"no events recorded for game {game_id!r}")
+        recorded_platform = events[0].platform
+        if requested_platform is not None and requested_platform != recorded_platform:
+            raise PlatformMismatchError(
+                f"requested platform {requested_platform!r} does not match recorded "
+                f"platform {recorded_platform!r}"
+            )
+        platform = recorded_platform
 
         targets = self._expand(body.scope, body.selection, events)
         if not targets:
@@ -107,6 +139,7 @@ class RequestService:
         await self._repository.create_request(
             request_id=request_id,
             game_id=game_id,
+            platform=platform,
             scope=body.scope,
             selection=body.selection.model_dump(),
             force=body.force,
@@ -120,6 +153,7 @@ class RequestService:
             claim = await self._repository.claim_target(
                 request_id=request_id,
                 game_id=game_id,
+                platform=platform,
                 target_seq=planned.target_seq,
                 scope=planned.scope,
                 round_span=planned.round_span,

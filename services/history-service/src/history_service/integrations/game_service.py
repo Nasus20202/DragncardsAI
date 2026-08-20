@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 import httpx
 from dragncards_common.http_client import BaseAsyncClient
+from history_service.schemas.envelope import PLATFORM_DRAGNCARDS, Platform
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,11 @@ class GameServiceClient(BaseAsyncClient):
         return httpx.URL(f"{self._base_url}/{encoded}")
 
     async def create_session(
-        self, plugin_name: str, *, ephemeral: bool = False
+        self,
+        plugin_name: str,
+        *,
+        ephemeral: bool = False,
+        platform: Platform = PLATFORM_DRAGNCARDS,
     ) -> BranchSession:
         """Create a fresh game-service session and return it with its room.
 
@@ -65,7 +70,11 @@ class GameServiceClient(BaseAsyncClient):
         """
         response = await self._http().post(
             f"{self._base_url}/games",
-            json={"plugin_name": plugin_name, "ephemeral": ephemeral},
+            json={
+                "plugin_name": plugin_name,
+                "ephemeral": ephemeral,
+                "platform": platform,
+            },
         )
         response.raise_for_status()
         body = response.json()
@@ -87,6 +96,30 @@ class GameServiceClient(BaseAsyncClient):
         return BranchSession(
             session_id=session_id,
             room_slug=room_slug if isinstance(room_slug, str) and room_slug else None,
+        )
+
+    async def get_session_platform(self, game_id: str) -> Platform:
+        """Resolve a live session's platform without mutating it.
+
+        Older game-service deployments omit the field and are therefore treated as
+        the default DragnCards platform.
+        """
+        response = await self._http().get(f"{self._base_url}/games")
+        response.raise_for_status()
+        body = response.json()
+        sessions = body.get("sessions", []) if isinstance(body, dict) else []
+        for session in sessions:
+            if isinstance(session, dict) and session.get("session_id") == game_id:
+                value = session.get("platform", PLATFORM_DRAGNCARDS)
+                return (
+                    value
+                    if value in ("dragncards", "marvel-lcg")
+                    else PLATFORM_DRAGNCARDS
+                )
+        raise httpx.HTTPStatusError(
+            "game-service session not found",
+            request=response.request,
+            response=response,
         )
 
     async def delete_session(self, game_id: str) -> None:

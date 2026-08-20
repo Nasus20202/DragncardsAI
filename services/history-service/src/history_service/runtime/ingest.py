@@ -304,7 +304,7 @@ class StreamIngester:
         # already-committed event.
         if self._snapshots is not None and result.inserted:
             await self._snapshots.maybe_snapshot_best_effort(
-                result.event.game_id, result.event.seq
+                result.event.game_id, result.event.seq, result.event.platform
             )
         await self._ack(entry_id)
         return result

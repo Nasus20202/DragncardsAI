@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from eval_service.config import Settings
 from eval_service.integrations.bifrost import BifrostError, BifrostJudgeClient
 from eval_service.integrations.history import HistoryClient
-from eval_service.judge.actions import non_strategic_reason
+from eval_service.judge.actions import non_strategic_reason, recorded_action
 from eval_service.judge.assembly import (
     BoundaryUndetectedError,
     assemble_game_input,
@@ -31,7 +31,7 @@ from eval_service.judge.prompt import (
     build_round_messages,
 )
 from eval_service.judge.writeback import build_verdict_envelope
-from eval_service.schemas.history import StoredEvent
+from eval_service.schemas.history import PLATFORM_DRAGNCARDS, Platform, StoredEvent
 from eval_service.schemas.verdict import VerdictPayload
 from eval_service.storage.repository import Repository
 
@@ -113,6 +113,7 @@ class Evaluator:
         *,
         target_id: int,
         game_id: str,
+        platform: Platform = PLATFORM_DRAGNCARDS,
         target_seq: int,
         scope: str,
         events: list[StoredEvent],
@@ -165,7 +166,7 @@ class Evaluator:
         # failure uses -- so a skipped action is never mistaken for a passed one,
         # and no judge call is spent on it.
         if scope == "move":
-            reason = self._non_strategic_reason(events, target_seq)
+            reason = self._non_strategic_reason(events, target_seq, platform)
             if reason is not None:
                 await self._repository.mark_skipped(
                     target_id, reason, attempts=attempts
@@ -184,13 +185,14 @@ class Evaluator:
                 target_seq=target_seq,
                 scope=scope,
                 events=events,
+                platform=platform,
                 attempts=attempts,
             )
             if deferred:
                 return False
             # Re-read the latest history so the roll-up sees child verdicts that
             # earlier-completed targets in this cascade just wrote back.
-            events = await self._latest_events(game_id, events)
+            events = await self._latest_events(game_id, platform, events)
 
         # Every branch below is an ERROR, not a skip: it is recorded as ``failed``
         # with its reason so the UI can show what went wrong, and so it is never
@@ -203,6 +205,7 @@ class Evaluator:
                 scope=scope,
                 events=events,
                 player=player,
+                platform=platform,
                 config=config,
                 attempts=attempts,
                 on_token=on_token,
@@ -284,7 +287,7 @@ class Evaluator:
             return True
 
         # Write back BEFORE finalizing the bookkeeping record.
-        envelope = build_verdict_envelope(game_id, verdict, config)
+        envelope = build_verdict_envelope(game_id, verdict, config, platform)
         try:
             await self._history.write_event(game_id, envelope)
         except Exception as exc:  # noqa: BLE001 - write-back failure -> skip
@@ -347,6 +350,7 @@ class Evaluator:
         target_seq: int,
         scope: str,
         events: list[StoredEvent],
+        platform: Platform = PLATFORM_DRAGNCARDS,
         player: str | None,
         config: ResolvedJudgeConfig,
         attempts: int | None = None,
@@ -383,6 +387,7 @@ class Evaluator:
                 target_seq,
                 context_before=self._settings.eval_judge_move_context_before,
                 context_after=self._settings.eval_judge_move_context_after,
+                player=player,
             )
             messages = build_move_messages(
                 move,
@@ -426,7 +431,8 @@ class Evaluator:
                 events,
                 target_seq,
                 player=player,
-                skip_actions=self._settings.non_strategic_actions,
+                skip_actions=self._skip_actions(platform),
+                platform=platform,
             )
             messages = build_round_messages(
                 rnd,
@@ -543,7 +549,10 @@ class Evaluator:
         )
 
     def _non_strategic_reason(
-        self, events: list[StoredEvent], target_seq: int
+        self,
+        events: list[StoredEvent],
+        target_seq: int,
+        platform: Platform = PLATFORM_DRAGNCARDS,
     ) -> str | None:
         """The skip reason for a non-strategic move, or None to evaluate it.
 
@@ -555,13 +564,19 @@ class Evaluator:
         if event is None or not is_agent_move(event):
             return None
         reason = non_strategic_reason(
-            event.payload.get("intended_action"),
-            self._settings.non_strategic_actions,
+            recorded_action(event.payload, event.platform),
+            self._skip_actions(platform),
+            platform,
         )
         if reason is None:
             return None
-        action = event.payload.get("intended_action")
+        action = recorded_action(event.payload, event.platform)
         return f"non-strategic action {action!r}: {reason}"
+
+    def _skip_actions(self, platform: Platform) -> frozenset[str]:
+        if platform == "marvel-lcg":
+            return self._settings.non_strategic_marvel_options
+        return self._settings.non_strategic_actions
 
     async def _defer_if_children_pending(
         self,
@@ -571,6 +586,7 @@ class Evaluator:
         target_seq: int,
         scope: str,
         events: list[StoredEvent],
+        platform: Platform = PLATFORM_DRAGNCARDS,
         attempts: int | None = None,
     ) -> bool:
         """Re-defer a round/game target while its children are still in flight.
@@ -590,6 +606,7 @@ class Evaluator:
 
         pending = await self._repository.count_nonterminal_children(
             game_id=game_id,
+            platform=platform,
             from_seq=from_seq,
             to_seq=to_seq,
             child_scope=child_scope,
@@ -599,11 +616,14 @@ class Evaluator:
         return False
 
     async def _latest_events(
-        self, game_id: str, fallback: list[StoredEvent]
+        self, game_id: str, platform: Platform, fallback: list[StoredEvent]
     ) -> list[StoredEvent]:
         """Re-read history so a roll-up sees freshly-written child verdicts."""
         try:
-            return await self._history.list_all_events(game_id)
+            try:
+                return await self._history.list_all_events(game_id, platform)
+            except TypeError:
+                return await self._history.list_all_events(game_id)
         except Exception as exc:  # noqa: BLE001 - fall back to the batch snapshot
             logger.info(
                 "Failed to re-read history for roll-up game=%s: %s", game_id, exc

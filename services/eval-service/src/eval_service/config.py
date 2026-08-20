@@ -347,6 +347,19 @@ class Settings(BaseSettings):
             "eval_non_strategic_actions", "EVAL_NON_STRATEGIC_ACTIONS"
         ),
     )
+    # JSON option identities for the rules-enforcing marvel-lcg platform. Each
+    # identity is keyed by id + name + event; parsing is depth-aware so commas in
+    # a JSON object are not treated as taxonomy separators. An empty value leaves
+    # all marvel-lcg options gradeable, including decline choices.
+    eval_non_strategic_marvel_options: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "eval_non_strategic_marvel_options",
+            "EVAL_NON_STRATEGIC_MARVEL_OPTIONS",
+            "eval_non_strategic_options",
+            "EVAL_NON_STRATEGIC_OPTIONS",
+        ),
+    )
     eval_judge_timeout_seconds: float = Field(
         default=120.0,
         validation_alias=AliasChoices(
@@ -389,6 +402,14 @@ class Settings(BaseSettings):
         if not self.eval_skip_non_strategic_moves:
             return frozenset()
         return parse_action_set(self.eval_non_strategic_actions)
+
+    @property
+    def non_strategic_marvel_options(self) -> frozenset[str]:
+        """Configured marvel-lcg option identities to skip."""
+        if not self.eval_skip_non_strategic_moves:
+            return frozenset()
+        raw = self.eval_non_strategic_marvel_options.strip()
+        return parse_action_set(raw)
 
     @property
     def skill_root_paths(self) -> tuple[Path, ...]:

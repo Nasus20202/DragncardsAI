@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from eval_service.judge.actions import non_strategic_reason
+from eval_service.judge.actions import non_strategic_reason, recorded_action
 from eval_service.judge.events import (
     ILLEGAL_ACTION_STATUS_OPEN,
     ILLEGAL_ACTION_STATUS_RESOLVED,
@@ -14,7 +14,7 @@ from eval_service.judge.events import (
     span_session_mode,
 )
 from eval_service.judge.rounds import neighbour_events, round_span_containing
-from eval_service.schemas.history import StoredEvent
+from eval_service.schemas.history import PLATFORM_DRAGNCARDS, Platform, StoredEvent
 
 
 class BoundaryUndetectedError(Exception):
@@ -51,6 +51,8 @@ class MoveInput:
     # round reveals rather than as an action that stood alone.
     context_before: list["NeighbourMove"] = field(default_factory=list)
     context_after: list["NeighbourMove"] = field(default_factory=list)
+    platform: Platform = PLATFORM_DRAGNCARDS
+    player: str | None = None
     # The round the context was drawn from. ``None`` means no detected round
     # contains this move, in which case the context is a plain neighbour count
     # over the whole timeline.
@@ -93,6 +95,7 @@ class RoundInput:
     # The 1-based round of PLAY (raw DragnCards ``roundNumber`` + 1), matching
     # what the History UI shows -- see ``round_of_play``.
     round_number: int | None
+    platform: Platform = PLATFORM_DRAGNCARDS
     moves: list[MoveInput] = field(default_factory=list)
     closing_state: dict[str, Any] | None = None
     # How many of the round's moves were left out as non-strategic, so the omission
@@ -118,6 +121,7 @@ class GameInput:
     target_seq: int
     from_seq: int
     to_seq: int
+    platform: Platform = PLATFORM_DRAGNCARDS
     player: str | None = None
     closing_state: dict[str, Any] | None = None
     # Already-graded child (round) verdicts for this player, as judge context.
@@ -155,16 +159,16 @@ def round_number_of(event: StoredEvent) -> int | None:
     """
     if event.actor != "game-service":
         return None
-    state = event.payload.get("state")
-    if not isinstance(state, dict):
+    state = _state_of(event)
+    if state is None:
         return None
-    flat = state.get("roundNumber")
-    if isinstance(flat, int):
+    flat = _integer_value(state.get("roundNumber"))
+    if flat is not None:
         return flat
     game = state.get("game")
     if isinstance(game, dict):
-        raw = game.get("roundNumber")
-        if isinstance(raw, int):
+        raw = _integer_value(game.get("roundNumber"))
+        if raw is not None:
             return raw
     return None
 
@@ -180,6 +184,91 @@ def round_of_play(raw_round_number: int) -> int:
     return raw_round_number + 1
 
 
+def play_round_number_of(event: StoredEvent) -> int | None:
+    """Return the neutral play round without applying the wrong platform offset."""
+    if event.actor != "game-service":
+        return None
+    state = _state_of(event)
+    if state is None:
+        return None
+    neutral = _integer_value(state.get("playRound"))
+    if neutral is not None:
+        # marvel-lcg uses zero (and, in older setup records, negative values) for
+        # pre-play setup. Those states must not open a selectable round or close a
+        # setup-only timeline.
+        return neutral if neutral > 0 else None
+    if event.platform != PLATFORM_DRAGNCARDS:
+        native = _native_round_id(state)
+        if native is not None:
+            return int(native) if native > 0 else None
+        return None
+    raw = round_number_of(event)
+    return round_of_play(raw) if raw is not None else None
+
+
+def _is_setup_round_event(event: StoredEvent) -> bool:
+    if event.actor != "game-service":
+        return False
+    state = _state_of(event)
+    if state is None:
+        return False
+    neutral = _integer_value(state.get("playRound"))
+    if neutral is not None and neutral <= 0:
+        return True
+    if event.platform == PLATFORM_DRAGNCARDS:
+        return False
+    native = _native_round_id(state)
+    return native is not None and native <= 0
+
+
+def _native_round_id(state: dict[str, Any]) -> int | None:
+    native = _integer_value(state.get("round_id"))
+    if native is not None:
+        return native
+    world = state.get("world")
+    if isinstance(world, dict):
+        nested = _integer_value(world.get("round_id"))
+        if nested is not None:
+            return nested
+    return None
+
+
+def _integer_value(value: Any) -> int | None:
+    """Read a JSON integer without treating booleans or fractional values as one."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _state_of(event: StoredEvent) -> dict[str, Any] | None:
+    """Return a producer state only when the event carries a JSON object state."""
+    if event.actor != "game-service":
+        return None
+    state = event.payload.get("state")
+    return state if isinstance(state, dict) else None
+
+
+def _terminal_state_status(state: dict[str, Any] | None) -> str | None:
+    """Find a native terminal mode without trusting arbitrary state payloads."""
+    if state is None:
+        return None
+    containers: list[dict[str, Any]] = [state]
+    for key in ("game", "world"):
+        nested = state.get(key)
+        if isinstance(nested, dict):
+            containers.append(nested)
+    for container in containers:
+        for key in ("status", "mode"):
+            value = container.get(key)
+            if isinstance(value, str) and value.strip().lower() in _TERMINAL_STATUSES:
+                return value.strip().lower()
+    return None
+
+
 def event_status(event: StoredEvent) -> str | None:
     status = event.payload.get("status")
     if isinstance(status, str) and status:
@@ -189,7 +278,9 @@ def event_status(event: StoredEvent) -> str | None:
 
 def is_terminal(event: StoredEvent) -> bool:
     status = event_status(event)
-    return status in _TERMINAL_STATUSES if status else False
+    if status and status.strip().lower() in _TERMINAL_STATUSES:
+        return True
+    return _terminal_state_status(_state_of(event)) is not None
 
 
 def assemble_move_input(
@@ -198,6 +289,7 @@ def assemble_move_input(
     *,
     context_before: int = 0,
     context_after: int = 0,
+    player: str | None = None,
 ) -> MoveInput:
     """Assemble a per-move judge input for the ``agent`` event at ``target_seq``.
 
@@ -235,12 +327,13 @@ def assemble_move_input(
     span = (boundary[1], boundary[2]) if boundary else None
     return MoveInput(
         game_id=target.game_id,
+        platform=target.platform,
         target_seq=target_seq,
-        intended_action=payload.get("intended_action"),
+        intended_action=recorded_action(payload, target.platform),
         reasoning=payload.get("reasoning"),
         arguments=payload.get("arguments"),
-        prior_state=prior.payload.get("state") if prior else None,
-        resulting_state=resulting.payload.get("state") if resulting else None,
+        prior_state=_state_of(prior) if prior else None,
+        resulting_state=_state_of(resulting) if resulting else None,
         context_before=_neighbour_window(
             events, target_seq, count=context_before, direction="before", span=span
         ),
@@ -249,6 +342,7 @@ def assemble_move_input(
         ),
         round_number=boundary[0] if boundary else None,
         round_span=span,
+        player=player or payload.get("player"),
         session_mode=session_mode_of(target),
     )
 
@@ -265,7 +359,7 @@ def _neighbour_window(
     return [
         NeighbourMove(
             seq=event.seq,
-            intended_action=event.payload.get("intended_action"),
+            intended_action=recorded_action(event.payload, event.platform),
             arguments=event.payload.get("arguments"),
             reasoning=event.payload.get("reasoning"),
         )
@@ -302,20 +396,22 @@ def detect_round_boundaries(events: list[StoredEvent]) -> list[tuple[int, int, i
     current_round: int | None = None
     round_start_seq = ordered[0].seq
     last_seq = ordered[0].seq
+    saw_setup = False
 
     for event in ordered:
-        rn = round_number_of(event)
+        rn = play_round_number_of(event)
+        saw_setup = saw_setup or _is_setup_round_event(event)
         if rn is not None:
             if current_round is None:
                 # Nothing has been observed yet, so there is no round this event
                 # acted FROM; its own state is the best attribution available (a
                 # timeline that begins mid-game must report the round it starts in).
                 current_round = rn
-                round_start_seq = ordered[0].seq
+                # Setup states are not part of the first playable round. Preserve
+                # the old mid-game fallback when no setup state was recorded.
+                round_start_seq = event.seq if saw_setup else ordered[0].seq
             elif rn != current_round:
-                boundaries.append(
-                    (round_of_play(current_round), round_start_seq, event.seq)
-                )
+                boundaries.append((current_round, round_start_seq, event.seq))
                 current_round = rn
                 round_start_seq = event.seq + 1
         last_seq = event.seq
@@ -323,17 +419,17 @@ def detect_round_boundaries(events: list[StoredEvent]) -> list[tuple[int, int, i
             # Terminal status closes the final round at this event -- unless this
             # very event already closed a round above, which would otherwise
             # append an empty span starting after it.
-            if round_start_seq <= event.seq:
-                close_round = (
-                    round_of_play(current_round) if current_round is not None else 1
-                )
+            if current_round is not None and round_start_seq <= event.seq:
+                close_round = current_round
                 boundaries.append((close_round, round_start_seq, event.seq))
+            elif current_round is None and not saw_setup:
+                boundaries.append((1, round_start_seq, event.seq))
             return boundaries
 
     # No terminal status reached: close the trailing open round at the last seq
     # if a round was ever detected.
     if current_round is not None and (not boundaries or boundaries[-1][2] < last_seq):
-        boundaries.append((round_of_play(current_round), round_start_seq, last_seq))
+        boundaries.append((current_round, round_start_seq, last_seq))
     return boundaries
 
 
@@ -343,6 +439,7 @@ def assemble_round_input(
     *,
     player: str | None = None,
     skip_actions: frozenset[str] = frozenset(),
+    platform: Platform = PLATFORM_DRAGNCARDS,
 ) -> RoundInput:
     """Assemble a per-round judge input for the round closing at ``closing_seq``.
 
@@ -372,10 +469,12 @@ def assemble_round_input(
         if is_agent_move(event) and from_seq <= event.seq <= to_seq:
             if player is not None and _move_player(events, event.seq) != player:
                 continue
-            if non_strategic_reason(event.payload.get("intended_action"), skip_actions):
+            if non_strategic_reason(
+                recorded_action(event.payload, event.platform), skip_actions, platform
+            ):
                 omitted += 1
                 continue
-            moves.append(assemble_move_input(events, event.seq))
+            moves.append(assemble_move_input(events, event.seq, player=player))
 
     # A round's closing seq is its LAST seq. A round closed by a round-number
     # change closes at the state event that reported it, so the closing state is
@@ -384,11 +483,10 @@ def assemble_round_input(
     # recorded state at-or-before it so a round roll-up is never graded with no
     # board at all.
     closing_event = _find_event(events, closing_seq)
-    if closing_event is not None and closing_event.actor == "game-service":
-        closing_state = closing_event.payload.get("state")
-    else:
+    closing_state = _state_of(closing_event) if closing_event else None
+    if closing_state is None:
         nearest = _nearest_state(events, closing_seq, direction="before")
-        closing_state = nearest.payload.get("state") if nearest else None
+        closing_state = _state_of(nearest) if nearest else None
     child_verdicts = (
         collect_child_verdicts(
             events, from_seq, to_seq, child_scope="move", player=player
@@ -398,6 +496,7 @@ def assemble_round_input(
     )
     return RoundInput(
         game_id=events[0].game_id if events else "",
+        platform=events[0].platform if events else PLATFORM_DRAGNCARDS,
         target_seq=closing_seq,
         from_seq=from_seq,
         to_seq=to_seq,
@@ -429,18 +528,18 @@ def assemble_game_input(
     verdicts as context. The span ``[from_seq, closing_seq]`` is the whole game.
     """
     closing_event = _find_event(events, closing_seq)
-    if closing_event is not None and closing_event.actor == "game-service":
-        closing_state = closing_event.payload.get("state")
-    else:
+    closing_state = _state_of(closing_event) if closing_event else None
+    if closing_state is None:
         # As for a round: the game's last seq is often an agent move, so fall back
         # to the nearest recorded state rather than grading with no final board.
         nearest = _nearest_state(events, closing_seq, direction="before")
-        closing_state = nearest.payload.get("state") if nearest else None
+        closing_state = _state_of(nearest) if nearest else None
     child_verdicts = collect_child_verdicts(
         events, from_seq, closing_seq, child_scope="round", player=player
     )
     return GameInput(
         game_id=events[0].game_id if events else "",
+        platform=events[0].platform if events else PLATFORM_DRAGNCARDS,
         target_seq=closing_seq,
         from_seq=from_seq,
         to_seq=closing_seq,
@@ -573,7 +672,7 @@ def _find_event(events: list[StoredEvent], seq: int) -> StoredEvent | None:
 def _nearest_state(
     events: list[StoredEvent], target_seq: int, *, direction: str
 ) -> StoredEvent | None:
-    candidates = [e for e in events if e.actor == "game-service"]
+    candidates = [e for e in events if _state_of(e) is not None]
     if direction == "before":
         before = [e for e in candidates if e.seq <= target_seq]
         return max(before, key=lambda e: e.seq) if before else None

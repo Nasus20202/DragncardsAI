@@ -734,13 +734,21 @@ async def test_replay_range_read_is_filtered_to_game_service_events(repository):
     seen: list[str | None] = []
     original = repository.get_events_in_range
 
-    async def spy(game_id, *, low_exclusive, high_inclusive, actor=None):
+    async def spy(
+        game_id,
+        *,
+        low_exclusive,
+        high_inclusive,
+        actor=None,
+        platform="dragncards",
+    ):
         seen.append(actor)
         return await original(
             game_id,
             low_exclusive=low_exclusive,
             high_inclusive=high_inclusive,
             actor=actor,
+            platform=platform,
         )
 
     repository.get_events_in_range = spy  # type: ignore[method-assign]

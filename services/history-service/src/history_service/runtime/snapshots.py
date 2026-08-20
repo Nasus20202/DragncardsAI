@@ -5,7 +5,11 @@ from datetime import datetime, timezone
 
 from history_service.config import Settings
 from history_service.integrations.game_service import GameServiceClient
-from history_service.schemas.envelope import StoredSnapshot
+from history_service.schemas.envelope import (
+    PLATFORM_DRAGNCARDS,
+    Platform,
+    StoredSnapshot,
+)
 from history_service.storage.repository import Repository
 from history_service.telemetry import get_tracer
 
@@ -33,8 +37,10 @@ class SnapshotService:
         self._repository = repository
         self._game_service = game_service
 
-    async def is_snapshot_due(self, game_id: str, current_seq: int) -> bool:
-        snapshots = await self._repository.list_snapshots(game_id)
+    async def is_snapshot_due(
+        self, game_id: str, current_seq: int, platform: Platform = PLATFORM_DRAGNCARDS
+    ) -> bool:
+        snapshots = await self._repository.list_snapshots(game_id, platform=platform)
         if not snapshots:
             # First snapshot is due once enough events accrue.
             return current_seq >= self._settings.snapshot_every_n_events
@@ -48,15 +54,15 @@ class SnapshotService:
         return elapsed >= self._settings.snapshot_max_interval_seconds
 
     async def maybe_snapshot(
-        self, game_id: str, current_seq: int
+        self, game_id: str, current_seq: int, platform: Platform = PLATFORM_DRAGNCARDS
     ) -> StoredSnapshot | None:
         """Take and store a snapshot if cadence policy says one is due."""
-        if not await self.is_snapshot_due(game_id, current_seq):
+        if not await self.is_snapshot_due(game_id, current_seq, platform):
             return None
-        return await self.take_snapshot(game_id, current_seq)
+        return await self.take_snapshot(game_id, current_seq, platform)
 
     async def maybe_snapshot_best_effort(
-        self, game_id: str, current_seq: int
+        self, game_id: str, current_seq: int, platform: Platform = PLATFORM_DRAGNCARDS
     ) -> StoredSnapshot | None:
         """Best-effort wrapper around :meth:`maybe_snapshot`.
 
@@ -66,7 +72,7 @@ class SnapshotService:
         path and the Valkey stream ingester).
         """
         try:
-            return await self.maybe_snapshot(game_id, current_seq)
+            return await self.maybe_snapshot(game_id, current_seq, platform)
         except Exception:  # noqa: BLE001 - never fail a committed event
             logger.warning(
                 "Snapshot after commit failed for game=%s at seq=%s (continuing)",
@@ -76,16 +82,25 @@ class SnapshotService:
             )
             return None
 
-    async def take_snapshot(self, game_id: str, snapshot_at_seq: int) -> StoredSnapshot:
+    async def take_snapshot(
+        self,
+        game_id: str,
+        snapshot_at_seq: int,
+        platform: Platform = PLATFORM_DRAGNCARDS,
+    ) -> StoredSnapshot:
         # Identifiers and the seq only: the snapshot document is a full recorded
         # game state and must never become a span attribute.
         with tracer.start_as_current_span(
             "history.take_snapshot",
-            attributes={"game.id": game_id, "history.snapshot_at_seq": snapshot_at_seq},
+            attributes={
+                "game.id": game_id,
+                "history.platform": platform,
+                "history.snapshot_at_seq": snapshot_at_seq,
+            },
         ):
             document = await self._game_service.get_snapshot(game_id)
             stored = await self._repository.write_snapshot(
-                game_id, snapshot_at_seq, document
+                game_id, snapshot_at_seq, document, platform
             )
             logger.info(
                 "Stored snapshot for game=%s at seq=%s", game_id, snapshot_at_seq

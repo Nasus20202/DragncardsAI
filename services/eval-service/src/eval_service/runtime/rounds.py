@@ -6,7 +6,7 @@ from eval_service.judge.events import is_agent_move
 from eval_service.judge.rounds import round_label
 from eval_service.runtime.players import players_in_span
 from eval_service.schemas.api import RoundListResponse, RoundSummary
-from eval_service.schemas.history import StoredEvent
+from eval_service.schemas.history import PLATFORM_DRAGNCARDS, Platform, StoredEvent
 
 
 class RoundsService:
@@ -21,7 +21,9 @@ class RoundsService:
     def __init__(self, *, history: HistoryClient):
         self._history = history
 
-    async def list_rounds(self, game_id: str) -> RoundListResponse:
+    async def list_rounds(
+        self, game_id: str, platform: Platform = PLATFORM_DRAGNCARDS
+    ) -> RoundListResponse:
         """Detected rounds for ``game_id``, in sequence order.
 
         Raises :class:`GameNotFoundError` when the game has no recorded events, so
@@ -31,7 +33,12 @@ class RoundsService:
         # config machinery) just for one exception type.
         from eval_service.runtime.requests import GameNotFoundError
 
-        events = await self._history.list_all_events(game_id)
+        try:
+            events = await self._history.list_all_events(game_id, platform)
+        except TypeError:
+            # Keep lightweight test/downgrade clients that predate the optional
+            # platform selector usable; the history default is DragnCards.
+            events = await self._history.list_all_events(game_id)
         if not events:
             raise GameNotFoundError(f"no events recorded for game {game_id!r}")
         return RoundListResponse(

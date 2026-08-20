@@ -10,6 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field
 ENVELOPE_VERSION = 1
 VALID_ACTORS = ("agent", "game-service", "evaluator", "user")
 Actor = Literal["agent", "game-service", "evaluator", "user"]
+PLATFORM_DRAGNCARDS = "dragncards"
+PLATFORM_MARVEL_LCG = "marvel-lcg"
+VALID_PLATFORMS = (PLATFORM_DRAGNCARDS, PLATFORM_MARVEL_LCG)
+Platform = Literal["dragncards", "marvel-lcg"]
 
 # The orchestration mode the agent session that produced an event ran in.
 # ``chat`` is the original single-agent flow; ``orchestrated`` is a table of
@@ -71,6 +75,7 @@ class EventEnvelope(BaseModel):
     envelope_version: int = Field(default=ENVELOPE_VERSION)
     event_id: str = Field(default_factory=lambda: str(uuid4()))
     game_id: str = Field(min_length=1)
+    platform: Platform = PLATFORM_DRAGNCARDS
     actor: Actor
     event_type: str = Field(min_length=1)
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -84,6 +89,7 @@ class StoredEvent(BaseModel):
 
     event_id: str
     game_id: str
+    platform: Platform = PLATFORM_DRAGNCARDS
     seq: int
     envelope_version: int
     actor: str
@@ -119,6 +125,7 @@ def session_mode_of(payload: Mapping[str, Any]) -> str:
 
 class StoredSnapshot(BaseModel):
     game_id: str
+    platform: Platform = PLATFORM_DRAGNCARDS
     snapshot_at_seq: int
     snapshot: dict[str, Any]
     created_at: datetime

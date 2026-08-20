@@ -8,7 +8,12 @@ import httpx
 
 from history_service.integrations.game_service import BranchSession, GameServiceClient
 from history_service.integrations.orchestrator import OrchestratorClient
-from history_service.schemas.envelope import StoredEvent, StoredSnapshot
+from history_service.schemas.envelope import (
+    PLATFORM_DRAGNCARDS,
+    Platform,
+    StoredEvent,
+    StoredSnapshot,
+)
 from history_service.storage.repository import Repository
 from history_service.telemetry import get_tracer
 
@@ -49,6 +54,7 @@ class RestoreResult:
     game_session_id: str
     orchestrator_session_id: str | None
     snapshot_at_seq: int | None
+    platform: Platform = PLATFORM_DRAGNCARDS
     replayed_event_seqs: list[int] = field(default_factory=list)
     status_verified: bool | None = None
     divergence: str | None = None
@@ -84,6 +90,7 @@ class RestoreService:
         mode: RestoreMode = "new",
         ephemeral: bool = False,
         reuse_session_id: str | None = None,
+        platform: Platform | None = PLATFORM_DRAGNCARDS,
     ) -> RestoreResult:
         """Traced entry point; the workflow itself is :meth:`_restore`.
 
@@ -93,6 +100,15 @@ class RestoreService:
         thing. Only identifiers and mode flags are attached — never the replayed
         events or the restored state.
         """
+        if platform is None:
+            matching = [
+                summary
+                for summary in await self._repository.list_games()
+                if summary.game_id == game_id
+            ]
+            platform = (
+                matching[0].platform if len(matching) == 1 else PLATFORM_DRAGNCARDS
+            )
         with tracer.start_as_current_span(
             "history.restore",
             attributes={
@@ -104,6 +120,7 @@ class RestoreService:
                 # already the span's `game.id` when it is honoured, and a flag is
                 # what a trace needs to tell a fast re-point from a fresh build.
                 "history.reuse_offered": reuse_session_id is not None,
+                "history.platform": platform,
             },
         ):
             return await self._restore(
@@ -112,6 +129,7 @@ class RestoreService:
                 mode=mode,
                 ephemeral=ephemeral,
                 reuse_session_id=reuse_session_id,
+                platform=platform,
             )
 
     async def _restore(
@@ -122,9 +140,19 @@ class RestoreService:
         mode: RestoreMode,
         ephemeral: bool,
         reuse_session_id: str | None = None,
+        platform: Platform = PLATFORM_DRAGNCARDS,
     ) -> RestoreResult:
+        if platform is None:
+            matching = [
+                summary
+                for summary in await self._repository.list_games()
+                if summary.game_id == game_id
+            ]
+            platform = (
+                matching[0].platform if len(matching) == 1 else PLATFORM_DRAGNCARDS
+            )
         # 1. Validate target_seq is in range BEFORE mutating anything.
-        latest_seq = await self._repository.get_latest_seq(game_id)
+        latest_seq = await self._repository.get_latest_seq(game_id, platform)
         if latest_seq is None or target_seq < 1 or target_seq > latest_seq:
             raise RestoreError(
                 f"target_seq {target_seq} is out of range for game {game_id!r} "
@@ -135,7 +163,7 @@ class RestoreService:
         #    two possible game-state bases and a source of the ``plugin_name``
         #    needed to materialize a fresh branch session.
         snapshot = await self._repository.get_latest_snapshot_at_or_before(
-            game_id, target_seq
+            game_id, target_seq, platform
         )
 
         # 3. Resolve the full-state base, for BOTH modes.
@@ -145,11 +173,11 @@ class RestoreService:
         # snapshot. A branch restore additionally cannot materialize a room
         # without it, and that requirement is enforced where the room is created
         # rather than here — so the value stays narrowable instead of being cast.
-        plugin_name = await self._resolve_plugin_name(game_id, snapshot)
+        plugin_name = await self._resolve_plugin_name(game_id, snapshot, platform)
         state_event = None
         if plugin_name:
             state_event = await self._repository.get_latest_state_event_at_or_before(
-                game_id, target_seq
+                game_id, target_seq, platform
             )
         base = _choose_base(snapshot, state_event, plugin_name)
 
@@ -178,6 +206,7 @@ class RestoreService:
                     "branchable session instead)"
                 )
             game_session_id = game_id
+            await self._assert_target_platform(game_session_id, platform)
         elif reuse_session_id is not None and ephemeral and base is not None:
             # Re-point a session the caller already owns instead of building a
             # second room for the same game. Creating one is several sequential
@@ -213,6 +242,7 @@ class RestoreService:
                 target_seq,
                 game_session_id,
             )
+            await self._assert_target_platform(game_session_id, platform)
         else:
             if plugin_name is None:
                 raise RestoreError(
@@ -223,7 +253,9 @@ class RestoreService:
             # An ephemeral branch is a non-emitting, server-reaped reconstruction
             # for viewing only; pass the flag through so the game-service tags the
             # session and never emits history for it.
-            branch = await self._create_branch_session(plugin_name, ephemeral=ephemeral)
+            branch = await self._create_branch_session(
+                plugin_name, ephemeral=ephemeral, platform=platform
+            )
             game_session_id = branch.session_id
             room_slug = branch.room_slug
             created_new_session = True
@@ -242,6 +274,7 @@ class RestoreService:
                 base=base,
                 ephemeral=ephemeral,
                 room_slug=room_slug,
+                platform=platform,
             )
         except RestoreError:
             if created_new_session:
@@ -265,6 +298,7 @@ class RestoreService:
         base: _RestoreBase | None,
         ephemeral: bool = False,
         room_slug: str | None = None,
+        platform: Platform = PLATFORM_DRAGNCARDS,
     ) -> RestoreResult:
         # Game-state layer: load the densest available base at/<= target, then
         # forward-replay any mutating actions after it.
@@ -296,6 +330,7 @@ class RestoreService:
             low_exclusive=low_exclusive,
             high_inclusive=target_seq,
             actor="game-service",
+            platform=platform,
         )
         replayed_seqs: list[int] = []
         for event in replay_events:
@@ -314,7 +349,7 @@ class RestoreService:
             )
         else:
             orchestrator_session_id, agent_note = await self._restore_agent_context(
-                game_id, game_session_id, target_seq, mode
+                game_id, game_session_id, target_seq, mode, platform
             )
 
         # Verify post-restore status against the stored event, if available.
@@ -324,6 +359,7 @@ class RestoreService:
 
         return RestoreResult(
             game_id=game_id,
+            platform=platform,
             target_seq=target_seq,
             mode=mode,
             game_session_id=game_session_id,
@@ -376,8 +412,30 @@ class RestoreService:
                 exc_info=True,
             )
 
+    async def _assert_target_platform(
+        self, game_session_id: str, platform: Platform
+    ) -> None:
+        """Reject a known cross-platform target before loading any state.
+
+        The optional capability keeps restores compatible with pre-platform
+        game-service deployments, whose only possible platform was DragnCards.
+        """
+        resolver = getattr(self._game_service, "get_session_platform", None)
+        if resolver is None:
+            if platform != PLATFORM_DRAGNCARDS:
+                raise RestoreError(
+                    "game-service does not advertise session platforms; "
+                    f"cannot safely restore {platform!r} history"
+                )
+            return
+        target_platform = await resolver(game_session_id)
+        if target_platform != platform:
+            raise RestoreError(
+                f"cannot restore {platform!r} history into {target_platform!r} session"
+            )
+
     async def _resolve_plugin_name(
-        self, game_id: str, snapshot: StoredSnapshot | None
+        self, game_id: str, snapshot: StoredSnapshot | None, platform: Platform
     ) -> str | None:
         """Resolve the plugin slug for this game, or None when none is recorded.
 
@@ -399,12 +457,16 @@ class RestoreService:
         """
         plugin_name = _plugin_name_from_snapshot(snapshot)
         if not plugin_name:
-            all_snapshots = await self._repository.list_snapshots(game_id, limit=1)
+            all_snapshots = await self._repository.list_snapshots(
+                game_id, platform=platform, limit=1
+            )
             plugin_name = _plugin_name_from_snapshot(
                 all_snapshots[0] if all_snapshots else None
             )
         if not plugin_name:
-            earliest = await self._repository.get_earliest_state_event(game_id)
+            earliest = await self._repository.get_earliest_state_event(
+                game_id, platform
+            )
             if earliest is not None:
                 candidate = earliest.payload.get("plugin_name")
                 if isinstance(candidate, str) and candidate:
@@ -412,7 +474,11 @@ class RestoreService:
         return plugin_name or None
 
     async def _create_branch_session(
-        self, plugin_name: str, *, ephemeral: bool = False
+        self,
+        plugin_name: str,
+        *,
+        ephemeral: bool = False,
+        platform: Platform = PLATFORM_DRAGNCARDS,
     ) -> BranchSession:
         """Create a fresh real game-service session for a branchable restore.
 
@@ -425,7 +491,16 @@ class RestoreService:
         When ``ephemeral`` is true the session is created as a non-emitting,
         server-reaped reconstruction (for viewing only).
         """
-        return await self._game_service.create_session(plugin_name, ephemeral=ephemeral)
+        try:
+            return await self._game_service.create_session(
+                plugin_name, ephemeral=ephemeral, platform=platform
+            )
+        except TypeError:
+            if platform != PLATFORM_DRAGNCARDS:
+                raise
+            return await self._game_service.create_session(
+                plugin_name, ephemeral=ephemeral
+            )
 
     async def _restore_agent_context(
         self,
@@ -433,6 +508,7 @@ class RestoreService:
         game_session_id: str,
         target_seq: int,
         mode: RestoreMode,
+        platform: Platform = PLATFORM_DRAGNCARDS,
     ) -> tuple[str | None, str | None]:
         """Rebuild the agent's conversation context; report, never raise, a miss.
 
@@ -452,7 +528,7 @@ class RestoreService:
         restore had failed.
         """
         agent_event = await self._repository.get_latest_agent_event_at_or_before(
-            game_id, target_seq
+            game_id, target_seq, platform
         )
         if agent_event is None:
             logger.info(
