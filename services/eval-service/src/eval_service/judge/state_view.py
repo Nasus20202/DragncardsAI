@@ -12,10 +12,12 @@ worlds. ``deltas`` sorts before ``game`` under canonical (sorted-key) JSON, so a
 judge was paying ~13,700 prompt tokens per move to see no board at all.
 
 This module builds a small structured projection instead, mirroring the
-`SimplifiedGameState` shape the game-service already serves to the playing agent
-(``roundNumber``, ``mode``, ``stepId``, per-player hit points / hand size, and
-per-zone card lists). The judge therefore sees the same view of the table the
-agent saw when it decided, which is the right basis for grading that decision.
+platform-neutral state shape the game-service already serves to the playing
+agent. DragnCards states are reduced from their raw room shape; marvel-lcg states
+are consumed from the game's normalized ``playRound``/``phase``/``phaseLabel``/
+``players``/``zones`` contract. The judge therefore sees the same view of the
+table the agent saw when it decided, which is the right basis for grading that
+decision.
 
 Hidden information stays hidden: face-down cards and cards showing a generic
 ``player``/``encounter`` back collapse to a ``HIDDEN`` entry with a count, so deck
@@ -90,15 +92,14 @@ def project_state(
 ) -> dict[str, Any] | None:
     """Project a recorded state to the judge's view for ``platform``.
 
-    ``player`` is the graded neutral seat. It matters for native marvel-lcg
-    world descriptors, whose visibility is seat-specific; ``seat`` is accepted as
-    an explicit alias for callers that use the platform-neutral vocabulary.
+    ``player`` and ``seat`` are accepted for a platform-neutral caller contract.
+    Marvel's normal producer state has already applied seat visibility, so neither
+    argument is used to reconstruct a board from a native world descriptor.
 
     Returns ``None`` when the selected platform does not recognise the shape. The
     caller then serialises the recorded value as a bounded raw fallback rather than
     silently dropping content it does not understand.
     """
-    graded_seat = player or seat
     if platform == PLATFORM_DRAGNCARDS:
         if not is_raw_dragncards_state(state):
             return None
@@ -121,53 +122,34 @@ def project_state(
         return projected
 
     if platform == PLATFORM_MARVEL_LCG:
-        return _project_marvel_lcg_state(state, graded_seat)
+        return _project_marvel_lcg_state(state)
     return None
 
 
-def _project_marvel_lcg_state(
-    state: Any, graded_seat: str | None
-) -> dict[str, Any] | None:
-    """Project either the neutral state or a native marvel-lcg world.
+def _project_marvel_lcg_state(state: Any) -> dict[str, Any] | None:
+    """Project the game-service's normalized, visibility-safe Marvel state.
 
-    The game-service normally records the neutral state returned by its
-    normaliser. Tests, imports, and older producers can still contain the native
-    ``WorldDescriptor`` (possibly under ``world``), so that shape is handled here
-    as well. In both paths only visible card descriptors are copied; no raw card
-    dictionary is ever returned to the judge.
+    Native ``WorldDescriptor`` records are legacy input, not a second consumer
+    contract. They intentionally return ``None`` and are rendered as unavailable
+    by :func:`render_state`; reconstructing their zones here would duplicate the
+    game-service normalizer and risks diverging from its visibility rules.
     """
     if not isinstance(state, dict):
         return None
 
     if _is_normalised_marvel_state(state):
         return _project_normalised_marvel_state(state)
-
-    world = state.get("world")
-    if not isinstance(world, dict):
-        world = state
-    if not _is_native_marvel_world(world):
-        return None
-    return _project_native_marvel_world(world, graded_seat)
+    return None
 
 
 def _is_normalised_marvel_state(state: dict[str, Any]) -> bool:
     return (
         isinstance(state.get("playRound"), int)
+        and not isinstance(state.get("playRound"), bool)
+        and isinstance(state.get("phase"), str)
+        and isinstance(state.get("phaseLabel"), str)
         and isinstance(state.get("zones"), dict)
         and isinstance(state.get("players"), dict)
-    )
-
-
-def _is_native_marvel_world(world: dict[str, Any]) -> bool:
-    return isinstance(world.get("round_id"), (int, float)) or any(
-        key in world
-        for key in (
-            "area_hero",
-            "area_villain",
-            "area_schemes_main",
-            "hand_cards",
-            "player_deck",
-        )
     )
 
 
@@ -238,258 +220,6 @@ def _project_normalised_zones(value: Any) -> dict[str, list[dict[str, Any]]]:
         if visible:
             zones[str(zone)] = visible
     return zones
-
-
-_MARVEL_ZONE_MAP = {
-    "area_schemes_main": "sharedMainScheme",
-    "main_schemes_deck": "sharedMainSchemeDeck",
-    "area_villain": "sharedVillain",
-    "villain_deck": "sharedVillainDeck",
-    "encounter_deck": "sharedEncounterDeck",
-    "encounter_discard_pile": "sharedEncounterDiscard",
-    "area_environment": "sharedEnvironment",
-    "area_rule": "sharedRules",
-    "area_mission": "sharedMission",
-    "area_processing": "sharedProcessing",
-    "area_revealing": "sharedRevealing",
-    "area_removed": "sharedRemoved",
-    "victory_display": "sharedVictory",
-}
-_MARVEL_PLAYER_ZONE_MAP = {
-    "area_hero": "Play1",
-    "allies": "Allies",
-    "supports": "Supports",
-    "player_deck": "Deck",
-    "player_discard_pile": "Discard",
-    "dealt_encounter_cards": "Encounter",
-    "hand_cards": "Hand",
-    "engaged_enemies": "Engaged",
-    "set_aside_nemesis_sets": "Nemesis",
-    "set_aside_deck": "SetAside",
-    "obligations_area": "Obligations",
-    "environment_area": "Environment",
-}
-
-
-def _project_native_marvel_world(
-    world: dict[str, Any], graded_seat: str | None
-) -> dict[str, Any]:
-    seat_number = _seat_number(graded_seat)
-    suppressed_card_instance_ids = _collect_down_card_instance_ids(world)
-    projected: dict[str, Any] = {}
-    round_id = world.get("round_id")
-    if isinstance(round_id, (int, float)) and not isinstance(round_id, bool):
-        projected["playRound"] = int(round_id)
-    phase_label = str(world.get("phase") or "")
-    if phase_label:
-        projected["phaseLabel"] = phase_label
-        projected["stepDescription"] = phase_label
-        projected["phase"] = _marvel_phase(phase_label)
-    if world.get("mode") is not None:
-        projected["mode"] = world["mode"]
-    if world.get("villain_hit_points") is not None:
-        projected["villainHitPoints"] = world["villain_hit_points"]
-
-    players: dict[str, Any] = {}
-    zones: dict[str, list[dict[str, Any]]] = {}
-    raw_players = world.get("players") or []
-    if isinstance(raw_players, dict):
-        raw_players = list(raw_players.values())
-    for index, raw_player in enumerate(raw_players):
-        if not isinstance(raw_player, dict):
-            continue
-        player_id = f"player{index + 1}"
-        players[player_id] = {
-            key: value
-            for key, value in (
-                ("handSize", len(raw_player.get("hand_cards") or [])),
-                (
-                    "hitPoints",
-                    raw_player.get("hit_points", raw_player.get("hitPoints")),
-                ),
-                ("resources", raw_player.get("resources")),
-            )
-            if value is not None
-        }
-        for source, suffix in _MARVEL_PLAYER_ZONE_MAP.items():
-            zone = _project_native_zone(
-                raw_player.get(source), seat_number, suppressed_card_instance_ids
-            )
-            if zone:
-                zones[f"{player_id}{suffix}"] = zone
-
-    for source, target in _MARVEL_ZONE_MAP.items():
-        zone = _project_native_zone(
-            world.get(source), seat_number, suppressed_card_instance_ids
-        )
-        if zone:
-            zones[target] = zone
-
-    projected["players"] = players
-    projected["zones"] = zones
-    return projected
-
-
-def _seat_number(player: str | None) -> int | None:
-    if not isinstance(player, str) or not player.startswith("player"):
-        return None
-    try:
-        number = int(player[6:]) - 1
-    except ValueError:
-        return None
-    return number if number in range(4) else None
-
-
-def _marvel_phase(label: str) -> str:
-    value = label.lower()
-    if any(
-        word in value
-        for word in ("mulligan", "setup", "choose hero", "select identity")
-    ):
-        return "setup"
-    if any(word in value for word in ("villain", "encounter", "scheme", "treachery")):
-        return "villain"
-    if any(word in value for word in ("player", "turn", "player phase")):
-        return "player"
-    if any(word in value for word in ("resolve", "end of", "passive", "waiting")):
-        return "passive"
-    return "unknown"
-
-
-def _project_native_zone(
-    value: Any,
-    seat_number: int | None,
-    suppressed_card_instance_ids: set[str] | None = None,
-) -> list[dict[str, Any]]:
-    if not isinstance(value, (list, tuple)):
-        return []
-    result: list[dict[str, Any]] = []
-    hidden_count = 0
-    for card in value:
-        if not isinstance(card, dict):
-            continue
-        if card.get("bind_object_id") not in (None, 0, "0", ""):
-            continue
-        if (
-            suppressed_card_instance_ids
-            and _native_card_instance_ids(card) & suppressed_card_instance_ids
-        ):
-            continue
-        buried_count = _buried_card_count(card.get("down_card_ids"))
-        if not _native_card_visible(card, seat_number):
-            hidden_count += 1 + buried_count
-            continue
-        entry: dict[str, Any] = {
-            "id": str(card.get("card_id", card.get("id", "Unknown"))),
-            "instanceId": str(card.get("id", "Unknown")),
-            "name": str(card.get("name") or card.get("card_id") or "Unknown"),
-            "stackSize": 1,
-        }
-        if card.get("card_type"):
-            entry["type"] = str(card["card_type"])
-        if card.get("is_ready") is False:
-            entry["exhausted"] = True
-        info = card.get("info")
-        if isinstance(info, dict):
-            tokens = {key: item for key, item in info.items() if item}
-            if tokens:
-                entry["tokens"] = tokens
-        result.append(entry)
-        # A visible parent remains targetable, but its buried cards are still
-        # hidden. Keep their count in the parent's zone instead of inflating the
-        # visible parent's stackSize, which would count the same cards twice.
-        hidden_count += buried_count
-    if hidden_count:
-        result.append({"name": "HIDDEN", "stackSize": hidden_count})
-    return result
-
-
-def _iter_native_cards(world: dict[str, Any]):
-    raw_players = world.get("players") or []
-    if isinstance(raw_players, dict):
-        raw_players = list(raw_players.values())
-    for raw_player in raw_players:
-        if not isinstance(raw_player, dict):
-            continue
-        for source in _MARVEL_PLAYER_ZONE_MAP:
-            cards = raw_player.get(source)
-            if isinstance(cards, (list, tuple)):
-                yield from (card for card in cards if isinstance(card, dict))
-    for source in _MARVEL_ZONE_MAP:
-        cards = world.get(source)
-        if isinstance(cards, (list, tuple)):
-            yield from (card for card in cards if isinstance(card, dict))
-
-
-def _down_card_items(value: Any) -> list[Any]:
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple, set)):
-        return list(value)
-    return [value]
-
-
-def _buried_card_count(value: Any) -> int:
-    """Count distinct buried-card references without exposing their identities."""
-    count = 0
-    seen_ids: set[str] = set()
-    for item in _down_card_items(value):
-        identity = _buried_card_identity(item)
-        if identity is not None and identity in seen_ids:
-            continue
-        if identity is not None:
-            seen_ids.add(identity)
-        count += 1
-    return count
-
-
-def _buried_card_identity(value: Any) -> str | None:
-    if not isinstance(value, dict):
-        return str(value) if value not in (None, "") else None
-    for key in ("id", "instanceId", "object_id", "objectId"):
-        if value.get(key) not in (None, ""):
-            return str(value[key])
-    return None
-
-
-def _native_card_instance_ids(value: Any) -> set[str]:
-    if not isinstance(value, dict):
-        return {str(value)} if value not in (None, "") else set()
-    return {
-        str(value[key])
-        for key in ("id", "instanceId", "object_id", "objectId")
-        if value.get(key) not in (None, "")
-    }
-
-
-def _collect_down_card_instance_ids(world: dict[str, Any]) -> set[str]:
-    """Collect buried physical identities before any native zone is rendered.
-
-    Native Marvel zones can contain both a stack's visible card and the full
-    objects named by its ``down_card_ids``. The latter must be suppressed as
-    objects, rather than merely counted on the top card, or their names can
-    escape into the projected state. Definition-level ``card_id`` values are
-    deliberately ignored: another physical copy with the same definition stays
-    visible.
-    """
-    suppressed: set[str] = set()
-    for card in _iter_native_cards(world):
-        for down_card in _down_card_items(card.get("down_card_ids")):
-            suppressed.update(_native_card_instance_ids(down_card))
-    return suppressed
-
-
-def _native_card_visible(card: dict[str, Any], seat_number: int | None) -> bool:
-    if "visible_for_players" in card:
-        allowed = card["visible_for_players"]
-        if seat_number is None:
-            return False
-        try:
-            if seat_number not in {int(item) for item in allowed}:
-                return False
-        except TypeError, ValueError:
-            return False
-    return bool(card.get("is_face_up", True))
 
 
 def _stack_size(card: dict[str, Any]) -> int:
@@ -598,10 +328,11 @@ def render_state(
 ) -> str:
     """Render a recorded state for a judge prompt, bounded by ``max_chars``.
 
-    Projects the raw DragnCards shape first (a ~180x reduction on real games) and
-    only then applies the character bound as a backstop. States in an unknown
-    shape are serialised as recorded, preserving the previous behaviour. Any
-    truncation is marked in the text and logged so it stays observable.
+    Projects the raw DragnCards shape or the normalized Marvel contract first and
+    only then applies the character bound as a backstop. Unknown Marvel shapes are
+    rendered as unavailable rather than sent raw, because their visibility rules
+    are not known. Any truncation is marked in the text and logged so it stays
+    observable.
     """
     projected = project_state(value, platform, player, seat=seat)
     if projected is not None:
