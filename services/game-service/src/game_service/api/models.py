@@ -18,6 +18,11 @@ from game_service.schemas.base import StrictRequest
 # Request models
 # ---------------------------------------------------------------------------
 
+ChoiceIdentifier = (
+    Annotated[int, Field(ge=0, le=2**63 - 1)]
+    | Annotated[str, Field(min_length=1, max_length=128)]
+)
+
 
 class CreateGameRequest(StrictRequest):
     platform: PlatformSlug = Field(
@@ -169,16 +174,20 @@ class ChooseGameOptionRequest(StrictRequest):
     """One neutral option choice; the driver translates it to ``POST /post``."""
 
     player_n: SeatId = "player1"
-    option_id: int | str | None = None
-    targets: list[int | str] = Field(default_factory=list)
-    resources: list[int | str] = Field(default_factory=list)
+    option_id: ChoiceIdentifier | None = None
+    targets: list[ChoiceIdentifier] = Field(default_factory=list, max_length=32)
+    resources: list[ChoiceIdentifier] = Field(default_factory=list, max_length=32)
     decline: bool = False
     prompt_id: str = Field(
         ...,
+        min_length=1,
+        max_length=128,
         description="Prompt signature returned by the preceding options read",
     )
     prompt_version: int = Field(
         ...,
+        ge=0,
+        le=2**32 - 1,
         description="Prompt version returned by the preceding options read",
     )
 

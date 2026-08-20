@@ -159,8 +159,7 @@ class PromptAttemptGuard:
         attempted = self._attempts.get(signature, [])
         if len(attempted) >= self.max_attempts:
             raise StuckPromptError(
-                f"marvel-lcg prompt {signature.prompt_text!r} remained after "
-                f"{len(attempted)} attempts; attempted options={attempted}"
+                f"marvel-lcg prompt remained after {len(attempted)} attempts"
             )
 
     def clear_except(self, signature: PromptSignature | None) -> None:
