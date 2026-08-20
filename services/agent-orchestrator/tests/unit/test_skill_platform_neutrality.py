@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SHARED_SKILL_DIRECTORIES = (
     REPO_ROOT / "skills" / "marvel-champions-rules-reference" / "resources",
@@ -39,9 +38,9 @@ def test_shared_rules_and_learning_references_are_platform_neutral() -> None:
                 if token in text:
                     violations.append(f"{path.relative_to(REPO_ROOT)}: {token}")
 
-    assert not violations, (
-        "platform tokens found in shared skill references: " + ", ".join(violations)
-    )
+    assert (
+        not violations
+    ), "platform tokens found in shared skill references: " + ", ".join(violations)
 
 
 def test_marvel_coordinator_delegates_option_tools_to_the_seat_agent() -> None:

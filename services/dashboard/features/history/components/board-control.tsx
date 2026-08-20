@@ -47,10 +47,12 @@ export function BoardOpenControl({
         around in. This game is not changed, and the copy is discarded when you
         close it.
       </p>
-        <Button
+      <Button
         type="button"
         variant="secondary"
-          isDisabled={unavailable || gameId === null || selectedSeq === null || isOpening}
+        isDisabled={
+          unavailable || gameId === null || selectedSeq === null || isOpening
+        }
         data-testid="board-open"
         onPress={onOpen}
       >
@@ -77,8 +79,12 @@ export function BoardOpenControl({
         </span>
       )}
       {unavailable && (
-        <span className="text-xs text-default-500" data-testid="board-unavailable">
-          This platform cannot be rewound into a throwaway copy, so reconstruction is unavailable.
+        <span
+          className="text-xs text-default-500"
+          data-testid="board-unavailable"
+        >
+          This platform cannot be rewound into a throwaway copy, so
+          reconstruction is unavailable.
         </span>
       )}
       {error && (
@@ -151,8 +157,18 @@ export function BoardView({
       </div>
       <div className="min-h-0 flex-1">
         <DragnCardsIframe
-          game={{ id: reconstruction.sessionId, plugin: "", plugin_id: 0, created_at: "", room_slug: reconstruction.roomSlug, platform: "dragncards" }}
-          urls={{ dragncardsFrontendUrl: frontendUrl, marvelLcgBaseUrl: marvelLcgBaseUrl ?? "" }}
+          game={{
+            id: reconstruction.sessionId,
+            plugin: "",
+            plugin_id: 0,
+            created_at: "",
+            room_slug: reconstruction.roomSlug,
+            platform: "dragncards",
+          }}
+          urls={{
+            dragncardsFrontendUrl: frontendUrl,
+            marvelLcgBaseUrl: marvelLcgBaseUrl ?? "",
+          }}
         />
       </div>
     </div>

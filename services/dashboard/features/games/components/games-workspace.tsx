@@ -5,8 +5,15 @@ import { DragnCardsIframe } from "@/features/games/components/dragncards-iframe"
 import { useGames } from "@/features/games/lib/use-games";
 
 export function GamesWorkspace() {
-  const { games, selectedGame, frontendUrl, marvelLcgBaseUrl, error, isLoading, selectGame } =
-    useGames();
+  const {
+    games,
+    selectedGame,
+    frontendUrl,
+    marvelLcgBaseUrl,
+    error,
+    isLoading,
+    selectGame,
+  } = useGames();
 
   if (isLoading) {
     return (

@@ -30,11 +30,19 @@ export function resolveGameViewerUrl(
   return null;
 }
 
-export function viewerConfigurationMessage(game: GameSession | null | undefined, urls: ViewerUrls): string {
+export function viewerConfigurationMessage(
+  game: GameSession | null | undefined,
+  urls: ViewerUrls
+): string {
   if (!game) return "Select a game to view";
   const platform = game.platform ?? "dragncards";
-  if (platform === "dragncards" && !urls.dragncardsFrontendUrl) return "Configuration error: DRAGNCARDS_FRONTEND_URL is not set";
-  if (platform === "marvel-lcg" && !urls.marvelLcgBaseUrl) return "Configuration error: MARVEL_LCG_BASE_URL is not set";
-  if (platform !== "dragncards" && platform !== "marvel-lcg") return `No viewer is configured for platform “${platform}”.`;
-  return platform === "dragncards" ? "This game has no room slug to open." : "This game has no supported viewer target.";
+  if (platform === "dragncards" && !urls.dragncardsFrontendUrl)
+    return "Configuration error: DRAGNCARDS_FRONTEND_URL is not set";
+  if (platform === "marvel-lcg" && !urls.marvelLcgBaseUrl)
+    return "Configuration error: MARVEL_LCG_BASE_URL is not set";
+  if (platform !== "dragncards" && platform !== "marvel-lcg")
+    return `No viewer is configured for platform “${platform}”.`;
+  return platform === "dragncards"
+    ? "This game has no room slug to open."
+    : "This game has no supported viewer target.";
 }

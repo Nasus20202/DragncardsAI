@@ -194,7 +194,10 @@ export function RestoreControl({
         be.
       </p>
       {unavailable && (
-        <p className="text-xs text-default-500" data-testid="restore-unavailable">
+        <p
+          className="text-xs text-default-500"
+          data-testid="restore-unavailable"
+        >
           Restore is unavailable: this platform cannot import a past state.
         </p>
       )}
