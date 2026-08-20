@@ -14,7 +14,7 @@ Write rules in terms of *what* to do, naming a specific tool or command only as 
 
 ## Project Overview
 
-- This repository contains an LLM-powered Marvel Champions bot for DragnCards.
+- This repository contains an LLM-powered Marvel Champions bot for DragnCards and `marvel-lcg`.
 - Top-level areas include `services/`, `scripts/`, `external/`, `openspec/`, and `.github/`.
 - Primary local workflows are documented in `README.md`.
 
@@ -26,7 +26,7 @@ Write rules in terms of *what* to do, naming a specific tool or command only as 
   read its actions, read the live board, request an evaluation, read the verdict — over the
   MCP surface every service exposes, plus the prerequisites that otherwise cost an
   afternoon.
-- Read [`services/game-service/README.md`](services/game-service/README.md) when working on DragnCards session control, MCP tools, or game actions.
+- Read [`services/game-service/README.md`](services/game-service/README.md) when working on DragnCards session control, MCP tools, game actions, or the platform-driver seam.
 - Read [`services/agent-orchestrator/README.md`](services/agent-orchestrator/README.md) when working on agent sessions, skills, providers, or background jobs.
 - Read [`services/history-service/README.md`](services/history-service/README.md) when working on the recorded event store, snapshots, or restore.
 - Read [`services/eval-service/README.md`](services/eval-service/README.md) when working on move/round/game evaluation or the judge.
@@ -254,8 +254,8 @@ make run                                   # the five app services, from source,
 ```
 
 Ports: dashboard `3001`, game-service `4001`, agent-orchestrator `4002`, bifrost `4003`,
-history-service `4004`, eval-service `4005`, Grafana `3004`, DragnCards frontend `3000`
-and backend `4000`.
+history-service `4004`, eval-service `4005`, marvel-lcg `4006` (profile-gated), Grafana
+`3004`, DragnCards frontend `3000` and backend `4000`.
 
 **Confirm the running services match your source before you conclude anything.** A
 Compose stack that was started before your change is serving the old image, and a missing
@@ -287,13 +287,18 @@ in a committed file.
 
 ### 1. Create a game
 
-`create_game` on **game-service**, body `{"plugin_name": "marvel-champions"}` — both
-fields default, so `{}` works too. Keep `session.session_id` from the response: it is the
-id every later game-service call takes, **and** it is the `game_id` history-service and
-eval-service key on. Do not pass `ephemeral: true`: an ephemeral session emits no history,
-so nothing downstream of step 3 will exist.
+`create_game` on **game-service** accepts an optional `platform`. For a DragnCards game,
+use `{"plugin_name": "marvel-champions", "platform": "dragncards"}`; omitting
+`platform` preserves the DragnCards default. For a `marvel-lcg` game, use
+`{"platform": "marvel-lcg"}` and do not invent a DragnCards plugin name. Keep
+`session.session_id` from the response: it is the id every later game-service call takes,
+**and** it is the `game_id` history-service and eval-service key on. Do not pass
+`ephemeral: true`: an ephemeral session emits no history, so nothing downstream of step 3
+will exist.
 
-Then set the table up, in this order:
+Then set the table up for its platform:
+
+**DragnCards**
 
 1. `set_player_count_action` — `{"type": "set_player_count", "num_players": 1, "layout_id": …}`.
    Read the valid `layout_id` values from `get_session_actions` →
@@ -305,6 +310,13 @@ Then set the table up, in this order:
    **query parameter**, not a body field. The wrong order fails with "Load all player
    decks before loading the scenario".
 4. `mulligan_draw_hand` per seat, `{"type": "mulligan_draw_hand", "player_n": "player1"}`.
+
+**marvel-lcg**
+
+Use `list_marvel_lcg_scenarios` and `list_marvel_lcg_decks` to discover the engine's
+shipped setup data, then use the platform's enumerated-option surface. Do not send
+DragnCards player-count, prebuilt-set, deck-loading, or DragnLang actions to a
+`marvel-lcg` session.
 
 **Worked?** `get_game_state` returns a `state` with populated `zones` and a `players` entry
 for each seat. Open `http://localhost:3000/room/<room_slug>` to see the same table.
@@ -327,10 +339,10 @@ On **agent-orchestrator**:
 
 **Nothing binds a session to a game, and this is the step agents get wrong.** There is no
 "attach session to game" endpoint. The agent learns its game and its seat *only from your
-prompt text*, so the prompt must state the game-service `session_id`, the hero, and the
-seat (`player1`). `session.metadata.game_id` is then populated automatically from the
-agent's first game-service tool call, and that is what stamps the history events — so an
-agent that never calls a game-service tool records nothing under the game.
+prompt text*, so the prompt must state the game-service `session_id`, the platform, the hero,
+and the seat (`player1`). `session.metadata.game_id` is then populated automatically from
+the agent's first game-service tool call, and that is what stamps the history events — so
+an agent that never calls a game-service tool records nothing under the game.
 
 **Worked?** `get_job_status` moves off `queued`, and `list_job_events` starts returning
 `tool_call` events whose `assignment` is `game-service`.
@@ -355,13 +367,20 @@ events concludes success from a truncated run.
 
 ### 4. Fetch the live board state
 
-`get_game_state` on game-service. For Marvel Champions the response is the *simplified*
-state — the same view the playing agent sees — with top-level `roundNumber`, `mode`,
-`villainHitPoints`, `stepId`, `stepDescription`, `players` and `zones`. Face-down cards and
-deck contents collapse to a single `HIDDEN` entry carrying a `stackSize` count.
+`get_game_state` on game-service returns one *simplified* state shape for either platform —
+the same visibility-limited view the playing agent sees. Its neutral vocabulary includes
+`playRound`, `phase`, `phaseLabel`, `mode`, `players` and `zones`; `villainHitPoints`
+remains available where the platform supplies it. `phase` is the closed classification
+`setup | player | villain | passive | unknown`, while `phaseLabel` preserves the opaque
+platform label (for example a DragnCards step id or a `marvel-lcg` phase description).
+`pendingSeats` is present when a platform reports which seats may act and is omitted when
+it does not. Face-down cards and deck contents collapse to a single `HIDDEN` entry carrying
+a `stackSize` count.
 
-`stepId` gives the phase, not the acting player: whose turn it is is not a field anywhere,
-and the orchestrating prompt tracks it. `mode` is `unknown | in progress | win | loss`.
+The platform normaliser owns round and phase conversion: `playRound` is already the play
+round for `marvel-lcg`, while DragnCards converts its completed-round counter once. A
+`pendingSeats` value is turn authority on platforms that provide it; otherwise the
+orchestrating prompt tracks whose turn it is. `mode` is `unknown | in progress | win | loss`.
 
 `GET /games/{id}/state/raw` exists for the rare case where you need DragnCards' own
 structure, and is deliberately HTTP-only: it is ~450 KB per game, about half of it the
@@ -450,9 +469,22 @@ openspec validate --all
 a throwaway `*_test_<uuid>` database per run and drop it at the end, so the suite never
 touches the data the running services are using. Naming one service keeps the run short.
 
-`openspec validate --all` reports **exactly one** pre-existing failure,
-`spec/typed-game-actions`, on `main` and on every branch off it. One failure is the expected
-result; two means you caused one.
+`openspec validate --all` is expected to report zero failures after the documentation repairs
+in tasks 13.1 and 13.2 and reconciliation of the remaining DRA-65 delta scenarios. The
+current clean baseline has two pre-existing failures: the missing `## Purpose` in
+`spec/typed-game-actions` and the active DRA-65 change's omitted scenarios in its MODIFIED
+requirements. After those are repaired, any failure is unexpected and needs investigation.
+
+## marvel-lcg attribution and licensing
+
+The `marvel-lcg` integration credits the **Irefrixs Team**, the original authors of the
+`irefrixs/marvel-lcg` project, and uses the maintained `z00lus/marvel-lcg` Ronin Edition
+fork. The engine repository has no `LICENSE` file, so do not assume a general
+redistribution license; this integration relies on the developer's explicit written
+permission recorded in [issue #3](https://github.com/irefrixs/marvel-lcg/issues/3).
+`marvel-lcg` is a fan implementation of Marvel/FFG intellectual property, which this
+project does not claim to own. Card art is fetched from Cerebro at runtime and is never
+redistributed by this repository.
 
 ## Adding or Changing a Service
 

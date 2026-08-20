@@ -3,10 +3,9 @@
 Two layers, mirroring how the seat guard is tested (`test_seat_guard.py` for the
 pure rule, `test_prompt_run.py` for the wiring):
 
-- `check_turn_authority` decides from the tool name and the current step id
-  whether a seat's call is one no seat could make at that step. The player phase
-  (steps `1.1`/`1.2`) is the only phase where a seat holds any authority; a
-  phase-advancing tool or an action tool called anywhere else is a violation.
+- `check_turn_authority` decides from the tool name and the neutral phase
+  classification whether a seat's call is one no seat could make at that step.
+  The phase label and step id are opaque reporting values only.
   The acting player within the player phase is not in game state (root
   `AGENTS.md`), so that slice is deliberately not judged here.
 - The wiring tests run a seat's job through the real `PromptRunService` and
@@ -18,7 +17,6 @@ pure rule, `test_prompt_run.py` for the wiring):
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -32,6 +30,7 @@ from agent_orchestrator.repositories.player_channel import (
 )
 from agent_orchestrator.runtime.history_emitter import SESSION_GAME_ID_KEY
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
+from agent_orchestrator.runtime.platforms import PLATFORM_MARVEL_LCG
 from agent_orchestrator.runtime.player_agents import (
     SESSION_ORCHESTRATOR_ID_KEY,
     SESSION_PLAYER_ID_KEY,
@@ -45,7 +44,6 @@ from agent_orchestrator.runtime.seat_turn_guard import (
     SEAT_ACTION_TOOLS,
     TurnAuthorityViolation,
     check_turn_authority,
-    phase_of,
 )
 from agent_orchestrator.runtime.session_modes import SESSION_MODE_ORCHESTRATED
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
@@ -59,9 +57,22 @@ from agent_orchestrator.storage.repository import Repository
 # ---------------------------------------------------------------------------
 
 
-def _check(tool_name: str, step_id: Any, caller: str = "player1"):
+def _check(
+    tool_name: str,
+    phase: str | None,
+    caller: str = "player1",
+    *,
+    step_id: Any = None,
+    pending_seats: Any = None,
+    platform: str = "dragncards",
+):
     return check_turn_authority(
-        caller_player_id=caller, tool_name=tool_name, step_id=step_id
+        caller_player_id=caller,
+        tool_name=tool_name,
+        step_id=step_id,
+        phase=phase,
+        pending_seats=pending_seats,
+        platform=platform,
     )
 
 
@@ -70,11 +81,10 @@ def _check(tool_name: str, step_id: Any, caller: str = "player1"):
     sorted(PHASE_ADVANCING_TOOLS),
 )
 def test_phase_tools_are_only_legal_during_the_player_phase(tool_name: str):
-    assert _check(tool_name, "1.1") is None
-    assert _check(tool_name, "1.2") is None
+    assert _check(tool_name, "player") is None
 
-    for villain_step in ("2.1", "2.5"):
-        violation = _check(tool_name, villain_step)
+    for phase in ("villain", "passive"):
+        violation = _check(tool_name, phase)
         assert violation is not None
         assert violation.kind == "phase_advance"
         assert violation.tool_name == tool_name
@@ -85,9 +95,9 @@ def test_phase_tools_are_only_legal_during_the_player_phase(tool_name: str):
     sorted(SEAT_ACTION_TOOLS),
 )
 def test_action_tools_are_only_legal_during_the_player_phase(tool_name: str):
-    assert _check(tool_name, "1.1") is None
+    assert _check(tool_name, "player") is None
 
-    violation = _check(tool_name, "2.2")
+    violation = _check(tool_name, "villain")
     assert violation is not None
     assert violation.kind == "action"
 
@@ -97,18 +107,18 @@ def test_action_tools_are_only_legal_during_the_player_phase(tool_name: str):
 
 def test_a_seat_calling_next_step_during_another_seats_turn_is_a_finding():
     """`next_step` while the villain phase resolves — no seat holds the turn."""
-    violation = _check("next_step", "2.1", caller="player1")
+    violation = _check("next_step", "villain", caller="player1", step_id="opaque")
     assert violation is not None
     assert violation.kind == "phase_advance"
     assert violation.caller_player_id == "player1"
     assert violation.phase == "villain"
-    assert violation.step_id == "2.1"
+    assert violation.step_id == "opaque"
     assert "next_step" in violation.message
     assert "villain phase" in violation.message
 
 
 def test_a_seat_calling_player_end_phase_out_of_turn_is_a_finding():
-    violation = _check("player_end_phase", "2.5", caller="player2")
+    violation = _check("player_end_phase", "villain", caller="player2")
     assert violation is not None
     assert violation.kind == "phase_advance"
     assert violation.caller_player_id == "player2"
@@ -116,7 +126,7 @@ def test_a_seat_calling_player_end_phase_out_of_turn_is_a_finding():
 
 
 def test_a_seat_calling_an_action_tool_during_the_villain_phase_is_a_finding():
-    violation = _check("move_card", "2.2", caller="player1")
+    violation = _check("move_card", "villain", caller="player1")
     assert violation is not None
     assert violation.kind == "action"
     assert violation.phase == "villain"
@@ -124,15 +134,14 @@ def test_a_seat_calling_an_action_tool_during_the_villain_phase_is_a_finding():
 
 
 def test_a_seat_acting_during_its_own_turn_is_not_a_finding():
-    assert _check("move_card", "1.1") is None
-    assert _check("draw_card", "1.2") is None
-    assert _check("next_step", "1.1") is None
+    assert _check("move_card", "player") is None
+    assert _check("draw_card", "player") is None
+    assert _check("next_step", "player") is None
 
 
 def test_passive_phase_steps_belong_to_no_seat():
-    for step in ("0.0", "0.1"):
-        assert _check("next_step", step) is not None
-        assert _check("move_card", step) is not None
+    assert _check("next_step", "passive") is not None
+    assert _check("move_card", "passive") is not None
 
 
 def test_read_only_lifecycle_and_setup_tools_never_fire():
@@ -150,36 +159,55 @@ def test_read_only_lifecycle_and_setup_tools_never_fire():
         "set_player_count_action",
         "mulligan_draw_hand",
     ):
-        assert _check(tool_name, "2.1") is None, tool_name
-        assert _check(tool_name, "0.0") is None, tool_name
+        assert _check(tool_name, "villain") is None, tool_name
+        assert _check(tool_name, "passive") is None, tool_name
 
 
-def test_an_unknown_or_missing_step_id_never_fires():
-    # The engine writes the step id as an integer during setup (`0`); an
-    # unrecognised step proves nothing and must not manufacture a finding.
-    for step_id in (None, 0, "0", "99", "", "player"):
-        assert _check("next_step", step_id) is None
-        assert _check("move_card", step_id) is None
+def test_an_unknown_or_missing_phase_never_fires():
+    for phase in (None, "unknown", "not-a-phase"):
+        assert _check("next_step", phase) is None
+        assert _check("move_card", phase) is None
 
 
-def test_phase_of_classifies_the_known_phases():
-    assert phase_of("1.1") == "player"
-    assert phase_of("1.2") == "player"
-    assert phase_of("2.1") == "villain"
-    assert phase_of("2.5") == "villain"
-    assert phase_of("0.0") == "passive"
-    assert phase_of("0.1") == "passive"
-    assert phase_of(None) == "unknown"
-    assert phase_of(0) == "unknown"
-    assert phase_of("9.9") == "unknown"
+def test_a_pending_seat_can_act_even_when_the_phase_is_not_player():
+    assert (
+        _check(
+            "choose_game_option",
+            "villain",
+            pending_seats=["player1"],
+            platform=PLATFORM_MARVEL_LCG,
+        )
+        is None
+    )
+    assert (
+        _check(
+            "choose_game_option",
+            "passive",
+            pending_seats=["player1"],
+            platform=PLATFORM_MARVEL_LCG,
+        )
+        is None
+    )
+
+
+def test_a_seat_absent_from_pending_decisions_gets_a_finding():
+    violation = _check(
+        "choose_game_option",
+        "player",
+        caller="player1",
+        pending_seats=["player2"],
+        platform=PLATFORM_MARVEL_LCG,
+    )
+    assert violation is not None
+    assert violation.kind == "action"
 
 
 def test_the_violation_names_the_board_as_it_was():
-    violation = _check("modify_tokens", "2.3")
+    violation = _check("modify_tokens", "villain", step_id="opaque-step")
     assert isinstance(violation, TurnAuthorityViolation)
-    assert violation.step_id == "2.3"
+    assert violation.step_id == "opaque-step"
     assert violation.phase == "villain"
-    assert "step 2.3" in violation.message
+    assert "step opaque-step" in violation.message
 
 
 # ---------------------------------------------------------------------------
@@ -405,12 +433,12 @@ async def test_an_out_of_turn_phase_advance_records_a_finding(
 ):
     """Ticket scenario: a seat calling `next_step` out of turn, recorded.
 
-    The board is in the villain phase (step `2.1`); the seat's call is not
+    The board is in the neutral villain phase; the seat's call is not
     refused — the fake records the dispatch — but the finding store records it
     against the seat, open, on the orchestrating session.
     """
     orchestrator, seat = await _prepare_seat_session(repository)
-    mcp = StatefulMcp(state={"stepId": "2.1", "roundNumber": 3})
+    mcp = StatefulMcp(state={"stepId": "2.1", "phase": "villain", "playRound": 3})
 
     stored_job, _ = await _run_seat_tool_call(
         repository,
@@ -439,7 +467,7 @@ async def test_an_out_of_turn_player_end_phase_records_a_finding(
 ):
     """Ticket scenario: `player_end_phase` called while the villain resolves."""
     orchestrator, seat = await _prepare_seat_session(repository)
-    mcp = StatefulMcp(state={"stepId": "2.5", "roundNumber": 2})
+    mcp = StatefulMcp(state={"stepId": "2.5", "phase": "villain", "playRound": 2})
 
     stored_job, _ = await _run_seat_tool_call(
         repository,
@@ -461,7 +489,7 @@ async def test_an_action_tool_during_the_villain_phase_records_a_finding(
 ):
     """Ticket scenario: a seat playing cards while the villain phase resolves."""
     orchestrator, seat = await _prepare_seat_session(repository)
-    mcp = StatefulMcp(state={"stepId": "2.2", "roundNumber": 1})
+    mcp = StatefulMcp(state={"stepId": "2.2", "phase": "villain", "playRound": 1})
 
     stored_job, _ = await _run_seat_tool_call(
         repository,
@@ -500,7 +528,7 @@ async def test_the_finding_is_announced_live_and_durably(
     )
     assert orchestrating_job is not None
     await repository.set_parent_job_id(job.id, orchestrating_job.id)
-    mcp = StatefulMcp(state={"stepId": "2.1"})
+    mcp = StatefulMcp(state={"stepId": "2.1", "phase": "villain"})
 
     claimed = await repository.claim_next_job()
     assert claimed is not None and claimed.id == job.id
@@ -568,7 +596,7 @@ async def test_the_finding_emits_the_illegal_action_history_event(
             return kwargs
 
     _, seat = await _prepare_seat_session(repository)
-    mcp = StatefulMcp(state={"stepId": "2.1", "roundNumber": 4})
+    mcp = StatefulMcp(state={"stepId": "2.1", "phase": "villain", "playRound": 4})
 
     stored_job, _ = await _run_seat_tool_call(
         repository,
@@ -593,7 +621,7 @@ async def test_acting_during_the_player_phase_records_nothing(
     repository: Repository, skill_registry: SkillRegistry
 ):
     _, seat = await _prepare_seat_session(repository)
-    mcp = StatefulMcp(state={"stepId": "1.1", "roundNumber": 2})
+    mcp = StatefulMcp(state={"stepId": "1.1", "phase": "player", "playRound": 2})
 
     stored_job, _ = await _run_seat_tool_call(
         repository,
@@ -619,7 +647,7 @@ async def test_a_read_only_call_during_the_villain_phase_records_nothing(
     repository: Repository, skill_registry: SkillRegistry
 ):
     _, seat = await _prepare_seat_session(repository)
-    mcp = StatefulMcp(state={"stepId": "2.2"})
+    mcp = StatefulMcp(state={"stepId": "2.2", "phase": "villain"})
 
     stored_job, _ = await _run_seat_tool_call(
         repository,
@@ -645,7 +673,7 @@ async def test_a_seat_with_no_game_attached_records_nothing(
     repository: Repository, skill_registry: SkillRegistry
 ):
     _, seat = await _prepare_seat_session(repository, game_id=None)
-    mcp = StatefulMcp(state={"stepId": "2.1"})
+    mcp = StatefulMcp(state={"stepId": "2.1", "phase": "villain"})
 
     stored_job, _ = await _run_seat_tool_call(
         repository,
@@ -713,7 +741,7 @@ async def test_the_orchestrating_job_is_not_turn_checked(
     await repository.enable_mcp_for_session(
         orchestrator.id, "game-service", enabled=True
     )
-    mcp = StatefulMcp(state={"stepId": "2.1"})
+    mcp = StatefulMcp(state={"stepId": "2.1", "phase": "villain"})
 
     job = await repository.enqueue_prompt_job(
         orchestrator.id,

@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_orchestrator.runtime.platforms import (
+    DEFAULT_PLATFORM,
+    PLATFORM_MARVEL_LCG,
+    normalize_platform,
+)
 from agent_orchestrator.runtime.skills import SkillRegistry
 
 BASE_SYSTEM_PROMPT_PARTS = (
@@ -221,8 +226,9 @@ def build_subagent_system_prompt(
     assignments: list[Any],
     *,
     persona_prompt: str | None = None,
+    platform: str = DEFAULT_PLATFORM,
 ) -> str:
-    parts = list(SUBAGENT_SYSTEM_PROMPT_PARTS)
+    parts = _platform_prompt_parts(SUBAGENT_SYSTEM_PROMPT_PARTS, platform)
     persona_section = _persona_section(persona_prompt)
     if persona_section is not None:
         parts.append(persona_section)
@@ -238,6 +244,7 @@ def build_system_prompt(
     *,
     personas: list[Any] | None = None,
     persona_prompt: str | None = None,
+    platform: str = DEFAULT_PLATFORM,
 ) -> str:
     """The system prompt for a top-level job.
 
@@ -247,7 +254,7 @@ def build_system_prompt(
     still override. ``personas`` is the separate catalogue of personas this
     session may DELEGATE to.
     """
-    parts = list(BASE_SYSTEM_PROMPT_PARTS)
+    parts = _platform_prompt_parts(BASE_SYSTEM_PROMPT_PARTS, platform)
     persona_section = _persona_section(persona_prompt)
     if persona_section is not None:
         parts.append(persona_section)
@@ -258,3 +265,51 @@ def build_system_prompt(
     if skills_section is not None:
         parts.append(skills_section)
     return "\n\n".join(parts)
+
+
+def _platform_prompt_parts(parts: tuple[str, ...], platform: str) -> list[str]:
+    """Render platform guidance without changing the legacy default prompt.
+
+    The default path returns the original tuple verbatim. This is deliberate:
+    existing DragnCards sessions and the prompt snapshot tests depend on its
+    exact wording and ordering.
+    """
+
+    resolved = normalize_platform(platform)
+    if resolved == DEFAULT_PLATFORM:
+        return list(parts)
+
+    rendered: list[str] = []
+    for part in parts:
+        current = part.replace(
+            "played on the DragnCards digital tabletop",
+            "played on the marvel-lcg rules engine",
+        )
+        if resolved == PLATFORM_MARVEL_LCG:
+            # Keep the platform-specific prompt from teaching a model to call
+            # DragnCards-only tools. The neutral state and option tools are the
+            # only game-service surface named for this platform.
+            for old, new in (
+                ("`search_cards_marvel_champions`", "`list_game_options`"),
+                ("`get_game_state_snapshot`", "`get_game_state`"),
+                ("`export_game_state_snapshot`", "`get_game_state`"),
+                ("`load_game_state_snapshot`", "`get_game_state`"),
+                ("`reset_game`", "`get_game_state`"),
+                ("`list_cards`", "`list_game_options`"),
+                ("`load_cards`", "`list_game_options`"),
+                ("card search results", "option lists"),
+                ("card loads", "option reads"),
+            ):
+                current = current.replace(old, new)
+        rendered.append(current)
+
+    rendered.append(
+        "## Platform: marvel-lcg\n\n"
+        "This session is bound to `marvel-lcg`. Read the neutral simplified game "
+        "state, then call `list_game_options` for the seat being asked and submit "
+        "one engine-validated choice with `choose_game_option`. Option ids, not "
+        "option names, identify choices; target-count ranges are authoritative. "
+        "Turns and phases advance as part of the engine's enumerated options, so "
+        "do not call DragnCards typed actions or invent a phase-advancing tool."
+    )
+    return rendered

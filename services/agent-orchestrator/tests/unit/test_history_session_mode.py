@@ -24,6 +24,7 @@ from agent_orchestrator.runtime.session_modes import (
     SESSION_MODE_CHAT,
     SESSION_MODE_ORCHESTRATED,
 )
+from agent_orchestrator.runtime.platforms import PLATFORM_MARVEL_LCG
 
 
 def _move(**overrides):
@@ -64,6 +65,28 @@ def test_a_chat_user_prompt_payload_is_byte_identical_to_the_pre_mode_payload():
 
 def test_the_chat_default_matches_an_explicit_chat_mode():
     assert _move()["payload"] == _move(session_mode=SESSION_MODE_CHAT)["payload"]
+
+
+def test_platform_is_carried_as_a_top_level_envelope_field():
+    move = _move(platform=PLATFORM_MARVEL_LCG)
+    prompt = HistoryEventEmitter.build_user_prompt_envelope(
+        game_id="game-1",
+        prompt="play",
+        producer_offset=2,
+        platform=PLATFORM_MARVEL_LCG,
+    )
+    finding = HistoryEventEmitter.build_illegal_action_envelope(
+        game_id="game-1",
+        player="player1",
+        violation="illegal action",
+        required_undo="undo it",
+        producer_offset=3,
+        platform=PLATFORM_MARVEL_LCG,
+    )
+
+    assert move["platform"] == PLATFORM_MARVEL_LCG
+    assert prompt["platform"] == PLATFORM_MARVEL_LCG
+    assert finding["platform"] == PLATFORM_MARVEL_LCG
 
 
 def test_the_stamp_helper_writes_nothing_for_chat_and_the_mode_otherwise():
@@ -121,6 +144,7 @@ async def test_the_emitted_move_and_prompt_publish_the_mode():
         game_id="game-1",
         prompt="play a turn",
         session_mode=SESSION_MODE_ORCHESTRATED,
+        platform=PLATFORM_MARVEL_LCG,
     )
     await emitter.emit_agent_move(
         game_id="game-1",
@@ -130,12 +154,15 @@ async def test_the_emitted_move_and_prompt_publish_the_mode():
         conversation_context=[],
         player="player1",
         session_mode=SESSION_MODE_ORCHESTRATED,
+        platform=PLATFORM_MARVEL_LCG,
     )
 
     prompt_event, move_event = bus.events
     assert prompt_event["payload"]["session_mode"] == SESSION_MODE_ORCHESTRATED
     assert move_event["payload"]["session_mode"] == SESSION_MODE_ORCHESTRATED
     assert move_event["payload"]["player"] == "player1"
+    assert prompt_event["platform"] == PLATFORM_MARVEL_LCG
+    assert move_event["platform"] == PLATFORM_MARVEL_LCG
 
 
 @pytest.mark.asyncio
@@ -153,6 +180,7 @@ async def test_a_chat_session_publishes_no_mode_key_on_either_event():
     )
 
     for envelope in bus.events:
+        assert envelope["platform"] == "dragncards"
         assert "session_mode" not in envelope["payload"]
 
 
@@ -180,6 +208,7 @@ async def test_an_illegal_action_finding_is_an_agent_event_of_its_own_type():
     assert envelope is not None
     assert envelope["actor"] == "agent"
     assert envelope["event_type"] == HISTORY_EVENT_TYPE_ILLEGAL_ACTION
+    assert envelope["platform"] == "dragncards"
     assert envelope["payload"] == {
         "player": "player2",
         "violation": "attacked with an exhausted hero",

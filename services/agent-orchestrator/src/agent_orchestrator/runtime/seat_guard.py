@@ -84,7 +84,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
+
+from agent_orchestrator.runtime.platforms import (
+    DEFAULT_PLATFORM,
+    PLATFORM_DRAGNCARDS,
+    normalize_platform,
+)
 
 # The seat a value names, when the value is nothing but a seat id. Case-insensitive
 # on purpose: the guard is a deny-list, so `PLAYER2` must not be a way around it.
@@ -152,6 +158,8 @@ def check_seat_scope(
     caller_player_id: str,
     tool_name: str,
     arguments: dict[str, Any],
+    platform: str = DEFAULT_PLATFORM,
+    game_state: Mapping[str, Any] | None = None,
 ) -> SeatScopeViolation | None:
     """The first foreign seat named in ``arguments``, or ``None`` if there is none.
 
@@ -162,6 +170,7 @@ def check_seat_scope(
     """
     if not isinstance(arguments, dict):
         return None
+    platform = normalize_platform(platform)
     budget = _Budget()
     return _walk(
         node=arguments,
@@ -171,6 +180,8 @@ def check_seat_scope(
         budget=budget,
         caller_player_id=caller_player_id,
         tool_name=tool_name,
+        platform=platform,
+        card_owners=_card_owners(game_state) if platform != PLATFORM_DRAGNCARDS else {},
     )
 
 
@@ -196,6 +207,9 @@ def _walk(
     budget: _Budget,
     caller_player_id: str,
     tool_name: str,
+    platform: str = DEFAULT_PLATFORM,
+    card_owners: dict[str, str] | None = None,
+    target_context: bool = False,
 ) -> SeatScopeViolation | None:
     if depth > MAX_TRAVERSAL_DEPTH or not budget.spend():
         return None
@@ -209,7 +223,11 @@ def _walk(
             # and the key is the only place it says so. Checked before descending,
             # so the refusal names the key rather than something inside the value
             # it guards, and so first-violation-wins ordering stays depth-first.
-            foreign_key = _foreign_seat_in_text(child_key, caller_player_id)
+            foreign_key = _foreign_seat_in_text(
+                child_key,
+                caller_player_id,
+                allow_group_ids=platform == PLATFORM_DRAGNCARDS,
+            )
             if foreign_key is not None:
                 return SeatScopeViolation(
                     caller_player_id=caller_player_id,
@@ -226,6 +244,9 @@ def _walk(
                 budget=budget,
                 caller_player_id=caller_player_id,
                 tool_name=tool_name,
+                platform=platform,
+                card_owners=card_owners,
+                target_context=target_context or _is_target_argument(child_key),
             )
             if violation is not None:
                 return violation
@@ -242,11 +263,26 @@ def _walk(
                 budget=budget,
                 caller_player_id=caller_player_id,
                 tool_name=tool_name,
+                platform=platform,
+                card_owners=card_owners,
+                target_context=target_context,
             )
             if violation is not None:
                 return violation
         return None
-    foreign = _foreign_seat(key=key, value=node, caller_player_id=caller_player_id)
+    foreign = _foreign_seat(
+        key=key,
+        value=node,
+        caller_player_id=caller_player_id,
+        allow_group_ids=platform == PLATFORM_DRAGNCARDS,
+    )
+    if foreign is None and target_context and card_owners:
+        foreign = _foreign_card_owner(
+            key=key,
+            value=node,
+            caller_player_id=caller_player_id,
+            card_owners=card_owners,
+        )
     if foreign is None:
         return None
     return SeatScopeViolation(
@@ -265,20 +301,28 @@ def _reported_value(value: Any) -> str:
     return f"{text[:MAX_REPORTED_VALUE_LENGTH]}…"
 
 
-def _foreign_seat(*, key: str | None, value: Any, caller_player_id: str) -> str | None:
+def _foreign_seat(
+    *,
+    key: str | None,
+    value: Any,
+    caller_player_id: str,
+    allow_group_ids: bool = True,
+) -> str | None:
     """The seat this scalar names, when that seat is not the caller's.
 
     ``bool`` is excluded before the integer check because it is an ``int`` in
     Python, and ``True`` would otherwise read as seat 1 under a name like
     ``player``.
     """
-    named = _named_seat(key=key, value=value)
+    named = _named_seat(key=key, value=value, allow_group_ids=allow_group_ids)
     if named is None or named == _canonical_seat(caller_player_id):
         return None
     return named
 
 
-def _foreign_seat_in_text(text: str, caller_player_id: str) -> str | None:
+def _foreign_seat_in_text(
+    text: str, caller_player_id: str, *, allow_group_ids: bool = True
+) -> str | None:
     """The foreign seat a bare string names, by seat id or owned-group id.
 
     Used for mapping keys. Deliberately narrower than :func:`_foreign_seat`: it
@@ -288,17 +332,19 @@ def _foreign_seat_in_text(text: str, caller_player_id: str) -> str | None:
     make every ordinary integer-keyed mapping a refusal, which widens the
     deny-list into false positives rather than closing a hole.
     """
-    named = _seat_from_string(text)
+    named = _seat_from_string(text, allow_group_ids=allow_group_ids)
     if named is None or named == _canonical_seat(caller_player_id):
         return None
     return named
 
 
-def _named_seat(*, key: str | None, value: Any) -> str | None:
+def _named_seat(
+    *, key: str | None, value: Any, allow_group_ids: bool = True
+) -> str | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, str):
-        seat = _seat_from_string(value)
+        seat = _seat_from_string(value, allow_group_ids=allow_group_ids)
         if seat is not None:
             return seat
         return _seat_from_index(value) if _is_player_argument(key) else None
@@ -307,10 +353,12 @@ def _named_seat(*, key: str | None, value: Any) -> str | None:
     return None
 
 
-def _seat_from_string(value: str) -> str | None:
+def _seat_from_string(value: str, *, allow_group_ids: bool = True) -> str | None:
     """The seat a string value names, by seat id or by owned-group id."""
     text = value.strip()
-    match = SEAT_ID_PATTERN.match(text) or PLAYER_GROUP_PATTERN.match(text)
+    match = SEAT_ID_PATTERN.match(text)
+    if match is None and allow_group_ids:
+        match = PLAYER_GROUP_PATTERN.match(text)
     return f"player{match.group(1)}" if match is not None else None
 
 
@@ -328,3 +376,91 @@ def _is_player_argument(key: str | None) -> bool:
 
 def _canonical_seat(player_id: str) -> str:
     return player_id.strip().lower()
+
+
+_TARGET_ARGUMENT_NAMES = frozenset(
+    {
+        "target",
+        "targets",
+        "targetid",
+        "targetids",
+        "targetcard",
+        "targetcards",
+        "cardid",
+        "cardids",
+        "instanceid",
+        "instanceids",
+        "card_id",
+        "card_ids",
+        "instance_id",
+        "instance_ids",
+    }
+)
+_CARD_ID_KEYS = frozenset(
+    {
+        "id",
+        "cardid",
+        "instanceid",
+        "card_id",
+        "instance_id",
+    }
+)
+
+
+def _is_target_argument(key: str) -> bool:
+    return key.lower() in _TARGET_ARGUMENT_NAMES
+
+
+def _foreign_card_owner(
+    *,
+    key: str | None,
+    value: Any,
+    caller_player_id: str,
+    card_owners: dict[str, str],
+) -> str | None:
+    """Resolve a marvel-lcg card id through normalised zone ownership."""
+
+    key_name = key.lower() if key is not None else ""
+    if key_name not in _CARD_ID_KEYS and key_name not in {
+        "target",
+        "targets",
+        "targetid",
+        "targetids",
+    }:
+        return None
+    owner = card_owners.get(str(value))
+    if owner is None or owner == _canonical_seat(caller_player_id):
+        return None
+    return owner
+
+
+def _card_owners(game_state: Mapping[str, Any] | None) -> dict[str, str]:
+    """Build a card-id-to-seat map from the neutral zone projection.
+
+    The map is intentionally derived from the normalised state, not from a
+    marvel-lcg object-id spelling. Shared and unattributed zones are omitted,
+    which leaves those targets available to the caller as the neutral contract
+    requires.
+    """
+
+    if not isinstance(game_state, Mapping):
+        return {}
+    zones = game_state.get("zones")
+    if not isinstance(zones, Mapping):
+        return {}
+    owners: dict[str, str] = {}
+    for zone_name, cards in zones.items():
+        if not isinstance(zone_name, str):
+            continue
+        match = re.match(r"^player([1-4])(?:[A-Z].*)?$", zone_name)
+        if match is None or not isinstance(cards, list):
+            continue
+        owner = f"player{match.group(1)}"
+        for card in cards:
+            if not isinstance(card, Mapping):
+                continue
+            for key in ("id", "instanceId", "cardId", "instance_id"):
+                card_id = card.get(key)
+                if card_id is not None:
+                    owners[str(card_id)] = owner
+    return owners

@@ -1,6 +1,6 @@
 # DragncardsAI
 
-An LLM-powered bot that plays **Marvel Champions** on [DragnCards](https://github.com/seastan/dragncards).
+An LLM-powered bot that plays **Marvel Champions** on [DragnCards](https://github.com/seastan/dragncards) and `marvel-lcg`.
 
 ## Quick start
 
@@ -15,6 +15,7 @@ docker compose up -d
 | Frontend           | http://localhost:3000           | —                          |
 | Backend API        | http://localhost:4000           | —                          |
 | Game Service       | http://localhost:4001           | http://localhost:4001/mcp/ |
+| marvel-lcg Engine  | http://localhost:4006           | —                          |
 | Agent Orchestrator | http://localhost:4002           | http://localhost:4002/mcp/ |
 | History Service    | http://localhost:4004           | http://localhost:4004/mcp/ |
 | Eval Service       | http://localhost:4005           | http://localhost:4005/mcp/ |
@@ -29,6 +30,8 @@ Compose profile, set a non-empty `MARVEL_LCG_PASSWORD`, and configure
 `MARVEL_LCG_HTTP_URL` (normally `http://marvel-lcg:2345` inside Compose). DragnCards
 remains the default platform and uses typed actions; Marvel LCG sessions use
 enumerated option endpoints.
+
+The `marvel-lcg` engine is profile-gated and is started on port 4006 only when that platform is enabled. It is an internal game engine, not a first-party service proxied by the dashboard.
 
 The Swagger playground merges the OpenAPI document of **every** first-party service —
 game-service, agent-orchestrator, history-service and eval-service — into one index, and
@@ -50,6 +53,7 @@ flowchart LR
     Backend["dragncards-backend<br/>port 4000"]
     PG1["dragncards-postgres<br/>port 5440"]
     GameSvc["game-service<br/>port 4001"]
+    LcgEngine["marvel-lcg engine<br/>port 4006<br/>(profile-gated)"]
     OrcPg["agent-orchestrator-postgres<br/>port 5441"]
     AgentOrch["agent-orchestrator<br/>port 4002"]
     HistorySvc["history-service<br/>port 4004"]
@@ -66,7 +70,7 @@ flowchart LR
     ExtAI["External AI Providers"]
 
     class Frontend,Backend,PG1 dragncards
-    class GameSvc,AgentOrch,HistorySvc,EvalSvc,Dashboard ai
+    class GameSvc,AgentOrch,HistorySvc,EvalSvc,Dashboard,LcgEngine ai
     class Bifrost,OtelLGTM,Valkey1,Valkey2,OrcPg,HistPg,EvalPg,LMProxy infra
     class HostLM,ExtAI external
 
@@ -77,6 +81,7 @@ flowchart LR
     Dashboard --> EvalSvc
 
     AgentOrch --> GameSvc
+    GameSvc --> LcgEngine
     AgentOrch --> Bifrost
     AgentOrch --> OrcPg
     AgentOrch --> Valkey2
@@ -110,6 +115,12 @@ The system runs DragnCards (frontend + backend) with PostgreSQL. The game-servic
 The game-service and agent-orchestrator publish game/agent events onto a Valkey `history:ingest` stream. The **history-service** ingests that stream into its own PostgreSQL as an ordered, per-game event store with periodic snapshots (fetched from the game-service), and can restore a session to any past moment (seeding a resumed agent-orchestrator session). A recorded game can also be exported to, and imported from, a human-readable NDJSON bundle (see [`services/history-service/README.md`](services/history-service/README.md#history-bundles-export--import)). The **eval-service** reads recorded games from the history-service and produces hierarchical per-player move/round/game evaluations, judging via Bifrost and writing verdicts back to the history-service; it uses its own dedicated PostgreSQL. A recorded event states the session mode it came from, and an orchestrated seat's move states its seat, so a stored timeline says whether it was produced by one chat agent or by a table of per-seat agents without that having to be inferred; the judge is told the same, and told that each seat held its own separate context, so it does not mark a seat down for information it could not have seen. A round's illegal-action findings reach the judge as recorded evidence to weigh, not as a verdict. A move is judged in the context of the ROUND it belongs to, not as an isolated action, because a single play is normally several recorded actions (play the card, exhaust to pay the cost, assign the damage) and grading one of them alone marks a good play down once per action. Rounds are selected by round number from `GET /games/{game_id}/rounds` rather than by naming a move inside them, and multiple targets are graded in parallel under durable per-game and global concurrency caps — a freed slot is refilled as soon as any one evaluation finishes rather than waiting out the slowest of a batch, and a claim left behind by a killed worker is reclaimed once its lease expires instead of consuming that capacity forever. The dashboard provides a UI over all of these — live play, game history, evaluations, and persona authoring.
 
 The Python services (agent-orchestrator, history-service, eval-service) share the internal **dragncards-common** library (schema-migration runner, RESP/Valkey client, typed Bifrost errors, an httpx base client, the OpenTelemetry bootstrap, and the MCP-surface bootstrap). All services send telemetry to otel-lgtm for observability.
+
+The game-service selects a platform driver for each session. DragnCards remains the playtable path: it accepts DragnLang actions and plugin automation. `marvel-lcg` is the rules-enforcing path: it exposes engine-validated legal options, which the agent chooses by option id rather than by composing DragnCards actions. Both paths produce the same platform-neutral simplified state for the downstream orchestrator, history, evaluation, and dashboard consumers.
+
+### marvel-lcg attribution and licensing
+
+This integration credits the **Irefrixs Team**, the original authors of the `irefrixs/marvel-lcg` project, and uses the maintained `z00lus/marvel-lcg` Ronin Edition fork. The engine repository has no `LICENSE` file, so this project does not assume a general redistribution license; the integration relies on the developer's explicit written permission recorded in [issue #3](https://github.com/irefrixs/marvel-lcg/issues/3). `marvel-lcg` is a fan implementation of Marvel/FFG intellectual property; this project claims no ownership of that intellectual property. Card art is fetched from Cerebro at runtime and is never redistributed by this repository.
 
 ## MCP surfaces
 

@@ -5,13 +5,18 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, Protocol, TypedDict
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from agent_orchestrator.runtime.session_modes import (
     SESSION_MODE_CHAT,
     SESSION_MODE_ORCHESTRATED,
+)
+from agent_orchestrator.runtime.platforms import (
+    DEFAULT_PLATFORM,
+    PLATFORM_MARVEL_LCG,
+    normalize_platform,
 )
 from agent_orchestrator.storage.valkey import RespConnection
 from agent_orchestrator.telemetry import get_tracer
@@ -30,6 +35,16 @@ HISTORY_ACTOR_USER = "user"
 # it, and eval-service's ``is_agent_move`` predicate is what keeps it from being
 # graded as a move.
 HISTORY_EVENT_TYPE_ILLEGAL_ACTION = "illegal_action"
+MARVEL_LCG_OPTION_PAYLOAD_KEY = "marvel_lcg_option"
+
+
+class MarvelLcgOptionIdentity(TypedDict):
+    """The durable option identity consumed by platform-aware evaluation."""
+
+    id: str | int
+    name: str
+    event: str
+
 
 # Resolution states an illegal-action finding can be recorded in.
 ILLEGAL_ACTION_STATUS_OPEN = "open"
@@ -37,6 +52,7 @@ ILLEGAL_ACTION_STATUS_RESOLVED = "resolved"
 
 # Keys used inside AgentSession.metadata_json to carry history-related state.
 SESSION_GAME_ID_KEY = "game_id"
+SESSION_PLATFORM_KEY = "platform"
 SESSION_RESTORED_CONTEXT_KEY = "restored_conversation_context"
 
 
@@ -68,6 +84,7 @@ _NON_MUTATING_GAME_SERVICE_TOOLS = frozenset(
         "get_gui_update",
         "get_alerts",
         "get_session_actions",
+        "list_game_options",
         "list_games",
         "list_actions",
         "list_card_providers",
@@ -80,6 +97,31 @@ _NON_MUTATING_GAME_SERVICE_TOOLS = frozenset(
 # used to capture the canonical game_id for an agent session.
 _GAME_ID_SOURCE_TOOLS = frozenset(
     {"create_game", "attach_game", "lookup_session_by_slug"}
+)
+
+# Single-session read results may carry their own id and can therefore be used
+# to detect a result that disagrees with the call's target. ``list_games`` is
+# intentionally excluded because it contains multiple session records.
+_GAME_ID_RESULT_SOURCE_TOOLS = frozenset(
+    {
+        *_GAME_ID_SOURCE_TOOLS,
+        "get_game_state",
+        "get_session_actions",
+        "list_game_options",
+    }
+)
+
+# Read-only responses can identify the platform of an already-created game.  Keep
+# this list explicit: a nested ``platform`` in an unrelated card or catalog result
+# must not bind an agent session to a game platform.
+_GAME_PLATFORM_SOURCE_TOOLS = frozenset(
+    {
+        *_GAME_ID_SOURCE_TOOLS,
+        "get_game_state",
+        "get_session_actions",
+        "list_game_options",
+        "list_games",
+    }
 )
 
 
@@ -139,57 +181,234 @@ def extract_game_id(
 ) -> str | None:
     """Best-effort extraction of the game-service session id (canonical game_id).
 
-    Conservative by design: the session id is only read from a tool *result*
-    body for the create/attach/lookup lifecycle tools (``_GAME_ID_SOURCE_TOOLS``)
-    whose result is the authoritative carrier of a session id. For every other
-    game-service tool the id is taken solely from the call's own ``session_id``
+    Conservative by design: the session id is read from a tool *result* only
+    for lifecycle tools and single-session reads whose result is an authoritative
+    carrier. ``list_games`` is excluded because it contains multiple rows. For
+    all other tools the id is taken solely from the call's own ``session_id``
     argument — never from arbitrary nested ids in an unrelated result payload
     (which could mis-attribute moves to a session the call never targeted).
     """
     if assignment != "game-service":
         return None
 
-    # Only lifecycle tools' results are trusted to name a session id.
-    if result is not None and tool_name in _GAME_ID_SOURCE_TOOLS:
-        candidate = _game_id_from_result(result)
-        if candidate:
-            return candidate
+    result_id = extract_game_id_from_result(
+        assignment=assignment,
+        tool_name=tool_name,
+        result=result,
+    )
+    if result_id is not None:
+        return result_id
+    return extract_game_id_from_arguments(
+        assignment=assignment,
+        arguments=arguments,
+    )
 
+
+def extract_game_id_from_arguments(
+    *, assignment: str | None, arguments: dict[str, Any]
+) -> str | None:
+    if assignment != "game-service":
+        return None
     argument_id = arguments.get("session_id")
-    if isinstance(argument_id, str) and argument_id:
-        return argument_id
+    return argument_id if isinstance(argument_id, str) and argument_id else None
+
+
+def extract_game_id_from_result(
+    *, assignment: str | None, tool_name: str, result: dict[str, Any] | None
+) -> str | None:
+    if (
+        assignment != "game-service"
+        or result is None
+        or tool_name not in _GAME_ID_RESULT_SOURCE_TOOLS
+    ):
+        return None
+    return _game_id_from_result(result)
+
+
+def extract_game_platform(
+    *,
+    assignment: str | None,
+    tool_name: str,
+    result: dict[str, Any] | None,
+    arguments: dict[str, Any] | None = None,
+    expected_game_id: str | None = None,
+) -> str | None:
+    """Extract a supported platform from a game-service result.
+
+    Lifecycle responses have appeared both as a nested ``session`` object and
+    as a flat session-shaped object. A state read may instead put the platform
+    alongside ``session_id`` or inside ``state``. MCP may carry any shape as
+    JSON text in ``content`` or as structured content, so the decoder accepts
+    all of those equivalent representations.
+
+    When a caller supplies an expected game id, only a matching session record is
+    trusted. This matters for reads such as ``list_games`` that can describe more
+    than one session. A missing or unsupported platform is deliberately returned
+    as ``None``; callers then retain the legacy DragnCards default because there
+    was no supported platform fact to bind.
+    """
+    if (
+        result is None
+        or assignment != "game-service"
+        or tool_name not in _GAME_PLATFORM_SOURCE_TOOLS
+    ):
+        return None
+
+    argument_id = extract_game_id_from_arguments(
+        assignment=assignment,
+        arguments=arguments or {},
+    )
+    result_id = extract_game_id_from_result(
+        assignment=assignment,
+        tool_name=tool_name,
+        result=result,
+    )
+    if argument_id is not None and result_id is not None and argument_id != result_id:
+        return None
+    if expected_game_id is not None and (
+        argument_id not in (None, expected_game_id)
+        or result_id not in (None, expected_game_id)
+    ):
+        return None
+    target_game_id = expected_game_id or argument_id or result_id
+    for decoded in _decoded_result_values(result):
+        session = _session_metadata_from_decoded(decoded)
+
+        # ``list_games`` recursively yields both its outer response and each
+        # session row.  A platform on a row is only useful when that row names
+        # the session we are resolving; otherwise the first unrelated game's
+        # platform could win through the flattened fallback below.  Without an
+        # expected id, no list row is demonstrably associated with this session.
+        if tool_name == "list_games" and (
+            target_game_id is None
+            or session is None
+            or not _session_matches(session, target_game_id)
+        ):
+            continue
+
+        if session is not None and _session_matches(session, target_game_id):
+            platform = _supported_platform(session.get(SESSION_PLATFORM_KEY))
+            if platform is not None:
+                return platform
+
+        # ``get_game_state`` responses commonly look like
+        # ``{"session_id": ..., "state": {"platform": ...}}``. The state
+        # itself is not session-shaped, so associate it with the enclosing id
+        # (or with the read's session_id argument when the response omits it).
+        state = decoded.get("state") if isinstance(decoded, dict) else None
+        if isinstance(state, dict):
+            enclosing_id = _session_id_from_decoded(decoded)
+            if enclosing_id is None:
+                enclosing_id = target_game_id
+            if target_game_id is None or enclosing_id == target_game_id:
+                platform = _supported_platform(state.get(SESSION_PLATFORM_KEY))
+                if platform is not None:
+                    return platform
+                # The neutral game-state contract keeps ``pendingSeats`` only
+                # for the enumerated-option platform. This lets an older
+                # game-service state response identify marvel-lcg even before
+                # its response model carries an explicit platform field.
+                if tool_name == "get_game_state" and "pendingSeats" in state:
+                    return PLATFORM_MARVEL_LCG
+
+        if (
+            tool_name == "get_session_actions"
+            and isinstance(decoded, dict)
+            and (session is None or _session_matches(session, target_game_id))
+        ):
+            plugin_metadata = decoded.get("plugin_metadata")
+            if isinstance(plugin_metadata, dict):
+                platform = _supported_platform(plugin_metadata.get("platform"))
+                if platform is not None:
+                    return platform
+            if decoded.get("plugin_name") == PLATFORM_MARVEL_LCG:
+                return PLATFORM_MARVEL_LCG
+
+        # This operation is only exposed by the marvel-lcg move surface. A
+        # successful response carrying its option list is therefore a read-only
+        # platform fact even when the response model has no platform field.
+        if (
+            tool_name == "list_game_options"
+            and isinstance(decoded, dict)
+            and "options" in decoded
+            and (session is None or _session_matches(session, target_game_id))
+        ):
+            return PLATFORM_MARVEL_LCG
+
+        # Some state/read response models flatten ``platform`` beside the
+        # state and omit ``session_id`` from the response. The tool argument is
+        # still the authoritative target in that shape. If an id is present,
+        # however, it must agree with that target; otherwise this fallback could
+        # re-associate another game's platform with the current session.
+        if target_game_id is not None and isinstance(decoded, dict):
+            decoded_id = _session_id_from_decoded(decoded)
+            if decoded_id is None or decoded_id == target_game_id:
+                platform = _supported_platform(decoded.get(SESSION_PLATFORM_KEY))
+                if platform is not None:
+                    return platform
     return None
 
 
+def _supported_platform(value: Any) -> str | None:
+    if isinstance(value, str) and value in {DEFAULT_PLATFORM, PLATFORM_MARVEL_LCG}:
+        return value
+    return None
+
+
+def _session_matches(session: dict[str, Any], expected_game_id: str | None) -> bool:
+    if expected_game_id is None:
+        return True
+    return session.get("session_id") == expected_game_id
+
+
 def _game_id_from_result(result: dict[str, Any]) -> str | None:
-    content = result.get("content")
-    if not isinstance(content, list):
-        return None
-    for item in content:
-        if not isinstance(item, dict):
-            continue
-        text = item.get("text")
-        if not isinstance(text, str):
-            continue
-        try:
-            decoded = json.loads(text)
-        except ValueError:
-            continue
+    for decoded in _decoded_result_values(result):
         candidate = _session_id_from_decoded(decoded)
         if candidate:
             return candidate
     return None
 
 
-def _session_id_from_decoded(decoded: Any) -> str | None:
+def _decoded_result_values(value: Any):
+    """Yield dictionaries represented by the equivalent MCP result shapes."""
+    pending: list[Any] = [value]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if isinstance(current, str):
+            try:
+                pending.append(json.loads(current))
+            except TypeError, ValueError:
+                continue
+            continue
+        if isinstance(current, dict):
+            identity = id(current)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            yield current
+            pending.extend(current.values())
+            continue
+        if isinstance(current, list):
+            pending.extend(current)
+
+
+def _session_metadata_from_decoded(decoded: Any) -> dict[str, Any] | None:
     if not isinstance(decoded, dict):
         return None
     session = decoded.get("session")
     if isinstance(session, dict):
-        session_id = session.get("session_id")
-        if isinstance(session_id, str) and session_id:
-            return session_id
-    session_id = decoded.get("session_id")
+        return session
+    if "session_id" in decoded:
+        return decoded
+    return None
+
+
+def _session_id_from_decoded(decoded: Any) -> str | None:
+    session = _session_metadata_from_decoded(decoded)
+    if session is None:
+        return None
+    session_id = session.get("session_id")
     if isinstance(session_id, str) and session_id:
         return session_id
     return None
@@ -304,8 +523,17 @@ class HistoryEventEmitter:
         event_type: str = "agent_move",
         player: str | None = None,
         session_mode: str = SESSION_MODE_CHAT,
+        platform: str = DEFAULT_PLATFORM,
+        marvel_lcg_option: MarvelLcgOptionIdentity | None = None,
     ) -> dict[str, Any] | None:
-        """Build and publish an agent move/decision envelope. Best-effort."""
+        """Build and publish an agent move/decision envelope. Best-effort.
+
+        For a Marvel LCG choice, ``marvel_lcg_option`` is the additive payload
+        field with the exact shape ``{"id", "name", "event"}``. The prompt
+        runtime supplies it only after matching a successful
+        ``list_game_options`` result; the option id in the submitted arguments
+        is not enough to populate this field.
+        """
         if not self._enabled:
             return None
         try:
@@ -323,6 +551,8 @@ class HistoryEventEmitter:
                     event_type=event_type,
                     player=player,
                     session_mode=session_mode,
+                    platform=platform,
+                    marvel_lcg_option=marvel_lcg_option,
                 )
                 await self._bus.publish(envelope)
             return envelope
@@ -340,6 +570,7 @@ class HistoryEventEmitter:
         game_id: str,
         prompt: str,
         session_mode: str = SESSION_MODE_CHAT,
+        platform: str = DEFAULT_PLATFORM,
     ) -> dict[str, Any] | None:
         """Build and publish a ``user_prompt`` envelope. Best-effort.
 
@@ -365,6 +596,7 @@ class HistoryEventEmitter:
                     prompt=prompt,
                     producer_offset=producer_offset,
                     session_mode=session_mode,
+                    platform=platform,
                 )
                 await self._bus.publish(envelope)
             return envelope
@@ -388,16 +620,23 @@ class HistoryEventEmitter:
         event_type: str = "agent_move",
         player: str | None = None,
         session_mode: str = SESSION_MODE_CHAT,
+        platform: str = DEFAULT_PLATFORM,
+        marvel_lcg_option: MarvelLcgOptionIdentity | None = None,
     ) -> dict[str, Any]:
         # ``player`` names the seat that made this move in a multi-player
         # orchestrated game. It is omitted entirely for moves that belong to no
         # seat (the orchestrator's own phase and villain automation) so
         # downstream consumers can tell "seat unknown" from "no seat".
         #
+        # ``marvel_lcg_option`` is deliberately separate from ``arguments``: it
+        # is producer-confirmed option metadata for the evaluator, not a second
+        # model-authored representation of the choice.
+        #
         # The mode and the seat are independent, and the combination is what makes
         # the orchestrator's own bookkeeping legible: an orchestrated event with
         # no ``player`` is the coordinating agent acting for the table, which is a
         # different thing from a seat's play and must not be attributed to one.
+        resolved_platform = normalize_platform(platform)
         payload: dict[str, Any] = {
             "intended_action": intended_action,
             "reasoning": reasoning,
@@ -405,12 +644,15 @@ class HistoryEventEmitter:
             "conversation_context": conversation_context,
         }
         stamp_session_mode(payload, session_mode)
+        if marvel_lcg_option is not None and resolved_platform == PLATFORM_MARVEL_LCG:
+            payload[MARVEL_LCG_OPTION_PAYLOAD_KEY] = marvel_lcg_option
         if player:
             payload["player"] = player
         return {
             "envelope_version": ENVELOPE_VERSION,
             "event_id": str(uuid4()),
             "game_id": game_id,
+            "platform": resolved_platform,
             "actor": HISTORY_ACTOR_AGENT,
             "event_type": event_type,
             "payload": payload,
@@ -428,6 +670,7 @@ class HistoryEventEmitter:
         prompt: str,
         producer_offset: int | str,
         session_mode: str = SESSION_MODE_CHAT,
+        platform: str = DEFAULT_PLATFORM,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"prompt": prompt}
         stamp_session_mode(payload, session_mode)
@@ -435,6 +678,7 @@ class HistoryEventEmitter:
             "envelope_version": ENVELOPE_VERSION,
             "event_id": str(uuid4()),
             "game_id": game_id,
+            "platform": normalize_platform(platform),
             "actor": HISTORY_ACTOR_USER,
             "event_type": "user_prompt",
             "payload": payload,
@@ -455,6 +699,7 @@ class HistoryEventEmitter:
         status: str = ILLEGAL_ACTION_STATUS_OPEN,
         resolution_note: str | None = None,
         round_number: int | None = None,
+        platform: str = DEFAULT_PLATFORM,
     ) -> dict[str, Any] | None:
         """Build and publish an ``illegal_action`` finding envelope. Best-effort.
 
@@ -486,6 +731,7 @@ class HistoryEventEmitter:
                     resolution_note=resolution_note,
                     round_number=round_number,
                     producer_offset=producer_offset,
+                    platform=platform,
                 )
                 await self._bus.publish(envelope)
             return envelope
@@ -508,6 +754,7 @@ class HistoryEventEmitter:
         status: str = ILLEGAL_ACTION_STATUS_OPEN,
         resolution_note: str | None = None,
         round_number: int | None = None,
+        platform: str = DEFAULT_PLATFORM,
     ) -> dict[str, Any]:
         # A finding always names a seat — an action with no seat has no seat to
         # hold responsible — so ``player`` is required here rather than optional as
@@ -529,6 +776,7 @@ class HistoryEventEmitter:
             "envelope_version": ENVELOPE_VERSION,
             "event_id": str(uuid4()),
             "game_id": game_id,
+            "platform": normalize_platform(platform),
             "actor": HISTORY_ACTOR_AGENT,
             "event_type": HISTORY_EVENT_TYPE_ILLEGAL_ACTION,
             "payload": payload,
