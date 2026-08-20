@@ -72,9 +72,15 @@ You run a long loop across many rounds. Your context is the scarcest resource in
   JSON object — holding only the facts you need: villain stage and hit points, main scheme threat
   vs. target, which players are defeated, the round number, minions engaged with each seat. The
   payload is then bounded however large the board has grown.
-- Keep a **compact running board summary** in your round log and update it from the seats' reports
-  and your own villain-phase actions. Re-read full state only when the summary may have drifted
-  (after an unexpected result, a failed action, or a scenario-changing encounter card).
+- Keep a **compact running board summary** in your round log, but update its board facts only from
+  a delegated, compact `get_game_state` checkpoint or an action verified against that checkpoint.
+  A seat report records what the seat claims it did; it never establishes card locations, hit
+  points, threat, round, or phase. Take a checkpoint before every player prompt and after every
+  phase-changing or scenario-changing operation.
+- When a checkpoint conflicts with the last verified phase, visible relevant card location, or key
+  total, take **one** fresh delegated state read. Continue only if it establishes one coherent
+  board. If it does not, abort: report the conflict and the last verified board. Do not choose the
+  more convenient value, estimate, or continue to collect turns on an unreliable table.
 - Player agents are subagents: **only their final answer text returns to your context**, not their
   tool results, reasoning, or skill loads. Ask them for a short structured report and nothing else.
 
@@ -147,11 +153,13 @@ player phase, do not prompt another seat. Go straight to the final report in Pha
 
 For each seat, in player order starting from the current first player:
 
-1. Build the turn prompt from the template in `references/player-turn-prompt.md`. It must be fully
-   self-contained — the seat has no memory of previous turns.
+1. Take a delegated state checkpoint, reconcile it as required above, then build the turn prompt
+   from the template in `references/player-turn-prompt.md`. It must be fully self-contained — the
+   seat has no memory of previous turns — and every board fact in it must come from that checkpoint.
 2. `prompt_player_agent(player_id, prompt)` → returns immediately with `{"child_job_id": ...}`.
 3. `wait_for_subagent(child_job_id)` → blocks until that seat finishes and returns its report.
-4. Record the seat's reported actions in the round log and update your board summary.
+4. Record the seat's reported actions as claims in the round log. Do not update board facts from
+   the report; the checkpoint before the next prompt establishes them.
 5. Only then move to the next seat. A seat is done when its report is in your hands.
 
 Skip defeated players. If a seat returns without a `TURN COMPLETE` marker, see **Failure handling**.
@@ -173,7 +181,10 @@ Orchestrator only. No seat advances any part of this.
    in hero form and schemes against a seat in alter-ego form. **Each villain activation gets a boost
    card** (`draw_boost`). Then each minion engaged with that seat activates.
 3. **Deal encounter cards** — one per player, plus one per hazard icon in play, in player order.
-4. **Reveal and resolve** — one card at a time, in player order, by card type.
+4. **Reveal and resolve** — one card at a time, in player order, by card type. Keep an explicit
+   pending-encounter queue; do not end the villain phase while an entry remains in it.
+5. Take a delegated state checkpoint after the queue is empty. If it cannot account for an
+   encountered facedown card or a required effect, abort and report the unresolved encounter state.
 
 > **Boundary case that matters most:** when the villain phase produces a decision that belongs to a
 > *player* — whether to defend an attack, an encounter card where "the revealing player chooses", a
@@ -223,7 +234,8 @@ Round N | First player: playerX
   Board: Villain stage I 22/28 HP | Main scheme 7/12 threat | Minions: Hydra Mercenary -> player2
 ```
 
-Keep it to this scale. Do not paste raw game state into the log.
+Keep it to this scale. Do not paste raw game state into the log. The `Board:` line is always the
+latest verified checkpoint, never an inferred merge of seat reports.
 
 ---
 
@@ -265,8 +277,9 @@ only reason orchestrated mode exists. One substituted turn makes the game unusab
 aborted game is worth more than a falsified one.
 
 If a *game-service* tool call fails (as opposed to a player agent), report the error, state what you
-were trying to do, and retry once. If the board is left in an inconsistent state, delegate a state
-read to a subagent to establish ground truth before continuing.
+were trying to do, and retry once. If the board may be inconsistent, take one fresh delegated state
+read and continue only when it reconciles the last verified checkpoint. Otherwise abort with the
+conflict and last verified board; an unresolved board is not a reason to keep playing cautiously.
 
 ---
 
@@ -286,15 +299,20 @@ judgement, not the runtime's. Two tools record and close that judgement.
    group, how many tokens. "Undo the illegal play" is not actionable; "move Enhanced Reflexes from
    player2's play area to player2's hand and remove the 1 damage it put on the villain" is. Keep the
    returned `finding_id` — nothing lists your open findings back to you.
-3. **The seat performs the undo with its own tools.** It is told about the open finding at the start
-   of every turn it takes until you close it, and it can re-read its own findings mid-turn. You
-   never undo a seat's action for it, for the same reason you never play its turn.
+3. **Send a recovery-only invocation to that seat.** Include the returned `finding_id`, violation,
+   and concrete undo. The seat performs the undo with its own tools, confirms it from state, and
+   reports recovery; it takes no ordinary turn actions in that invocation. You never undo a seat's
+   action for it, for the same reason you never play its turn.
 4. `resolve_illegal_action(finding_id, resolution_note)` — only after you have read the board and
    seen the undo. A seat's report that it undid the action is a claim to check, not the check.
    Resolving without checking is how an illegal board state becomes the official one.
 
-**Exit:** the finding is resolved and the board is legal again. An open finding does not pause the
-round loop — the seat keeps taking turns, and keeps being told about it.
+**Exit:** the finding is resolved and the board is legal again. A recovery-only invocation neither
+grants nor consumes a player turn. If the finding arose from a seat's completed turn report, resume
+the current seat loop with the next seat after recovery; do not replay that seat's ordinary turn.
+The recovered seat receives its next normal turn only when it would ordinarily act in a later
+seat-loop pass, from a new checkpoint. A normal-play prompt lists only findings still open against
+that seat; never repeat a resolved finding as an active constraint.
 
 Refusals you can hit: both tools work only from the orchestrating (top-level) job, so delegate the
 state read and call the tool yourself; `player_id` must be a configured seat, and the error names
