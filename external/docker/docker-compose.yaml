@@ -84,7 +84,7 @@ services:
       - "${MARVEL_LCG_PORT:-4006}:2345"
     environment:
       # No default is intentional: the entrypoint refuses an empty password.
-      MARVEL_LCG_PASSWORD: ${MARVEL_LCG_PASSWORD:-}
+      MARVEL_LCG_PASSWORD: ${MARVEL_LCG_PASSWORD:-password}
     volumes:
       - marvel-lcg-assets:/app/assets
       - marvel-lcg-replays:/app/replays

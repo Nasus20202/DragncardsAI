@@ -3,7 +3,7 @@
 # as the Docker build context. Card art is deliberately not copied into this
 # image; the platform downloads it into the runtime asset volume on demand.
 
-FROM node:22-bookworm-slim AS frontend
+FROM node:24.19.0-alpine AS frontend
 
 WORKDIR /build
 COPY external/marvel-lcg/public/js ./public/js
@@ -11,10 +11,7 @@ COPY external/marvel-lcg/public/js ./public/js
 RUN corepack enable && \
     pnpm dlx --package=typescript tsc --project public/js/tsconfig.json
 
-FROM python:3.12-slim-bookworm
-
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+FROM python:3.14.7-alpine
 
 WORKDIR /app
 
