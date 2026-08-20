@@ -12,6 +12,7 @@ from pydantic import (
 
 from eval_service.schemas.base import StrictRequest
 from eval_service.schemas.verdict import Scope, VerdictPayload
+from eval_service.schemas.history import PLATFORM_DRAGNCARDS, Platform
 
 # Terminal/non-terminal target statuses shared across response models. A target
 # is non-terminal while ``pending`` or ``running``; the rest are terminal.
@@ -140,6 +141,7 @@ class JudgeConfig(StrictRequest):
 
 
 class EvaluationRequestBody(StrictRequest):
+    platform: Platform | None = None
     scope: Scope
     selection: Selection
     force: bool = False

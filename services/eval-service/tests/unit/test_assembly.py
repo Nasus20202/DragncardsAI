@@ -10,7 +10,13 @@ from eval_service.judge.assembly import (
     round_number_of,
     round_of_play,
 )
-from tests.unit.conftest import agent_event, make_event, state_event
+from eval_service.schemas.history import PLATFORM_MARVEL_LCG
+from tests.unit.conftest import (
+    agent_event,
+    make_event,
+    marvel_producer_event,
+    state_event,
+)
 
 
 def _recorded_game(game_id="g1"):
@@ -93,6 +99,104 @@ def test_round_boundary_undetected_when_no_round_numbers():
         assemble_round_input(events, closing_seq=1)
 
 
+def test_malformed_or_missing_marvel_state_is_ignored_without_losing_valid_context():
+    events = [
+        marvel_producer_event(game_id="marvel-malformed", seq=1, state="not a state"),
+        agent_event(game_id="marvel-malformed", seq=2).model_copy(
+            update={"platform": PLATFORM_MARVEL_LCG}
+        ),
+        marvel_producer_event(
+            game_id="marvel-malformed",
+            seq=3,
+            state={"playRound": 1, "phase": "player", "phaseLabel": "Player 1 Turn"},
+            event_type="move",
+        ),
+    ]
+
+    move = assemble_move_input(events, target_seq=2)
+
+    assert move.prior_state is None
+    assert move.resulting_state == events[2].payload["state"]
+    assert detect_round_boundaries(events) == [(1, 1, 3)]
+
+
+def test_marvel_producer_states_keep_round_projection_and_terminal_metadata():
+    current_state = {
+        "playRound": 1,
+        "phase": "player",
+        "phaseLabel": "Player 1 Turn",
+        "players": {"player1": {"handSize": 4}},
+        "zones": {"player1Hand": [{"name": "HIDDEN", "stackSize": 4}]},
+    }
+    terminal_state = {
+        **current_state,
+        "phase": "victory",
+        "phaseLabel": "Victory",
+        "mode": "win",
+    }
+    events = [
+        marvel_producer_event(
+            game_id="marvel-contract",
+            seq=1,
+            state=current_state,
+            event_type="prompt",
+        ),
+        agent_event(game_id="marvel-contract", seq=2).model_copy(
+            update={"platform": PLATFORM_MARVEL_LCG}
+        ),
+        marvel_producer_event(
+            game_id="marvel-contract",
+            seq=3,
+            state=current_state,
+            event_type="move",
+        ),
+        agent_event(game_id="marvel-contract", seq=4).model_copy(
+            update={"platform": PLATFORM_MARVEL_LCG}
+        ),
+        marvel_producer_event(
+            game_id="marvel-contract",
+            seq=5,
+            state=terminal_state,
+            event_type="terminal",
+        ),
+    ]
+
+    move = assemble_move_input(events, target_seq=2)
+    rnd = assemble_round_input(events, closing_seq=5)
+
+    assert detect_round_boundaries(events) == [(1, 1, 5)]
+    assert move.round_number == 1
+    assert move.round_span == (1, 5)
+    assert move.prior_state == current_state
+    assert move.resulting_state == current_state
+    assert rnd.round_number == 1
+    assert rnd.closing_state == terminal_state
+
+
+@pytest.mark.parametrize("terminal_mode", ["win", "loss"])
+def test_native_marvel_terminal_state_closes_the_round_without_payload_status(
+    terminal_mode: str,
+):
+    events = [
+        marvel_producer_event(
+            game_id="marvel-native-terminal",
+            seq=1,
+            state={"round_id": 1, "mode": "in progress"},
+        ),
+        agent_event(game_id="marvel-native-terminal", seq=2).model_copy(
+            update={"platform": PLATFORM_MARVEL_LCG}
+        ),
+        marvel_producer_event(
+            game_id="marvel-native-terminal",
+            seq=3,
+            state={"round_id": 1, "mode": terminal_mode},
+            event_type="terminal",
+        ),
+    ]
+
+    assert detect_round_boundaries(events) == [(1, 1, 3)]
+
+
 def test_assemble_round_input_spans_round_moves():
     events = _recorded_game()
     rnd = assemble_round_input(events, closing_seq=5)
@@ -173,6 +277,119 @@ def test_round_number_of_reads_raw_game_shape():
         payload={"state": {"game": {"roundNumber": 5}}},
     )
     assert round_number_of(raw_state) == 5
+
+
+def test_marvel_round_detection_uses_play_round_without_dragncards_offset():
+    def marvel_state(seq: int, round_id: int, *, status: str = "in progress"):
+        return make_event(
+            game_id="marvel-rounds",
+            seq=seq,
+            actor="game-service",
+            event_type="game_state",
+            payload={"state": {"round_id": round_id}, "status": status},
+        ).model_copy(update={"platform": PLATFORM_MARVEL_LCG})
+
+    events = [
+        marvel_state(1, 1),
+        agent_event(game_id="marvel-rounds", seq=2),
+        marvel_state(3, 2),
+        agent_event(game_id="marvel-rounds", seq=4),
+        marvel_state(5, 2, status="win"),
+    ]
+
+    assert detect_round_boundaries(events) == [(1, 1, 3), (2, 4, 5)]
+
+
+def test_marvel_setup_round_zero_is_not_an_evaluable_round():
+    def marvel_state(seq: int, play_round: int, *, status: str = "in progress"):
+        return make_event(
+            game_id="marvel-setup",
+            seq=seq,
+            actor="game-service",
+            event_type="game_state",
+            payload={"state": {"playRound": play_round}, "status": status},
+        ).model_copy(update={"platform": PLATFORM_MARVEL_LCG})
+
+    events = [
+        marvel_state(1, 0),
+        marvel_state(2, 1),
+        agent_event(game_id="marvel-setup", seq=3),
+        marvel_state(4, 2),
+        agent_event(game_id="marvel-setup", seq=5),
+        marvel_state(6, 2, status="win"),
+    ]
+
+    assert detect_round_boundaries(events) == [(1, 2, 4), (2, 5, 6)]
+
+
+@pytest.mark.parametrize("play_round", [0, -1])
+def test_marvel_setup_only_history_has_no_evaluable_round(play_round: int):
+    events = [
+        make_event(
+            game_id="marvel-setup-only",
+            seq=1,
+            actor="game-service",
+            event_type="game_state",
+            payload={"state": {"playRound": play_round}, "status": "in progress"},
+        ).model_copy(update={"platform": PLATFORM_MARVEL_LCG}),
+        make_event(
+            game_id="marvel-setup-only",
+            seq=2,
+            actor="game-service",
+            event_type="game_state",
+            payload={"state": {"playRound": play_round}, "status": "win"},
+        ).model_copy(update={"platform": PLATFORM_MARVEL_LCG}),
+    ]
+
+    assert detect_round_boundaries(events) == []
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("setup_round", [0, -1])
+def test_marvel_native_setup_round_ids_are_not_evaluable(
+    nested: bool, setup_round: int
+):
+    def marvel_state(seq: int, round_id: int, *, status: str = "in progress"):
+        state = {"world": {"round_id": round_id}} if nested else {"round_id": round_id}
+        return make_event(
+            game_id="marvel-native-setup",
+            seq=seq,
+            actor="game-service",
+            event_type="game_state",
+            payload={"state": state, "status": status},
+        ).model_copy(update={"platform": PLATFORM_MARVEL_LCG})
+
+    events = [
+        marvel_state(1, setup_round),
+        marvel_state(2, 1),
+        agent_event(game_id="marvel-native-setup", seq=3).model_copy(
+            update={"platform": PLATFORM_MARVEL_LCG}
+        ),
+        marvel_state(4, 2),
+        agent_event(game_id="marvel-native-setup", seq=5).model_copy(
+            update={"platform": PLATFORM_MARVEL_LCG}
+        ),
+        marvel_state(6, 2, status="win"),
+    ]
+
+    assert detect_round_boundaries(events) == [(1, 2, 4), (2, 5, 6)]
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_marvel_native_setup_only_history_has_no_evaluable_round(nested: bool):
+    def state(seq: int, *, status: str):
+        round_state = {"world": {"round_id": 0}} if nested else {"round_id": 0}
+        return make_event(
+            game_id="marvel-native-setup-only",
+            seq=seq,
+            actor="game-service",
+            event_type="game_state",
+            payload={"state": round_state, "status": status},
+        ).model_copy(update={"platform": PLATFORM_MARVEL_LCG})
+
+    events = [state(1, status="in progress"), state(2, status="win")]
+
+    assert detect_round_boundaries(events) == []
 
 
 def test_move_context_is_scoped_to_the_moves_round():

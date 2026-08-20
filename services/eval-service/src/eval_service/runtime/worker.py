@@ -247,8 +247,8 @@ class EvaluationWorker:
         if not claimed:
             return 0
         started = 0
-        for game_id, targets in self._group_by_game(claimed).items():
-            events = await self._read_events_or_fail(game_id, targets)
+        for (game_id, platform), targets in self._group_by_game(claimed).items():
+            events = await self._read_events_or_fail(game_id, platform, targets)
             if events is None:
                 continue
             for target in targets:
@@ -267,19 +267,22 @@ class EvaluationWorker:
     @staticmethod
     def _group_by_game(
         claimed: list[EvaluatedTargetRow],
-    ) -> dict[str, list[EvaluatedTargetRow]]:
+    ) -> dict[tuple[str, str], list[EvaluatedTargetRow]]:
         """Group a claim so each game's timeline is read once, not once per target."""
-        by_game: dict[str, list[EvaluatedTargetRow]] = defaultdict(list)
+        by_game: dict[tuple[str, str], list[EvaluatedTargetRow]] = defaultdict(list)
         for target in claimed:
-            by_game[target.game_id].append(target)
+            by_game[(target.game_id, target.platform)].append(target)
         return by_game
 
     async def _read_events_or_fail(
-        self, game_id: str, targets: list[EvaluatedTargetRow]
+        self, game_id: str, platform: str, targets: list[EvaluatedTargetRow]
     ) -> list[StoredEvent] | None:
         """Read a game's timeline, failing its targets if it cannot be read."""
         try:
-            return await self._history.list_all_events(game_id)
+            try:
+                return await self._history.list_all_events(game_id, platform)
+            except TypeError:
+                return await self._history.list_all_events(game_id)
         except Exception as exc:  # noqa: BLE001 - fail this game's targets
             logger.warning("Failed to read history for game=%s: %s", game_id, exc)
             for target in targets:
@@ -327,8 +330,8 @@ class EvaluationWorker:
 
         tasks: list[asyncio.Task[bool]] = []
         # Read each game's timeline once per batch (shared across its targets).
-        for game_id, targets in self._group_by_game(claimed).items():
-            events = await self._read_events_or_fail(game_id, targets)
+        for (game_id, platform), targets in self._group_by_game(claimed).items():
+            events = await self._read_events_or_fail(game_id, platform, targets)
             if events is None:
                 # A failure is a terminal outcome, so the cycle did progress.
                 progressed += len(targets)
@@ -417,6 +420,7 @@ class EvaluationWorker:
                 "eval.scope": target.scope,
                 "eval.target_seq": target.target_seq,
                 "eval.events_considered": len(events),
+                "eval.platform": target.platform,
                 "game.id": target.game_id,
             },
         ) as target_span:
@@ -426,6 +430,7 @@ class EvaluationWorker:
                 evaluated = await self._evaluator.evaluate_target(
                     target_id=target.id,
                     game_id=target.game_id,
+                    platform=target.platform,
                     target_seq=target.target_seq,
                     scope=target.scope,
                     events=events,

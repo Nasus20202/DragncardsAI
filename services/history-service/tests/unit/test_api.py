@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 
 import httpx
 import pytest
@@ -431,6 +432,35 @@ async def test_timeline_lists_entries_without_the_state_bulk(client):
     # The dropped bulk is what makes the listing affordable.
     assert "cardById" not in entry["payload"]["state"]["game"]
     assert "deltas" not in entry["payload"]["state"]
+
+
+@pytest.mark.asyncio
+async def test_marvel_timeline_preserves_round_and_phase_metadata(client):
+    c, _ = client
+    envelope = _envelope(
+        "marvel-timeline",
+        "game-service",
+        0,
+        state={
+            "playRound": 1,
+            "phase": "player",
+            "phaseLabel": "Player 1 Turn",
+            "zones": {"player1Hand": [{"name": "Secret"}]},
+        },
+        status="in progress",
+    )
+    envelope["platform"] = "marvel-lcg"
+    await c.post("/games/marvel-timeline/events", json=envelope)
+
+    body = (await c.get("/games/marvel-timeline/timeline?platform=marvel-lcg")).json()
+    (entry,) = body["events"]
+    assert entry["platform"] == "marvel-lcg"
+    assert entry["payload"]["state"] == {
+        "playRound": 1,
+        "phase": "player",
+        "phaseLabel": "Player 1 Turn",
+    }
+    assert "Secret" not in json.dumps(entry["payload"]["state"])
 
 
 @pytest.mark.asyncio

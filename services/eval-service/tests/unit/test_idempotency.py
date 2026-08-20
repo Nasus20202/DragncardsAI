@@ -93,6 +93,33 @@ async def test_same_seq_different_scope_does_not_collide(repository):
 
 
 @pytest.mark.asyncio
+async def test_same_seq_different_platform_does_not_collide(repository):
+    await _seed_request(repository, request_id="dragncards", game_id="shared")
+    await _seed_request(repository, request_id="marvel", game_id="shared")
+    dragncards = await repository.claim_target(
+        request_id="dragncards",
+        game_id="shared",
+        platform="dragncards",
+        target_seq=5,
+        scope="move",
+        round_span=None,
+        force=False,
+    )
+    marvel = await repository.claim_target(
+        request_id="marvel",
+        game_id="shared",
+        platform="marvel-lcg",
+        target_seq=5,
+        scope="move",
+        round_span=None,
+        force=False,
+    )
+    assert dragncards.claimed is True
+    assert marvel.claimed is True
+    assert dragncards.target_id != marvel.target_id
+
+
+@pytest.mark.asyncio
 async def test_concurrent_claims_resolve_to_single(repository):
     await _seed_request(repository)
 

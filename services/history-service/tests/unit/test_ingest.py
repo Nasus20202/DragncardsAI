@@ -192,11 +192,13 @@ class RecordingSnapshots:
     """Records maybe_snapshot_best_effort calls from the ingester."""
 
     def __init__(self, *, fail: bool = False):
-        self.calls: list[tuple[str, int]] = []
+        self.calls: list[tuple[str, int, str]] = []
         self._fail = fail
 
-    async def maybe_snapshot_best_effort(self, game_id, current_seq):
-        self.calls.append((game_id, current_seq))
+    async def maybe_snapshot_best_effort(
+        self, game_id, current_seq, platform="dragncards"
+    ):
+        self.calls.append((game_id, current_seq, platform))
         return None
 
 
@@ -240,7 +242,30 @@ async def test_ingester_invokes_snapshot_after_commit(repository):
     await ingester.ensure_group()
     await ingester.process_batch()
     # One snapshot evaluation per inserted event, addressed by game_id + seq.
-    assert snapshots.calls == [("g1", 1), ("g1", 2)]
+    assert snapshots.calls == [
+        ("g1", 1, "dragncards"),
+        ("g1", 2, "dragncards"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ingester_forwards_event_platform_to_snapshot(repository):
+    valkey = FakeValkey()
+    envelope = make_envelope("marvel-game", producer_offset=0).model_copy(
+        update={"platform": "marvel-lcg"}
+    )
+    valkey.add(encode_envelope_fields(envelope))
+    snapshots = RecordingSnapshots()
+    ingester = StreamIngester(
+        settings=Settings(),
+        repository=repository,
+        client=valkey,
+        snapshots=snapshots,
+    )
+    await ingester.ensure_group()
+    await ingester.process_batch()
+
+    assert snapshots.calls == [("marvel-game", 1, "marvel-lcg")]
 
 
 @pytest.mark.asyncio
@@ -259,7 +284,7 @@ async def test_ingester_snapshot_not_called_for_duplicate(repository):
     )
     await ingester.ensure_group()
     await ingester.process_batch()
-    assert snapshots.calls == [("g1", 1)]
+    assert snapshots.calls == [("g1", 1, "dragncards")]
 
 
 @pytest.mark.asyncio

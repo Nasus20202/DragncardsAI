@@ -143,6 +143,16 @@ def test_idempotency_key_is_stable_and_scoped():
     assert len(k1) == 64  # sha256 hex
 
 
+def test_idempotency_key_scopes_marvel_lcg_without_rekeying_dragncards():
+    dragncards = verdict_idempotency_key("g1", 12, "move", "eval-1")
+    explicit_default = verdict_idempotency_key(
+        "g1", 12, "move", "eval-1", platform="dragncards"
+    )
+    marvel = verdict_idempotency_key("g1", 12, "move", "eval-1", platform="marvel-lcg")
+    assert explicit_default == dragncards
+    assert marvel != dragncards
+
+
 def test_idempotency_key_same_config_is_stable():
     # Two distinct-but-equal configs must yield the SAME key (identical re-eval
     # still dedupes).

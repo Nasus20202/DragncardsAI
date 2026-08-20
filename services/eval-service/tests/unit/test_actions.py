@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
+
 from eval_service.config import Settings
 from eval_service.judge.actions import (
     DEFAULT_NON_STRATEGIC_ACTIONS,
@@ -7,7 +10,10 @@ from eval_service.judge.actions import (
     non_strategic_reason,
     normalize_action_name,
     parse_action_set,
+    recorded_action,
 )
+from eval_service.schemas.history import PLATFORM_MARVEL_LCG
+from eval_service.schemas.history import StoredEvent
 
 DEFAULT_SET = parse_action_set(DEFAULT_NON_STRATEGIC_ACTIONS)
 
@@ -104,3 +110,114 @@ def test_skipping_can_be_disabled_entirely():
         )
         is None
     )
+
+
+def test_marvel_option_taxonomy_uses_id_name_and_event_without_comma_splitting():
+    identity = {"id": 7, "name": "Play, card", "event": "Player 1 Turn"}
+    configured = parse_action_set(json.dumps(identity))
+
+    assert len(configured) == 1
+    assert non_strategic_reason(identity, configured, PLATFORM_MARVEL_LCG)
+    # The same display name is a different engine choice when its id differs.
+    assert (
+        non_strategic_reason(
+            {"id": 8, "name": "Play, card", "event": "Player 1 Turn"},
+            configured,
+            PLATFORM_MARVEL_LCG,
+        )
+        is None
+    )
+    assert (
+        non_strategic_reason(
+            {"id": 7, "name": "Play, card"},
+            configured,
+            PLATFORM_MARVEL_LCG,
+        )
+        is None
+    )
+
+
+def test_marvel_option_taxonomy_is_separate_from_dragncards_tool_names():
+    assert (
+        non_strategic_reason(
+            "search_cards_marvel_champions",
+            DEFAULT_SET,
+            PLATFORM_MARVEL_LCG,
+        )
+        is None
+    )
+
+
+def test_marvel_recorded_action_is_additive_to_the_legacy_intended_action():
+    identity = {"id": 7, "name": "Play", "event": "Turn"}
+    assert (
+        recorded_action(
+            {"intended_action": "choose_option", "option_identity": identity},
+            PLATFORM_MARVEL_LCG,
+        )
+        == identity
+    )
+    assert (
+        recorded_action(
+            {
+                "intended_action": "choose_option",
+                "arguments": {"option_identity": identity},
+            },
+            PLATFORM_MARVEL_LCG,
+        )
+        == identity
+    )
+    assert (
+        recorded_action(
+            {
+                "intended_action": "choose_option",
+                "marvel_lcg_option": identity,
+            },
+            PLATFORM_MARVEL_LCG,
+        )
+        == identity
+    )
+    assert (
+        recorded_action({"intended_action": "move_card"}, PLATFORM_MARVEL_LCG)
+        == "move_card"
+    )
+
+
+def test_settings_exposes_platform_specific_option_taxonomy():
+    settings = Settings(
+        eval_judge_model="p/m",
+        eval_non_strategic_marvel_options='{"id":7,"name":"Play","event":"Turn"}',
+    )
+    assert len(settings.non_strategic_marvel_options) == 1
+
+
+def test_orchestrator_marvel_option_envelope_reaches_recording_and_taxonomy():
+    now = datetime.now(timezone.utc).isoformat()
+    event = StoredEvent.model_validate(
+        {
+            "event_id": "evt-7",
+            "game_id": "game-1",
+            "platform": PLATFORM_MARVEL_LCG,
+            "seq": 7,
+            "envelope_version": 1,
+            "actor": "agent",
+            "event_type": "agent_move",
+            "payload": {
+                "intended_action": "choose_option",
+                "marvel_lcg_option": {
+                    "option_id": 7,
+                    "option_name": "Play",
+                    "event_type": "Player Turn",
+                },
+                "arguments": {"card_id": "ally-1"},
+            },
+            "occurred_at": now,
+        }
+    )
+    expected = {"id": 7, "name": "Play", "event": "Player Turn"}
+
+    action = recorded_action(event.payload, event.platform)
+    configured = parse_action_set(json.dumps(expected))
+
+    assert action == expected
+    assert non_strategic_reason(action, configured, event.platform)

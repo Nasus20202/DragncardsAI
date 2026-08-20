@@ -27,12 +27,14 @@ async def restore_game(
             mode=body.mode,
             ephemeral=body.ephemeral,
             reuse_session_id=body.reuse_session_id,
+            platform=body.platform,
         )
     except RestoreError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RestoreResponse(
         status="restored",
         game_id=result.game_id,
+        platform=result.platform,
         target_seq=result.target_seq,
         mode=result.mode,
         game_session_id=result.game_session_id,

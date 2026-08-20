@@ -15,7 +15,11 @@ from history_service.schemas.api import (
     TimelineEventResponse,
     TimelineListResponse,
 )
-from history_service.schemas.envelope import EventEnvelope
+from history_service.schemas.envelope import (
+    EventEnvelope,
+    PLATFORM_DRAGNCARDS,
+    Platform,
+)
 from history_service.storage.repository import Repository
 
 router = APIRouter(tags=["events"])
@@ -44,9 +48,13 @@ async def backfill_event(
     if result.inserted:
         # Best-effort: a snapshot failure must never turn a committed event into
         # an error response.
-        await snapshots.maybe_snapshot_best_effort(game_id, result.event.seq)
+        await snapshots.maybe_snapshot_best_effort(
+            game_id, result.event.seq, result.event.platform
+        )
     return BackfillResponse(
-        game_id=game_id, seq=result.event.seq, inserted=result.inserted
+        game_id=game_id,
+        seq=result.event.seq,
+        inserted=result.inserted,
     )
 
 
@@ -59,9 +67,12 @@ async def list_events(
     game_id: GameIdPath,
     after_seq: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=1000),
+    platform: Platform = Query(default=PLATFORM_DRAGNCARDS),
     repo: Repository = Depends(get_repository),
 ) -> EventListResponse:
-    events = await repo.list_events(game_id, after_seq=after_seq, limit=limit)
+    events = await repo.list_events(
+        game_id, platform=platform, after_seq=after_seq, limit=limit
+    )
     next_after = events[-1].seq if len(events) == limit else None
     return EventListResponse(
         game_id=game_id,
@@ -79,6 +90,7 @@ async def list_timeline(
     game_id: GameIdPath,
     after_seq: int = Query(default=0, ge=0),
     limit: int = Query(default=500, ge=1, le=5000),
+    platform: Platform = Query(default=PLATFORM_DRAGNCARDS),
     repo: Repository = Depends(get_repository),
 ) -> TimelineListResponse:
     """A game's timeline: every event, without the unbounded payload fields.
@@ -93,7 +105,9 @@ async def list_timeline(
     The per-request ceiling is higher than the events read's 1000 because an
     entry is a few hundred bytes rather than a few hundred kilobytes.
     """
-    events = await repo.list_event_summaries(game_id, after_seq=after_seq, limit=limit)
+    events = await repo.list_event_summaries(
+        game_id, platform=platform, after_seq=after_seq, limit=limit
+    )
     next_after = events[-1].seq if len(events) == limit else None
     return TimelineListResponse(
         game_id=game_id,

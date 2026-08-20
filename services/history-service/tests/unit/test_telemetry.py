@@ -164,6 +164,7 @@ _PERMITTED_SPAN_ATTRIBUTES = {
     "history.restore_mode",
     "history.ephemeral",
     "history.snapshot_at_seq",
+    "history.platform",
 }
 
 
@@ -181,7 +182,7 @@ async def test_snapshot_span_never_carries_the_snapshot_document(monkeypatch):
             return secret_state
 
     class _Repository:
-        async def write_snapshot(self, game_id, seq, document):
+        async def write_snapshot(self, game_id, seq, document, platform="dragncards"):
             return SimpleNamespace(game_id=game_id, snapshot_at_seq=seq)
 
     service = snapshots.SnapshotService(
@@ -195,7 +196,14 @@ async def test_snapshot_span_never_carries_the_snapshot_document(monkeypatch):
     await service.take_snapshot("game-1", 7)
 
     assert tracer.spans == [
-        ("history.take_snapshot", {"game.id": "game-1", "history.snapshot_at_seq": 7})
+        (
+            "history.take_snapshot",
+            {
+                "game.id": "game-1",
+                "history.platform": "dragncards",
+                "history.snapshot_at_seq": 7,
+            },
+        )
     ]
     for _name, attributes in tracer.spans:
         assert set(attributes) <= _PERMITTED_SPAN_ATTRIBUTES

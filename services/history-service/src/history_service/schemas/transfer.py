@@ -5,7 +5,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from history_service.schemas.envelope import GAME_ID_PATTERN, Actor
+from history_service.schemas.envelope import (
+    GAME_ID_PATTERN,
+    PLATFORM_DRAGNCARDS,
+    Actor,
+    Platform,
+)
 
 # A bundle is NDJSON: one self-contained JSON object per line, keys sorted, in
 # the order header -> blob/event/snapshot -> footer, with events in ascending
@@ -76,6 +81,7 @@ class BundleHeader(BaseModel):
     format: str = Field(min_length=1, max_length=128)
     format_version: int = Field(ge=1)
     game_id: str = Field(pattern=GAME_ID_PATTERN, max_length=_GAME_ID_MAX)
+    platform: Platform = PLATFORM_DRAGNCARDS
     plugin_name: str | None = Field(default=None, max_length=_PLUGIN_NAME_MAX)
     exported_at: datetime
     event_count: int = Field(ge=0)
@@ -87,12 +93,13 @@ class BundleHeader(BaseModel):
 
 
 class BundleEvent(BaseModel):
-    """One stored event, verbatim apart from the dropped ``game_id``.
+    """One stored event, verbatim apart from bundle-level fields.
 
     ``game_id`` is deliberately absent: the target game is chosen at import
     time, so carrying a per-line copy would only create a second, conflicting
-    source of truth. ``payload`` is a plain JSON object stored verbatim, exactly
-    as the ingest path already stores producer payloads.
+    source of truth. ``platform`` is likewise declared once in the header. The
+    ``payload`` is a plain JSON object stored verbatim, exactly as the ingest path
+    already stores producer payloads.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -140,7 +147,7 @@ class BundleBlob(BaseModel):
 
 
 class BundleSnapshot(BaseModel):
-    """One stored snapshot: a verbatim game-service ``GameStateSnapshot``."""
+    """One stored snapshot without the header-level game id or platform."""
 
     model_config = ConfigDict(extra="ignore")
 

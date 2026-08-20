@@ -11,7 +11,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from eval_service.schema_migrations import ensure_schema
-from eval_service.schemas.history import StoredEvent
+from eval_service.schemas.history import (
+    PLATFORM_DRAGNCARDS,
+    PLATFORM_MARVEL_LCG,
+    Platform,
+    StoredEvent,
+)
 from eval_service.storage.db import create_session_factory
 from eval_service.storage.models import EvaluatedTargetRow, utc_now
 from eval_service.storage.repository import Repository
@@ -79,6 +84,7 @@ def make_event(
     actor: str,
     event_type: str = "event",
     payload: dict[str, Any] | None = None,
+    platform: Platform = PLATFORM_DRAGNCARDS,
 ) -> StoredEvent:
     now = datetime.now(timezone.utc)
     return StoredEvent(
@@ -92,6 +98,7 @@ def make_event(
         occurred_at=now,
         recorded_at=now,
         idempotency_key=f"{game_id}:{actor}:{seq}",
+        platform=platform,
     )
 
 
@@ -107,6 +114,34 @@ def state_event(
             "state": {"roundNumber": round_number, "mode": status},
             "status": status,
         },
+    )
+
+
+def marvel_producer_event(
+    *,
+    game_id: str,
+    seq: int,
+    state: Any,
+    event_type: str = "game_state",
+    status: str | None = None,
+) -> StoredEvent:
+    """A history event shaped like the normalized Marvel producer contract.
+
+    The producer puts the post-action current board under ``payload.state`` and
+    may attach a status at the payload level. Keeping this fixture here makes the
+    eval tests exercise the producer-to-eval boundary without importing or editing
+    either producer service.
+    """
+    payload: dict[str, Any] = {"state": state}
+    if status is not None:
+        payload["status"] = status
+    return make_event(
+        game_id=game_id,
+        seq=seq,
+        actor="game-service",
+        event_type=event_type,
+        payload=payload,
+        platform=PLATFORM_MARVEL_LCG,
     )
 
 

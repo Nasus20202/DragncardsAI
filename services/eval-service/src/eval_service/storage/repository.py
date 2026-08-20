@@ -17,6 +17,7 @@ from eval_service.storage.models import (
     EvaluationRequestRow,
     utc_now,
 )
+from eval_service.schemas.history import PLATFORM_DRAGNCARDS, Platform
 
 # The single advisory-lock key every claimer contends on. It must be ONE
 # constant: two claimers taking different keys serialize against nobody, which
@@ -94,6 +95,7 @@ class Repository:
         *,
         request_id: str,
         game_id: str,
+        platform: Platform = PLATFORM_DRAGNCARDS,
         scope: str,
         selection: dict[str, Any],
         force: bool,
@@ -105,6 +107,7 @@ class Repository:
                     EvaluationRequestRow(
                         request_id=request_id,
                         game_id=game_id,
+                        platform=platform,
                         scope=scope,
                         selection_json=selection,
                         force=1 if force else 0,
@@ -180,6 +183,7 @@ class Repository:
         *,
         request_id: str,
         game_id: str,
+        platform: Platform = PLATFORM_DRAGNCARDS,
         target_seq: int,
         scope: str,
         round_span: tuple[int, int] | None,
@@ -212,6 +216,7 @@ class Repository:
                 insert_stmt = insert_stmt.values(
                     request_id=request_id,
                     game_id=game_id,
+                    platform=platform,
                     target_seq=target_seq,
                     scope=scope,
                     player=player,
@@ -222,13 +227,19 @@ class Repository:
                     created_at=now,
                     updated_at=now,
                 ).on_conflict_do_nothing(
-                    index_elements=["game_id", "target_seq", "scope", "player"]
+                    index_elements=[
+                        "game_id",
+                        "platform",
+                        "target_seq",
+                        "scope",
+                        "player",
+                    ]
                 )
                 result = await session.execute(insert_stmt)
                 inserted = (result.rowcount or 0) > 0
                 # Resolve the row id inside the same transaction.
                 row = await self._get_target(
-                    session, game_id, target_seq, scope, player
+                    session, game_id, target_seq, scope, player, platform
                 )
 
                 if inserted:
@@ -276,10 +287,12 @@ class Repository:
         target_seq: int,
         scope: str,
         player: str = "",
+        platform: Platform = PLATFORM_DRAGNCARDS,
     ) -> EvaluatedTargetRow | None:
         result = await session.execute(
             select(EvaluatedTargetRow).where(
                 EvaluatedTargetRow.game_id == game_id,
+                EvaluatedTargetRow.platform == platform,
                 EvaluatedTargetRow.target_seq == target_seq,
                 EvaluatedTargetRow.scope == scope,
                 EvaluatedTargetRow.player == player,
@@ -416,7 +429,13 @@ class Repository:
                 return (result.rowcount or 0) > 0
 
     async def count_nonterminal_children(
-        self, *, game_id: str, from_seq: int, to_seq: int, child_scope: str
+        self,
+        *,
+        game_id: str,
+        from_seq: int,
+        to_seq: int,
+        child_scope: str,
+        platform: Platform = PLATFORM_DRAGNCARDS,
     ) -> int:
         """Count still-in-flight (pending/running) child targets in a span.
 
@@ -432,6 +451,7 @@ class Repository:
                     .select_from(EvaluatedTargetRow)
                     .where(
                         EvaluatedTargetRow.game_id == game_id,
+                        EvaluatedTargetRow.platform == platform,
                         EvaluatedTargetRow.scope == child_scope,
                         EvaluatedTargetRow.target_seq >= from_seq,
                         EvaluatedTargetRow.target_seq <= to_seq,

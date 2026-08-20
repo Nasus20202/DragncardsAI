@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 from dragncards_common.http_client import BaseAsyncClient
 
-from eval_service.schemas.history import StoredEvent
+from eval_service.schemas.history import PLATFORM_DRAGNCARDS, Platform, StoredEvent
 
 
 class HistoryClient(BaseAsyncClient):
@@ -26,12 +26,14 @@ class HistoryClient(BaseAsyncClient):
         super().__init__(base_url, timeout_seconds=timeout_seconds)
         self._page_size = page_size
 
-    async def list_all_events(self, game_id: str) -> list[StoredEvent]:
+    async def list_all_events(
+        self, game_id: str, platform: Platform = PLATFORM_DRAGNCARDS
+    ) -> list[StoredEvent]:
         """Return every event for a game, paginating until exhausted."""
         events: list[StoredEvent] = []
         after_seq = 0
         while True:
-            page = await self._fetch_page(game_id, after_seq)
+            page = await self._fetch_page(game_id, after_seq, platform)
             raw_events = page.get("events") or []
             for raw in raw_events:
                 events.append(StoredEvent.model_validate(raw))
@@ -41,12 +43,37 @@ class HistoryClient(BaseAsyncClient):
             after_seq = int(next_after)
         return events
 
-    async def _fetch_page(self, game_id: str, after_seq: int) -> dict[str, Any]:
+    async def recorded_platforms(self, game_id: str) -> set[Platform]:
+        """Return platform series known for a game id.
+
+        A legacy history service may omit the field; that is the default series.
+        Multiple platforms sharing an id remain caller-selectable through the
+        explicit request field and are deliberately not guessed here.
+        """
+        response = await self._http().get(f"{self._base_url}/games")
+        response.raise_for_status()
+        body = response.json()
+        summaries = body.get("games", []) if isinstance(body, dict) else []
+        platforms: set[Platform] = set()
+        for summary in summaries:
+            if isinstance(summary, dict) and summary.get("game_id") == game_id:
+                value = summary.get("platform", PLATFORM_DRAGNCARDS)
+                if value in ("dragncards", "marvel-lcg"):
+                    platforms.add(value)
+        return platforms
+
+    async def _fetch_page(
+        self, game_id: str, after_seq: int, platform: Platform
+    ) -> dict[str, Any]:
         # URL-encode the path segment so a game_id never breaks out of the path
         # (defense-in-depth even though the route layer already validates it).
         response = await self._http().get(
             f"{self._base_url}/games/{quote(game_id, safe='')}/events",
-            params={"after_seq": after_seq, "limit": self._page_size},
+            params={
+                "after_seq": after_seq,
+                "limit": self._page_size,
+                "platform": platform,
+            },
         )
         response.raise_for_status()
         return response.json()
@@ -59,6 +86,7 @@ class HistoryClient(BaseAsyncClient):
         The history-service dedupes on ``(game_id, idempotency_key)``, so a
         duplicate write-back is stored exactly once.
         """
+        envelope.setdefault("platform", PLATFORM_DRAGNCARDS)
         response = await self._http().post(
             f"{self._base_url}/games/{quote(game_id, safe='')}/events",
             json=envelope,

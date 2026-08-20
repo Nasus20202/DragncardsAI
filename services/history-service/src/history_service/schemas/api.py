@@ -6,6 +6,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from history_service.schemas.envelope import (
+    PLATFORM_DRAGNCARDS,
+    Platform,
     SESSION_MODE_CHAT,
     StoredEvent,
     StoredSnapshot,
@@ -30,6 +32,7 @@ class EventResponse(BaseModel):
 
     event_id: str
     game_id: str
+    platform: Platform = PLATFORM_DRAGNCARDS
     seq: int
     envelope_version: int
     actor: str
@@ -77,6 +80,7 @@ class TimelineListResponse(BaseModel):
 
 class SnapshotResponse(BaseModel):
     game_id: str
+    platform: Platform = PLATFORM_DRAGNCARDS
     snapshot_at_seq: int
     created_at: datetime
     snapshot: dict[str, Any]
@@ -99,6 +103,7 @@ class BackfillResponse(BaseModel):
 
 class GameSummaryResponse(BaseModel):
     game_id: str
+    platform: Platform = PLATFORM_DRAGNCARDS
     event_count: int
     first_recorded_at: datetime
     last_recorded_at: datetime
@@ -115,6 +120,7 @@ class GameDeletionResponse(BaseModel):
 
 
 class RestoreRequest(BaseModel):
+    platform: Platform | None = None
     target_seq: int = Field(ge=1)
     mode: Literal["new", "in_place"] = "new"
     # When true, a ``mode="new"`` restore creates an *ephemeral* branch session:
@@ -150,6 +156,7 @@ class RestoreResponse(BaseModel):
     # mirrors ``game_session_id`` so the UI can name the restored session.
     status: Literal["restored"] = "restored"
     game_id: str
+    platform: Platform = PLATFORM_DRAGNCARDS
     target_seq: int
     mode: Literal["new", "in_place"]
     game_session_id: str
