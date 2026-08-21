@@ -469,11 +469,8 @@ openspec validate --all
 a throwaway `*_test_<uuid>` database per run and drop it at the end, so the suite never
 touches the data the running services are using. Naming one service keeps the run short.
 
-`openspec validate --all` is expected to report zero failures after the documentation repairs
-in tasks 13.1 and 13.2 and reconciliation of the remaining DRA-65 delta scenarios. The
-current clean baseline has two pre-existing failures: the missing `## Purpose` in
-`spec/typed-game-actions` and the active DRA-65 change's omitted scenarios in its MODIFIED
-requirements. After those are repaired, any failure is unexpected and needs investigation.
+`openspec validate --all` is expected to report zero failures. Any failure needs
+investigation.
 
 ## marvel-lcg attribution and licensing
 
