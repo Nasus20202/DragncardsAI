@@ -63,7 +63,7 @@ services:
       - dragncards-shared
 
   otel-lgtm:
-    image: grafana/otel-lgtm:0.30.2
+    image: grafana/otel-lgtm:0.31.0
     restart: unless-stopped
     volumes:
       - otel-lgtm-data:/data
