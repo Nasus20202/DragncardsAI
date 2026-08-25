@@ -9,6 +9,21 @@ export interface ComboSelectItem {
 }
 
 /**
+ * Keep the first item for each value so rendered option keys and ids stay
+ * unique even when an upstream catalogue repeats an entry.
+ */
+export function dedupeItems<T extends { value: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.value)) {
+      return false;
+    }
+    seen.add(item.value);
+    return true;
+  });
+}
+
+/**
  * Case-insensitive substring match used to narrow a {@link ComboSelect} list as
  * the user types. An empty query keeps the full list so opening the control
  * always shows every option.
@@ -54,11 +69,13 @@ export function ComboSelect({
   // unrelated re-render of the owning panel — which hands down a fresh `items`
   // array every time — from wiping what the user has typed.
   const [query, setQuery] = useState<string | null>(null);
+  const renderItems = dedupeItems(items);
 
-  const committedLabel = items.find((i) => i.value === value)?.label ?? value;
+  const committedLabel =
+    renderItems.find((i) => i.value === value)?.label ?? value;
   const inputValue = query ?? committedLabel;
   const filtered =
-    query === null ? items : filterComboSelectItems(items, query);
+    query === null ? renderItems : filterComboSelectItems(renderItems, query);
 
   return (
     <ComboBox

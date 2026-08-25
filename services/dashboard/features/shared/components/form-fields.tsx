@@ -10,7 +10,10 @@ import {
   TextField,
 } from "@heroui/react";
 import { SkillDefinitionResponse } from "@/features/shared/lib/types";
-import { ComboSelect } from "@/features/shared/components/combo-select";
+import {
+  ComboSelect,
+  dedupeItems,
+} from "@/features/shared/components/combo-select";
 import { ToggleInfoRow } from "@/features/shared/components/toggle-info-row";
 
 /**
@@ -204,6 +207,7 @@ export function SelectField({
   onChange: (v: string) => void;
 }) {
   const name = ariaLabel ?? label;
+  const renderItems = dedupeItems(items);
   return (
     <div className="grid gap-1">
       <FieldLabel id={id}>{label}</FieldLabel>
@@ -224,7 +228,7 @@ export function SelectField({
         </Select.Trigger>
         <Select.Popover>
           <ListBox aria-label={name}>
-            {items.map((item) => (
+            {renderItems.map((item) => (
               <ListBoxItem
                 key={item.value}
                 id={item.value}
