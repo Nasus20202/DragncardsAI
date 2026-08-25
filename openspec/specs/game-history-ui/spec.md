@@ -167,12 +167,18 @@ The whole-game choice SHALL require no further input. The moves choice SHALL be 
 
 ### Requirement: History-driven game picker with delete
 
-The dashboard history view SHALL source its game picker from games-with-recorded-history and SHALL provide a control to delete all history for the selected game, with a confirmation step, refreshing the picker and clearing the selection after a successful deletion.
+The dashboard history view SHALL source its game picker from games-with-recorded-history and SHALL provide a control to delete all history for the selected game, with a confirmation step, refreshing the picker and clearing the selection after a successful deletion. When a selected game declares a platform, every timeline, snapshot, complete-event, and deletion request SHALL request that platform so the view reads and manages the selected game's `(game_id, platform)` history series rather than relying on the history-service's `dragncards` compatibility default.
 
 #### Scenario: Picking a recorded game
 
 - WHEN the user opens the history view
 - THEN the game picker lists games that have recorded history and selecting one loads its timeline
+
+#### Scenario: Deleting a Marvel LCG game's history
+
+- WHEN the user deletes the selected Marvel LCG game's history and confirms
+- THEN the dashboard SHALL include `platform=marvel-lcg` on the delete request
+- AND the Marvel LCG history SHALL be removed without deleting a DragnCards series with the same identifier
 
 #### Scenario: Deleting a game's history
 

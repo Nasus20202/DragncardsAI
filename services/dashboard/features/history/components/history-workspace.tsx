@@ -302,10 +302,17 @@ export function HistoryWorkspace({
     if (!deleteTargetId) return;
     const removedId = deleteTargetId;
     const wasActive = removedId === gameId;
+    const removedPlatform: GamePlatform =
+      games.find((game) => game.game_id === removedId)?.platform ??
+      "dragncards";
     setIsDeleting(true);
     setDeleteError(null);
     try {
-      await deleteHistoryGame(removedId);
+      if (removedPlatform === "marvel-lcg") {
+        await deleteHistoryGame(removedId, removedPlatform);
+      } else {
+        await deleteHistoryGame(removedId);
+      }
       setConfirmDelete(false);
       // Clear the active selection only if we deleted the game in view.
       if (wasActive) {

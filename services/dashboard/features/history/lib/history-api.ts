@@ -29,10 +29,12 @@ export async function listHistoryGames(): Promise<HistoryGame[]> {
  * Calls `DELETE /api/proxy/history/games/{game_id}`. Idempotent.
  */
 export async function deleteHistoryGame(
-  gameId: string
+  gameId: string,
+  platform: GamePlatform = "dragncards"
 ): Promise<HistoryDeleteResponse> {
+  const query = platform === "marvel-lcg" ? "?platform=marvel-lcg" : "";
   const response = await fetch(
-    `/api/proxy/history/games/${encodeURIComponent(gameId)}`,
+    `/api/proxy/history/games/${encodeURIComponent(gameId)}${query}`,
     { method: "DELETE" }
   );
   return readJson<HistoryDeleteResponse>(response);
