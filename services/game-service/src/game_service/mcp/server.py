@@ -54,6 +54,10 @@ def create_mcp_server(session_manager, fastapi_app) -> FastMCP:
         route_maps=[
             # /health is noise for an LLM client
             RouteMap(pattern=r"^/health$", mcp_type=MCPType.EXCLUDE),
+            # Setup discovery is the backend-neutral entry point for game creation.
+            # Keep it as a tool so a client can use its result immediately in the
+            # typed create_game call rather than receiving it as a resource.
+            RouteMap(pattern=r"^/games/setup-catalog$", mcp_type=MCPType.TOOL),
             # /capabilities tells a client what the server supports — the
             # server's own state, like the probes — and is not a tool an agent
             # needs to call. A client asks over HTTP before it sends anything.

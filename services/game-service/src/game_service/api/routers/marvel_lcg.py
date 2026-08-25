@@ -70,7 +70,12 @@ async def choose_game_option(
             prompt_id=body.prompt_id,
             prompt_version=body.prompt_version,
         )
-        return ChooseGameOptionResponse(session_id=session.session_id, **result)
+        return ChooseGameOptionResponse(
+            session_id=session.session_id,
+            platform=session.platform,
+            move_surface=driver.move_surface,
+            **result,
+        )
 
 
 @router.get(

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from game_service.api.deps import SessionIdentifier, get_manager
 from game_service.api.models import GameStateSnapshot, GameStateResponse
+from game_service.logic.platform import DRAGNCARDS_PLATFORM, MARVEL_LCG_PLATFORM
 from game_service.logic.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,16 @@ def _normalise_session_state(session: Any, state: Any) -> Any:
     if not isinstance(normalised, (dict, list, BaseModel)):
         raise TypeError("platform driver returned an invalid normalized state")
     return normalised
+
+
+def _session_capabilities(session: Any) -> tuple[str, str]:
+    platform = getattr(session, "platform", DRAGNCARDS_PLATFORM)
+    if platform not in {DRAGNCARDS_PLATFORM, MARVEL_LCG_PLATFORM}:
+        platform = DRAGNCARDS_PLATFORM
+    move_surface = getattr(session.driver, "move_surface", "typed_actions")
+    if move_surface not in {"typed_actions", "enumerated_options"}:
+        move_surface = "typed_actions"
+    return platform, move_surface
 
 
 @router.get(
@@ -64,7 +75,13 @@ async def get_game_state(
 
     state = _normalise_session_state(session, state)
 
-    return GameStateResponse(session_id=session_id, state=state)
+    platform, move_surface = _session_capabilities(session)
+    return GameStateResponse(
+        session_id=session.session_id,
+        platform=platform,
+        move_surface=move_surface,
+        state=state,
+    )
 
 
 @router.get(
@@ -106,4 +123,10 @@ async def load_game_state_snapshot(
 
     state = _normalise_session_state(session, state)
 
-    return GameStateResponse(session_id=session_id, state=state)
+    platform, move_surface = _session_capabilities(session)
+    return GameStateResponse(
+        session_id=session.session_id,
+        platform=platform,
+        move_surface=move_surface,
+        state=state,
+    )

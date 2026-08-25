@@ -25,13 +25,17 @@ docker compose up -d
 | Grafana            | http://localhost:3004           | —                          |
 | Login              | dev_user@example.com / password | —                          |
 
-Game Service also supports the optional `marvel-lcg` platform. Start the Marvel LCG
-Compose profile, set a non-empty `MARVEL_LCG_PASSWORD`, and configure
-`MARVEL_LCG_HTTP_URL` (normally `http://marvel-lcg:2345` inside Compose). DragnCards
-remains the default platform and uses typed actions; Marvel LCG sessions use
-enumerated option endpoints.
+Game Service also supports the `marvel-lcg` platform. The engine and its initializer
+start with the ordinary Compose stack; no Marvel-specific profile or second startup
+command is required. Set a non-empty `MARVEL_LCG_PASSWORD` for deployments and
+configure `MARVEL_LCG_HTTP_URL` (normally `http://marvel-lcg:2345` inside Compose).
+DragnCards remains the default platform and uses typed actions; Marvel LCG sessions
+use enumerated option endpoints. The engine is a singleton backend, so only one
+active Marvel game can use the local engine at a time.
 
-The `marvel-lcg` engine is profile-gated and is started on port 4006 only when that platform is enabled. It is an internal game engine, not a first-party service proxied by the dashboard.
+The `marvel-lcg` engine is bound to loopback port 4006 for deliberate local browser
+access and is otherwise reached by game-service over the internal Compose network. It
+is an internal game engine, not a first-party service proxied by the dashboard.
 
 The Swagger playground merges the OpenAPI document of **every** first-party service —
 game-service, agent-orchestrator, history-service and eval-service — into one index, and
@@ -53,7 +57,7 @@ flowchart LR
     Backend["dragncards-backend<br/>port 4000"]
     PG1["dragncards-postgres<br/>port 5440"]
     GameSvc["game-service<br/>port 4001"]
-    LcgEngine["marvel-lcg engine<br/>port 4006<br/>(profile-gated)"]
+    LcgEngine["marvel-lcg engine<br/>port 4006<br/>(internal backend)"]
     OrcPg["agent-orchestrator-postgres<br/>port 5441"]
     AgentOrch["agent-orchestrator<br/>port 4002"]
     HistorySvc["history-service<br/>port 4004"]
@@ -234,13 +238,17 @@ make infra-restart
 
 "Infrastructure" is every service defined in `docker-compose.infra.yaml` or
 `external/docker/docker-compose.yaml`: the DragnCards frontend, backend, database and MC
-plugin builder, both Valkey instances, the orchestrator/history/eval PostgreSQL databases,
-Bifrost, `lmstudio-proxy`, and `otel-lgtm`. The list is derived from those two compose
-files, so a newly added infra service is covered automatically. The app services —
+plugin builder, the `marvel-lcg` engine and initializer, both Valkey instances, the
+orchestrator/history/eval PostgreSQL databases, Bifrost, `lmstudio-proxy`, and `otel-lgtm`.
+The list is derived from those two compose files, so a newly added infra service is covered
+automatically. The app services —
 `game-service`, `agent-orchestrator`, `history-service`, `eval-service`, `dashboard` — are
 defined in `docker-compose.yaml` itself and are left untouched, so you can run them from
-source with `make run` on top of Dockerised infrastructure. `infra-down` stops containers
-without removing them; use `make down` to remove them.
+source with `make run` on top of Dockerised infrastructure. When the source game-service is
+started on that stack, the launcher hands it the non-empty password from the healthy Docker
+engine unless `MARVEL_LCG_PASSWORD` is already explicitly set. Without a healthy engine,
+provide the password through the source environment or `services/game-service/.env`.
+`infra-down` stops containers without removing them; use `make down` to remove them.
 
 ### Node dependencies and build-script approvals
 

@@ -121,9 +121,17 @@ describe("buildMetaBySeq", () => {
       marvelEvent(2, 1, "player", "Player 1 Turn"),
       agentEvent(3),
     ]);
-    expect(meta.get(1)).toMatchObject({ round: null, phase: "Resolve Mulligans", platform: "marvel-lcg" });
+    expect(meta.get(1)).toMatchObject({
+      round: null,
+      phase: "Resolve Mulligans",
+      platform: "marvel-lcg",
+    });
     expect(meta.get(2)).toMatchObject({ round: null, platform: "marvel-lcg" });
-    expect(meta.get(3)).toMatchObject({ round: 1, phase: "Player 1 Turn", platform: "marvel-lcg" });
+    expect(meta.get(3)).toMatchObject({
+      round: 1,
+      phase: "Player 1 Turn",
+      platform: "marvel-lcg",
+    });
     expect(meta.get(3)?.step).toBeNull();
   });
 

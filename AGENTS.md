@@ -249,13 +249,19 @@ anything.
 **Start infrastructure, and know what "infrastructure" means.**
 
 ```bash
-./scripts/docker-infrastructure.sh start   # DragnCards, the databases, Valkey, Bifrost, otel-lgtm
+./scripts/docker-infrastructure.sh start   # DragnCards, marvel-lcg + init, databases, Valkey, Bifrost, otel-lgtm
 make run                                   # the five app services, from source, on top of it
 ```
 
 Ports: dashboard `3001`, game-service `4001`, agent-orchestrator `4002`, bifrost `4003`,
-history-service `4004`, eval-service `4005`, marvel-lcg `4006` (profile-gated), Grafana
-`3004`, DragnCards frontend `3000` and backend `4000`.
+history-service `4004`, eval-service `4005`, marvel-lcg `4006` (loopback-bound internal
+backend), Grafana `3004`, DragnCards frontend `3000` and backend `4000`.
+
+The ordinary infrastructure startup includes both `marvel-lcg` and its
+`marvel-lcg-init` initializer. The engine is reached by game-service over the internal
+Compose network and is not a dashboard-proxied service; no Compose profile is needed.
+The helper waits up to 300 seconds for Compose readiness by default; override that
+bound with `MARVEL_LCG_WAIT_TIMEOUT_SECONDS` when needed.
 
 **Confirm the running services match your source before you conclude anything.** A
 Compose stack that was started before your change is serving the old image, and a missing
@@ -289,8 +295,10 @@ in a committed file.
 
 `create_game` on **game-service** accepts an optional `platform`. For a DragnCards game,
 use `{"plugin_name": "marvel-champions", "platform": "dragncards"}`; omitting
-`platform` preserves the DragnCards default. For a `marvel-lcg` game, use
-`{"platform": "marvel-lcg"}` and do not invent a DragnCards plugin name. Keep
+`platform` preserves the DragnCards default. For a `marvel-lcg` game, first call
+`list_game_setup_catalog` with `{"platform": "marvel-lcg"}`, then pass its opaque
+ids in a typed `setup` object. Do not invent a DragnCards plugin name or an engine
+file path. Keep
 `session.session_id` from the response: it is the id every later game-service call takes,
 **and** it is the `game_id` history-service and eval-service key on. Do not pass
 `ephemeral: true`: an ephemeral session emits no history, so nothing downstream of step 3
@@ -313,8 +321,10 @@ Then set the table up for its platform:
 
 **marvel-lcg**
 
-Use `list_marvel_lcg_scenarios` and `list_marvel_lcg_decks` to discover the engine's
-shipped setup data, then use the platform's enumerated-option surface. Do not send
+Use `list_game_setup_catalog` to discover the engine's shipped scenario and hero-deck
+ids, then create with `{"platform":"marvel-lcg","setup":{"platform":"marvel-lcg",
+"scenario_id":"<scenario id>","hero_decks":[{"seat":"player1","hero_deck_id":"<deck id>"}]}}`.
+Preserve hero-deck order and use the platform's enumerated-option surface. Do not send
 DragnCards player-count, prebuilt-set, deck-loading, or DragnLang actions to a
 `marvel-lcg` session.
 

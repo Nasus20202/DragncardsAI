@@ -1,4 +1,4 @@
-.PHONY: help lint lint-fix test test-unit test-integration build up up-registry up-marvel-lcg down down-clean \
+.PHONY: help lint lint-fix test test-unit test-integration build up up-registry down down-clean \
 	infra-up infra-down infra-restart smoke-up smoke-check smoke-model smoke-test \
 	run run-game-service run-agent-orchestrator run-history-service run-eval-service run-dashboard
 
@@ -21,7 +21,6 @@ help:
 		"make smoke-check                # validate smoke dependencies" \
 		"make smoke-model                # start compose-managed llama.cpp smoke model" \
 		"make smoke-test                 # run smoke tests against running stack" \
-		"make up-marvel-lcg              # start the profile-gated marvel-lcg platform (password required)" \
 		"make run                        # run local services directly" \
 		"make run-game-service           # run game-service locally" \
 		"make run-agent-orchestrator     # run agent-orchestrator locally" \
@@ -61,9 +60,6 @@ up-registry:
 	DRAGNCARDS_FRONTEND_IMAGE=ghcr.io/nasus20202/dragncardsai/dragncards-frontend:latest \
 	MARVEL_LCG_IMAGE=ghcr.io/nasus20202/dragncardsai/marvel-lcg:latest \
 	IMAGE_PULL_POLICY=always ./scripts/docker.sh start
-
-up-marvel-lcg:
-	docker compose --profile marvel-lcg up -d marvel-lcg
 
 down:
 	./scripts/docker.sh down

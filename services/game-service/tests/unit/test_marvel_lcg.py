@@ -18,6 +18,7 @@ from game_service.logic.exceptions import (
     StateUnavailableError,
 )
 from game_service.logic.session import GameSession
+from game_service.logic.platform import HeroDeckSelection, MarvelLcgCreateSpec
 from game_service.marvel_lcg.client import (
     MarvelLcgAuthenticationError,
     MarvelLcgHttpError,
@@ -185,7 +186,19 @@ async def test_application_spans_cover_game_creation_options_and_submission(
     client.new_game = AsyncMock(return_value={"result": "New game created"})
     platform = _option_platform(client)
 
-    await platform.create_table(MagicMock(), {})
+    await platform.create_table(
+        MagicMock(),
+        MarvelLcgCreateSpec(
+            platform="marvel-lcg",
+            scenario_id=platform._catalog_id("scenario", "scenario.json"),
+            hero_decks=(
+                HeroDeckSelection(
+                    seat="player1",
+                    hero_deck_id=platform._catalog_id("hero-deck", "hero.json"),
+                ),
+            ),
+        ),
+    )
     options = await platform.list_options("player1")
     await platform.choose_option(
         "player1",

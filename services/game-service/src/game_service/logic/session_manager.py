@@ -30,6 +30,7 @@ from game_service.logic.exceptions import (
     SessionError,
     SessionLockedError,
     SessionNotFoundError,
+    SingletonLeaseConflictError,
     SnapshotValidationError,
     StateUnavailableError,
 )
@@ -40,7 +41,10 @@ from game_service.logic.seats import (
 )
 from game_service.logic.platform import (
     DRAGNCARDS_PLATFORM,
+    DragnCardsCreateSpec,
     GamePlatform,
+    HeroDeckSelection,
+    MarvelLcgCreateSpec,
     PlatformSlug,
     DragnCardsPlatform,
 )
@@ -96,6 +100,7 @@ class SessionManager:
         dragncards_ws_url: str | None = None,
         email: str | None = None,
         password: str | None = None,
+        marvel_lease_ttl_seconds: float = 30.0,
     ):
         self._plugin_registry = plugin_registry or {}
         if platform_registry is None and platforms is not None:
@@ -141,6 +146,12 @@ class SessionManager:
         self._ephemeral_session_ttl_seconds = ephemeral_session_ttl_seconds
         self._ephemeral_reaper_interval_seconds = ephemeral_reaper_interval_seconds
         self._reaper_task: asyncio.Task[None] | None = None
+        self._marvel_lease_ttl_seconds = marvel_lease_ttl_seconds
+        self._marvel_lease_tasks: dict[str, asyncio.Task[None]] = {}
+        self._marvel_leases: dict[str, tuple[str, str]] = {}
+        self._marvel_lease_sessions: dict[str, GameSession] = {}
+        self._marvel_lease_validators: dict[str, Any] = {}
+        self._marvel_lease_lost: set[str] = set()
 
     async def restore_sessions(self) -> None:
         with tracer.start_as_current_span("game_service.restore_sessions"):
@@ -148,6 +159,13 @@ class SessionManager:
             for record in records:
                 session_id = record["session_id"]
                 if session_id in self._sessions:
+                    continue
+                if record.get("platform", DRAGNCARDS_PLATFORM) == "marvel-lcg":
+                    logger.warning(
+                        "Skipping persisted marvel-lcg session %s: attachment is unsupported",
+                        session_id,
+                    )
+                    await self._session_store.delete_session(session_id)
                     continue
                 await self._restore_session(record)
 
@@ -241,6 +259,7 @@ class SessionManager:
         plugin_version: int | None = None,
         initial_state: Any = None,
         ephemeral: bool = False,
+        setup: dict[str, Any] | None = None,
     ) -> GameSession:
         session = GameSession(
             session_id=session_id,
@@ -259,8 +278,59 @@ class SessionManager:
                 NullHistoryEmitter() if ephemeral else self._history_emitter
             ),
             ephemeral=ephemeral,
+            setup=setup,
         )
         return session
+
+    @staticmethod
+    def _setup_metadata(spec: Any) -> dict[str, Any] | None:
+        if isinstance(spec, MarvelLcgCreateSpec):
+            return {
+                "platform": spec.platform,
+                "scenario_id": spec.scenario_id,
+                "hero_decks": [
+                    {"seat": item.seat, "hero_deck_id": item.hero_deck_id}
+                    for item in spec.hero_decks
+                ],
+            }
+        if isinstance(spec, DragnCardsCreateSpec):
+            return {"platform": spec.platform, "plugin_name": spec.plugin_name}
+        return None
+
+    @staticmethod
+    def _coerce_create_spec(
+        platform: PlatformSlug,
+        plugin_name: str,
+        plugin_info: dict[str, Any],
+        setup: Any,
+    ) -> Any:
+        if platform == DRAGNCARDS_PLATFORM:
+            selected_plugin = getattr(setup, "plugin_name", plugin_name)
+            return DragnCardsCreateSpec(
+                platform=DRAGNCARDS_PLATFORM,
+                plugin_name=selected_plugin,
+                plugin_info=plugin_info,
+            )
+        if setup is None:
+            return None
+        if isinstance(setup, MarvelLcgCreateSpec):
+            return setup
+        if getattr(setup, "platform", None) != "marvel-lcg":
+            raise SessionError(
+                "Platform 'marvel-lcg' cannot use a DragnCards creation specification"
+            )
+        hero_decks = tuple(
+            HeroDeckSelection(
+                seat=item.seat,
+                hero_deck_id=item.hero_deck_id,
+            )
+            for item in getattr(setup, "hero_decks", ())
+        )
+        return MarvelLcgCreateSpec(
+            platform=platform,
+            scenario_id=setup.scenario_id,
+            hero_decks=hero_decks,
+        )
 
     async def _register_session(
         self, session: GameSession, *, persist: bool = True
@@ -286,6 +356,128 @@ class SessionManager:
                 type(exc).__name__,
             )
 
+    async def _claim_marvel_lease(
+        self, driver: GamePlatform, session_id: str
+    ) -> tuple[str, str]:
+        self._ensure_marvel_lease_capability()
+        endpoint = getattr(driver, "http_url", None)
+        if not isinstance(endpoint, str) or not endpoint:
+            raise SessionError("marvel-lcg singleton endpoint is not configured")
+        owner_token = str(uuid.uuid4())
+        acquired = await self._session_store.acquire_marvel_lease(
+            endpoint,
+            session_id,
+            owner_token,
+            lease_ttl=self._marvel_lease_ttl_seconds,
+        )
+        if not acquired:
+            raise SingletonLeaseConflictError(
+                "marvel-lcg supports one active game per engine; another session "
+                "currently owns the configured singleton engine"
+            )
+        # Register the exact ownership tuple and start renewal before any engine
+        # table creation or WebSocket connection work. Those calls can outlive a
+        # short lease, and a failed creation still owns a real lease that must be
+        # released with this token rather than relying on a session record.
+        self._marvel_leases[session_id] = (endpoint, owner_token)
+        self._start_marvel_lease(session_id, endpoint, owner_token)
+        return endpoint, owner_token
+
+    def _ensure_marvel_lease_capability(self) -> None:
+        if (
+            getattr(self._session_store, "supports_distributed_leases", False)
+            is not True
+        ):
+            raise SessionError(
+                "marvel-lcg singleton sessions require the Valkey-backed session "
+                "store; the in-memory fallback cannot provide cross-worker fencing"
+            )
+
+    def _start_marvel_lease(
+        self, session_id: str, endpoint: str, owner_token: str
+    ) -> None:
+        async def validate() -> bool:
+            try:
+                owned = await self._session_store.marvel_lease_owned(
+                    endpoint, owner_token
+                )
+            except Exception:
+                owned = False
+            if not owned:
+                await self._mark_marvel_lease_lost(session_id)
+            return owned
+
+        async def renew() -> None:
+            interval = max(self._marvel_lease_ttl_seconds / 3.0, 0.1)
+            try:
+                while True:
+                    await asyncio.sleep(interval)
+                    try:
+                        renewed = await self._session_store.renew_marvel_lease(
+                            endpoint,
+                            owner_token,
+                            lease_ttl=self._marvel_lease_ttl_seconds,
+                        )
+                    except Exception:
+                        renewed = False
+                    if not renewed:
+                        await self._mark_marvel_lease_lost(session_id)
+                        return
+            except asyncio.CancelledError:
+                raise
+
+        self._marvel_lease_validators[session_id] = validate
+        self._marvel_lease_tasks[session_id] = asyncio.create_task(renew())
+
+    async def _mark_marvel_lease_lost(self, session_id: str) -> None:
+        self._marvel_lease_lost.add(session_id)
+        session = self._marvel_lease_sessions.get(session_id)
+        if session is None:
+            return
+        session.mark_degraded("marvel-lcg singleton lease lost")
+        try:
+            await self._session_store.put_session(session.to_metadata())
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist degraded marvel-lcg session %s: %s",
+                session_id,
+                type(exc).__name__,
+            )
+
+    def _bind_marvel_lease(self, session: GameSession) -> None:
+        session_id = session.session_id
+        self._marvel_lease_sessions[session_id] = session
+        validator = self._marvel_lease_validators.get(session_id)
+        setter = getattr(session.driver, "set_lease_validator", None)
+        if setter is not None and validator is not None:
+            setter(validator)
+        if session_id in self._marvel_lease_lost:
+            session.mark_degraded("marvel-lcg singleton lease lost")
+
+    async def _release_marvel_lease(self, session_id: str) -> None:
+        task = self._marvel_lease_tasks.pop(session_id, None)
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        lease = self._marvel_leases.pop(session_id, None)
+        self._marvel_lease_sessions.pop(session_id, None)
+        self._marvel_lease_validators.pop(session_id, None)
+        self._marvel_lease_lost.discard(session_id)
+        if lease is None:
+            return
+        endpoint, owner_token = lease
+        try:
+            await self._session_store.release_marvel_lease(endpoint, owner_token)
+        except Exception as exc:
+            logger.warning(
+                "Failed to release marvel-lcg singleton lease for %s: %s",
+                session_id,
+                type(exc).__name__,
+            )
+
     async def _restore_session(self, record: dict[str, Any]) -> GameSession:
         with tracer.start_as_current_span(
             "game_service.restore_session",
@@ -295,6 +487,11 @@ class SessionManager:
             },
         ):
             platform = record.get("platform", DRAGNCARDS_PLATFORM)
+            if platform == "marvel-lcg":
+                raise SessionError(
+                    "marvel-lcg attachment is unsupported; create a new session "
+                    "after discovering setup"
+                )
             plugin_name = record.get("plugin_name")
             driver = self._new_platform(platform)
             plugin_info = (
@@ -322,6 +519,7 @@ class SessionManager:
                     plugin_version=(plugin_info or {}).get("version"),
                     initial_state=initial_state,
                     ephemeral=bool(record.get("ephemeral", False)),
+                    setup=record.get("setup"),
                 )
             except Exception:
                 await self._teardown_failed_driver(driver, record["room_slug"])
@@ -471,6 +669,7 @@ class SessionManager:
         *,
         platform: PlatformSlug = DRAGNCARDS_PLATFORM,
         ephemeral: bool = False,
+        setup: Any = None,
     ) -> GameSession:
         with tracer.start_as_current_span(
             "game_service.create_session",
@@ -481,21 +680,35 @@ class SessionManager:
             },
         ):
             driver = self._new_platform(platform)
+            selected_plugin_name = getattr(setup, "plugin_name", plugin_name)
             plugin_info = (
-                self._get_plugin_info(plugin_name) if driver.uses_plugin else {}
+                self._get_plugin_info(selected_plugin_name)
+                if driver.uses_plugin
+                else {}
             )
             room_slug = ""
+            session_id = str(uuid.uuid4())
+            marvel_lease: tuple[str, str] | None = None
             try:
+                if platform == "marvel-lcg":
+                    self._ensure_marvel_lease_capability()
                 identity = await driver.authenticate()
-                room = await driver.create_table(identity, plugin_info)
+                requested_spec = self._coerce_create_spec(
+                    platform, selected_plugin_name, plugin_info, setup
+                )
+                resolved_spec = await driver.resolve_create_spec(requested_spec)
+                if platform == "marvel-lcg":
+                    # Resolve the live catalog before claiming so the bounded lease
+                    # covers table creation and connection, not an unbounded read.
+                    marvel_lease = await self._claim_marvel_lease(driver, session_id)
+                room = await driver.create_table(identity, resolved_spec)
                 room_slug = room["slug"]
                 logger.info("Created %s room %s", platform, room_slug)
                 initial_state = await driver.connect(room_slug, identity)
 
-                session_id = str(uuid.uuid4())
                 session = self._build_session(
                     session_id=session_id,
-                    plugin_name=plugin_name if driver.uses_plugin else None,
+                    plugin_name=selected_plugin_name if driver.uses_plugin else None,
                     plugin_id=plugin_info.get("id"),
                     room_slug=room_slug,
                     created_at=datetime.now(timezone.utc),
@@ -504,14 +717,27 @@ class SessionManager:
                     plugin_version=plugin_info.get("version"),
                     initial_state=initial_state,
                     ephemeral=ephemeral,
+                    setup=self._setup_metadata(resolved_spec),
                 )
+                if marvel_lease is not None:
+                    self._bind_marvel_lease(session)
                 await self._register_session(session)
             except Exception:
                 await self._teardown_failed_driver(driver, room_slug)
+                if marvel_lease is not None:
+                    await self._release_marvel_lease(session_id)
                 raise
             user_id = getattr(identity, "user_id", None)
             if isinstance(user_id, int):
                 await self._auto_seat(session, user_id)
+
+            if marvel_lease is not None:
+                validator = self._marvel_lease_validators.get(session_id)
+                if validator is not None and not await validator():
+                    logger.warning(
+                        "Marvel session %s became degraded before creation returned",
+                        session_id,
+                    )
 
             logger.info("Session %s created (room=%s)", session_id, room_slug)
             return session
@@ -523,6 +749,11 @@ class SessionManager:
         *,
         platform: PlatformSlug = DRAGNCARDS_PLATFORM,
     ) -> GameSession:
+        if platform == "marvel-lcg":
+            raise SessionError(
+                "marvel-lcg attachment is unsupported because the engine has no "
+                "stable external room identifier; create a new session instead"
+            )
         driver = self._new_platform(platform)
         plugin_info = self._get_plugin_info(plugin_name) if driver.uses_plugin else {}
         try:
@@ -680,6 +911,7 @@ class SessionManager:
     async def _remove_session(self, session_id: str) -> None:
         async with self._lock:
             self._sessions.pop(session_id, None)
+        await self._release_marvel_lease(session_id)
         await self._session_store.delete_session(session_id)
         logger.info("Session %s removed from pool (room closed)", session_id)
 
@@ -709,6 +941,7 @@ class SessionManager:
             await session.driver.teardown(session.room_slug)
         except Exception as exc:
             logger.warning("Error tearing down session %s: %s", session_id, exc)
+        await self._release_marvel_lease(session_id)
         await self._session_store.delete_session(session_id)
         logger.info("Session %s deleted", session_id)
 
@@ -793,6 +1026,12 @@ class SessionManager:
     def platform_driver(self, platform: str) -> GamePlatform:
         """Return the configured platform template for read-only catalog calls."""
         return self._get_platform(platform)
+
+    async def list_setup_catalog(self, platform: PlatformSlug) -> dict[str, Any]:
+        """Return the selected driver's backend-neutral setup catalog."""
+        driver = self.platform_driver(platform)
+        await driver.authenticate()
+        return await driver.setup_catalog()
 
     async def close_all(self) -> None:
         session_ids = list(self._sessions.keys())

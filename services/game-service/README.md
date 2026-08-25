@@ -55,15 +55,23 @@ simply omits `Origin`. Requiring a credential is tracked separately as DRA-32.
 ## Marvel LCG Platform
 
 Set `MARVEL_LCG_HTTP_URL` and a non-empty `MARVEL_LCG_PASSWORD` before starting
-the service. The Marvel LCG engine is available through the `marvel-lcg` Compose
-profile; when both containers share the Compose network, use
+the service. Ordinary infrastructure startup includes the Marvel LCG engine and
+initializer; when both containers share the Compose network, use
 `MARVEL_LCG_HTTP_URL=http://marvel-lcg:2345`. The client validates the engine
 version and authenticated cookies before using game endpoints.
 
-Create a Marvel session with `{"platform":"marvel-lcg"}`. Marvel sessions use
+Discover opaque setup ids with `GET /games/setup-catalog?platform=marvel-lcg`, then
+create a Marvel session with a typed outer `setup` object. The `hero_decks` roster
+must be the contiguous ordered prefix `player1`..`playerN`; reverse or gapped
+rosters are rejected. Marvel sessions use
 `GET /games/{session_id}/options` and `POST /games/{session_id}/options/choose`;
 the generic typed-action routes are rejected for this platform. Option responses
 include stable prompt identity/version fields so stale choices are rejected.
+Both option routes use the neutral seat name `player_n`; a stale `player` argument
+is rejected rather than ignored, and choices must include the returned `prompt_id`
+and `prompt_version`. If the engine or its initializer is unavailable, setup and
+creation return HTTP 503 with `Retry-After: 5`. Marvel `close_room` is unsupported;
+delete the session for full transport teardown and lease release.
 
 ## DragnCards Credential Cache
 
@@ -125,6 +133,11 @@ Use these first when integrating a client.
   Lists all generic typed actions and curated raw DragnLang operations.
   Use this when you want to know what can be passed to `POST /games/{session_id}/actions`.
 
+- `GET /games/setup-catalog?platform=marvel-lcg`
+  Returns the selected backend's typed, neutral setup catalog. Marvel scenario and
+  hero-deck ids are opaque; pass the selected `scenario_id` and ordered
+  `{seat, hero_deck_id}` entries to `POST /games` rather than constructing engine paths.
+
 ### Session Lifecycle
 
 Use these to create, attach, list, and remove active game sessions.
@@ -142,6 +155,26 @@ to disambiguate.
   claimed when the player count is set. See
   [Seats are slots, not identities](#seats-are-slots-not-identities).
 
+  Marvel creation uses the neutral setup selection discovered above, for example:
+
+  ```json
+  {
+    "platform": "marvel-lcg",
+    "setup": {
+      "platform": "marvel-lcg",
+      "scenario_id": "scenario:<catalog-id>",
+      "hero_decks": [
+        {"seat": "player1", "hero_deck_id": "hero-deck:<catalog-id>"}
+      ]
+    }
+  }
+  ```
+
+  The response echoes the resolved setup and always identifies the session's
+  `platform` and `move_surface`. The marvel-lcg engine is singleton; sessions use
+  the Valkey-backed lease and a second active creation receives a conflict. Marvel
+  attachment is unsupported because the engine has no stable external room id.
+
 - `POST /games/attach`
   Attach to an existing DragnCards room. This service is seated in the first
   available player slot, as above.
@@ -157,7 +190,8 @@ to disambiguate.
 
 - `DELETE /games/{session_id}`
   Delete a managed session.
-  Optional query param: `close_room=true`.
+  Optional query param `close_room=true` applies only to DragnCards; Marvel callers
+  must omit it and use deletion for full teardown.
 
 ### State and Snapshots
 

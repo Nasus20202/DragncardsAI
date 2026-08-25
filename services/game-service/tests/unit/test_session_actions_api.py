@@ -119,6 +119,8 @@ async def test_get_session_actions_unknown_plugin_returns_empty_groups():
         "default_actions": [],
         "player_count_layouts": [],
         "load_groups": [],
+        "platform": "dragncards",
+        "move_surface": "typed_actions",
     }
 
 

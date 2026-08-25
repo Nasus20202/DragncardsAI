@@ -15,6 +15,7 @@ from game_service.api.models import (
 from game_service.catalog.service import get_plugin_action_catalog
 from game_service.api.routers.meta import build_generic_action_catalog
 from game_service.logic.session_manager import SessionManager
+from game_service.logic.platform import DRAGNCARDS_PLATFORM, MARVEL_LCG_PLATFORM
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,12 @@ async def get_session_actions(
     logger.info("get_session_actions: session_id=%s", session_id)
     session = await manager.get_session(session_id)
     catalog = session.driver.action_catalog()
+    platform = getattr(session, "platform", DRAGNCARDS_PLATFORM)
+    if platform not in {DRAGNCARDS_PLATFORM, MARVEL_LCG_PLATFORM}:
+        platform = DRAGNCARDS_PLATFORM
+    move_surface = getattr(session.driver, "move_surface", "typed_actions")
+    if move_surface not in {"typed_actions", "enumerated_options"}:
+        move_surface = "typed_actions"
     if catalog.get("plugin_metadata") is None:
         actions, raw_ops = build_generic_action_catalog()
         plugin_metadata = get_plugin_action_catalog(session.plugin_name)
@@ -74,11 +81,16 @@ async def get_session_actions(
             "load_groups": plugin_metadata.load_groups,
             "plugin_metadata": plugin_metadata.to_dict(),
         }
+    plugin_metadata = dict(catalog["plugin_metadata"] or {})
+    plugin_metadata["platform"] = platform
+    plugin_metadata["move_surface"] = move_surface
     return SessionActionsResponse(
-        session_id=session_id,
+        session_id=session.session_id,
         plugin_name=session.plugin_name or session.platform,
+        platform=platform,
+        move_surface=move_surface,
         actions=catalog["actions"],
         raw_ops=catalog["raw_ops"],
         load_groups=catalog["load_groups"],
-        plugin_metadata=catalog["plugin_metadata"] or {},
+        plugin_metadata=plugin_metadata,
     )

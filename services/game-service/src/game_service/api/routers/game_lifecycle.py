@@ -17,8 +17,12 @@ from game_service.api.models import (
     LookupSessionBySlugResponse,
     SessionMetadata,
 )
-from game_service.logic.exceptions import SessionNotFoundError
+from game_service.logic.exceptions import (
+    SessionNotFoundError,
+    SingletonLeaseConflictError,
+)
 from game_service.logic.session_manager import SessionError, SessionManager
+from game_service.marvel_lcg.client import MarvelLcgError
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +45,15 @@ async def create_game(
     )
     try:
         session = await manager.create_session(
-            body.plugin_name, platform=body.platform, ephemeral=body.ephemeral
+            body.plugin_name,
+            platform=body.platform,
+            ephemeral=body.ephemeral,
+            setup=body.setup,
         )
+    except SingletonLeaseConflictError:
+        raise
+    except MarvelLcgError:
+        raise
     except SessionError as exc:
         logger.warning("create_game failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
