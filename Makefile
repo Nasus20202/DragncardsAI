@@ -1,4 +1,4 @@
-.PHONY: help lint lint-fix test test-unit test-integration build up up-registry down down-clean \
+.PHONY: help lint lint-fix test test-unit test-integration test-infrastructure build up up-registry down down-clean \
 	infra-up infra-down infra-restart smoke-up smoke-check smoke-model smoke-test \
 	run run-game-service run-agent-orchestrator run-history-service run-eval-service run-dashboard
 
@@ -9,6 +9,7 @@ help:
 		"make test                       # run all tests" \
 		"make test-unit                  # run unit tests" \
 		"make test-integration           # run integration tests" \
+		"make test-infrastructure        # check DragnCards asset synchronization" \
 		"make build                      # build docker images" \
 		"make up                         # start docker stack" \
 		"make up-registry                # pull GHCR images and start stack" \
@@ -42,6 +43,9 @@ test-unit:
 
 test-integration:
 	./scripts/test.sh integration
+
+test-infrastructure:
+	./scripts/test.sh infrastructure
 
 build:
 	./scripts/docker.sh build
