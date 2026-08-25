@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import time
 import uuid
@@ -48,6 +49,15 @@ class MarvelLcgIdentity:
     user_id: int | None = None
 
 
+@dataclass(frozen=True)
+class _SetupExpectation:
+    """Card-identity witnesses used to verify the engine selected our setup."""
+
+    villain_ids: frozenset[str]
+    scheme_ids: frozenset[str]
+    hero_ids_by_seat: tuple[frozenset[str], ...]
+
+
 class MarvelLcgPlatform:
     """Adapter that hides HTTP, render frames, and zero-based seats."""
 
@@ -67,6 +77,8 @@ class MarvelLcgPlatform:
         encounter_set_names: Iterable[str] = (),
         seats: Iterable[str] = ("player1",),
         max_submission_attempts: int = 3,
+        render_ack_attempts: int = 3,
+        render_ack_retry_delay: float = 0.05,
         ready_timeout: float = 30.0,
         move_timeout: float = 30.0,
         http_client: MarvelLcgHttpClient | None = None,
@@ -93,6 +105,12 @@ class MarvelLcgPlatform:
         if not self.held_seats:
             raise ValueError("marvel-lcg requires at least one held seat")
         self.max_submission_attempts = max_submission_attempts
+        if render_ack_attempts < 1:
+            raise ValueError("render_ack_attempts must be positive")
+        if render_ack_retry_delay < 0:
+            raise ValueError("render_ack_retry_delay must not be negative")
+        self.render_ack_attempts = render_ack_attempts
+        self.render_ack_retry_delay = render_ack_retry_delay
         self.ready_timeout = ready_timeout
         self.move_timeout = move_timeout
         self._http_client = http_client or MarvelLcgHttpClient(http_url, password)
@@ -113,6 +131,7 @@ class MarvelLcgPlatform:
         self._processed_frame_key: tuple[Any, ...] | None = None
         self._latest_frames: dict[int, FrameDescriptor] = {}
         self._acked_render_ids: dict[int, int] = {}
+        self._render_ack_locks: dict[int, asyncio.Lock] = {}
         self._degraded_seats: set[int] = set()
         self._prompt_events: set[PromptSignature] = set()
         self.normaliser = MarvelLcgNormaliser(
@@ -124,6 +143,7 @@ class MarvelLcgPlatform:
         self._scenario_paths_by_id: dict[str, str] = {}
         self._hero_paths_by_id: dict[str, str] = {}
         self._last_resolved_spec: MarvelLcgCreateSpec | None = None
+        self._setup_expectation: _SetupExpectation | None = None
         self._lease_lost = False
         self._lease_validator: Callable[[], Awaitable[bool]] | None = None
 
@@ -168,6 +188,8 @@ class MarvelLcgPlatform:
             encounter_set_names=self.encounter_set_names,
             seats=self.held_seats,
             max_submission_attempts=self.max_submission_attempts,
+            render_ack_attempts=self.render_ack_attempts,
+            render_ack_retry_delay=self.render_ack_retry_delay,
             ready_timeout=self.ready_timeout,
             move_timeout=self.move_timeout,
             http_client=client,
@@ -345,6 +367,9 @@ class MarvelLcgPlatform:
             rules=["v18_all"],
             campaign_log={},
         )
+        self._setup_expectation = self._build_setup_expectation(
+            campaign_json, hero_json
+        )
         with tracer.start_as_current_span(
             "marvel_lcg.create_game",
             attributes={
@@ -363,6 +388,114 @@ class MarvelLcgPlatform:
         self._room_slug = f"marvel-lcg-{uuid.uuid4()}"
         self._table_created = True
         return {"slug": self._room_slug, **result}
+
+    @staticmethod
+    def _document_ids(value: Any) -> frozenset[str]:
+        identifiers: set[str] = set()
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                identifiers.update(MarvelLcgPlatform._document_ids(item))
+        elif isinstance(value, str):
+            identifiers.update(
+                part.strip() for part in value.split(",") if part.strip()
+            )
+        return frozenset(identifiers)
+
+    @classmethod
+    def _build_setup_expectation(
+        cls, campaign_json: str, hero_json: Iterable[str]
+    ) -> _SetupExpectation:
+        try:
+            campaign = json.loads(campaign_json)
+            heroes = [json.loads(document) for document in hero_json]
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise SessionError(
+                "marvel-lcg selected setup documents could not be inspected"
+            ) from exc
+        if not isinstance(campaign, dict) or not all(
+            isinstance(hero, dict) for hero in heroes
+        ):
+            raise SessionError(
+                "marvel-lcg selected setup documents are not JSON objects"
+            )
+        return _SetupExpectation(
+            villain_ids=cls._document_ids(campaign.get("villain")),
+            scheme_ids=cls._document_ids(campaign.get("schemes")),
+            hero_ids_by_seat=tuple(
+                cls._document_ids(hero.get("hero")) for hero in heroes
+            ),
+        )
+
+    @staticmethod
+    def _world_card_ids(value: Any) -> frozenset[str]:
+        identifiers: set[str] = set()
+        if not isinstance(value, (list, tuple)):
+            return frozenset()
+        for card in value:
+            if not isinstance(card, dict):
+                continue
+            card_id = card.get("card_id")
+            if card_id:
+                identifiers.add(str(card_id))
+            identifiers.update(
+                str(item)
+                for item in card.get("down_card_ids") or []
+                if item is not None
+            )
+        return frozenset(identifiers)
+
+    def _validate_selected_setup(self, state: Any) -> None:
+        expectation = self._setup_expectation
+        if expectation is None:
+            return
+        world = state.get("world", state) if isinstance(state, dict) else None
+        mismatches: list[str] = []
+        players = world.get("players") if isinstance(world, dict) else None
+        if not isinstance(players, list):
+            mismatches.append("player list is unavailable")
+            players = []
+        if len(players) != len(expectation.hero_ids_by_seat):
+            mismatches.append(
+                f"expected {len(expectation.hero_ids_by_seat)} players, got {len(players)}"
+            )
+        for index, expected_ids in enumerate(expectation.hero_ids_by_seat):
+            if index >= len(players) or not isinstance(players[index], dict):
+                mismatches.append(f"player{index + 1} identity is unavailable")
+                continue
+            actual_ids = self._world_card_ids(players[index].get("area_hero"))
+            if not expected_ids or not actual_ids.intersection(expected_ids):
+                mismatches.append(f"player{index + 1} hero identity does not match")
+
+        if not isinstance(world, dict):
+            mismatches.append("world descriptor is unavailable")
+        else:
+            villain_ids = self._world_card_ids(
+                world.get("area_villain")
+            ) | self._world_card_ids(world.get("villain_deck"))
+            if not expectation.villain_ids or not villain_ids.intersection(
+                expectation.villain_ids
+            ):
+                mismatches.append("scenario villain does not match")
+            scheme_ids = self._world_card_ids(
+                world.get("area_schemes_main")
+            ) | self._world_card_ids(world.get("main_schemes_deck"))
+            if not expectation.scheme_ids or not scheme_ids.intersection(
+                expectation.scheme_ids
+            ):
+                mismatches.append("scenario main scheme does not match")
+
+        if mismatches:
+            setup = self.selected_setup
+            selected = (
+                f"scenario_id={setup.scenario_id!r}, "
+                f"hero_deck_ids={[item.hero_deck_id for item in setup.hero_decks]!r}"
+                if setup is not None
+                else "selected setup unavailable"
+            )
+            raise SessionError(
+                "marvel-lcg engine state does not match the selected setup "
+                f"({selected}): {', '.join(mismatches)}"
+            )
 
     async def attach_table(
         self, room_slug: str, identity: MarvelLcgIdentity
@@ -423,6 +556,7 @@ class MarvelLcgPlatform:
         )
         await self._process_frame(frame)
         state = await self.request_state(timeout=self.ready_timeout)
+        self._validate_selected_setup(state)
         return state
 
     def register_state_handlers(self, **handlers: Callable[..., Any]) -> None:
@@ -432,17 +566,48 @@ class MarvelLcgPlatform:
         await self._process_frame(frame)
         if frame.transport_degraded:
             return
-        if self._acked_render_ids.get(frame.player_id) == frame.render_id:
+        await self._acknowledge_frame(frame, fail_operation=False)
+
+    def _mark_render_degraded(self, seat: int, reason: str) -> None:
+        if seat in self._degraded_seats:
             return
-        self._acked_render_ids[frame.player_id] = frame.render_id
-        try:
-            await self._http_client.client_updated(
-                f"player{frame.player_id + 1}", frame.render_id, frame.game_id
-            )
-        except Exception:
-            # Frame acknowledgement is advisory; the next frame remains the
-            # authoritative source of state.
-            return
+        self._degraded_seats.add(seat)
+        callback = self._handlers.get("on_state_unavailable")
+        if callback is not None:
+            callback({"seat": seat, "reason": reason})
+
+    async def _acknowledge_frame(
+        self, frame: FrameDescriptor, *, fail_operation: bool
+    ) -> bool:
+        """Acknowledge a frame, failing closed when the engine will not advance."""
+        if frame.transport_degraded:
+            return False
+        if self._acked_render_ids.get(frame.player_id, -1) >= frame.render_id:
+            return True
+        lock = self._render_ack_locks.setdefault(frame.player_id, asyncio.Lock())
+        async with lock:
+            if self._acked_render_ids.get(frame.player_id, -1) >= frame.render_id:
+                return True
+            for attempt in range(self.render_ack_attempts):
+                try:
+                    await self._http_client.client_updated(
+                        f"player{frame.player_id + 1}", frame.render_id, frame.game_id
+                    )
+                except Exception:
+                    if attempt + 1 < self.render_ack_attempts:
+                        await asyncio.sleep(self.render_ack_retry_delay)
+                        continue
+                    reason = (
+                        "marvel-lcg render acknowledgement failed after "
+                        f"{self.render_ack_attempts} attempts"
+                    )
+                    self._mark_render_degraded(frame.player_id, reason)
+                    if fail_operation:
+                        raise PlatformTransportError(reason)
+                    return False
+                self._acked_render_ids[frame.player_id] = frame.render_id
+                return True
+        return False
 
     async def _wait_for_frame(
         self, predicate: Callable[[FrameDescriptor], bool], timeout: float
@@ -461,8 +626,9 @@ class MarvelLcgPlatform:
             if frame.transport_degraded:
                 raise PlatformTransportError("marvel-lcg render transport is degraded")
             self._latest_frame = frame
+            await self._process_frame(frame)
+            await self._acknowledge_frame(frame, fail_operation=True)
             if frame.game_over:
-                await self._process_frame(frame)
                 return frame
             if predicate(frame):
                 return frame
@@ -537,15 +703,7 @@ class MarvelLcgPlatform:
         self._latest_world = world
         frame = self._latest_frames.get(self._seat_number(seat))
         if frame is not None:
-            self._acked_render_ids[self._seat_number(seat)] = frame.render_id
-            try:
-                await self._http_client.client_updated(
-                    seat, frame.render_id, frame.game_id
-                )
-            except Exception:
-                # Acknowledgement is best-effort; the next frame still gives us
-                # an authoritative render id.
-                pass
+            await self._acknowledge_frame(frame, fail_operation=True)
         callback = self._handlers.get("on_full_state")
         if callback is not None:
             callback(self._raw_state())
@@ -568,6 +726,7 @@ class MarvelLcgPlatform:
         if frame.transport_degraded:
             raise PlatformTransportError("marvel-lcg render transport is degraded")
         await self._process_frame(frame)
+        await self._acknowledge_frame(frame, fail_operation=True)
         if frame.game_over:
             return await self.request_state(timeout)
         return await self.request_state(timeout)
@@ -776,8 +935,10 @@ class MarvelLcgPlatform:
                     },
                 )
                 await self._process_frame(frame)
+                await self._acknowledge_frame(frame, fail_operation=True)
                 return True
             await self._process_frame(frame)
+            await self._acknowledge_frame(frame, fail_operation=True)
             if self._seat_number(player_n) not in frame.ask_players:
                 self._pending.pop(player_n, None)
                 self._attempt_guard.clear(previous)
