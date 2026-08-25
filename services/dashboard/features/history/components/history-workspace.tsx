@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   DashboardConfig,
+  GamePlatform,
   HistoryGame,
   ProviderResponse,
   RestoreMode,

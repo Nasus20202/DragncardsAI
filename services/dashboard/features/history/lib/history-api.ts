@@ -6,6 +6,7 @@ import {
   HistoryGame,
   HistoryImportResult,
   HistorySnapshot,
+  GamePlatform,
   RestoreOutcome,
   RestoreRequestBody,
 } from "@/features/shared/lib/types";
