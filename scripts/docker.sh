@@ -24,7 +24,22 @@ case "$ACTION" in
         ;;
     start)
         echo "Starting Docker stack..."
-        compose_with_optional_services up -d
+        if [ "${#SERVICES[@]}" -gt 0 ]; then
+            compose_with_optional_services up -d --build
+        else
+            # A normal local start must rebuild checked-out external sources. The
+            # registry workflow sets IMAGE_PULL_POLICY=always and intentionally
+            # skips local builds.
+            if [ "${IMAGE_PULL_POLICY:-never}" != "always" ]; then
+                docker compose build dragncards-mc-plugin dragncards-backend dragncards-frontend
+            fi
+            # Start the coupled group first. A dependency image change alone does
+            # not require-recreate its dependent backend, so force the group before
+            # the application services can connect to it.
+            docker compose up -d --force-recreate \
+                dragncards-mc-plugin dragncards-backend dragncards-frontend
+            docker compose up -d
+        fi
         ;;
     stop)
         echo "Stopping Docker stack..."

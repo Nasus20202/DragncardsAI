@@ -221,6 +221,10 @@ make test-unit
 scripts/test.sh integration
 make test-integration
 
+# DragnCards image/plugin coupling diagnostics (live stack optional)
+scripts/test.sh infrastructure
+make test-infrastructure
+
 # Rebuild images
 scripts/docker.sh build
 make build
@@ -229,11 +233,19 @@ make build
 scripts/docker.sh down
 make down
 
-# Start/stop/restart infrastructure only, leaving the app services alone
+# Start/stop/restart infrastructure only, leaving the app services alone.
+# Start/restart rebuild and recreate the coupled DragnCards frontend, backend,
+# and Marvel Champions plugin artifacts from the checked-out submodules.
+# The generated-artifact volume is refreshed in place; game database volumes
+# are not removed by these commands.
 scripts/docker-infrastructure.sh start   # or stop, or restart
 make infra-up
 make infra-down
 make infra-restart
+
+# Check the Compose coupling and, when running, compare the mounted plugin
+# artifacts with the plugin image.
+scripts/test.sh infrastructure
 ```
 
 "Infrastructure" is every service defined in `docker-compose.infra.yaml` or

@@ -17,8 +17,11 @@ case "$MODE" in
     all)
         LABEL="all"
         ;;
+    infrastructure)
+        exec "$ROOT_DIR/scripts/test-dragncards-assets.sh"
+        ;;
     *)
-        echo "Usage: $0 {unit|integration|all} [service ...]" >&2
+        echo "Usage: $0 {unit|integration|all|infrastructure} [service ...]" >&2
         exit 1
         ;;
 esac
