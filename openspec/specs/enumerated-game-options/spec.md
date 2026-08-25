@@ -1,7 +1,8 @@
 # enumerated-game-options Specification
 
 ## Purpose
-TBD - created by archiving change dra-65-marvel-lcg-platform-support. Update Purpose after archive.
+The enumerated-game-options capability exposes each platform's legal move set through one
+platform-neutral option list and validates submissions against the currently pending decision.
 
 ## Requirements
 

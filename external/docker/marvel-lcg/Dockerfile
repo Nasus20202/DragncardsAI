@@ -39,8 +39,10 @@ COPY external/marvel-lcg/main.py ./main.py
 COPY --from=frontend /build/public/js ./public/js
 
 COPY external/docker/marvel-lcg/patches/0001-fail-closed-web-surface.patch /tmp/marvel-lcg-hardening.patch
+COPY external/docker/marvel-lcg/patches/0002-fail-closed-startup-save.patch /tmp/marvel-lcg-startup.patch
 RUN patch --fuzz=0 -p1 < /tmp/marvel-lcg-hardening.patch && \
-    rm -f /tmp/marvel-lcg-hardening.patch
+    patch --fuzz=0 -p1 < /tmp/marvel-lcg-startup.patch && \
+    rm -f /tmp/marvel-lcg-hardening.patch /tmp/marvel-lcg-startup.patch
 
 COPY external/docker/marvel-lcg/entrypoint.sh /usr/local/bin/marvel-lcg-entrypoint
 RUN chmod 0755 /usr/local/bin/marvel-lcg-entrypoint

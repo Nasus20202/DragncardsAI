@@ -4,6 +4,7 @@ import asyncio
 import gzip
 import json
 import logging
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call
 from urllib.parse import quote, unquote
 
@@ -259,6 +260,115 @@ async def test_application_spans_cover_game_creation_options_and_submission(
             "prompt" not in key.lower() or key == "game.prompt.present"
             for key in span.attributes
         )
+
+
+def _setup_world(*, hero_id: str = "01001a", villain_id: str = "01094") -> dict:
+    return {
+        "players": [{"area_hero": [{"card_id": hero_id}]}],
+        "area_villain": [{"card_id": villain_id}],
+        "area_schemes_main": [{"card_id": "01097a"}],
+    }
+
+
+def _setup_platform() -> MarvelLcgPlatform:
+    platform = MarvelLcgPlatform("http://engine", "password", http_client=object())
+    platform.selected_setup = MarvelLcgCreateSpec(
+        platform="marvel-lcg",
+        scenario_id="scenario:rhino",
+        hero_decks=(HeroDeckSelection(seat="player1", hero_deck_id="hero:spider"),),
+    )
+    platform._setup_expectation = platform._build_setup_expectation(
+        json.dumps({"villain": ["01094", "01095"], "schemes": ["01097a,01097b"]}),
+        [json.dumps({"hero": ["01001a,01001b"]})],
+    )
+    return platform
+
+
+def test_selected_setup_validation_accepts_matching_world():
+    _setup_platform()._validate_selected_setup(_setup_world())
+
+
+@pytest.mark.parametrize(
+    "world, mismatch",
+    [
+        (_setup_world(hero_id="01002"), "hero identity"),
+        (_setup_world(villain_id="02094"), "scenario villain"),
+        (
+            {**_setup_world(), "area_schemes_main": [{"card_id": "02097a"}]},
+            "main scheme",
+        ),
+    ],
+)
+def test_selected_setup_validation_rejects_mismatched_world(world, mismatch):
+    with pytest.raises(SessionError, match=mismatch):
+        _setup_platform()._validate_selected_setup(world)
+
+
+async def test_render_ack_retries_and_marks_degraded_after_bounded_failure():
+    client = _option_client()
+    client.client_updated.side_effect = RuntimeError("engine unavailable")
+    platform = MarvelLcgPlatform(
+        "http://engine",
+        "password",
+        http_client=client,
+        render_ack_attempts=2,
+        render_ack_retry_delay=0,
+    )
+    unavailable: list[dict] = []
+    platform.register_state_handlers(on_state_unavailable=unavailable.append)
+    frame = FrameDescriptor(5, 1, (), 0, 0, (), "", 1, 1, 0, 1)
+
+    assert not await platform._acknowledge_frame(frame, fail_operation=False)
+    assert client.client_updated.await_count == 2
+    assert unavailable == [
+        {
+            "seat": 0,
+            "reason": "marvel-lcg render acknowledgement failed after 2 attempts",
+        }
+    ]
+    assert platform._degraded_seats == {0}
+
+    with pytest.raises(PlatformTransportError, match="acknowledgement failed"):
+        await platform._acknowledge_frame(
+            FrameDescriptor(6, 1, (), 0, 0, (), "", 1, 1, 0, 1),
+            fail_operation=True,
+        )
+    assert client.client_updated.await_count == 4
+
+
+async def test_empty_reveal_frame_is_acknowledged_before_pending_frame():
+    client = _option_client()
+    platform = _option_platform(client)
+    empty_reveal = FrameDescriptor(1, 1, (), 0, 0, (), "", 1, 1, 0, 1)
+    pending = FrameDescriptor(2, 1, (0,), 0, 0, (), "", 1, 1, 0, 1)
+    platform._socket.wait_for_frame = AsyncMock(side_effect=[empty_reveal, pending])
+
+    result = await platform._wait_for_frame(lambda frame: 0 in frame.ask_players, 1)
+
+    assert result == pending
+    assert client.client_updated.await_args_list == [
+        call("player1", 1, 1),
+        call("player1", 2, 1),
+    ]
+
+
+def test_startup_save_fallback_is_disabled_by_exact_image_patch():
+    root = Path(__file__).resolve().parents[4]
+    patch = (
+        root
+        / "external"
+        / "docker"
+        / "marvel-lcg"
+        / "patches"
+        / "0002-fail-closed-startup-save.patch"
+    ).read_text()
+    dockerfile = (root / "external/docker/marvel-lcg/Dockerfile").read_text()
+    assert (
+        'raise RuntimeError("Configured startup save file could not be loaded")'
+        in patch
+    )
+    assert "\n+                scene = SceneLoader.NewScene" not in patch
+    assert "0002-fail-closed-startup-save.patch" in dockerfile
 
 
 async def test_choose_option_valid_choice_uses_live_prompt_without_crashing():

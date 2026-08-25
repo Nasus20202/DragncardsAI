@@ -1,0 +1,11 @@
+--- a/game/game.py
++++ b/game/game.py
+@@ -258,7 +258,7 @@
+         if save_file:
+             scene = SceneLoader.Load(save_file, nullable=True)
+             if not scene:
+-                scene = SceneLoader.NewScene("rhino", None, ["spider_man"], -1)
++                raise RuntimeError("Configured startup save file could not be loaded")
+             self.session.SetScene(scene, 'Load')
+         else:
+             # Wait for new game

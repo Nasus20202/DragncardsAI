@@ -1,7 +1,8 @@
 # game-platform Specification
 
 ## Purpose
-TBD - created by archiving change dra-65-marvel-lcg-platform-support. Update Purpose after archive.
+The game-platform capability provides one platform-neutral driver contract so session orchestration
+can create, drive, observe, and tear down games without depending on a platform's wire protocol.
 
 ## Requirements
 
