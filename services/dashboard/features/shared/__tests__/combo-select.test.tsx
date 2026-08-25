@@ -7,6 +7,7 @@ import {
   ComboSelect,
   filterComboSelectItems,
 } from "@/features/shared/components/combo-select";
+import { SelectField } from "@/features/shared/components/form-fields";
 import { installResizeObserver } from "@/features/shared/__tests__/heroui-test-env";
 
 const MODELS = [
@@ -17,6 +18,11 @@ const MODELS = [
 ];
 
 const items = MODELS.map((model) => ({ value: model, label: model }));
+const duplicateItems = [
+  { value: "duplicate", label: "First label" },
+  { value: "duplicate", label: "Second label" },
+  { value: "unique", label: "Unique label" },
+];
 
 beforeAll(installResizeObserver);
 
@@ -42,6 +48,53 @@ describe("filterComboSelectItems", () => {
 });
 
 describe("ComboSelect", () => {
+  it("renders duplicate values without React key or accessible id warnings", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const user = userEvent.setup();
+    const onComboChange = vi.fn();
+
+    render(
+      <>
+        <SelectField
+          id="provider"
+          label="Provider"
+          items={duplicateItems}
+          value="duplicate"
+          triggerTestId="provider-trigger"
+          onChange={vi.fn()}
+        />
+        <ComboSelect
+          label="Model"
+          items={duplicateItems}
+          value="unique"
+          inputTestId="model-input"
+          onChange={onComboChange}
+        />
+      </>
+    );
+
+    await user.click(screen.getByTestId("provider-trigger"));
+    const providerOptions = screen.getAllByRole("option");
+    expect(providerOptions).toHaveLength(2);
+    expect(new Set(providerOptions.map((option) => option.id)).size).toBe(2);
+
+    await user.click(screen.getByTestId("model-input"));
+    const modelOptions = screen.getAllByRole("option");
+    expect(modelOptions).toHaveLength(2);
+    expect(new Set(modelOptions.map((option) => option.id)).size).toBe(2);
+    await user.click(screen.getByRole("option", { name: "First label" }));
+    expect(onComboChange).toHaveBeenCalledWith("duplicate");
+
+    const duplicateKeyWarnings = consoleError.mock.calls.filter((call) =>
+      call.some((argument) => String(argument).includes("same key"))
+    );
+    expect(duplicateKeyWarnings).toHaveLength(0);
+
+    consoleError.mockRestore();
+  });
+
   it("shows the committed value in the input", () => {
     render(
       <ComboSelect
