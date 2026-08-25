@@ -13,6 +13,8 @@ services:
     depends_on:
       dragncards-backend:
         condition: service_started
+      marvel-lcg:
+        condition: service_healthy
       otel-lgtm:
         condition: service_healthy
     ports:
@@ -24,9 +26,8 @@ services:
       # History events go to the SHARED orchestrator Valkey (the history bus),
       # separate from the game-service's own session-store Valkey above.
       HISTORY_VALKEY_URL: ${GAME_SERVICE_HISTORY_VALKEY_URL:-redis://agent-orchestrator-valkey:6379/0}
-      # Required only when the marvel-lcg compose profile is selected. Keep the
-      # value outside committed files; the platform container refuses an empty
-      # password.
+      # The platform container refuses an empty password. Keep credentials
+      # outside committed files for non-local deployments.
       MARVEL_LCG_PASSWORD: ${MARVEL_LCG_PASSWORD:-password}
       BOT_EMAIL: ${BOT_EMAIL:-dev_user@example.com}
       BOT_PASSWORD: ${BOT_PASSWORD:-password}

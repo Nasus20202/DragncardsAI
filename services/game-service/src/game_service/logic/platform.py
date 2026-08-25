@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass
 from typing import Any, Callable, Literal, Protocol, runtime_checkable
 
 from game_service.dragncards.auth_cache import DragnCardsAuthCache, DragnCardsIdentity
@@ -39,6 +40,35 @@ PLATFORM_SLUGS: tuple[PlatformSlug, ...] = (
 )
 
 
+@dataclass(frozen=True)
+class HeroDeckSelection:
+    """A neutral seat and the opaque hero-deck id selected for it."""
+
+    seat: str
+    hero_deck_id: str
+
+
+@dataclass(frozen=True)
+class DragnCardsCreateSpec:
+    """Typed creation input owned by the DragnCards platform."""
+
+    platform: Literal["dragncards"]
+    plugin_name: str
+    plugin_info: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MarvelLcgCreateSpec:
+    """Typed creation input owned by the marvel-lcg platform."""
+
+    platform: Literal["marvel-lcg"]
+    scenario_id: str
+    hero_decks: tuple[HeroDeckSelection, ...]
+
+
+PlatformCreateSpec = DragnCardsCreateSpec | MarvelLcgCreateSpec
+
+
 @runtime_checkable
 class GamePlatform(Protocol):
     """Transport contract for one playable game platform."""
@@ -46,12 +76,19 @@ class GamePlatform(Protocol):
     slug: PlatformSlug
     move_surface: MoveSurface
     uses_plugin: bool
+    supports_room_close: bool
 
     def new_session(self) -> "GamePlatform": ...
 
     async def authenticate(self) -> Any: ...
 
-    async def create_table(self, identity: Any, plugin_info: dict[str, Any]) -> Any: ...
+    async def create_table(self, identity: Any, spec: PlatformCreateSpec) -> Any: ...
+
+    async def resolve_create_spec(
+        self, spec: PlatformCreateSpec | None
+    ) -> PlatformCreateSpec: ...
+
+    async def setup_catalog(self) -> dict[str, Any]: ...
 
     async def attach_table(self, room_slug: str, identity: Any) -> Any: ...
 
@@ -142,6 +179,7 @@ class DragnCardsPlatform:
     slug: PlatformSlug = DRAGNCARDS_PLATFORM
     move_surface: MoveSurface = "typed_actions"
     uses_plugin = True
+    supports_room_close = True
 
     def __init__(
         self,
@@ -196,8 +234,13 @@ class DragnCardsPlatform:
         return await self.auth_cache.resolve()
 
     async def create_table(
-        self, identity: DragnCardsIdentity, plugin_info: dict[str, Any]
+        self, identity: DragnCardsIdentity, spec: PlatformCreateSpec
     ) -> dict[str, Any]:
+        if not isinstance(spec, DragnCardsCreateSpec):
+            raise SessionError(
+                "Platform 'dragncards' requires a DragnCards creation specification"
+            )
+        plugin_info = spec.plugin_info
         if self.http_url is None:
             raise ValueError("DragnCards HTTP URL is not configured")
         return await self._create_room(
@@ -208,6 +251,31 @@ class DragnCardsPlatform:
             plugin_version=plugin_info["version"],
             plugin_name=plugin_info["name"],
         )
+
+    async def resolve_create_spec(
+        self, spec: PlatformCreateSpec | None
+    ) -> DragnCardsCreateSpec:
+        if spec is None:
+            raise SessionError("DragnCards creation requires a plugin selection")
+        if not isinstance(spec, DragnCardsCreateSpec):
+            raise SessionError(
+                "Platform 'dragncards' cannot use a marvel-lcg creation specification"
+            )
+        return spec
+
+    async def setup_catalog(self) -> dict[str, Any]:
+        from game_service.catalog.service import supported_plugins
+
+        return {
+            "platform": self.slug,
+            "move_surface": self.move_surface,
+            "plugins": [
+                {"id": plugin, "name": plugin, "display_name": plugin}
+                for plugin in supported_plugins()
+            ],
+            "scenarios": [],
+            "hero_decks": [],
+        }
 
     async def attach_table(
         self, room_slug: str, identity: DragnCardsIdentity
@@ -422,6 +490,8 @@ class DragnCardsPlatform:
         plugin_version: int | None,
     ) -> dict[str, Any]:
         return {
+            "platform": self.slug,
+            "move_surface": self.move_surface,
             "plugin_name": plugin_name,
             "plugin_id": plugin_id,
             "plugin_version": plugin_version,

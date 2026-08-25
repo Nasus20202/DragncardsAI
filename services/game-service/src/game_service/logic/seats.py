@@ -47,6 +47,28 @@ def normalise_seat_id(value: Any) -> str:
     return value
 
 
+def require_contiguous_seat_roster(values: Any) -> tuple[str, ...]:
+    """Return an exact ``player1``..``playerN`` roster or reject it.
+
+    Marvel's engine receives hero documents positionally, so accepting a reverse
+    or gapped seat list would make the requested seat metadata disagree with the
+    engine's player order.  Keep the invariant at the neutral seam rather than
+    repairing it independently in each transport adapter.
+    """
+    if not isinstance(values, (list, tuple)) or not values:
+        raise ValueError("hero-deck roster must contain at least player1")
+    roster = tuple(normalise_seat_id(value) for value in values)
+    expected = SEAT_IDS[: len(roster)]
+    if roster != expected:
+        expected_text = ", ".join(expected)
+        actual_text = ", ".join(roster)
+        raise ValueError(
+            f"hero-deck roster must be the ordered contiguous prefix "
+            f"{expected_text}; received {actual_text}"
+        )
+    return roster
+
+
 def _game_of(state: Any) -> dict[str, Any] | None:
     """The ``game`` sub-document of a room state, tolerating either nesting.
 

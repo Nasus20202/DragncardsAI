@@ -22,7 +22,7 @@ import pytest
 
 from game_service.api.app import create_app
 from game_service.coordination.history_emitter import NullHistoryEmitter
-from game_service.coordination.session_store import InMemorySessionStore
+from game_service.coordination.session_store import ValkeySessionStore
 from game_service.logic.platform import MARVEL_LCG_PLATFORM
 from game_service.logic.session_manager import SessionManager
 from game_service.marvel_lcg.platform import MarvelLcgPlatform
@@ -72,7 +72,9 @@ async def test_marvel_lcg_real_engine_option_round_trip():
     )
     manager = SessionManager(
         platform_registry={MARVEL_LCG_PLATFORM: platform},
-        session_store=InMemorySessionStore(),
+        session_store=ValkeySessionStore(
+            os.environ.get("VALKEY_URL", "redis://localhost:6380/0")
+        ),
         history_emitter=NullHistoryEmitter(),
     )
     app = create_app(session_manager=manager)
@@ -85,11 +87,33 @@ async def test_marvel_lcg_real_engine_option_round_trip():
             base_url="http://test",
             timeout=15.0,
         ) as client:
+            catalog = await client.get(
+                "/games/setup-catalog", params={"platform": "marvel-lcg"}
+            )
+            assert catalog.status_code == 200, catalog.text
+            catalog_body = catalog.json()
+            scenario_id = catalog_body["scenarios"][0]["id"]
+            hero_decks = catalog_body["hero_decks"]
+            assert len(hero_decks) >= 2
+
             created = await client.post(
                 "/games",
                 json={
                     "platform": "marvel-lcg",
-                    "plugin_name": "marvel-champions",
+                    "setup": {
+                        "platform": "marvel-lcg",
+                        "scenario_id": scenario_id,
+                        "hero_decks": [
+                            {
+                                "seat": "player1",
+                                "hero_deck_id": hero_decks[0]["id"],
+                            },
+                            {
+                                "seat": "player2",
+                                "hero_deck_id": hero_decks[1]["id"],
+                            },
+                        ],
+                    },
                 },
             )
             assert created.status_code == 201, created.text

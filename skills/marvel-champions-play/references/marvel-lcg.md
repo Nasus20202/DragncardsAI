@@ -20,14 +20,16 @@ your pending set are the confirmation, not the HTTP response.
 
 Use the `game-service_` prefix shown by the session's tool list:
 
-1. `list_game_options(session_id, player)` reads the current prompt and options for the
-   requested seat.
+1. `list_game_options(session_id, player_n)` reads the current prompt and options for the
+   requested seat. Retain its `prompt_id` and `prompt_version`; both are required for
+   the matching choice.
 2. Choose by `option_id`, never by option name. Names are descriptive and are not unique;
    one prompt can contain several options named `Play`. Use each option's resolved target
    card name and type, payment choices, and event context to distinguish them.
-3. Submit exactly one choice with `choose_game_option(session_id, player, option_id,
-   targets, resources)`. The tool validates that the id is still pending, that targets
-   are legal, and that the target count fits the option's inclusive range.
+3. Submit exactly one choice with `choose_game_option(session_id, player_n, option_id,
+   targets, resources, prompt_id, prompt_version)`. The tool validates that the id is
+   still pending, that the prompt identity matches, that targets are legal, and that the
+   target count fits the option's inclusive range.
 
 For durable evaluation, a successful choice is recorded additively on the agent move as
 `payload.marvel_lcg_option` with exactly `{id, name, event}`. The orchestrator copies

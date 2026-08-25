@@ -71,6 +71,7 @@ EXPECTED_TOOL_NAMES = {
     "load_prebuilt_deck",
     "search_prebuilt_sets_marvel_champions",
     "create_game",
+    "list_game_setup_catalog",
     "attach_game",
     "list_games",
     "lookup_session_by_slug",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -17,8 +18,15 @@ from game_service.logic.exceptions import (
     PlatformTransportError,
     SessionError,
 )
-from game_service.logic.platform import MARVEL_LCG_PLATFORM, MoveSurface, PlatformSlug
-from game_service.logic.seats import normalise_seat_id
+from game_service.logic.platform import (
+    HeroDeckSelection,
+    MARVEL_LCG_PLATFORM,
+    MarvelLcgCreateSpec,
+    MoveSurface,
+    PlatformCreateSpec,
+    PlatformSlug,
+)
+from game_service.logic.seats import normalise_seat_id, require_contiguous_seat_roster
 from game_service.marvel_lcg.client import MarvelLcgHttpClient, NewGameDescriptor
 from game_service.marvel_lcg.frames import (
     FrameDescriptor,
@@ -46,6 +54,7 @@ class MarvelLcgPlatform:
     slug: PlatformSlug = MARVEL_LCG_PLATFORM
     move_surface: MoveSurface = "enumerated_options"
     uses_plugin = False
+    supports_room_close = False
 
     def __init__(
         self,
@@ -111,6 +120,12 @@ class MarvelLcgPlatform:
         )
         self.history_emitter: Any = None
         self.session_id: str | None = None
+        self.selected_setup: MarvelLcgCreateSpec | None = None
+        self._scenario_paths_by_id: dict[str, str] = {}
+        self._hero_paths_by_id: dict[str, str] = {}
+        self._last_resolved_spec: MarvelLcgCreateSpec | None = None
+        self._lease_lost = False
+        self._lease_validator: Callable[[], Awaitable[bool]] | None = None
 
     @staticmethod
     def _validate_http_url(value: str) -> str:
@@ -170,47 +185,165 @@ class MarvelLcgPlatform:
     async def list_starter_deck(self) -> list[str]:
         return await self._http_client.list_starter_deck()
 
+    @staticmethod
+    def _catalog_id(kind: str, source_path: str) -> str:
+        digest = hashlib.sha256(f"{kind}:{source_path}".encode("utf-8")).hexdigest()
+        return f"{kind}:{digest[:24]}"
+
+    @staticmethod
+    def _display_name(source_path: str) -> str:
+        name = os.path.basename(source_path).rsplit(".", 1)[0]
+        return name.replace("_", " ").replace("-", " ").strip() or source_path
+
+    async def setup_catalog(self) -> dict[str, Any]:
+        scenarios = await self._http_client.list_scenarios()
+        hero_decks = await self._http_client.list_starter_deck()
+        return {
+            "platform": self.slug,
+            "move_surface": self.move_surface,
+            "scenarios": [
+                {
+                    "id": self._catalog_id("scenario", path),
+                    "name": self._display_name(path),
+                    "display_name": self._display_name(path),
+                }
+                for path in scenarios
+            ],
+            "hero_decks": [
+                {
+                    "id": self._catalog_id("hero-deck", path),
+                    "name": self._display_name(path),
+                    "display_name": self._display_name(path),
+                }
+                for path in hero_decks
+            ],
+        }
+
+    async def resolve_create_spec(
+        self, spec: PlatformCreateSpec | None
+    ) -> MarvelLcgCreateSpec:
+        scenarios = await self._http_client.list_scenarios()
+        decks = await self._http_client.list_starter_deck()
+        scenario_by_id = {
+            self._catalog_id("scenario", path): path for path in scenarios
+        }
+        hero_by_id = {self._catalog_id("hero-deck", path): path for path in decks}
+        self._scenario_paths_by_id = scenario_by_id
+        self._hero_paths_by_id = hero_by_id
+
+        if spec is None:
+            configured_scenario = self.scenario_path
+            configured_heroes = self.hero_paths
+            if configured_scenario is None or not configured_heroes:
+                raise SessionError(
+                    "marvel-lcg setup is not configured; call list_game_setup_catalog "
+                    "and provide scenario_id plus ordered hero_decks"
+                )
+            scenario_id = (
+                configured_scenario
+                if configured_scenario in scenario_by_id
+                else self._catalog_id("scenario", configured_scenario)
+            )
+            if scenario_id not in scenario_by_id:
+                raise SessionError(
+                    "Configured MARVEL_LCG_SCENARIO_PATH is absent from the live "
+                    "setup catalog; call list_game_setup_catalog for valid scenario_id"
+                )
+            hero_decks = tuple(
+                HeroDeckSelection(
+                    seat=f"player{index}",
+                    hero_deck_id=(
+                        path
+                        if path in hero_by_id
+                        else self._catalog_id("hero-deck", path)
+                    ),
+                )
+                for index, path in enumerate(configured_heroes, start=1)
+            )
+            spec = MarvelLcgCreateSpec(
+                platform=MARVEL_LCG_PLATFORM,
+                scenario_id=scenario_id,
+                hero_decks=hero_decks,
+            )
+
+        if not isinstance(spec, MarvelLcgCreateSpec):
+            raise SessionError(
+                "Platform 'marvel-lcg' cannot use a DragnCards creation specification"
+            )
+        if spec.scenario_id not in scenario_by_id:
+            raise SessionError(
+                f"Unknown marvel-lcg scenario_id {spec.scenario_id!r}; "
+                "call list_game_setup_catalog first"
+            )
+        if not spec.hero_decks:
+            raise SessionError(
+                "marvel-lcg setup requires at least one ordered hero_decks entry"
+            )
+
+        seats: list[str] = []
+        for selection in spec.hero_decks:
+            try:
+                seat = normalise_seat_id(selection.seat)
+            except (TypeError, ValueError) as exc:
+                raise SessionError(
+                    f"Invalid marvel-lcg seat {selection.seat!r}; expected player1..player4"
+                ) from exc
+            if seat in seats:
+                raise SessionError(f"Duplicate marvel-lcg seat {seat!r}")
+            seats.append(seat)
+            if selection.hero_deck_id not in hero_by_id:
+                raise SessionError(
+                    f"Unknown marvel-lcg hero_deck_id {selection.hero_deck_id!r}; "
+                    "call list_game_setup_catalog first"
+                )
+
+        try:
+            require_contiguous_seat_roster(seats)
+        except ValueError as exc:
+            raise SessionError(str(exc)) from exc
+
+        resolved = MarvelLcgCreateSpec(
+            platform=MARVEL_LCG_PLATFORM,
+            scenario_id=spec.scenario_id,
+            hero_decks=tuple(
+                HeroDeckSelection(
+                    seat=normalise_seat_id(selection.seat),
+                    hero_deck_id=selection.hero_deck_id,
+                )
+                for selection in spec.hero_decks
+            ),
+        )
+        self._last_resolved_spec = resolved
+        return resolved
+
     async def create_table(
-        self, identity: MarvelLcgIdentity, plugin_info: dict[str, Any]
+        self, identity: MarvelLcgIdentity, spec: PlatformCreateSpec
     ) -> dict[str, Any]:
         del identity
-        scenario = plugin_info.get("scenario_path", self.scenario_path)
-        scenarios = await self._http_client.list_scenarios()
-        if not scenarios:
-            raise SessionError("marvel-lcg exposes no vendored scenarios")
-        if scenario is None:
-            scenario = scenarios[0]
-        elif scenario not in scenarios:
-            raise SessionError(
-                f"marvel-lcg scenario is not in the vendored listing: {scenario!r}"
-            )
-        heroes = tuple(plugin_info.get("hero_paths") or self.hero_paths)
-        decks = await self._http_client.list_starter_deck()
-        if not decks:
-            raise SessionError("marvel-lcg exposes no vendored starter decks")
-        if not heroes:
-            heroes = (decks[0],)
-        elif any(hero not in decks for hero in heroes):
-            raise SessionError(
-                "marvel-lcg hero deck is not in the vendored starter-deck listing"
-            )
+        resolved = (
+            self._last_resolved_spec
+            if self._last_resolved_spec is not None and self._last_resolved_spec == spec
+            else await self.resolve_create_spec(spec)
+        )
+        scenario = self._scenario_paths_by_id[resolved.scenario_id]
+        selections = tuple(resolved.hero_decks)
+        heroes = tuple(self._hero_paths_by_id[item.hero_deck_id] for item in selections)
+        self.held_seats = tuple(item.seat for item in selections)
+        self.normaliser = MarvelLcgNormaliser(
+            self.held_seats, reading_seat=self.held_seats[0]
+        )
+        self.selected_setup = resolved
         campaign_json = await self._http_client.get_scenario_json(scenario)
         hero_json = [await self._http_client.get_hero_json(path) for path in heroes]
         descriptor = NewGameDescriptor(
             campaign_json=campaign_json,
-            encounter_set_names=list(
-                plugin_info.get("encounter_set_names") or self.encounter_set_names
-            ),
+            encounter_set_names=list(self.encounter_set_names),
             hero_json=hero_json,
-            seed=plugin_info.get("seed") or 0,
-            timeout=plugin_info.get("timeout") or 0,
-            challenges=list(plugin_info.get("challenges") or []),
-            rules=(
-                [plugin_info["rules"]]
-                if isinstance(plugin_info.get("rules"), str)
-                else list(plugin_info.get("rules") or ["v18_all"])
-            ),
-            campaign_log=plugin_info.get("campaign_log") or {},
+            seed=0,
+            timeout=0,
+            challenges=[],
+            rules=["v18_all"],
+            campaign_log={},
         )
         with tracer.start_as_current_span(
             "marvel_lcg.create_game",
@@ -597,6 +730,7 @@ class MarvelLcgPlatform:
             },
         ) as span:
             try:
+                await self.ensure_lease_owned()
                 self._attempt_guard.raise_if_exhausted(signature)
                 self._attempt_guard.record(signature, chosen_id)
                 await self._http_client.post(
@@ -757,12 +891,56 @@ class MarvelLcgPlatform:
         plugin_version: int | None,
     ) -> dict[str, Any]:
         del plugin_name, plugin_id, plugin_version
-        return {}
+        setup = None
+        if self.selected_setup is not None:
+            setup = {
+                "platform": self.selected_setup.platform,
+                "scenario_id": self.selected_setup.scenario_id,
+                "hero_decks": [
+                    {
+                        "seat": item.seat,
+                        "hero_deck_id": item.hero_deck_id,
+                    }
+                    for item in self.selected_setup.hero_decks
+                ],
+            }
+        return {
+            "platform": self.slug,
+            "move_surface": self.move_surface,
+            "setup": setup,
+        }
 
     def ensure_move_allowed(self) -> None:
         self._check_bad_state()
+        if self._lease_lost:
+            raise SessionError(
+                "marvel-lcg singleton lease is lost; no further moves are allowed"
+            )
         if self._terminal:
             raise SessionError("marvel-lcg game is terminal")
+
+    def set_lease_validator(self, validator: Callable[[], Awaitable[bool]]) -> None:
+        self._lease_validator = validator
+        self._lease_lost = False
+
+    def mark_lease_lost(self, reason: str = "marvel-lcg singleton lease lost") -> None:
+        del reason
+        self._lease_lost = True
+
+    async def ensure_lease_owned(self) -> None:
+        self.ensure_move_allowed()
+        if self._lease_validator is None:
+            return
+        try:
+            owned = await self._lease_validator()
+        except Exception as exc:
+            self.mark_lease_lost()
+            raise SessionError(
+                "marvel-lcg singleton lease could not be verified; no move was sent"
+            ) from exc
+        if not owned:
+            self.mark_lease_lost()
+            raise SessionError("marvel-lcg singleton lease is lost; no move was sent")
 
     def _require_held_seat(self, player_n: str) -> None:
         if normalise_seat_id(player_n) not in self.held_seats:

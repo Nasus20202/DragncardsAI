@@ -6,9 +6,17 @@ schedules; it does not synthesize a phase-advancing call.
 
 ## Setup order
 
-1. Create the game with `platform: marvel-lcg` and retain its session id.
-2. Resolve one of the engine's scenario and hero-deck catalog entries.
-3. Assign the roster's neutral seats and verify the initial neutral state.
+1. Call `game-service_list_game_setup_catalog` with
+   `{"platform":"marvel-lcg"}` and retain opaque `scenario.id` and
+   `hero_decks[].id` values. Do not construct engine paths or choose the first
+   catalog entry.
+2. Call `game-service_create_game` with
+   `{"platform":"marvel-lcg","setup":{"platform":"marvel-lcg",
+   "scenario_id":<id>,"hero_decks":[{"seat":"player1",
+   "hero_deck_id":<id>}, ...]}}`. Preserve the exact contiguous roster order
+   and stop if a requested id is absent.
+3. Read the returned session metadata and verify its `platform`, `move_surface`, and
+   echoed `setup` before reading the initial neutral state.
 4. Prompt only after `pendingSeats` names a seat and load the play skill's
    `references/marvel-lcg.md` in that seat.
 
@@ -24,7 +32,8 @@ Repeat until the neutral state reports win, loss, or a service failure:
    the pending set but does not call `list_game_options` or `choose_game_option` itself.
    If no seat is pending, wait for the next state rather than inventing a turn transition.
 3. The seat agent calls `list_game_options`, chooses by stable `option_id`, and submits
-   exactly once with `choose_game_option`, including the resolved targets and payments.
+   exactly once with `choose_game_option`, including the resolved targets, payments,
+   `prompt_id`, and `prompt_version` returned by the options read.
    It reports the selected option and result to the coordinator.
 4. Wait for the seat report, then verify that the prompt changed or the seat left
    `pendingSeats`; a response status alone is not confirmation.

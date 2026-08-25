@@ -26,6 +26,7 @@ from game_service.api.routers import (
     game_state,
     meta,
     marvel_lcg,
+    setup_catalog,
 )
 from game_service.logic.session_manager import SessionManager
 from game_service.telemetry import instrument_fastapi_app
@@ -95,5 +96,6 @@ def create_app(session_manager: SessionManager | None = None) -> FastAPI:
     app.include_router(load_prebuilt_deck_router.router)
     app.include_router(prebuilt_sets_router.router)
     app.include_router(marvel_lcg.router)
+    app.include_router(setup_catalog.router)
 
     return app

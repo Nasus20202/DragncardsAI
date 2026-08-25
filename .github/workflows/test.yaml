@@ -74,8 +74,6 @@ jobs:
         run: scripts/test-marvel-lcg-infrastructure.sh
 
       - name: Build Docker stack
-        env:
-          COMPOSE_PROFILES: marvel-lcg
         uses: docker/bake-action@v7
         with:
           files: docker-compose.yaml
@@ -89,6 +87,7 @@ jobs:
           DEFAULT_PROVIDER_ID: lmstudio
           DEFAULT_MODEL_NAME: qwen3.5-0.8b
           ENABLED_PROVIDER_IDS: lmstudio
+          MARVEL_LCG_PASSWORD: ci-only-${{ github.run_id }}-${{ github.run_attempt }}
         run: ./services/smoketest/smoke.sh up --no-build
 
       - name: Wait for backend
@@ -103,11 +102,15 @@ jobs:
           echo "DragnCards backend did not become reachable in time" >&2
           exit 1
 
-      - name: Start marvel-lcg profile and wait for readiness
-        env:
-          # Generated for this run; never use a committed platform password.
-          MARVEL_LCG_PASSWORD: ci-only-${{ github.run_id }}-${{ github.run_attempt }}
-        run: docker compose --profile marvel-lcg up -d --wait marvel-lcg
+      - name: Verify ordinary marvel-lcg startup
+        run: |
+          engine_id="$(docker compose ps -q marvel-lcg)"
+          init_id="$(docker compose ps -aq marvel-lcg-init)"
+          test -n "$engine_id"
+          test -n "$init_id"
+          test "$(docker inspect -f '{{.State.Health.Status}}' "$engine_id")" = healthy
+          test "$(docker inspect -f '{{.State.Status}}' "$init_id")" = exited
+          test "$(docker inspect -f '{{.State.ExitCode}}' "$init_id")" = 0
 
       - name: Run integration tests
         run: scripts/test.sh integration

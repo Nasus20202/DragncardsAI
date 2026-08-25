@@ -43,6 +43,10 @@ class SessionLockedError(SessionError):
     """Raised when a session operation lock cannot be acquired in time."""
 
 
+class SingletonLeaseConflictError(SessionError):
+    """Raised when the singleton marvel-lcg engine is already owned."""
+
+
 class EnumeratedOptionError(SessionError):
     """Raised when a platform option cannot be listed or submitted."""
 

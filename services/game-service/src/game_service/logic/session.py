@@ -84,6 +84,9 @@ class GameSession:
     # Non-emitting, server-reaped reconstruction session (view-only). When true
     # this session never emits history events and is eligible for TTL reaping.
     ephemeral: bool = False
+    setup: dict[str, Any] | None = None
+    degraded: bool = False
+    degraded_reason: str | None = None
     room: GamePlatform = field(init=False)
     _state: Any = field(default=None, init=False)
     _state_stale: bool = field(default=False, init=False)
@@ -175,6 +178,21 @@ class GameSession:
                 f"Session {self.session_id}: game state is temporarily unavailable"
             )
 
+    def mark_degraded(self, reason: str) -> None:
+        """Record a platform degradation without allowing mutating calls."""
+        self.degraded = True
+        self.degraded_reason = reason
+        marker = getattr(self.driver, "mark_lease_lost", None)
+        if marker is not None:
+            marker(reason)
+
+    async def ensure_move_allowed(self) -> None:
+        """Check distributed fencing immediately before a mutating operation."""
+        validator = getattr(self.driver, "ensure_lease_owned", None)
+        if validator is not None:
+            await validator()
+        self.driver.ensure_move_allowed()
+
     async def _request_fresh_state(self, timeout: float) -> Any:
         with tracer.start_as_current_span("game_session.request_state"):
             new_state = await self.driver.request_state(timeout=timeout)
@@ -233,7 +251,7 @@ class GameSession:
         ) as span:
             try:
                 self._check_state_flags()
-                self.driver.ensure_move_allowed()
+                await self.ensure_move_allowed()
                 # Clear any previous action error before executing
                 self._action_error = None
                 logger.info(
@@ -600,6 +618,12 @@ class GameSession:
         )
 
     async def close_room(self, timeout: float = 10.0) -> None:
+        if not getattr(self.driver, "supports_room_close", True):
+            platform = getattr(self.driver, "slug", self.platform)
+            raise SessionError(
+                f"Platform '{platform}' does not support close_room; "
+                "delete the session to tear down its transport"
+            )
         try:
             await self.driver.push_event("close_room", {"options": {}}, timeout)
         except PlatformTransportError as exc:
@@ -650,6 +674,9 @@ class GameSession:
             "created_at": self.created_at.isoformat(),
             "frontend_url": None,
             "ephemeral": self.ephemeral,
+            "setup": self.setup,
+            "degraded": self.degraded,
+            "degraded_reason": self.degraded_reason,
             **self.driver.session_metadata(
                 plugin_name=self.plugin_name,
                 plugin_id=self.plugin_id,

@@ -6,11 +6,12 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from game_service.api.enums import LayoutId, PlayerN, SeatId
 
 from game_service.logic.actions import GameAction
 from game_service.logic.platform import DRAGNCARDS_PLATFORM, MoveSurface, PlatformSlug
+from game_service.logic.seats import require_contiguous_seat_roster
 from game_service.logic.snapshots import GameStateSnapshot
 from game_service.schemas.base import StrictRequest
 
@@ -42,6 +43,70 @@ class CreateGameRequest(StrictRequest):
             "the client never tears them down."
         ),
     )
+    setup: "PlatformCreateSpecRequest | None" = Field(
+        default=None,
+        description=(
+            "Optional platform-discriminated setup selection. Discover opaque ids "
+            "with list_game_setup_catalog before creating a Marvel LCG session."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_setup_platform(self):
+        if self.setup is not None and self.setup.platform != self.platform:
+            raise ValueError("create_game platform must match setup.platform")
+        return self
+
+
+class HeroDeckSelectionRequest(StrictRequest):
+    seat: SeatId = Field(description="Neutral seat receiving this hero deck")
+    hero_deck_id: str = Field(
+        min_length=1,
+        max_length=256,
+        description="Opaque hero-deck id returned by list_game_setup_catalog",
+    )
+
+
+class DragnCardsSetupRequest(StrictRequest):
+    platform: Literal["dragncards"]
+    plugin_name: str = Field(
+        default="marvel-champions",
+        min_length=1,
+        description="DragnCards plugin identifier from the setup catalog",
+    )
+
+
+class MarvelLcgSetupRequest(StrictRequest):
+    platform: Literal["marvel-lcg"]
+    scenario_id: str = Field(
+        min_length=1,
+        max_length=256,
+        description="Opaque scenario id returned by list_game_setup_catalog",
+    )
+    hero_decks: list[HeroDeckSelectionRequest] = Field(
+        min_length=1,
+        max_length=4,
+        description="Ordered, unique seat/deck selections",
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_seats(self):
+        seats = [item.seat for item in self.hero_decks]
+        if len(seats) != len(set(seats)):
+            raise ValueError("Marvel setup hero_decks must use unique neutral seats")
+        try:
+            require_contiguous_seat_roster(seats)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
+
+
+PlatformCreateSpecRequest = Annotated[
+    Union[DragnCardsSetupRequest, MarvelLcgSetupRequest],
+    Field(discriminator="platform"),
+]
+
+CreateGameRequest.model_rebuild()
 
 
 class AttachGameRequest(StrictRequest):
@@ -72,9 +137,34 @@ ActionRequest = Annotated[
 # ---------------------------------------------------------------------------
 
 
+class ResolvedHeroDeckSelection(BaseModel):
+    """The ordered hero-deck selection echoed by a created Marvel session."""
+
+    seat: SeatId
+    hero_deck_id: str
+
+
+class ResolvedDragnCardsSetup(BaseModel):
+    platform: Literal["dragncards"]
+    plugin_name: str
+
+
+class ResolvedMarvelLcgSetup(BaseModel):
+    platform: Literal["marvel-lcg"]
+    scenario_id: str
+    hero_decks: list[ResolvedHeroDeckSelection]
+
+
+ResolvedSetup = Annotated[
+    Union[ResolvedDragnCardsSetup, ResolvedMarvelLcgSetup],
+    Field(discriminator="platform"),
+]
+
+
 class SessionMetadata(BaseModel):
     session_id: str
     platform: PlatformSlug = DRAGNCARDS_PLATFORM
+    move_surface: MoveSurface = "typed_actions"
     # These fields belong to the DragnCards platform. They remain present for
     # DragnCards responses, while a platform without plugins may leave them null.
     plugin_name: str | None = None
@@ -85,6 +175,9 @@ class SessionMetadata(BaseModel):
     frontend_url: str | None = None
     # True for non-emitting, server-reaped reconstruction sessions (view-only).
     ephemeral: bool = False
+    setup: ResolvedSetup | None = None
+    degraded: bool = False
+    degraded_reason: str | None = None
 
 
 class CreateGameResponse(BaseModel):
@@ -146,6 +239,8 @@ class SimplifiedGameState(BaseModel):
 
 class GameStateResponse(BaseModel):
     session_id: str
+    platform: PlatformSlug = DRAGNCARDS_PLATFORM
+    move_surface: MoveSurface = "typed_actions"
     state: Union[SimplifiedGameState, dict[str, Any]] = Field(
         description="Current DragnCards game state object. Simplified format for Marvel Champions (flat keys), raw format for other plugins."
     )
@@ -194,6 +289,8 @@ class ChooseGameOptionRequest(StrictRequest):
 
 class ChooseGameOptionResponse(BaseModel):
     session_id: str
+    platform: Literal["marvel-lcg"] = "marvel-lcg"
+    move_surface: Literal["enumerated_options"] = "enumerated_options"
     player_n: SeatId
     option_id: int | str
     resolved: bool
@@ -506,6 +603,8 @@ class ListPrebuiltSetsResponse(BaseModel):
 class SessionActionsResponse(BaseModel):
     session_id: str
     plugin_name: str
+    platform: PlatformSlug = DRAGNCARDS_PLATFORM
+    move_surface: MoveSurface = "typed_actions"
     actions: list[ActionSchema] = Field(
         description="All action types accepted by POST /games/{session_id}/actions"
     )
@@ -522,3 +621,35 @@ class SessionActionsResponse(BaseModel):
     plugin_metadata: PluginActionCatalogMetadata = Field(
         description="Plugin-defined action metadata and UI affordances for this session"
     )
+
+
+# ---------------------------------------------------------------------------
+# Neutral setup catalog models
+# ---------------------------------------------------------------------------
+
+
+class SetupCatalogEntry(BaseModel):
+    id: str = Field(description="Opaque setup identifier accepted by create_game")
+    name: str = Field(description="Stable display name for the setup entry")
+    display_name: str = Field(description="Human-readable setup label")
+
+
+class DragnCardsSetupCatalog(BaseModel):
+    platform: Literal["dragncards"]
+    move_surface: Literal["typed_actions"]
+    plugins: list[SetupCatalogEntry] = Field(default_factory=list)
+    scenarios: list[SetupCatalogEntry] = Field(default_factory=list)
+    hero_decks: list[SetupCatalogEntry] = Field(default_factory=list)
+
+
+class MarvelLcgSetupCatalog(BaseModel):
+    platform: Literal["marvel-lcg"]
+    move_surface: Literal["enumerated_options"]
+    scenarios: list[SetupCatalogEntry] = Field(default_factory=list)
+    hero_decks: list[SetupCatalogEntry] = Field(default_factory=list)
+
+
+SetupCatalogResponse = Annotated[
+    Union[DragnCardsSetupCatalog, MarvelLcgSetupCatalog],
+    Field(discriminator="platform"),
+]

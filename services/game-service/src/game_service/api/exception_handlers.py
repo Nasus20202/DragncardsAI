@@ -13,8 +13,10 @@ from game_service.logic.session_manager import (
     SessionError,
     SessionLockedError,
     SessionNotFoundError,
+    SingletonLeaseConflictError,
     StateUnavailableError,
 )
+from game_service.marvel_lcg.client import MarvelLcgError
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -36,9 +38,23 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def state_unavailable_handler(request, exc: StateUnavailableError):
         return JSONResponse(status_code=503, content={"detail": str(exc)})
 
+    @app.exception_handler(MarvelLcgError)
+    async def marvel_backend_unavailable_handler(request, exc: MarvelLcgError):
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": "5"},
+            content={"detail": f"marvel-lcg backend is unavailable: {exc}"},
+        )
+
     @app.exception_handler(SessionLockedError)
     async def session_locked_handler(request, exc: SessionLockedError):
         return JSONResponse(status_code=423, content={"detail": str(exc)})
+
+    @app.exception_handler(SingletonLeaseConflictError)
+    async def singleton_lease_conflict_handler(
+        request, exc: SingletonLeaseConflictError
+    ):
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     # SessionError is the base class — must be registered last so the more
     # specific subclass handlers above take priority.

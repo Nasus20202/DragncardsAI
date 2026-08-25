@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -47,6 +47,8 @@ class GameOptions(BaseModel):
     """The platform-neutral pending decision returned to callers."""
 
     session_id: str | None = None
+    platform: Literal["marvel-lcg"] = "marvel-lcg"
+    move_surface: Literal["enumerated_options"] = "enumerated_options"
     prompt_id: str | None = None
     prompt_version: int | None = None
     player_n: str

@@ -8,6 +8,7 @@ in-memory fallback keeps tests and isolated unit runs simple.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -24,9 +25,19 @@ _RELEASE_LOCK_LUA = (
 _MIN_LOCK_TTL_MS = 1
 _MIN_LOCK_RETRY_INTERVAL = 0.01
 _MAX_LOCK_RETRY_INTERVAL = 0.5
+_RENEW_MARVEL_LEASE_LUA = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] "
+    "then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end"
+)
+_RELEASE_MARVEL_LEASE_LUA = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] "
+    "then return redis.call('del', KEYS[1]) else return 0 end"
+)
 
 
 class SessionStore(Protocol):
+    supports_distributed_leases: bool
+
     async def list_sessions(self) -> list[dict[str, Any]]: ...
 
     async def get_session(self, session_id: str) -> dict[str, Any] | None: ...
@@ -49,8 +60,30 @@ class SessionStore(Protocol):
 
     async def release_session_lock(self, session_id: str, owner_token: str) -> None: ...
 
+    async def acquire_marvel_lease(
+        self,
+        endpoint: str,
+        session_id: str,
+        owner_token: str,
+        *,
+        lease_ttl: float,
+    ) -> bool: ...
+
+    async def renew_marvel_lease(
+        self, endpoint: str, owner_token: str, *, lease_ttl: float
+    ) -> bool: ...
+
+    async def marvel_lease_owned(self, endpoint: str, owner_token: str) -> bool: ...
+
+    async def release_marvel_lease(self, endpoint: str, owner_token: str) -> None: ...
+
 
 class InMemorySessionStore:
+    # The fallback store intentionally cannot claim singleton correctness.  A
+    # Marvel session therefore requires the Valkey-backed store rather than
+    # silently substituting an in-process lock.
+    supports_distributed_leases = False
+
     def __init__(self) -> None:
         self._records: dict[str, dict[str, Any]] = {}
         self._slug_index: dict[str, str] = {}
@@ -123,6 +156,30 @@ class InMemorySessionStore:
                 return
             self._session_lock_tokens.pop(session_id, None)
             lock.release()
+
+    async def acquire_marvel_lease(
+        self,
+        endpoint: str,
+        session_id: str,
+        owner_token: str,
+        *,
+        lease_ttl: float,
+    ) -> bool:
+        del endpoint, session_id, owner_token, lease_ttl
+        return False
+
+    async def renew_marvel_lease(
+        self, endpoint: str, owner_token: str, *, lease_ttl: float
+    ) -> bool:
+        del endpoint, owner_token, lease_ttl
+        return False
+
+    async def marvel_lease_owned(self, endpoint: str, owner_token: str) -> bool:
+        del endpoint, owner_token
+        return False
+
+    async def release_marvel_lease(self, endpoint: str, owner_token: str) -> None:
+        del endpoint, owner_token
 
 
 class _RespError(RuntimeError):
@@ -202,6 +259,7 @@ class ValkeySessionStore:
         key_prefix: str = "game-service:session:",
         lock_prefix: str = "game-service:session-lock:",
         slug_prefix: str = "game-service:session-by-slug:",
+        marvel_lease_prefix: str = "game-service:marvel-lease:",
     ) -> None:
         parsed = urlparse(url)
         if parsed.scheme not in {"redis", "valkey"}:
@@ -211,7 +269,9 @@ class ValkeySessionStore:
         self._prefix = key_prefix
         self._lock_prefix = lock_prefix
         self._slug_prefix = slug_prefix
+        self._marvel_lease_prefix = marvel_lease_prefix
         self._conn = _RespConnection(self._host, self._port)
+        self.supports_distributed_leases = True
 
     def _key(self, session_id: str) -> str:
         return f"{self._prefix}{session_id}"
@@ -221,6 +281,10 @@ class ValkeySessionStore:
 
     def _slug_key(self, room_slug: str) -> str:
         return f"{self._slug_prefix}{room_slug}"
+
+    def _marvel_lease_key(self, endpoint: str) -> str:
+        digest = hashlib.sha256(endpoint.encode("utf-8")).hexdigest()[:32]
+        return f"{self._marvel_lease_prefix}{digest}"
 
     async def list_sessions(self) -> list[dict[str, Any]]:
         keys = await self._conn.execute("KEYS", f"{self._prefix}*")
@@ -298,4 +362,81 @@ class ValkeySessionStore:
             "1",
             key,
             owner_token,
+        )
+
+    async def acquire_marvel_lease(
+        self,
+        endpoint: str,
+        session_id: str,
+        owner_token: str,
+        *,
+        lease_ttl: float,
+    ) -> bool:
+        ttl_ms = max(int(lease_ttl * 1000), _MIN_LOCK_TTL_MS)
+        value = json.dumps({"session_id": session_id, "owner_token": owner_token})
+        result = await self._conn.execute(
+            "SET",
+            self._marvel_lease_key(endpoint),
+            value,
+            "NX",
+            "PX",
+            str(ttl_ms),
+        )
+        return result == "OK"
+
+    async def renew_marvel_lease(
+        self, endpoint: str, owner_token: str, *, lease_ttl: float
+    ) -> bool:
+        key = self._marvel_lease_key(endpoint)
+        ttl_ms = max(int(lease_ttl * 1000), _MIN_LOCK_TTL_MS)
+        current = await self._conn.execute("GET", key)
+        if current is None:
+            return False
+        try:
+            value = json.loads(current)
+        except TypeError, ValueError:
+            return False
+        if not isinstance(value, dict) or value.get("owner_token") != owner_token:
+            return False
+        expected = current
+        result = await self._conn.execute(
+            "EVAL",
+            _RENEW_MARVEL_LEASE_LUA,
+            "1",
+            key,
+            expected,
+            str(ttl_ms),
+        )
+        return result == 1
+
+    async def marvel_lease_owned(self, endpoint: str, owner_token: str) -> bool:
+        raw = await self._conn.execute("GET", self._marvel_lease_key(endpoint))
+        if raw is None:
+            return False
+        try:
+            value = json.loads(raw)
+        except TypeError, ValueError:
+            return False
+        return isinstance(value, dict) and value.get("owner_token") == owner_token
+
+    async def release_marvel_lease(self, endpoint: str, owner_token: str) -> None:
+        key = self._marvel_lease_key(endpoint)
+        current = await self._conn.execute("GET", key)
+        if current is None:
+            return
+        try:
+            value = json.loads(current)
+        except TypeError, ValueError:
+            return
+        if not isinstance(value, dict) or value.get("owner_token") != owner_token:
+            return
+        # The value includes the session id as well as the token. Passing the
+        # exact value observed by GET keeps the compare-and-delete atomic even
+        # if the lease expires and is claimed by another session meanwhile.
+        await self._conn.execute(
+            "EVAL",
+            _RELEASE_MARVEL_LEASE_LUA,
+            "1",
+            key,
+            current,
         )
