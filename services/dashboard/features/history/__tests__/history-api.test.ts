@@ -124,6 +124,24 @@ describe("history-api client", () => {
     expect(result).toEqual(body);
   });
 
+  it("includes the selected platform when deleting Marvel LCG history", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        game_id: "game-1",
+        deleted_events: 1,
+        deleted_snapshots: 0,
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await deleteHistoryGame("game-1", "marvel-lcg");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/proxy/history/games/game-1?platform=marvel-lcg",
+      { method: "DELETE" }
+    );
+  });
+
   it("throws with the error detail on a non-ok response", async () => {
     const fetchMock = vi
       .fn()
