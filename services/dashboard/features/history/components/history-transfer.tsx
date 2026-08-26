@@ -20,6 +20,7 @@ import {
 } from "@/features/history/lib/history-api";
 import { TextInputField } from "@/features/shared/components/form-fields";
 import {
+  GamePlatform,
   HistoryExportMode,
   HistoryImportResult,
 } from "@/features/shared/lib/types";
@@ -109,10 +110,12 @@ function describeImport(result: HistoryImportResult): string {
  */
 export function HistoryTransferControls({
   gameId,
+  platform = "dragncards",
   onNotice,
   onImported,
 }: {
   gameId: string | null;
+  platform?: GamePlatform;
   onNotice: (notice: TransferNotice | null) => void;
   onImported: (gameId: string) => void;
 }) {
@@ -135,7 +138,7 @@ export function HistoryTransferControls({
     // Navigate an anchor rather than fetching: the response is an attachment
     // that can run to tens of megabytes, and the browser streams it to disk.
     const link = document.createElement("a");
-    link.href = historyExportUrl(gameId, exportMode);
+    link.href = historyExportUrl(gameId, exportMode, platform);
     link.download = historyExportFilename(gameId, exportMode);
     document.body.appendChild(link);
     link.click();

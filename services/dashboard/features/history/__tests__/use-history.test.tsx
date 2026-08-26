@@ -29,8 +29,14 @@ function entry(seq: number): HistoryEvent {
 }
 
 /** A probe that renders the hook's seqs and exposes its two refresh paths. */
-function Probe({ gameId }: { gameId: string | null }) {
-  const history = useHistory(gameId);
+function Probe({
+  gameId,
+  platform,
+}: {
+  gameId: string | null;
+  platform?: "dragncards" | "marvel-lcg";
+}) {
+  const history = useHistory(gameId, platform);
   return (
     <div>
       <span data-testid="seqs">
@@ -64,7 +70,9 @@ describe("useHistory", () => {
     await waitFor(() =>
       expect(screen.getByTestId("seqs")).toHaveTextContent("1,2,3")
     );
-    expect(listAllHistoryTimeline).toHaveBeenCalledWith("g1");
+    expect(listAllHistoryTimeline).toHaveBeenCalledWith("g1", {
+      platform: "dragncards",
+    });
   });
 
   it("reads only what is new on a refresh, and appends it", async () => {
@@ -90,6 +98,7 @@ describe("useHistory", () => {
     // than re-reading the game.
     expect(listAllHistoryTimeline).toHaveBeenLastCalledWith("g1", {
       afterSeq: 2,
+      platform: "dragncards",
     });
   });
 
@@ -123,6 +132,7 @@ describe("useHistory", () => {
 
     expect(listAllHistoryTimeline).toHaveBeenLastCalledWith("g1", {
       afterSeq: 2,
+      platform: "dragncards",
     });
   });
 
@@ -163,7 +173,9 @@ describe("useHistory", () => {
       expect(listAllHistoryTimeline).toHaveBeenCalledTimes(2)
     );
     // A reload takes no cursor: it starts over.
-    expect(listAllHistoryTimeline).toHaveBeenLastCalledWith("g1");
+    expect(listAllHistoryTimeline).toHaveBeenLastCalledWith("g1", {
+      platform: "dragncards",
+    });
   });
 
   it("keeps the loaded timeline when a background refresh fails", async () => {
@@ -196,6 +208,22 @@ describe("useHistory", () => {
     await waitFor(() =>
       expect(screen.getByTestId("truncated")).toHaveTextContent("true")
     );
+  });
+
+  it("loads a Marvel LCG timeline and snapshots from the selected partition", async () => {
+    listAllHistoryTimeline.mockResolvedValue({
+      events: [entry(1)],
+      truncated: false,
+    });
+    render(<Probe gameId="g1" platform="marvel-lcg" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("seqs")).toHaveTextContent("1")
+    );
+    expect(listAllHistoryTimeline).toHaveBeenCalledWith("g1", {
+      platform: "marvel-lcg",
+    });
+    expect(listHistorySnapshots).toHaveBeenCalledWith("g1", "marvel-lcg");
   });
 
   it("clears everything and reads nothing without a game", async () => {

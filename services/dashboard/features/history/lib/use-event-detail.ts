@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { HistoryEvent } from "@/features/shared/lib/types";
+import { GamePlatform, HistoryEvent } from "@/features/shared/lib/types";
 import { fetchHistoryEvent } from "@/features/history/lib/history-api";
 
 export interface UseEventDetailResult {
@@ -28,7 +28,8 @@ export interface UseEventDetailResult {
 export function useEventDetail(
   gameId: string | null,
   seq: number,
-  enabled: boolean
+  enabled: boolean,
+  platform: GamePlatform = "dragncards"
 ): UseEventDetailResult {
   // One settled outcome rather than three pieces of state. "Loading" is then
   // *derived* — enabled with nothing settled yet — so entering it needs no
@@ -40,7 +41,7 @@ export function useEventDetail(
   useEffect(() => {
     if (!enabled || !gameId || outcome !== null) return;
     let cancelled = false;
-    fetchHistoryEvent(gameId, seq)
+    fetchHistoryEvent(gameId, seq, platform)
       .then((loaded) => {
         if (cancelled) return;
         setOutcome(
@@ -58,7 +59,7 @@ export function useEventDetail(
     return () => {
       cancelled = true;
     };
-  }, [enabled, gameId, seq, outcome]);
+  }, [enabled, gameId, platform, seq, outcome]);
 
   return {
     event: outcome && "event" in outcome ? outcome.event : null,

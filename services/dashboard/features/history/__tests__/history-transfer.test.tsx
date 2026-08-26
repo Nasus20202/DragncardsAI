@@ -74,6 +74,12 @@ describe("history bundle API client", () => {
     );
   });
 
+  it("includes the Marvel LCG partition on an export URL", () => {
+    expect(historyExportUrl("g1", "full", "marvel-lcg")).toBe(
+      "/api/proxy/history/games/g1/export?mode=full&platform=marvel-lcg"
+    );
+  });
+
   it("names the download the way the service's own header does", () => {
     expect(historyExportFilename("g1")).toBe(
       "dragncards-history-g1-full.ndjson"
@@ -196,6 +202,30 @@ describe("HistoryTransferControls", () => {
         href: "/api/proxy/history/games/g1/export?mode=full",
         name: "dragncards-history-g1-full.ndjson",
       },
+    ]);
+  });
+
+  it("exports the selected Marvel LCG partition", async () => {
+    const downloads: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement
+    ) {
+      downloads.push(this.getAttribute("href") ?? "");
+    });
+
+    render(
+      <HistoryTransferControls
+        gameId="marvel-game"
+        platform="marvel-lcg"
+        onNotice={vi.fn()}
+        onImported={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByTestId("history-export"));
+    fireEvent.click(await screen.findByTestId("history-export-confirm"));
+
+    expect(downloads).toEqual([
+      "/api/proxy/history/games/marvel-game/export?mode=full&platform=marvel-lcg",
     ]);
   });
 

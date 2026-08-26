@@ -44,6 +44,22 @@ describe("history-api client", () => {
     expect(page.nextAfterSeq).toBeNull();
   });
 
+  it("requests Marvel LCG events from its platform partition", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ events: [{ seq: 1 }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listHistoryEventPage("marvel-game", {
+      platform: "marvel-lcg",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/proxy/history/games/marvel-game/events?platform=marvel-lcg",
+      { cache: "no-store" }
+    );
+  });
+
   it("accepts a bare array of snapshots", async () => {
     const fetchMock = vi
       .fn()
@@ -52,6 +68,20 @@ describe("history-api client", () => {
 
     const snapshots = await listHistorySnapshots("game-1");
     expect(snapshots).toEqual([{ snapshot_at_seq: 5 }]);
+  });
+
+  it("requests Marvel LCG snapshots from its platform partition", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ snapshots: [{ snapshot_at_seq: 5 }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listHistorySnapshots("marvel-game", "marvel-lcg");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/proxy/history/games/marvel-game/snapshots?platform=marvel-lcg",
+      { cache: "no-store" }
+    );
   });
 
   it("posts the restore body to the history proxy", async () => {
@@ -173,6 +203,22 @@ describe("listHistoryTimelinePage", () => {
     expect(page.events).toEqual([{ seq: 1, payload_complete: false }]);
     expect(page.nextAfterSeq).toBeNull();
   });
+
+  it("propagates Marvel LCG on timeline pages", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ events: [{ seq: 1 }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listHistoryTimelinePage("marvel-game", {
+      platform: "marvel-lcg",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/proxy/history/games/marvel-game/timeline?platform=marvel-lcg",
+      { cache: "no-store" }
+    );
+  });
 });
 
 describe("fetchHistoryEvent", () => {
@@ -189,6 +235,20 @@ describe("fetchHistoryEvent", () => {
       { cache: "no-store" }
     );
     expect(event).toEqual({ seq: 7 });
+  });
+
+  it("propagates Marvel LCG when fetching one complete event", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ events: [{ seq: 7 }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchHistoryEvent("marvel-game", 7, "marvel-lcg");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/proxy/history/games/marvel-game/events?after_seq=6&limit=1&platform=marvel-lcg",
+      { cache: "no-store" }
+    );
   });
 
   it("asks from zero for the very first event", async () => {

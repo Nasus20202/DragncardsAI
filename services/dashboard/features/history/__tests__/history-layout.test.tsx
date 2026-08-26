@@ -118,6 +118,23 @@ describe("HistoryWorkspace responsive layout", () => {
     ).toBeInTheDocument();
   });
 
+  it("loads a nonempty Marvel LCG transcript for a game with recorded events", async () => {
+    stubSources();
+    const marvelGame = { ...GAMES[0], event_count: 4, platform: "marvel-lcg" };
+    listHistoryGames.mockResolvedValue([marvelGame]);
+    listHistoryEvents.mockResolvedValue(EVENTS);
+
+    render(<HistoryWorkspace initialGameId="demo-001" />);
+
+    expect(await screen.findByTestId("history-event-1")).toBeInTheDocument();
+    expect(screen.getByTestId("history-game-demo-001")).toHaveTextContent(
+      "4 events"
+    );
+    expect(listHistoryEvents).toHaveBeenCalledWith("demo-001", {
+      platform: "marvel-lcg",
+    });
+  });
+
   it("reveals per-event actions via the event's Actions toggle (restore + board)", async () => {
     stubSources();
     render(<HistoryWorkspace initialGameId="demo-001" />);
