@@ -15,6 +15,7 @@ const deleteHistoryGame = vi.fn();
 const requestEvaluation = vi.fn();
 const cancelEvaluation = vi.fn();
 const listEvaluations = vi.fn().mockResolvedValue({ requests: [] });
+const listGameRounds = vi.fn();
 const fetchDashboardConfig = vi.fn();
 const listProviders = vi.fn();
 const listAvailableSkills = vi.fn();
@@ -36,6 +37,7 @@ vi.mock("@/features/history/lib/eval-api", () => ({
   requestEvaluation: (...args: unknown[]) => requestEvaluation(...args),
   cancelEvaluation: (...args: unknown[]) => cancelEvaluation(...args),
   listEvaluations: (...args: unknown[]) => listEvaluations(...args),
+  listGameRounds: (...args: unknown[]) => listGameRounds(...args),
 }));
 
 vi.mock("@/features/play/lib/client-api", () => ({
@@ -76,6 +78,7 @@ function stubSources() {
   listAvailableSkills.mockResolvedValue([]);
   listHistorySnapshots.mockResolvedValue([]);
   listHistoryEvents.mockResolvedValue([]);
+  listGameRounds.mockResolvedValue([]);
 }
 
 describe("HistoryWorkspace games list + delete", () => {
@@ -117,6 +120,124 @@ describe("HistoryWorkspace games list + delete", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("history-game-demo-eval-002")).toHaveAttribute(
+        "aria-current",
+        "true"
+      )
+    );
+  });
+
+  it("keeps same-id platform records independent across selection, evaluation, and deletion", async () => {
+    const sharedGames = [
+      {
+        game_id: "shared-game",
+        event_count: 8,
+        first_recorded_at: "2026-06-28T00:00:00Z",
+        last_recorded_at: "2026-06-28T01:00:00Z",
+      },
+      {
+        game_id: "shared-game",
+        event_count: 3,
+        first_recorded_at: "2026-06-27T00:00:00Z",
+        last_recorded_at: "2026-06-27T01:00:00Z",
+        platform: "marvel-lcg" as const,
+      },
+    ];
+    stubSources();
+    listHistoryGames.mockResolvedValue(sharedGames);
+    deleteHistoryGame.mockResolvedValue({
+      game_id: "shared-game",
+      deleted_events: 3,
+      deleted_snapshots: 1,
+    });
+    requestEvaluation.mockResolvedValue({
+      request_id: "req-marvel",
+      game_id: "shared-game",
+      scope: "game",
+      created_count: 1,
+      skipped_count: 0,
+      targets: [],
+    });
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    render(
+      <HistoryWorkspace
+        initialGameId="shared-game"
+        initialPlatform="marvel-lcg"
+      />
+    );
+
+    const dragncards = await screen.findByTestId("history-game-shared-game");
+    const marvel = await screen.findByTestId(
+      "history-game-marvel-lcg-shared-game"
+    );
+    expect(marvel).toHaveAttribute("aria-current", "true");
+    expect(dragncards).not.toHaveAttribute("aria-current", "true");
+    expect(
+      consoleError.mock.calls.filter((call) =>
+        call.some((argument) => String(argument).includes("same key"))
+      )
+    ).toHaveLength(0);
+
+    fireEvent.click(dragncards);
+    await waitFor(() =>
+      expect(dragncards).toHaveAttribute("aria-current", "true")
+    );
+    expect(marvel).not.toHaveAttribute("aria-current", "true");
+
+    fireEvent.click(marvel);
+    fireEvent.click(await screen.findByTestId("history-evaluate-open"));
+    await waitFor(() =>
+      expect(listGameRounds).toHaveBeenCalledWith("shared-game", "marvel-lcg")
+    );
+    fireEvent.click(screen.getByTestId("eval-choice-game"));
+    fireEvent.click(screen.getByTestId("eval-submit"));
+    await waitFor(() =>
+      expect(requestEvaluation).toHaveBeenCalledWith("shared-game", {
+        scope: "game",
+        selection: { whole_game: true },
+        platform: "marvel-lcg",
+        force: false,
+        judge: { provider_id: "openrouter", model_name: "m1" },
+      })
+    );
+
+    fireEvent.click(
+      screen.getByTestId("history-game-marvel-lcg-shared-game-delete")
+    );
+    fireEvent.click(screen.getByTestId("history-delete-confirm"));
+    await waitFor(() =>
+      expect(deleteHistoryGame).toHaveBeenCalledWith(
+        "shared-game",
+        "marvel-lcg"
+      )
+    );
+    consoleError.mockRestore();
+  });
+
+  it("resolves an unqualified same-id deep link to the DragnCards partition", async () => {
+    stubSources();
+    listHistoryGames.mockResolvedValue([
+      {
+        game_id: "shared-game",
+        event_count: 3,
+        first_recorded_at: "2026-06-27T00:00:00Z",
+        last_recorded_at: "2026-06-27T01:00:00Z",
+        platform: "marvel-lcg" as const,
+      },
+      {
+        game_id: "shared-game",
+        event_count: 8,
+        first_recorded_at: "2026-06-28T00:00:00Z",
+        last_recorded_at: "2026-06-28T01:00:00Z",
+      },
+    ]);
+
+    render(<HistoryWorkspace initialGameId="shared-game" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("history-game-shared-game")).toHaveAttribute(
         "aria-current",
         "true"
       )

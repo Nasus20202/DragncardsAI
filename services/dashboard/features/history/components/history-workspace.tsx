@@ -29,6 +29,14 @@ import {
 } from "@/features/history/lib/judge-config";
 import { RightDrawer } from "@/features/shared/components/right-drawer";
 import { mapSessionGameNames } from "@/features/history/lib/history-games";
+import {
+  HistoryGameRef,
+  findHistoryGame,
+  historyGameRef,
+  historyGameRefKey,
+  resolveHistoryGameRef,
+  sameHistoryGameRef,
+} from "@/features/history/lib/history-game-ref";
 import { useHistory } from "@/features/history/lib/use-history";
 import { useBoardReconstruction } from "@/features/history/lib/use-board-reconstruction";
 import { useEvaluationQueue } from "@/features/history/lib/use-evaluation-queue";
@@ -52,15 +60,23 @@ import {
 
 export function HistoryWorkspace({
   initialGameId = null,
+  initialPlatform,
 }: {
   initialGameId?: string | null;
+  initialPlatform?: GamePlatform;
 }) {
   const [games, setGames] = useState<HistoryGame[]>([]);
-  const [gameId, setGameId] = useState<string | null>(initialGameId);
+  const [selectedGameRef, setSelectedGameRef] = useState<HistoryGameRef | null>(
+    initialGameId
+      ? { gameId: initialGameId, platform: initialPlatform ?? "dragncards" }
+      : null
+  );
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
-  const [lastGameId, setLastGameId] = useState<string | null>(initialGameId);
+  const [lastGameKey, setLastGameKey] = useState<string | null>(
+    initialGameId ? `${initialPlatform ?? "dragncards"}:${initialGameId}` : null
+  );
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<HistoryGameRef | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -108,21 +124,20 @@ export function HistoryWorkspace({
   const [gameNames, setGameNames] = useState<Record<string, string>>({});
 
   // Clear the selection when the game changes (reset-on-change during render).
-  if (gameId !== lastGameId) {
-    setLastGameId(gameId);
+  const selectedGameKey = historyGameRefKey(selectedGameRef);
+  if (selectedGameKey !== lastGameKey) {
+    setLastGameKey(selectedGameKey);
     setSelectedSeq(null);
   }
 
-  const refreshGames = (preferId?: string | null) => {
+  const refreshGames = (prefer?: HistoryGameRef | null) => {
     return listHistoryGames()
       .then((loaded) => {
         setGames(loaded);
-        const stillExists =
-          preferId !== undefined
-            ? loaded.some((game) => game.game_id === preferId)
-            : loaded.some((game) => game.game_id === gameId);
-        if (!stillExists && !gameId && loaded.length > 0) {
-          setGameId(loaded[0].game_id);
+        const preferred = prefer === undefined ? selectedGameRef : prefer;
+        if (preferred === null) return loaded;
+        if (!findHistoryGame(loaded, preferred) && loaded.length > 0) {
+          setSelectedGameRef(historyGameRef(loaded[0]));
         }
         return loaded;
       })
@@ -138,8 +153,13 @@ export function HistoryWorkspace({
       .then((loaded) => {
         if (cancelled) return;
         setGames(loaded);
-        if (!gameId && loaded.length > 0) {
-          setGameId(loaded[0].game_id);
+        const initial = initialGameId
+          ? resolveHistoryGameRef(loaded, initialGameId, initialPlatform)
+          : null;
+        if (initial) {
+          setSelectedGameRef(initial);
+        } else if (!selectedGameRef && loaded.length > 0) {
+          setSelectedGameRef(historyGameRef(loaded[0]));
         }
       })
       .catch(() => {
@@ -194,11 +214,9 @@ export function HistoryWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The history service partitions each recording by (game_id, platform). A
-  // missing platform is the legacy DragnCards series, so keep that fallback at
-  // the selected-game boundary and pass the resolved value to every history read.
-  const selectedGame = games.find((game) => game.game_id === gameId) ?? null;
-  const selectedPlatform = selectedGame?.platform ?? "dragncards";
+  const selectedGame = findHistoryGame(games, selectedGameRef);
+  const gameId = selectedGameRef?.gameId ?? null;
+  const selectedPlatform = selectedGameRef?.platform ?? "dragncards";
 
   const { events, isLoading, error, isTruncated, reload, refresh } = useHistory(
     gameId,
@@ -260,12 +278,15 @@ export function HistoryWorkspace({
   // `TranscriptEvent`).
   const handleRestore = useCallback(
     async (targetSeq: number, mode: RestoreMode) => {
-      if (!gameId) {
+      if (!selectedGameRef) {
         throw new Error("No game selected.");
       }
-      const outcome = await restoreGame(gameId, {
+      const outcome = await restoreGame(selectedGameRef.gameId, {
         target_seq: targetSeq,
         mode,
+        ...(selectedGameRef.platform === "marvel-lcg"
+          ? { platform: selectedGameRef.platform }
+          : {}),
       });
       // A new-session restore does not alter this timeline; an in-place restore
       // does, so refresh the events afterwards.
@@ -274,7 +295,7 @@ export function HistoryWorkspace({
       }
       return outcome;
     },
-    [gameId, reload]
+    [selectedGameRef, reload]
   );
 
   // Destructured so the memo depends on the individual values rather than on the
@@ -287,43 +308,45 @@ export function HistoryWorkspace({
   } = board;
   const transcriptBoard = useMemo(
     () => ({
-      gameId,
+      gameId: selectedGameRef?.gameId ?? null,
       isOpening: boardIsOpening,
       error: boardError,
       isOpen: boardReconstruction !== null,
       onOpen: () => void openBoard(),
     }),
-    [gameId, boardIsOpening, boardError, boardReconstruction, openBoard]
+    [
+      selectedGameRef,
+      boardIsOpening,
+      boardError,
+      boardReconstruction,
+      openBoard,
+    ]
   );
 
-  const openDelete = (id: string) => {
-    setDeleteTargetId(id);
+  const openDelete = (target: HistoryGameRef) => {
+    setDeleteTarget(target);
     setDeleteError(null);
     setConfirmDelete(true);
   };
 
   const handleDelete = async () => {
-    if (!deleteTargetId) return;
-    const removedId = deleteTargetId;
-    const wasActive = removedId === gameId;
-    const removedPlatform: GamePlatform =
-      games.find((game) => game.game_id === removedId)?.platform ??
-      "dragncards";
+    if (!deleteTarget) return;
+    const wasActive = sameHistoryGameRef(deleteTarget, selectedGameRef);
     setIsDeleting(true);
     setDeleteError(null);
     try {
-      if (removedPlatform === "marvel-lcg") {
-        await deleteHistoryGame(removedId, removedPlatform);
+      if (deleteTarget.platform === "marvel-lcg") {
+        await deleteHistoryGame(deleteTarget.gameId, deleteTarget.platform);
       } else {
-        await deleteHistoryGame(removedId);
+        await deleteHistoryGame(deleteTarget.gameId);
       }
       setConfirmDelete(false);
       // Clear the active selection only if we deleted the game in view.
       if (wasActive) {
-        setGameId(null);
+        setSelectedGameRef(null);
       }
-      setDeleteTargetId(null);
-      await refreshGames(wasActive ? null : gameId);
+      setDeleteTarget(null);
+      await refreshGames(wasActive ? null : selectedGameRef);
     } catch (e) {
       setDeleteError(
         e instanceof Error ? e.message : "Failed to delete history."
@@ -343,9 +366,9 @@ export function HistoryWorkspace({
             gameId={gameId}
             platform={selectedPlatform}
             onNotice={setTransferNotice}
-            onImported={(importedId) => {
-              setGameId(importedId);
-              void refreshGames(importedId);
+            onImported={(imported) => {
+              setSelectedGameRef(imported);
+              void refreshGames(imported);
             }}
           />
           <Button
@@ -418,11 +441,11 @@ export function HistoryWorkspace({
           <HistoryGamesList
             games={games}
             gameNames={gameNames}
-            selectedGameId={gameId}
+            selectedGame={selectedGameRef}
             isCollapsed={sidebarCollapsed}
             isBusy={isDeleting}
             onToggleCollapsed={() => setSidebarCollapsed((c) => !c)}
-            onSelect={setGameId}
+            onSelect={setSelectedGameRef}
             onRemove={openDelete}
           />
           {!sidebarCollapsed && gameId && events.length > 0 && (
@@ -557,6 +580,7 @@ export function HistoryWorkspace({
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
             <EvaluationControl
               gameId={gameId}
+              platform={selectedPlatform}
               selectedSeq={selectedSeq}
               onEnqueued={() => {
                 // Surface the new request immediately and open the queue so
@@ -593,7 +617,7 @@ export function HistoryWorkspace({
         />
       )}
 
-      {confirmDelete && deleteTargetId && (
+      {confirmDelete && deleteTarget && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
           role="dialog"
@@ -610,7 +634,7 @@ export function HistoryWorkspace({
                 This permanently removes all recorded history (events and
                 snapshots) for{" "}
                 <span className="font-mono text-foreground">
-                  {deleteTargetId}
+                  {deleteTarget.gameId}
                 </span>
                 . This cannot be undone.
               </p>

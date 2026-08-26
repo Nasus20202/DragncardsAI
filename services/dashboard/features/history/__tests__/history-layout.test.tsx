@@ -127,9 +127,9 @@ describe("HistoryWorkspace responsive layout", () => {
     render(<HistoryWorkspace initialGameId="demo-001" />);
 
     expect(await screen.findByTestId("history-event-1")).toBeInTheDocument();
-    expect(screen.getByTestId("history-game-demo-001")).toHaveTextContent(
-      "4 events"
-    );
+    expect(
+      screen.getByTestId("history-game-marvel-lcg-demo-001")
+    ).toHaveTextContent("4 events");
     expect(listHistoryEvents).toHaveBeenCalledWith("demo-001", {
       platform: "marvel-lcg",
     });

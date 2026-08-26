@@ -1,5 +1,12 @@
 import { HistoryGame } from "@/features/shared/lib/types";
 import { formatActivity } from "@/features/history/lib/history-games";
+import {
+  HistoryGameRef,
+  historyGameRef,
+  historyGameRefKey,
+  historyGameDeleteTestId,
+  historyGameTestId,
+} from "@/features/history/lib/history-game-ref";
 
 function gameLabel(game: HistoryGame, names: Record<string, string>): string {
   const friendly = names[game.game_id];
@@ -14,7 +21,7 @@ function gameLabel(game: HistoryGame, names: Record<string, string>): string {
 export function HistoryGamesList({
   games,
   gameNames,
-  selectedGameId,
+  selectedGame,
   isCollapsed,
   isBusy,
   onToggleCollapsed,
@@ -23,12 +30,12 @@ export function HistoryGamesList({
 }: {
   games: HistoryGame[];
   gameNames: Record<string, string>;
-  selectedGameId: string | null;
+  selectedGame: HistoryGameRef | null;
   isCollapsed: boolean;
   isBusy: boolean;
   onToggleCollapsed: () => void;
-  onSelect: (gameId: string) => void;
-  onRemove: (gameId: string) => void;
+  onSelect: (game: HistoryGameRef) => void;
+  onRemove: (game: HistoryGameRef) => void;
 }) {
   // The root flexes within the sidebar column (`min-h-0 flex-1`) instead of
   // claiming its full height: the navigation tree is a sibling below it, so
@@ -71,12 +78,15 @@ export function HistoryGamesList({
         )}
 
         {games.map((game) => {
-          const active = game.game_id === selectedGameId;
+          const ref = historyGameRef(game);
+          const active =
+            historyGameRefKey(ref) === historyGameRefKey(selectedGame);
           const label = gameLabel(game, gameNames);
+          const testId = historyGameTestId(ref);
 
           return (
             <div
-              key={game.game_id}
+              key={historyGameRefKey(ref)}
               className={[
                 "group relative flex items-center transition-colors",
                 active
@@ -85,7 +95,7 @@ export function HistoryGamesList({
               ].join(" ")}
             >
               <button
-                data-testid={`history-game-${game.game_id}`}
+                data-testid={testId}
                 aria-label={label}
                 aria-current={active ? "true" : undefined}
                 type="button"
@@ -95,7 +105,7 @@ export function HistoryGamesList({
                     ? "flex justify-center px-2 py-3"
                     : "flex items-center gap-2.5 py-2.5 pl-3 pr-2",
                 ].join(" ")}
-                onClick={() => onSelect(game.game_id)}
+                onClick={() => onSelect(ref)}
               >
                 <span
                   aria-hidden="true"
@@ -121,12 +131,12 @@ export function HistoryGamesList({
 
               {!isCollapsed && (
                 <button
-                  data-testid={`history-game-delete-${game.game_id}`}
+                  data-testid={historyGameDeleteTestId(ref)}
                   aria-label={`Delete history for ${label}`}
                   type="button"
                   disabled={isBusy}
                   className="mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-default-400 opacity-0 transition-opacity hover:bg-default-200/70 hover:text-danger focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-0 group-hover:opacity-100"
-                  onClick={() => onRemove(game.game_id)}
+                  onClick={() => onRemove(ref)}
                 >
                   <span aria-hidden="true">✕</span>
                 </button>

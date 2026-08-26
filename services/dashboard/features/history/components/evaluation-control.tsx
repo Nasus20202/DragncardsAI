@@ -17,6 +17,7 @@ import {
   EvaluationRequestBody,
   EvaluationRound,
   EvaluationScope,
+  GamePlatform,
   ProviderResponse,
   SkillDefinitionResponse,
 } from "@/features/shared/lib/types";
@@ -71,6 +72,7 @@ const CHOICE_DESCRIPTION: Record<EvaluationChoice, string> = {
 
 export interface EvaluationControlProps {
   gameId: string | null;
+  platform?: GamePlatform;
   /** The currently selected timeline seq, used by the "moves" choice only. */
   selectedSeq: number | null;
   /**
@@ -99,6 +101,7 @@ export interface EvaluationControlProps {
  */
 export function EvaluationControl({
   gameId,
+  platform = "dragncards",
   selectedSeq,
   onEnqueued,
   judgeDraft = null,
@@ -120,15 +123,16 @@ export function EvaluationControl({
   const [rounds, setRounds] = useState<EvaluationRound[]>([]);
   const [roundsLoading, setRoundsLoading] = useState(gameId !== null);
   const [roundsError, setRoundsError] = useState<string | null>(null);
-  const [loadedGameId, setLoadedGameId] = useState<string | null>(gameId);
+  const gameKey = gameId ? `${platform}:${gameId}` : null;
+  const [loadedGameKey, setLoadedGameKey] = useState<string | null>(gameKey);
 
   // Discard the previous game's rounds and round selection during render, the
   // same reset-on-change pattern the workspace uses for its own selection. Doing
   // it synchronously inside the effect below would cascade renders (and is
   // rejected by the repo's lint rules); doing it in the effect's async callback
   // would leave the picker briefly offering another game's rounds.
-  if (gameId !== loadedGameId) {
-    setLoadedGameId(gameId);
+  if (gameKey !== loadedGameKey) {
+    setLoadedGameKey(gameKey);
     setSelectedRounds([]);
     setRounds([]);
     setRoundsError(null);
@@ -138,7 +142,10 @@ export function EvaluationControl({
   useEffect(() => {
     if (!gameId) return;
     let cancelled = false;
-    listGameRounds(gameId)
+    (platform === "marvel-lcg"
+      ? listGameRounds(gameId, platform)
+      : listGameRounds(gameId)
+    )
       .then((loaded) => {
         if (cancelled) return;
         setRounds(loaded);
@@ -156,18 +163,24 @@ export function EvaluationControl({
     return () => {
       cancelled = true;
     };
-  }, [gameId]);
+  }, [gameId, platform]);
 
   const buildBody = (): EvaluationRequestBody | { error: string } => {
     const judge = judgeDraft ? assembleJudgeConfig(judgeDraft) : undefined;
     const scope = CHOICE_SCOPE[choice];
     const withJudge = <T extends EvaluationRequestBody>(body: T): T =>
       judge ? { ...body, judge } : body;
+    const platformBody = platform === "marvel-lcg" ? { platform } : {};
 
     if (choice === "game") {
       // The whole game needs no further input: the transcript selection and the
       // seq range have no bearing on what is submitted.
-      return withJudge({ scope, selection: { whole_game: true }, force });
+      return withJudge({
+        scope,
+        selection: { whole_game: true },
+        ...platformBody,
+        force,
+      });
     }
     if (choice === "rounds") {
       if (selectedRounds.length === 0) {
@@ -178,6 +191,7 @@ export function EvaluationControl({
       return withJudge({
         scope,
         selection: { rounds: selectedRounds.map((value) => Number(value)) },
+        ...platformBody,
         force,
       });
     }
@@ -185,7 +199,12 @@ export function EvaluationControl({
       if (selectedSeq === null) {
         return { error: "Select a timeline event to evaluate." };
       }
-      return withJudge({ scope, selection: { seqs: [selectedSeq] }, force });
+      return withJudge({
+        scope,
+        selection: { seqs: [selectedSeq] },
+        ...platformBody,
+        force,
+      });
     }
     const from = Number.parseInt(fromSeq, 10);
     const to = Number.parseInt(toSeq, 10);
@@ -198,6 +217,7 @@ export function EvaluationControl({
     return withJudge({
       scope,
       selection: { seq_range: { from_seq: from, to_seq: to } },
+      ...platformBody,
       force,
     });
   };
