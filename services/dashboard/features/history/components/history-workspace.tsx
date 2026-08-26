@@ -194,8 +194,16 @@ export function HistoryWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { events, isLoading, error, isTruncated, reload, refresh } =
-    useHistory(gameId);
+  // The history service partitions each recording by (game_id, platform). A
+  // missing platform is the legacy DragnCards series, so keep that fallback at
+  // the selected-game boundary and pass the resolved value to every history read.
+  const selectedGame = games.find((game) => game.game_id === gameId) ?? null;
+  const selectedPlatform = selectedGame?.platform ?? "dragncards";
+
+  const { events, isLoading, error, isTruncated, reload, refresh } = useHistory(
+    gameId,
+    selectedPlatform
+  );
 
   // The round breakdown behind the "Jump to round" control, shared with the
   // sidebar navigation tree so both name rounds the same way.
@@ -203,10 +211,6 @@ export function HistoryWorkspace({
     () => buildNavTree(primaryEvents(events), buildMetaBySeq(events)),
     [events]
   );
-
-  // The selected game's summary carries the authoritative recorded event count,
-  // which is what the truncation notice compares the loaded events against.
-  const selectedGame = games.find((game) => game.game_id === gameId) ?? null;
 
   // Persistent evaluations queue: polls the cross-game listing while the panel
   // is open or anything is in flight, and refreshes the transcript whenever a
@@ -216,7 +220,6 @@ export function HistoryWorkspace({
   const queue = useEvaluationQueue(queueOpen, refresh);
 
   // On-demand "board at this event" reconstruction (ephemeral, single live).
-  const selectedPlatform = selectedGame?.platform ?? "dragncards";
   const board = useBoardReconstruction(gameId, selectedSeq, selectedPlatform);
 
   // Keep history live without a manual reload: refresh the games list, friendly
@@ -338,6 +341,7 @@ export function HistoryWorkspace({
         <div className="ml-auto flex items-center gap-2">
           <HistoryTransferControls
             gameId={gameId}
+            platform={selectedPlatform}
             onNotice={setTransferNotice}
             onImported={(importedId) => {
               setGameId(importedId);

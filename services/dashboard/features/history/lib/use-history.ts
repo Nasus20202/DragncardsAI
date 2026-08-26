@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { HistoryEvent, HistorySnapshot } from "@/features/shared/lib/types";
+import {
+  GamePlatform,
+  HistoryEvent,
+  HistorySnapshot,
+} from "@/features/shared/lib/types";
 import {
   listAllHistoryTimeline,
   listHistorySnapshots,
@@ -28,7 +32,10 @@ export interface UseHistoryResult {
   refresh: () => void;
 }
 
-export function useHistory(gameId: string | null): UseHistoryResult {
+export function useHistory(
+  gameId: string | null,
+  platform: GamePlatform = "dragncards"
+): UseHistoryResult {
   const [events, setEvents] = useState<HistoryEvent[]>([]);
   const [snapshots, setSnapshots] = useState<HistorySnapshot[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -69,8 +76,8 @@ export function useHistory(gameId: string | null): UseHistoryResult {
       setError(null);
       try {
         const [timeline, loadedSnapshots] = await Promise.all([
-          listAllHistoryTimeline(gameId),
-          listHistorySnapshots(gameId),
+          listAllHistoryTimeline(gameId, { platform }),
+          listHistorySnapshots(gameId, platform),
         ]);
         if (cancelled) return;
         const ordered = [...timeline.events].sort((a, b) => a.seq - b.seq);
@@ -91,7 +98,7 @@ export function useHistory(gameId: string | null): UseHistoryResult {
     return () => {
       cancelled = true;
     };
-  }, [gameId, reloadToken]);
+  }, [gameId, platform, reloadToken]);
 
   // Incremental append: read only what was recorded after the highest seq
   // already held, and merge it in. Keyed off `refreshToken` alone.
@@ -103,7 +110,10 @@ export function useHistory(gameId: string | null): UseHistoryResult {
 
     const append = async () => {
       try {
-        const timeline = await listAllHistoryTimeline(gameId, { afterSeq });
+        const timeline = await listAllHistoryTimeline(gameId, {
+          afterSeq,
+          platform,
+        });
         // Drop a response that a reload or a game switch has made stale, rather
         // than letting it resurrect a timeline that has moved on.
         if (cancelled || loadIdRef.current !== loadId) return;
@@ -127,7 +137,7 @@ export function useHistory(gameId: string | null): UseHistoryResult {
     return () => {
       cancelled = true;
     };
-  }, [gameId, refreshToken]);
+  }, [gameId, platform, refreshToken]);
 
   return { events, snapshots, isLoading, error, isTruncated, reload, refresh };
 }

@@ -33,12 +33,16 @@ export async function deleteHistoryGame(
   gameId: string,
   platform: GamePlatform = "dragncards"
 ): Promise<HistoryDeleteResponse> {
-  const query = platform === "marvel-lcg" ? "?platform=marvel-lcg" : "";
+  const query = platformQuery(platform);
   const response = await fetch(
     `/api/proxy/history/games/${encodeURIComponent(gameId)}${query}`,
     { method: "DELETE" }
   );
   return readJson<HistoryDeleteResponse>(response);
+}
+
+function platformQuery(platform: GamePlatform = "dragncards"): string {
+  return platform === "marvel-lcg" ? "?platform=marvel-lcg" : "";
 }
 
 /** One page of a game's timeline, plus the cursor to fetch the next one. */
@@ -67,7 +71,7 @@ export const HISTORY_MAX_EVENTS = 20_000;
 async function fetchEventPage(
   gameId: string,
   resource: "events" | "timeline",
-  options?: { afterSeq?: number; limit?: number }
+  options?: { afterSeq?: number; limit?: number; platform?: GamePlatform }
 ): Promise<HistoryEventPage> {
   const params = new URLSearchParams();
   if (options?.afterSeq !== undefined) {
@@ -75,6 +79,9 @@ async function fetchEventPage(
   }
   if (options?.limit !== undefined) {
     params.set("limit", String(options.limit));
+  }
+  if (options?.platform === "marvel-lcg") {
+    params.set("platform", "marvel-lcg");
   }
   const query = params.toString();
   const response = await fetch(
@@ -97,7 +104,7 @@ async function fetchEventPage(
 
 export async function listHistoryEventPage(
   gameId: string,
-  options?: { afterSeq?: number; limit?: number }
+  options?: { afterSeq?: number; limit?: number; platform?: GamePlatform }
 ): Promise<HistoryEventPage> {
   return fetchEventPage(gameId, "events", options);
 }
@@ -110,7 +117,7 @@ export async function listHistoryEventPage(
  */
 export async function listHistoryTimelinePage(
   gameId: string,
-  options?: { afterSeq?: number; limit?: number }
+  options?: { afterSeq?: number; limit?: number; platform?: GamePlatform }
 ): Promise<HistoryEventPage> {
   return fetchEventPage(gameId, "timeline", options);
 }
@@ -122,11 +129,13 @@ export async function listHistoryTimelinePage(
  */
 export async function fetchHistoryEvent(
   gameId: string,
-  seq: number
+  seq: number,
+  platform: GamePlatform = "dragncards"
 ): Promise<HistoryEvent | null> {
   const page = await listHistoryEventPage(gameId, {
     afterSeq: Math.max(0, seq - 1),
     limit: 1,
+    platform,
   });
   const event = page.events[0];
   return event && event.seq === seq ? event : null;
@@ -158,7 +167,12 @@ export interface HistoryTimeline {
  */
 export async function listAllHistoryTimeline(
   gameId: string,
-  options?: { pageLimit?: number; maxEvents?: number; afterSeq?: number }
+  options?: {
+    pageLimit?: number;
+    maxEvents?: number;
+    afterSeq?: number;
+    platform?: GamePlatform;
+  }
 ): Promise<HistoryTimeline> {
   const pageLimit = options?.pageLimit ?? HISTORY_TIMELINE_PAGE_LIMIT;
   const maxEvents = options?.maxEvents ?? HISTORY_MAX_EVENTS;
@@ -168,6 +182,7 @@ export async function listAllHistoryTimeline(
     const page = await listHistoryTimelinePage(gameId, {
       afterSeq,
       limit: pageLimit,
+      platform: options?.platform,
     });
     events.push(...page.events);
     if (page.nextAfterSeq === null || page.events.length === 0) {
@@ -181,10 +196,12 @@ export async function listAllHistoryTimeline(
 }
 
 export async function listHistorySnapshots(
-  gameId: string
+  gameId: string,
+  platform: GamePlatform = "dragncards"
 ): Promise<HistorySnapshot[]> {
+  const query = platformQuery(platform);
   const response = await fetch(
-    `/api/proxy/history/games/${encodeURIComponent(gameId)}/snapshots`,
+    `/api/proxy/history/games/${encodeURIComponent(gameId)}/snapshots${query}`,
     { cache: "no-store" }
   );
   const payload = await readJson<
@@ -206,10 +223,14 @@ export async function listHistorySnapshots(
  */
 export function historyExportUrl(
   gameId: string,
-  mode: HistoryExportMode = "full"
+  mode: HistoryExportMode = "full",
+  platform: GamePlatform = "dragncards"
 ): string {
-  const query = new URLSearchParams({ mode }).toString();
-  return `/api/proxy/history/games/${encodeURIComponent(gameId)}/export?${query}`;
+  const params = new URLSearchParams({ mode });
+  if (platform === "marvel-lcg") {
+    params.set("platform", "marvel-lcg");
+  }
+  return `/api/proxy/history/games/${encodeURIComponent(gameId)}/export?${params.toString()}`;
 }
 
 /**

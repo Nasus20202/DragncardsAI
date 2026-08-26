@@ -181,7 +181,7 @@ describe("on-demand event detail", () => {
     fireEvent.click(screen.getByTestId("history-event-body-toggle-200"));
 
     await waitFor(() =>
-      expect(fetchHistoryEvent).toHaveBeenCalledWith("g1", 200)
+      expect(fetchHistoryEvent).toHaveBeenCalledWith("g1", 200, "dragncards")
     );
     expect(
       await screen.findByTestId("history-detail-game")

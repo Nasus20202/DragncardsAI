@@ -636,7 +636,8 @@ const TranscriptEvent = memo(function TranscriptEvent({
   const detail = useEventDetail(
     board.gameId,
     event.seq,
-    bodyOpen && event.payload_complete === false
+    bodyOpen && event.payload_complete === false,
+    platform
   );
   const detailed = detail.event ?? event;
   const [lastSignalGen, setLastSignalGen] = useState(expandSignal.generation);
