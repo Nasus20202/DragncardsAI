@@ -36,8 +36,6 @@ jobs:
         run: echo "SHORT_SHA=sha-${GITHUB_SHA::8}" >> "$GITHUB_ENV"
 
       - name: Build and push Docker images
-        env:
-          COMPOSE_PROFILES: marvel-lcg
         uses: docker/bake-action@v7
         with:
           files: docker-compose.yaml

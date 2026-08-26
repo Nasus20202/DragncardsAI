@@ -70,9 +70,6 @@ jobs:
       - name: Run unit tests
         run: scripts/test.sh unit
 
-      - name: Check marvel-lcg infrastructure hardening
-        run: scripts/test-marvel-lcg-infrastructure.sh
-
       - name: Build Docker stack
         uses: docker/bake-action@v7
         with:
@@ -101,16 +98,6 @@ jobs:
           done
           echo "DragnCards backend did not become reachable in time" >&2
           exit 1
-
-      - name: Verify ordinary marvel-lcg startup
-        run: |
-          engine_id="$(docker compose ps -q marvel-lcg)"
-          init_id="$(docker compose ps -aq marvel-lcg-init)"
-          test -n "$engine_id"
-          test -n "$init_id"
-          test "$(docker inspect -f '{{.State.Health.Status}}' "$engine_id")" = healthy
-          test "$(docker inspect -f '{{.State.Status}}' "$init_id")" = exited
-          test "$(docker inspect -f '{{.State.ExitCode}}' "$init_id")" = 0
 
       - name: Run integration tests
         run: scripts/test.sh integration
