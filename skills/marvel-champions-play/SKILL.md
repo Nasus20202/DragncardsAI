@@ -41,8 +41,10 @@ reporting, not by inventing a phase-advancement call.
 
 ## Read the neutral state
 
-Call `get_game_state` before a move and after a significant board change. It returns one
-shape on every platform:
+Call `get_game_state(session_id, player_n=<your assigned seat>)` before a move and after a
+significant board change. A player agent SHALL always pass its assigned neutral seat in
+`player_n`; omitting it requests the spectator/public projection and hides every hand. It
+returns one shape on every platform:
 
 - `playRound` is the round being played. Read it; never add or subtract an offset.
 - `phase` is the neutral classification (`setup`, `player`, `villain`, `passive`, or
@@ -55,7 +57,9 @@ shape on every platform:
 - `zones` are named by meaning: a seat's hand, deck, discard, controlled play area,
   engaged area, the villain, the main scheme, and shared encounter areas.
 - A `HIDDEN` entry is a merged placeholder, not an addressable card. Do not use an absent
-  or hidden identifier as a target.
+  or hidden identifier as a target. On Marvel LCG, your own hand may contain named cards
+  when its engine ACL permits your seat even though the engine reports hand cards as face
+  down; other seats' hands remain hidden.
 - `tokens` is sparse; a missing token key means zero.
 
 Read your platform harness reference before relying on a projected hit-point, hand-size,
@@ -66,7 +70,8 @@ resource, zone, or failure value. Harness quirks are not Marvel Champions rules.
 1. **Identify.** Confirm your seat, game-service `session_id`, and hero from the prompt.
    If any is missing, ask and take no mutating action. Never infer your seat from the
    board, because the board can show every hero.
-2. **Observe.** Read the current state and identify your form, remaining health, threat,
+2. **Observe.** Call `get_game_state` with your assigned `player_n`, then identify your
+   form, remaining health, threat,
    engaged enemies, available cards, and any pending decision for your seat.
 3. **Research.** Load the relevant rules reference and card data only when needed. Keep
    the board facts compact; do not paste a full state into a report.

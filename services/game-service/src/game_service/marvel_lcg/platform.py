@@ -65,6 +65,7 @@ class MarvelLcgPlatform:
     move_surface: MoveSurface = "enumerated_options"
     uses_plugin = False
     supports_room_close = False
+    state_reads_are_reader_sensitive = True
 
     def __init__(
         self,
@@ -134,9 +135,7 @@ class MarvelLcgPlatform:
         self._render_ack_locks: dict[int, asyncio.Lock] = {}
         self._degraded_seats: set[int] = set()
         self._prompt_events: set[PromptSignature] = set()
-        self.normaliser = MarvelLcgNormaliser(
-            self.held_seats, reading_seat=self.held_seats[0]
-        )
+        self.normaliser = MarvelLcgNormaliser(self.held_seats)
         self.history_emitter: Any = None
         self.session_id: str | None = None
         self.selected_setup: MarvelLcgCreateSpec | None = None
@@ -351,9 +350,7 @@ class MarvelLcgPlatform:
         selections = tuple(resolved.hero_decks)
         heroes = tuple(self._hero_paths_by_id[item.hero_deck_id] for item in selections)
         self.held_seats = tuple(item.seat for item in selections)
-        self.normaliser = MarvelLcgNormaliser(
-            self.held_seats, reading_seat=self.held_seats[0]
-        )
+        self.normaliser = MarvelLcgNormaliser(self.held_seats)
         self.selected_setup = resolved
         campaign_json = await self._http_client.get_scenario_json(scenario)
         hero_json = [await self._http_client.get_hero_json(path) for path in heroes]
@@ -687,13 +684,15 @@ class MarvelLcgPlatform:
         self, timeout: float, player_n: str | None = None
     ) -> dict[str, Any]:
         del timeout
-        if player_n is not None:
-            self._require_held_seat(player_n)
+        seat = (
+            self.held_seats[0]
+            if player_n is None
+            else self._require_held_seat(player_n)
+        )
         self._check_bad_state()
         self._check_transport()
         if self._socket is None:
             raise SessionError("marvel-lcg render socket is not connected")
-        seat = normalise_seat_id(player_n or self.held_seats[0])
         with tracer.start_as_current_span(
             "marvel_lcg.world",
             attributes={"game.platform": "marvel-lcg", "game.seat": seat},
@@ -1018,11 +1017,19 @@ class MarvelLcgPlatform:
         await self._http_client.aclose()
 
     def normalise_state(
-        self, state: Any, *, plugin_name: str | None = None
+        self,
+        state: Any,
+        *,
+        plugin_name: str | None = None,
+        player_n: str | None = None,
     ) -> dict[str, Any]:
         self._check_bad_state()
         try:
-            return self.normaliser.normalise(state, plugin_name=plugin_name)
+            return self.normaliser.normalise(
+                state,
+                plugin_name=plugin_name,
+                player_n=player_n,
+            )
         except (TypeError, ValueError, KeyError) as exc:
             self._mark_bad_state(exc)
             raise BadGameStateError(
@@ -1103,9 +1110,14 @@ class MarvelLcgPlatform:
             self.mark_lease_lost()
             raise SessionError("marvel-lcg singleton lease is lost; no move was sent")
 
-    def _require_held_seat(self, player_n: str) -> None:
-        if normalise_seat_id(player_n) not in self.held_seats:
-            raise SessionError(f"Seat {player_n} is not held by this session")
+    def _require_held_seat(self, player_n: str) -> str:
+        try:
+            seat = normalise_seat_id(player_n)
+        except (TypeError, ValueError) as exc:
+            raise SessionError(f"Invalid Marvel seat {player_n!r}") from exc
+        if seat not in self.held_seats:
+            raise SessionError(f"Seat {seat} is not held by this session")
+        return seat
 
     @staticmethod
     def build_set_game_payload(
@@ -1123,7 +1135,7 @@ class MarvelLcgPlatform:
             self._mark_bad_state(error)
             raise error
         try:
-            self.normaliser.normalise(state)
+            self.normaliser.normalise(state, player_n=None)
         except (TypeError, ValueError, KeyError) as exc:
             self._mark_bad_state(exc)
             raise BadGameStateError(
@@ -1189,4 +1201,4 @@ class MarvelLcgPlatform:
             source = {"_frame": self._latest_frame.__dict__}
         else:
             source = {}
-        return self.normaliser.normalise(source)
+        return self.normaliser.normalise(source, player_n=None)

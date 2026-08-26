@@ -193,18 +193,52 @@ class GameSession:
             await validator()
         self.driver.ensure_move_allowed()
 
-    async def _request_fresh_state(self, timeout: float) -> Any:
+    async def _request_fresh_state(
+        self, timeout: float, player_n: str | None = None
+    ) -> Any:
         with tracer.start_as_current_span("game_session.request_state"):
-            new_state = await self.driver.request_state(timeout=timeout)
+            new_state = await self.driver.request_state(
+                timeout=timeout,
+                player_n=player_n,
+            )
             self._check_state_flags()
             async with self._state_lock:
                 self._state = new_state
                 self._state_stale = False
             return new_state
 
-    async def get_state(self) -> Any:
+    async def get_state(self, player_n: str | None = None) -> Any:
         with tracer.start_as_current_span("game_session.get_state"):
             self._check_state_flags()
+
+            # Only reader-sensitive platforms must refresh for an explicit seat.
+            # Marvel's engine applies ACLs at the requested transport seat, so
+            # reusing a world fetched for another seat would be a reader-specific
+            # cache leak.  Platforms that ignore ``player_n`` retain the ordinary
+            # session cache behavior.
+            if (
+                player_n is not None
+                and getattr(self.driver, "state_reads_are_reader_sensitive", False)
+                is True
+            ):
+                try:
+                    return await self._request_fresh_state(
+                        timeout=10.0,
+                        player_n=player_n,
+                    )
+                except (
+                    PlatformTransportError,
+                    PlatformTimeoutError,
+                    asyncio.TimeoutError,
+                ) as exc:
+                    self._check_state_flags()
+                    logger.error(
+                        "get_state: session_id=%s failed: %s",
+                        self.session_id,
+                        type(exc).__name__,
+                    )
+                    raise SessionError("Could not fetch game state") from exc
+
             async with self._state_lock:
                 self._check_state_flags()
                 if self._state is not None and not self._state_stale:
@@ -334,10 +368,14 @@ class GameSession:
         """Raise the platform's common bad-state error for manager call sites."""
         self.driver.raise_for_bad_game_state(state)
 
-    def normalise_state(self, state: Any) -> Any:
+    def normalise_state(self, state: Any, player_n: str | None = None) -> Any:
         """Normalise state below the session rather than in an HTTP router."""
         try:
-            return self.driver.normalise_state(state, plugin_name=self.plugin_name)
+            return self.driver.normalise_state(
+                state,
+                plugin_name=self.plugin_name,
+                player_n=player_n,
+            )
         except BadGameStateError:
             raise
         except (TypeError, ValueError) as exc:

@@ -6,7 +6,9 @@ accepts composed actions and does not adjudicate Marvel Champions rules.
 
 ## State and zones
 
-`get_game_state(session_id)` returns the simplified state. DragnCards' `roundNumber` is
+`get_game_state(session_id, player_n=<your assigned seat>)` returns the simplified state.
+Pass your assigned seat on every player-agent read; DragnCards ignores this selector and
+retains its existing projection/cache behavior. DragnCards' `roundNumber` is
 the completed-round counter; use the neutral state's `playRound` instead. Its `stepId`
 and `stepDescription` are meaningful only on this platform. `players.<seat>.hitPoints`
 is maximum health, `handSize` is the current form's target hand size, and
@@ -42,7 +44,7 @@ Always copy `instanceId` from the current state; never construct it.
 Inside an agent session the names carry the `game-service_` prefix. The bare names below
 are the operation names:
 
-- Observe: `get_game_state`.
+- Observe: `get_game_state(session_id, player_n=<your assigned seat>)`.
 - Cards: `move_card`, `exhaust_card`, `ready_card`, `flip_card`, `draw_card`,
   `shuffle_into_deck`, `set_card_property`.
 - Counters: `modify_tokens`, `zero_tokens`.

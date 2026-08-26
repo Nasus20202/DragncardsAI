@@ -198,7 +198,14 @@ to disambiguate.
 Use these when you need the current table state or a reusable snapshot.
 
 - `GET /games/{session_id}/state`
-  Get the latest game state.
+  Get the latest neutral game state. The optional `player_n=player1` through
+  `player4` query parameter selects the seat-scoped Marvel LCG projection, so the
+  engine ACL may reveal that seat's hand while other hands remain `HIDDEN`, even when
+  the engine reports those hand cards as face down. Omit it for the spectator/public
+  projection; omission never implies `player1`. DragnCards accepts and ignores the
+  selector and retains its existing cached state behavior. This selector is
+  trusted-session view selection rather than caller authorization, and projected reads
+  are returned with `Cache-Control: private, no-store`.
 
 - `GET /games/{session_id}/snapshot`
   Export a reusable snapshot document.

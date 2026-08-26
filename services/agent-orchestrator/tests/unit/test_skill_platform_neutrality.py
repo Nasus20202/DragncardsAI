@@ -16,6 +16,16 @@ MARVEL_COORDINATOR_LOOP = (
     / "references"
     / "marvel-lcg-round-loop.md"
 )
+PLAYER_SKILL_FILES = (
+    REPO_ROOT / "skills" / "marvel-champions-play" / "SKILL.md",
+    REPO_ROOT / "skills" / "marvel-champions-play" / "resources" / "tool-reference.md",
+    REPO_ROOT / "skills" / "marvel-champions-play" / "resources" / "reading-state.md",
+    REPO_ROOT / "skills" / "marvel-champions-play" / "resources" / "strategy.md",
+    REPO_ROOT / "skills" / "marvel-champions-play" / "resources" / "recovery.md",
+    REPO_ROOT / "skills" / "marvel-champions-play" / "resources" / "play-recipes.md",
+    REPO_ROOT / "skills" / "marvel-champions-play" / "references" / "marvel-lcg.md",
+    REPO_ROOT / "skills" / "marvel-champions-play" / "references" / "dragncards.md",
+)
 PLATFORM_TOKENS = (
     "DragnCards",
     "marvel-lcg",
@@ -50,3 +60,14 @@ def test_marvel_coordinator_delegates_option_tools_to_the_seat_agent() -> None:
     assert "does not call `list_game_options` or `choose_game_option` itself" in text
     assert "The seat agent calls `list_game_options`" in text
     assert "`choose_game_option`" in text
+
+
+def test_player_skill_scopes_every_state_read_to_the_assigned_seat() -> None:
+    for path in PLAYER_SKILL_FILES:
+        text = path.read_text(encoding="utf-8")
+        assert "player_n" in text, path
+        assert "assigned" in text, path
+
+    skill = PLAYER_SKILL_FILES[0].read_text(encoding="utf-8")
+    assert "get_game_state(session_id, player_n=<your assigned seat>)" in skill
+    assert "omitting it requests the spectator/public projection" in skill

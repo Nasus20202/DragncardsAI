@@ -3,7 +3,8 @@
 Ordered tool-call sequences for everything you do on a turn. `N` is your player number —
 substitute the concrete group id (`player1Play2`, not `playerNPlay2`).
 
-Every `instance_id` comes from the current `get_game_state` output. Never construct one.
+Every `instance_id` comes from the current `get_game_state` output requested with your
+assigned `player_n`. Never construct one.
 After every sequence, check the `error` field on each response.
 
 ---

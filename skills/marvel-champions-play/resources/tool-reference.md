@@ -20,10 +20,11 @@ so it never goes stale.
 
 ## Tools you use constantly
 
-### `get_game_state(session_id)`
+### `get_game_state(session_id, player_n)`
 
 Returns the simplified state. See `resources/reading-state.md`. Safe, cheap, idempotent.
-Call it liberally.
+Always pass your assigned neutral seat as `player_n` when acting as a player agent; omit it
+only when deliberately requesting the spectator/public projection. Call it liberally.
 
 ### `move_card(session_id, instance_id, dest_group_id, dest_stack_index=-1, dest_card_index=0, player_n=null)`
 

@@ -96,13 +96,34 @@ def _range(value: Any) -> OptionTargetRange:
     return OptionTargetRange(min=max(0, minimum), max=max(0, maximum))
 
 
-def _visible(card: dict[str, Any], seats: Iterable[int]) -> bool:
+def _visible(
+    card: dict[str, Any],
+    seats: Iterable[int],
+    *,
+    require_all: bool = False,
+    require_face_up: bool = True,
+) -> bool:
+    """Return engine-ACL visibility, failing closed for malformed metadata."""
     allowed = card.get("visible_for_players")
-    if allowed and not any(
-        int(seat) in {int(item) for item in allowed} for seat in seats
+    if not isinstance(allowed, (list, tuple, set)):
+        return False
+    allowed_seats: set[int] = set()
+    for item in allowed:
+        if isinstance(item, bool) or not isinstance(item, int) or item not in range(4):
+            return False
+        allowed_seats.add(item)
+
+    if require_face_up and (
+        not isinstance(card.get("is_face_up"), bool) or not card["is_face_up"]
     ):
         return False
-    return bool(card.get("is_face_up", True))
+
+    requested_seats = tuple(seats)
+    if not requested_seats:
+        return False
+    if require_all:
+        return all(seat in allowed_seats for seat in requested_seats)
+    return any(seat in allowed_seats for seat in requested_seats)
 
 
 def card_index(

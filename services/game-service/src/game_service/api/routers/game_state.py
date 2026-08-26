@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 
 from game_service.api.deps import SessionIdentifier, get_manager
+from game_service.api.enums import SeatId
 from game_service.api.models import GameStateSnapshot, GameStateResponse
 from game_service.logic.platform import DRAGNCARDS_PLATFORM, MARVEL_LCG_PLATFORM
 from game_service.logic.session_manager import SessionManager
@@ -18,9 +19,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["game-state"])
 
 
-def _normalise_session_state(session: Any, state: Any) -> Any:
+def _normalise_session_state(
+    session: Any, state: Any, *, player_n: str | None = None
+) -> Any:
     """Delegate state projection to the session's platform driver."""
-    normalised = session.normalise_state(state)
+    normalised = session.normalise_state(state, player_n=player_n)
     if not isinstance(normalised, (dict, list, BaseModel)):
         raise TypeError("platform driver returned an invalid normalized state")
     return normalised
@@ -60,12 +63,21 @@ async def get_raw_game_state(
 )
 async def get_game_state(
     session_id: SessionIdentifier,
+    response: Response,
     manager: SessionManager = Depends(get_manager),
+    player_n: SeatId | None = Query(
+        default=None,
+        description=(
+            "Seat whose engine-permitted private cards are visible. Omit for the "
+            "spectator/public projection; this selector is not caller authorization."
+        ),
+    ),
 ):
-    logger.info("get_game_state: session_id=%s", session_id)
+    response.headers["Cache-Control"] = "private, no-store"
+    logger.info("get_game_state: session_id=%s player_n=%s", session_id, player_n)
     async with manager.session_operation_lock(session_id):
         session = await manager.get_session(session_id)
-        state = await session.get_state()
+        state = await session.get_state(player_n=player_n)
 
     logger.debug(
         "get_game_state: session_id=%s -> state keys=%s",
@@ -73,7 +85,7 @@ async def get_game_state(
         list(state.keys()) if isinstance(state, dict) else type(state).__name__,
     )
 
-    state = _normalise_session_state(session, state)
+    state = _normalise_session_state(session, state, player_n=player_n)
 
     platform, move_surface = _session_capabilities(session)
     return GameStateResponse(

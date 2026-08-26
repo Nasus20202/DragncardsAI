@@ -6,7 +6,9 @@ mutations. The task is to choose well among those options.
 
 ## State and pending decisions
 
-Read `get_game_state` before acting. Use neutral `playRound`, `phase`, and `phaseLabel`.
+Read `get_game_state(session_id, player_n=<your assigned seat>)` before acting. Player
+agents must pass their assigned seat so the engine can return their ACL-permitted hand.
+Use neutral `playRound`, `phase`, and `phaseLabel`.
 The platform's integer `stepId` is opaque. `pendingSeats` names the seats whose decision
 the engine is currently asking for; act only when your seat is present. The platform's
 normalised zones resolve cards by meaning and visibility. Do not infer ownership from an

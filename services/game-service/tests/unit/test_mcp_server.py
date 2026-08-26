@@ -188,6 +188,18 @@ async def test_get_game_state_exposed_as_tool():
     assert "get_game_state" in names
 
 
+async def test_get_game_state_tool_has_optional_seat_without_player1_default():
+    mcp = _make_mcp()
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+
+    tool = next(t for t in tools if t.name == "get_game_state")
+    player_parameter = tool.inputSchema["properties"]["player_n"]
+    assert "player_n" not in tool.inputSchema.get("required", [])
+    assert player_parameter.get("default") is None
+    assert "player1" not in str(player_parameter.get("default", ""))
+
+
 async def test_create_game_has_no_required_fields():
     mcp = _make_mcp()
     async with Client(mcp) as client:
