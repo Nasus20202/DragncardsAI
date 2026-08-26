@@ -2,7 +2,8 @@
 
 Marvel Champions is a race: the villain's threat clock versus your damage clock. Every
 turn you are deciding which clock to push. All the heuristics below are written in terms
-of values you can read or derive from `get_game_state`.
+of values you can read or derive from `get_game_state(session_id, player_n=<your assigned
+seat>)`; pass your assigned seat on every player-agent read.
 
 ## The two clocks
 

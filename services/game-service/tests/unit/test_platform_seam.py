@@ -33,6 +33,8 @@ def test_both_platform_drivers_satisfy_the_shared_protocol():
     assert isinstance(marvel, GamePlatform)
     assert _driver().move_surface == "typed_actions"
     assert marvel.move_surface == "enumerated_options"
+    assert _driver().state_reads_are_reader_sensitive is False
+    assert marvel.state_reads_are_reader_sensitive is True
     assert marvel.action_catalog()["actions"] == []
 
 
@@ -93,6 +95,20 @@ async def test_session_platform_survives_store_round_trip():
     restored = await store.get_session("session-1")
     assert restored is not None
     assert restored["platform"] == "dragncards"
+
+
+async def test_dragncards_ignored_seat_selector_keeps_cached_state():
+    driver = _driver()
+    initial_state = {"game": {"roundNumber": 0, "playerData": {}, "cardById": {}}}
+    session = GameSession(
+        session_id="session-1",
+        platform="dragncards",
+        plugin_name="marvel-champions",
+        driver=driver,
+        initial_state=initial_state,
+    )
+
+    assert await session.get_state(player_n="player2") is initial_state
 
 
 def test_dragncards_normaliser_adds_neutral_phase_and_play_round():

@@ -970,7 +970,7 @@ def test_marvel_normaliser_hides_other_seat_and_preserves_play_round():
         ],
         "_frame": {"current_step_id": 8, "ask_players": [0]},
     }
-    state = MarvelLcgNormaliser(("player1",)).normalise(raw)
+    state = MarvelLcgNormaliser(("player1",)).normalise(raw, player_n="player1")
     assert state["playRound"] == 1
     assert state["phase"] == "player"
     assert state["pendingSeats"] == ["player1"]
@@ -991,15 +991,212 @@ def test_default_multiseat_normaliser_does_not_union_private_visibility():
         ]
     }
 
-    default_view = MarvelLcgNormaliser(("player1", "player2")).normalise(raw)
-    player_two_view = MarvelLcgNormaliser(
-        ("player1", "player2"), reading_seat="player2"
-    ).normalise(raw)
+    default_view = MarvelLcgNormaliser(("player1", "player2")).normalise(
+        raw, player_n="player1"
+    )
+    player_two_view = MarvelLcgNormaliser(("player1", "player2")).normalise(
+        raw, player_n="player2"
+    )
 
     assert default_view["zones"]["sharedVillain"] == [
         {"name": "HIDDEN", "stackSize": 1}
     ]
     assert player_two_view["zones"]["sharedVillain"][0]["name"] == "Private Villain"
+
+
+def _visibility_card(
+    card_id: str,
+    name: str,
+    visible_for_players: list[int],
+    *,
+    is_face_up: bool = True,
+) -> dict:
+    return {
+        "id": card_id,
+        "card_id": card_id,
+        "name": name,
+        "card_type": "ally",
+        "is_face_up": is_face_up,
+        "is_ready": True,
+        "visible_for_players": visible_for_players,
+    }
+
+
+def test_marvel_state_visibility_matrix_is_seat_scoped_and_spectator_redacted():
+    raw = {
+        "round_id": 1,
+        "phase": "Player 1 Turn",
+        "players": [
+            {
+                "hand_cards": [_visibility_card("p1-card", "P1 Secret", [0])],
+            },
+            {
+                "hand_cards": [_visibility_card("p2-card", "P2 Secret", [0, 1])],
+            },
+        ],
+        "area_villain": [
+            _visibility_card("public-villain", "Public Villain", [0, 1]),
+            _visibility_card("private-villain", "Private Villain", [1]),
+        ],
+    }
+    normaliser = MarvelLcgNormaliser(("player1", "player2"))
+
+    player_one = normaliser.normalise(raw, player_n="player1")
+    player_two = normaliser.normalise(raw, player_n="player2")
+    spectator = normaliser.normalise(raw, player_n=None)
+
+    assert player_one["zones"]["player1Hand"][0]["name"] == "P1 Secret"
+    assert player_one["zones"]["player2Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
+    assert player_one["zones"]["sharedVillain"] == [
+        {
+            "id": "public-villain",
+            "instanceId": "public-villain",
+            "name": "Public Villain",
+            "type": "ally",
+            "stackSize": 1,
+        },
+        {"name": "HIDDEN", "stackSize": 1},
+    ]
+
+    assert player_two["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
+    assert player_two["zones"]["player2Hand"][0]["name"] == "P2 Secret"
+    assert player_two["zones"]["sharedVillain"][-1]["name"] == "Private Villain"
+
+    assert spectator["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
+    assert spectator["zones"]["player2Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
+    assert spectator["zones"]["sharedVillain"] == [
+        {
+            "id": "public-villain",
+            "instanceId": "public-villain",
+            "name": "Public Villain",
+            "type": "ally",
+            "stackSize": 1,
+        },
+        {"name": "HIDDEN", "stackSize": 1},
+    ]
+
+
+def test_marvel_hand_owner_acl_reveals_engine_face_down_card_only_to_owner():
+    raw = {
+        "players": [
+            {
+                "hand_cards": [
+                    _visibility_card(
+                        "face-down-hand",
+                        "Owner Hand Card",
+                        [0],
+                        is_face_up=False,
+                    )
+                ]
+            },
+            {},
+        ]
+    }
+    normaliser = MarvelLcgNormaliser(("player1", "player2"))
+
+    owner = normaliser.normalise(raw, player_n="player1")
+    other_seat = normaliser.normalise(raw, player_n="player2")
+    spectator = normaliser.normalise(raw, player_n=None)
+
+    assert owner["zones"]["player1Hand"][0]["name"] == "Owner Hand Card"
+    assert other_seat["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
+    assert spectator["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
+
+
+def test_marvel_state_malformed_visibility_metadata_fails_closed():
+    raw = {
+        "players": [
+            {
+                "hand_cards": [
+                    _visibility_card("missing", "Missing ACL", []),
+                    {
+                        **_visibility_card("string", "String ACL", [0]),
+                        "visible_for_players": ["0"],
+                    },
+                ]
+            }
+        ],
+        "area_villain": [
+            {
+                **_visibility_card("face", "Malformed Face", [0]),
+                "is_face_up": "yes",
+            }
+        ],
+    }
+
+    state = MarvelLcgNormaliser(("player1",)).normalise(raw, player_n="player1")
+
+    assert state["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 2}]
+    assert state["zones"]["sharedVillain"] == [{"name": "HIDDEN", "stackSize": 1}]
+
+
+async def test_marvel_explicit_unheld_seat_is_rejected_before_engine_access():
+    client = _option_client()
+    platform = _option_platform(client, seats=("player1", "player2"))
+    platform.held_seats = ("player1",)
+
+    with pytest.raises(SessionError, match="not held"):
+        await platform.request_state(timeout=1, player_n="player2")
+
+    client.get_world.assert_not_awaited()
+
+
+async def test_marvel_state_transport_forwards_requested_seat():
+    client = _option_client()
+    platform = _option_platform(client, seats=("player1", "player2"))
+    platform._sockets["player2"] = platform._socket
+
+    await platform.request_state(timeout=1, player_n="player2")
+
+    client.get_world.assert_awaited_once_with("player2")
+
+
+async def test_marvel_sequential_projected_reads_do_not_reuse_another_seat_world():
+    first_world = {
+        "round_id": 1,
+        "players": [
+            {"hand_cards": [_visibility_card("p1", "P1 Secret", [0])]},
+            {"hand_cards": [_visibility_card("p2", "P2 Secret", [1])]},
+        ],
+    }
+    second_world = {**first_world, "round_id": 2}
+    client = _option_client(world=first_world)
+    client.get_world = AsyncMock(side_effect=[first_world, second_world])
+    platform = _option_platform(client, seats=("player1", "player2"))
+    platform._sockets["player2"] = platform._socket
+    session = GameSession(
+        session_id="seat-scoped",
+        platform="marvel-lcg",
+        driver=platform,
+        initial_state={},
+    )
+
+    first = await session.get_state(player_n="player1")
+    second = await session.get_state(player_n="player2")
+
+    assert first["round_id"] == 1
+    assert second["round_id"] == 2
+    assert client.get_world.await_args_list == [call("player1"), call("player2")]
+
+
+def test_marvel_history_state_is_spectator_redacted():
+    client = _option_client(
+        world={
+            "round_id": 1,
+            "players": [
+                {"hand_cards": [_visibility_card("secret", "Secret Hand", [0])]}
+            ],
+            "area_villain": [_visibility_card("villain", "Public Villain", [0])],
+        }
+    )
+    platform = _option_platform(client)
+    platform._latest_world = client.get_world.return_value
+
+    state = platform._history_state()
+
+    assert state["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
+    assert state["zones"]["sharedVillain"][0]["name"] == "Public Villain"
+    assert "Secret Hand" not in json.dumps(state)
 
 
 def test_options_use_ids_and_ignore_legal_targets_when_maximum_is_zero():

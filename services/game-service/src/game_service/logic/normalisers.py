@@ -34,7 +34,13 @@ STEP_DESCRIPTIONS: dict[str, str] = {
 class StateNormaliser(Protocol):
     """Produce the neutral state view for a platform."""
 
-    def normalise(self, raw_state: Any, *, plugin_name: str | None = None) -> Any: ...
+    def normalise(
+        self,
+        raw_state: Any,
+        *,
+        plugin_name: str | None = None,
+        player_n: str | None = None,
+    ) -> Any: ...
 
 
 def _get_step_description(step_id: str | int | None) -> str | None:
@@ -163,15 +169,28 @@ def simplify_dragncards_marvel_state(raw_state: dict[str, Any]) -> dict[str, Any
 class DragnCardsNormaliser:
     platform: PlatformSlug = DRAGNCARDS_PLATFORM
 
-    def normalise(self, raw_state: Any, *, plugin_name: str | None = None) -> Any:
+    def normalise(
+        self,
+        raw_state: Any,
+        *,
+        plugin_name: str | None = None,
+        player_n: str | None = None,
+    ) -> Any:
+        del player_n
         if plugin_name is not None and plugin_name != "marvel-champions":
             return raw_state
         return simplify_dragncards_marvel_state(raw_state)
 
 
 class IdentityNormaliser:
-    def normalise(self, raw_state: Any, *, plugin_name: str | None = None) -> Any:
-        del plugin_name
+    def normalise(
+        self,
+        raw_state: Any,
+        *,
+        plugin_name: str | None = None,
+        player_n: str | None = None,
+    ) -> Any:
+        del plugin_name, player_n
         return raw_state
 
 

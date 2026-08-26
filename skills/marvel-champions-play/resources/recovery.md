@@ -17,8 +17,9 @@ reports a stale failure.
 **Read `error` after every mutating call.** If it is non-null:
 
 1. Assume the action did **not** take effect.
-2. Do not retry blindly — re-read state with `get_game_state` and confirm what actually
-   happened. Some errors fire partway through a multi-step action list.
+2. Do not retry blindly — re-read state with `get_game_state` and your assigned `player_n`,
+   then confirm what actually happened. Some errors fire partway through a multi-step
+   action list.
 3. Fix or report. Do not stack further actions on an unverified board.
 
 Example of a real failure:

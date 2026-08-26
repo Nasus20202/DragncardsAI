@@ -29,6 +29,48 @@ async def test_get_game_state_200():
     assert "game" not in body["state"]
 
 
+async def test_get_game_state_accepts_optional_seat_without_implicit_player1():
+    session = mock_session()
+    async with make_client(mock_manager(session)) as client:
+        response = await client.get(
+            f"/games/{SESSION_ID}/state", params={"player_n": "player2"}
+        )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"
+    session.get_state.assert_awaited_once_with(player_n="player2")
+    session.normalise_state.assert_called_once_with(
+        {"game": {"roundNumber": 1}}, player_n="player2"
+    )
+
+
+async def test_get_game_state_omission_is_the_spectator_projection():
+    session = mock_session()
+    async with make_client(mock_manager(session)) as client:
+        response = await client.get(f"/games/{SESSION_ID}/state")
+
+    assert response.status_code == 200
+    session.get_state.assert_awaited_once_with(player_n=None)
+    session.normalise_state.assert_called_once_with(
+        {"game": {"roundNumber": 1}}, player_n=None
+    )
+
+
+def test_get_game_state_schema_has_optional_player_n_and_stable_operation_id():
+    from game_service.api.app import create_app
+
+    schema = create_app().openapi()
+    operation = schema["paths"]["/games/{session_id}/state"]["get"]
+    assert operation["operationId"] == "get_game_state"
+    player_parameter = next(
+        parameter
+        for parameter in operation["parameters"]
+        if parameter["name"] == "player_n"
+    )
+    assert player_parameter["required"] is False
+    assert player_parameter["schema"].get("default") is None
+
+
 async def test_bad_game_state_error_returns_409():
     session = mock_session()
     session.get_state = AsyncMock(

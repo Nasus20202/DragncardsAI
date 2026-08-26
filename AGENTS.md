@@ -385,7 +385,10 @@ remains available where the platform supplies it. `phase` is the closed classifi
 platform label (for example a DragnCards step id or a `marvel-lcg` phase description).
 `pendingSeats` is present when a platform reports which seats may act and is omitted when
 it does not. Face-down cards and deck contents collapse to a single `HIDDEN` entry carrying
-a `stackSize` count.
+a `stackSize` count. Marvel hand cards are the exception: the engine's owner ACL may
+reveal the card name to the requested owner even while `is_face_up` is false; other seats
+and spectators still receive `HIDDEN` for that hand card. Do not treat the Marvel hand's
+face-down flag alone as proof that its owner cannot see the name.
 
 The platform normaliser owns round and phase conversion: `playRound` is already the play
 round for `marvel-lcg`, while DragnCards converts its completed-round counter once. A

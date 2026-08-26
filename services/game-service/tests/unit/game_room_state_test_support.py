@@ -51,7 +51,8 @@ def mock_session(**kwargs) -> MagicMock:
     session.get_state = AsyncMock(return_value={"game": {"roundNumber": 1}})
     dragncards_normaliser = DragnCardsNormaliser()
 
-    def normalise_state(state):
+    def normalise_state(state, *, player_n=None):
+        del player_n
         if session.plugin_name != "marvel-champions":
             return state
         return dragncards_normaliser.normalise(state, plugin_name=session.plugin_name)

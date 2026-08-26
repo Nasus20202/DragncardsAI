@@ -68,40 +68,45 @@ def _resource_count(value: Any) -> int | None:
 
 
 class MarvelLcgNormaliser:
-    """Normaliser with one explicit reading seat for private-card visibility.
+    """Stateless normaliser for the Marvel engine's per-call reader projection."""
 
-    A multi-seat session may own several sockets, but the engine's card
-    visibility is evaluated from one reader at a time.  Unioning all held seats
-    would disclose a card visible only to another player, so the default view
-    deliberately uses the first configured seat unless a caller selects one.
-    """
-
-    def __init__(
-        self,
-        seats: Iterable[str] = ("player1",),
-        *,
-        reading_seat: str | None = None,
-    ) -> None:
+    def __init__(self, seats: Iterable[str] = ("player1",)) -> None:
         self.seats = tuple(seats)
-        self.reading_seat = reading_seat or (self.seats[0] if self.seats else "player1")
 
-    @property
-    def seat_numbers(self) -> tuple[int, ...]:
+    @staticmethod
+    def _seat_number(player_n: str | None) -> tuple[int, ...]:
+        if player_n is None:
+            return ()
         result: list[int] = []
         try:
-            result.append(int(self.reading_seat[6:]) - 1)
+            result.append(int(player_n[6:]) - 1)
         except ValueError, TypeError:
             return ()
         return tuple(number for number in result if number in range(4))
 
-    def _card(self, card: dict[str, Any]) -> dict[str, Any] | None:
+    def _card(
+        self,
+        card: dict[str, Any],
+        visible_seats: Iterable[int],
+        *,
+        require_all: bool = False,
+        force_hidden: bool = False,
+        require_face_up: bool = True,
+    ) -> dict[str, Any] | None:
         if not isinstance(card, dict):
             return None
         if card.get("bind_object_id") not in (None, 0, "0", ""):
             # Attached/tucked cards are represented by their host, not as a
             # second card in the neutral zone listing.
             return None
-        visible = _visible(card, self.seat_numbers)
+        visible = _visible(
+            card,
+            visible_seats,
+            require_all=require_all,
+            require_face_up=require_face_up,
+        )
+        if force_hidden:
+            visible = False
         down = card.get("down_card_ids") or []
         stack_size = 1 + len(down)
         if not visible:
@@ -127,7 +132,15 @@ class MarvelLcgNormaliser:
             "stackSize": stack_size
         }
 
-    def _zone(self, cards: Any) -> list[dict[str, Any]]:
+    def _zone(
+        self,
+        cards: Any,
+        visible_seats: Iterable[int],
+        *,
+        require_all: bool = False,
+        force_hidden: bool = False,
+        require_face_up: bool = True,
+    ) -> list[dict[str, Any]]:
         if not isinstance(cards, (list, tuple)):
             return []
         result: list[dict[str, Any]] = []
@@ -135,7 +148,13 @@ class MarvelLcgNormaliser:
         for card in cards:
             if not isinstance(card, dict):
                 continue
-            compact = self._card(card)
+            compact = self._card(
+                card,
+                visible_seats,
+                require_all=require_all,
+                force_hidden=force_hidden,
+                require_face_up=require_face_up,
+            )
             if compact is None:
                 continue
             if compact.get("name") == "HIDDEN":
@@ -147,7 +166,11 @@ class MarvelLcgNormaliser:
         return result
 
     def normalise(
-        self, raw_state: Any, *, plugin_name: str | None = None
+        self,
+        raw_state: Any,
+        *,
+        plugin_name: str | None = None,
+        player_n: str | None = None,
     ) -> dict[str, Any]:
         del plugin_name
         if not isinstance(raw_state, dict):
@@ -162,15 +185,22 @@ class MarvelLcgNormaliser:
         )
         if not isinstance(world, dict):
             raise ValueError("marvel-lcg world is not an object")
-        phase_label = str(world.get("phase", "") or "")
-        zones: dict[str, list[dict[str, Any]]] = {}
-        for source, target in _ZONE_MAP.items():
-            zones[target] = self._zone(world.get(source, []))
-
-        players: dict[str, dict[str, Any]] = {}
+        visible_seats = self._seat_number(player_n)
         raw_players = world.get("players") or []
         if isinstance(raw_players, dict):
             raw_players = list(raw_players.values())
+        spectator = player_n is None
+        spectator_seats = tuple(range(min(len(raw_players), 4))) if spectator else ()
+        phase_label = str(world.get("phase", "") or "")
+        zones: dict[str, list[dict[str, Any]]] = {}
+        for source, target in _ZONE_MAP.items():
+            zones[target] = self._zone(
+                world.get(source, []),
+                visible_seats or spectator_seats,
+                require_all=spectator,
+            )
+
+        players: dict[str, dict[str, Any]] = {}
         for index, player in enumerate(raw_players):
             if not isinstance(player, dict):
                 continue
@@ -187,7 +217,14 @@ class MarvelLcgNormaliser:
                 )
             players[seat] = player_view
             for source, suffix in _PLAYER_ZONE_MAP.items():
-                zones[f"{seat}{suffix}"] = self._zone(player.get(source, []))
+                zones[f"{seat}{suffix}"] = self._zone(
+                    player.get(source, []),
+                    visible_seats or spectator_seats,
+                    require_all=spectator,
+                    force_hidden=source == "hand_cards"
+                    and (spectator or seat != player_n),
+                    require_face_up=source != "hand_cards",
+                )
 
         pending = []
         for item in world.get("_ask_players", frame.get("ask_players", [])) or []:

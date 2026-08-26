@@ -77,6 +77,7 @@ class GamePlatform(Protocol):
     move_surface: MoveSurface
     uses_plugin: bool
     supports_room_close: bool
+    state_reads_are_reader_sensitive: bool
 
     def new_session(self) -> "GamePlatform": ...
 
@@ -142,7 +143,13 @@ class GamePlatform(Protocol):
 
     async def teardown(self, room_slug: str) -> None: ...
 
-    def normalise_state(self, state: Any, *, plugin_name: str | None = None) -> Any: ...
+    def normalise_state(
+        self,
+        state: Any,
+        *,
+        plugin_name: str | None = None,
+        player_n: str | None = None,
+    ) -> Any: ...
 
     def configure_history(self, emitter: Any, session_id: str) -> None: ...
 
@@ -180,6 +187,7 @@ class DragnCardsPlatform:
     move_surface: MoveSurface = "typed_actions"
     uses_plugin = True
     supports_room_close = True
+    state_reads_are_reader_sensitive = False
 
     def __init__(
         self,
@@ -463,10 +471,20 @@ class DragnCardsPlatform:
         await self._client.leave(f"room:{room_slug}")
         await self._client.disconnect()
 
-    def normalise_state(self, state: Any, *, plugin_name: str | None = None) -> Any:
+    def normalise_state(
+        self,
+        state: Any,
+        *,
+        plugin_name: str | None = None,
+        player_n: str | None = None,
+    ) -> Any:
         from game_service.logic.normalisers import DragnCardsNormaliser
 
-        return DragnCardsNormaliser().normalise(state, plugin_name=plugin_name)
+        return DragnCardsNormaliser().normalise(
+            state,
+            plugin_name=plugin_name,
+            player_n=player_n,
+        )
 
     def configure_history(self, emitter: Any, session_id: str) -> None:
         del emitter, session_id

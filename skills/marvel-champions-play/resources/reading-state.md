@@ -1,8 +1,10 @@
 # Reading the board
 
-`get_game_state(session_id)` returns a **simplified projection**, not the raw DragnCards
-state. The raw state is deliberately not reachable over MCP. Everything below describes
-what you actually receive.
+`get_game_state(session_id, player_n=<your assigned seat>)` returns a **simplified
+projection**, not the raw DragnCards state. A player agent must pass its assigned seat;
+omitting `player_n` deliberately requests the spectator/public projection. The raw state
+is deliberately not reachable over MCP. Everything below describes what you actually
+receive.
 
 ## Top-level shape
 
@@ -84,7 +86,9 @@ hero you will not see it listed separately.
 
 ## Hidden entries
 
-Facedown cards and encounter/player card backs are collapsed into a single entry per zone:
+Facedown cards and encounter/player card backs are collapsed into a single entry per zone.
+Marvel hand cards are a deliberate exception: the engine reports hands face down, but the
+owner ACL can still authorize the owner to receive the card name in `playerNHand`:
 
 ```json
 { "name": "HIDDEN", "stackSize": 38 }
@@ -104,7 +108,7 @@ A zone can contain both real entries and one merged `HIDDEN` entry at once — f
 
 | Group | Contents |
 | --- | --- |
-| `playerNHand` | Your hand. Each card is its own entry; you see all of them. |
+| `playerNHand` | Your hand. Each ACL-permitted card is its own entry; other seats and spectators see `HIDDEN`. |
 | `playerNDeck` | Your deck. One `HIDDEN` entry; `stackSize` is the deck count. |
 | `playerNDiscard` | Your discard. Listed card by card, face up. Fully readable. |
 | `playerNPlay1` | Your identity row — your identity card lives here. |
