@@ -7,22 +7,22 @@ import {
 } from "@/features/shared/lib/types";
 
 export type AggEvent =
-  | { kind: "reasoning"; text: string }
-  | { kind: "model_output"; text: string }
-  | { kind: "compaction"; text: string }
+  | { key: string; kind: "reasoning"; text: string }
+  | { key: string; kind: "model_output"; text: string }
+  | { key: string; kind: "compaction"; text: string }
   /**
    * Compaction was attempted and could not complete. The turn it was protecting
    * still ran, on the history it already had — this row exists so that
    * degradation is visible instead of silent.
    */
-  | { kind: "compaction_failed"; event: JobEventResponse }
+  | { key: string; kind: "compaction_failed"; event: JobEventResponse }
   /**
    * The provider cut the model off at its output token limit and the service
    * resumed the turn by itself. Its own row because the alternative — two
    * output blocks with nothing between them — reads as one answer the model
    * chose to write in two parts, which is not what happened.
    */
-  | { kind: "turn_continued"; event: JobEventResponse }
+  | { key: string; kind: "turn_continued"; event: JobEventResponse }
   /**
    * One tool invocation: the call, and its result once it has arrived. The two
    * events are paired by `tool_call_id` rather than shown as two separate cards,
@@ -30,30 +30,31 @@ export type AggEvent =
    * and because a call with no result yet is exactly what "still running" means.
    */
   | {
+      key: string;
       kind: "tool_exchange";
       call: JobEventResponse | null;
       result: JobEventResponse | null;
     }
-  | { kind: "skill_loaded"; event: JobEventResponse }
-  | { kind: "subagent_started"; event: JobEventResponse }
-  | { kind: "subagent_completed"; event: JobEventResponse }
-  | { kind: "subagent_failed"; event: JobEventResponse }
-  | { kind: "user_question"; event: JobEventResponse }
+  | { key: string; kind: "skill_loaded"; event: JobEventResponse }
+  | { key: string; kind: "subagent_started"; event: JobEventResponse }
+  | { key: string; kind: "subagent_completed"; event: JobEventResponse }
+  | { key: string; kind: "subagent_failed"; event: JobEventResponse }
+  | { key: string; kind: "user_question"; event: JobEventResponse }
   /**
    * A tool call a player seat made was refused before it reached the tool,
    * because one of its arguments named another seat's cards. Its own row rather
    * than a tool exchange: no tool ran, so there is no call/result pair to show,
    * and the point of the row is that the boundary held.
    */
-  | { kind: "seat_scope_violation"; event: JobEventResponse }
+  | { key: string; kind: "seat_scope_violation"; event: JobEventResponse }
   /**
    * The orchestrator recorded (or resolved) a finding that a seat's action broke
    * the rules. Opening and resolving are the same event type carrying different
    * `status` values, so the transcript shows both halves of one finding's life.
    */
-  | { kind: "illegal_action_finding"; event: JobEventResponse }
-  | { kind: "failure"; event: JobEventResponse }
-  | { kind: "cancellation"; event: JobEventResponse };
+  | { key: string; kind: "illegal_action_finding"; event: JobEventResponse }
+  | { key: string; kind: "failure"; event: JobEventResponse }
+  | { key: string; kind: "cancellation"; event: JobEventResponse };
 
 export interface SubagentEntry {
   childJobId: string;
@@ -132,6 +133,15 @@ function sortEventsOldestFirst(
 
 function eventHasCompactionPayload(event: JobEventResponse): boolean {
   return event.payload.compaction === true;
+}
+
+/**
+ * Give one aggregated row the identity of the event that introduced it. This
+ * remains stable while a streamed event's payload changes and avoids using the
+ * row's current position as a React key.
+ */
+function aggregateEventKey(event: JobEventResponse): string {
+  return `${event.event_type}:${event.id}`;
 }
 
 export function compareJobsOldestFirst(left: JobSummary, right: JobSummary) {
@@ -505,21 +515,33 @@ export function aggregateEvents(
   const pairedResults = new Set<JobEventResponse>();
 
   let reasoningText = "";
+  let reasoningKey: string | null = null;
   let modelText = "";
+  let modelKey: string | null = null;
   const result: AggEvent[] = [];
 
   function flushReasoning() {
-    if (reasoningText) {
-      result.push({ kind: "reasoning", text: reasoningText });
+    if (reasoningText && reasoningKey) {
+      result.push({
+        key: reasoningKey,
+        kind: "reasoning",
+        text: reasoningText,
+      });
       reasoningText = "";
     }
+    reasoningKey = null;
   }
 
   function flushModel() {
-    if (modelText) {
-      result.push({ kind: "model_output", text: modelText });
+    if (modelText && modelKey) {
+      result.push({
+        key: modelKey,
+        kind: "model_output",
+        text: modelText,
+      });
       modelText = "";
     }
+    modelKey = null;
   }
 
   for (const event of filteredEvents) {
@@ -532,26 +554,40 @@ export function aggregateEvents(
         const completionText =
           typeof event.payload.text === "string" ? event.payload.text : "";
         if (completionText) {
+          modelKey ??= aggregateEventKey(event);
           modelText = completionText;
         }
         break;
       }
 
-      case "reasoning":
-        reasoningText +=
+      case "reasoning": {
+        const text =
           typeof event.payload.text === "string" ? event.payload.text : "";
+        if (text) {
+          reasoningKey ??= aggregateEventKey(event);
+          reasoningText += text;
+        }
         break;
+      }
 
       case "model_output":
         if (isCompactionJob || eventHasCompactionPayload(event)) {
           flushReasoning();
           flushModel();
-          result.push({ kind: "compaction", text: compactionText(event) });
+          result.push({
+            key: aggregateEventKey(event),
+            kind: "compaction",
+            text: compactionText(event),
+          });
           break;
         }
         flushReasoning();
-        modelText +=
+        const text =
           typeof event.payload.text === "string" ? event.payload.text : "";
+        if (text) {
+          modelKey ??= aggregateEventKey(event);
+          modelText += text;
+        }
         break;
 
       // A question is its own transcript row, not a collapsible tool block.
@@ -572,7 +608,12 @@ export function aggregateEvents(
         if (paired) {
           pairedResults.add(paired);
         }
-        result.push({ kind: "tool_exchange", call: event, result: paired });
+        result.push({
+          key: aggregateEventKey(event),
+          kind: "tool_exchange",
+          call: event,
+          result: paired,
+        });
         break;
       }
 
@@ -583,7 +624,12 @@ export function aggregateEvents(
         // no call to attach to — a truncated event window, or a payload with no
         // `tool_call_id` — is still shown, so nothing is silently dropped.
         if (!pairedResults.has(event)) {
-          result.push({ kind: "tool_exchange", call: null, result: event });
+          result.push({
+            key: aggregateEventKey(event),
+            kind: "tool_exchange",
+            call: null,
+            result: event,
+          });
         }
         break;
 
@@ -602,16 +648,29 @@ export function aggregateEvents(
         flushReasoning();
         flushModel();
         if (event.event_type === "compaction") {
-          result.push({ kind: "compaction", text: compactionText(event) });
+          result.push({
+            key: aggregateEventKey(event),
+            kind: "compaction",
+            text: compactionText(event),
+          });
         } else {
-          result.push({ kind: event.event_type, event });
+          result.push({
+            key: aggregateEventKey(event),
+            kind: event.event_type,
+            event,
+          });
         }
         break;
 
       default:
         flushReasoning();
         flushModel();
-        result.push({ kind: "tool_exchange", call: event, result: null });
+        result.push({
+          key: aggregateEventKey(event),
+          kind: "tool_exchange",
+          call: event,
+          result: null,
+        });
         break;
     }
   }

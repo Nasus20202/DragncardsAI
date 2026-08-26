@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { createElement } from "react";
 
@@ -8,7 +8,11 @@ import {
   STREAM_EVENT_TYPES,
   TERMINAL_EVENT_TYPES,
 } from "@/features/play/lib/play-session-events";
-import { JobDetail, SessionDetail } from "@/features/shared/lib/types";
+import {
+  JobDetail,
+  JobEventResponse,
+  SessionDetail,
+} from "@/features/shared/lib/types";
 
 const selectedSession = {
   id: "session-1",
@@ -177,6 +181,105 @@ describe("PlayTranscript", () => {
 
     expect(aggregated).toHaveLength(1);
     expect(aggregated[0].kind).toBe("turn_continued");
+  });
+
+  it("keys aggregated rows by their source event rather than their position", () => {
+    const events: JobEventResponse[] = [
+      {
+        id: "reasoning-1",
+        event_type: "reasoning",
+        payload: { text: "same text" },
+        created_at: "2026-05-11T00:00:01Z",
+      },
+      {
+        id: "call-1",
+        event_type: "tool_call",
+        payload: { tool_call_id: "tool-1", tool_name: "draw_card" },
+        created_at: "2026-05-11T00:00:02Z",
+      },
+      {
+        id: "reasoning-2",
+        event_type: "reasoning",
+        payload: { text: "same text" },
+        created_at: "2026-05-11T00:00:03Z",
+      },
+    ];
+
+    const initial = aggregateEvents(events, false);
+    const updated = aggregateEvents(
+      [
+        ...events,
+        {
+          id: "failure-1",
+          event_type: "failure",
+          payload: { message: "failed" },
+          created_at: "2026-05-11T00:00:04Z",
+        },
+      ],
+      false
+    );
+
+    expect(initial.map((event) => event.key)).toEqual([
+      "reasoning:reasoning-1",
+      "tool_call:call-1",
+      "reasoning:reasoning-2",
+    ]);
+    expect(new Set(initial.map((event) => event.key)).size).toBe(
+      initial.length
+    );
+    expect(updated.slice(0, initial.length).map((event) => event.key)).toEqual(
+      initial.map((event) => event.key)
+    );
+  });
+
+  it("renders repeated row content without a duplicate-key warning", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    render(
+      createElement(PlayTranscript, {
+        jobs: [
+          makeJob([
+            {
+              id: "reasoning-1",
+              event_type: "reasoning",
+              payload: { text: "same text" },
+              created_at: "2026-05-11T00:00:01Z",
+            },
+            {
+              id: "failure-1",
+              event_type: "failure",
+              payload: { message: "failed" },
+              created_at: "2026-05-11T00:00:02Z",
+            },
+            {
+              id: "reasoning-2",
+              event_type: "reasoning",
+              payload: { text: "same text" },
+              created_at: "2026-05-11T00:00:03Z",
+            },
+          ]),
+        ],
+        streamingJobId: null,
+        selectedSession,
+        streamState: "idle",
+        statusText: "Ready",
+        isBusy: false,
+        errorText: null,
+        onOpenSettings: () => {},
+        settingsOpen: false,
+      })
+    );
+
+    expect(
+      consoleError.mock.calls.filter((call) =>
+        call.some((argument) =>
+          String(argument).includes("Each child in a list should have a unique")
+        )
+      )
+    ).toHaveLength(0);
+    consoleError.mockRestore();
   });
 
   it("renders a seam between the partial output and the output that continued it", () => {
