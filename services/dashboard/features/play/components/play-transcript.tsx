@@ -513,7 +513,7 @@ const JobThread = memo(function JobThread({
         <div className="space-y-2">
           {aggEvents.map((agg, i) => (
             <AggEventRow
-              key={i}
+              key={agg.key}
               agg={agg}
               isStreaming={isStreaming}
               hasOutput={hasOutput}
