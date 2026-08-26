@@ -24,6 +24,7 @@ import {
   HistoryExportMode,
   HistoryImportResult,
 } from "@/features/shared/lib/types";
+import { HistoryGameRef } from "@/features/history/lib/history-game-ref";
 
 /** What the workspace renders in its notice row after an export or import. */
 export interface TransferNotice {
@@ -117,7 +118,7 @@ export function HistoryTransferControls({
   gameId: string | null;
   platform?: GamePlatform;
   onNotice: (notice: TransferNotice | null) => void;
-  onImported: (gameId: string) => void;
+  onImported: (game: HistoryGameRef) => void;
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [exportMode, setExportMode] = useState<HistoryExportMode>("full");
@@ -169,7 +170,7 @@ export function HistoryTransferControls({
         gameId: importTarget === "custom" ? customGameId.trim() : undefined,
       });
       onNotice({ kind: "success", message: describeImport(result) });
-      onImported(result.game_id);
+      onImported({ gameId: result.game_id, platform: result.platform });
       closeImport();
     } catch (e) {
       onNotice({

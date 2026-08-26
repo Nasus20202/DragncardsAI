@@ -8,6 +8,7 @@ import {
   EvaluationRequestStatusResponse,
   EvaluationRound,
   EvaluationRoundsResponse,
+  GamePlatform,
 } from "@/features/shared/lib/types";
 
 /**
@@ -20,10 +21,12 @@ import {
  * Calls `GET /api/proxy/eval/games/{gameId}/rounds`.
  */
 export async function listGameRounds(
-  gameId: string
+  gameId: string,
+  platform: GamePlatform = "dragncards"
 ): Promise<EvaluationRound[]> {
+  const query = platform === "marvel-lcg" ? "?platform=marvel-lcg" : "";
   const response = await fetch(
-    `/api/proxy/eval/games/${encodeURIComponent(gameId)}/rounds`,
+    `/api/proxy/eval/games/${encodeURIComponent(gameId)}/rounds${query}`,
     { cache: "no-store" }
   );
   const body = await readJson<EvaluationRoundsResponse>(response);

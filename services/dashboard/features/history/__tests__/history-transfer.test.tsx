@@ -31,6 +31,7 @@ function bundleFile(name = "game.ndjson"): File {
 function importResult(overrides: Record<string, unknown> = {}) {
   return {
     game_id: "g1",
+    platform: "dragncards" as const,
     source_game_id: "g1",
     imported_events: 12,
     imported_snapshots: 2,
@@ -263,7 +264,12 @@ describe("HistoryTransferControls", () => {
     });
     fireEvent.click(await screen.findByTestId("history-import-confirm"));
 
-    await waitFor(() => expect(onImported).toHaveBeenCalledWith("minted"));
+    await waitFor(() =>
+      expect(onImported).toHaveBeenCalledWith({
+        gameId: "minted",
+        platform: "dragncards",
+      })
+    );
     expect(fetchMock.mock.calls[0][0]).toBe(
       "/api/proxy/history/import?as_new=true"
     );
@@ -283,7 +289,12 @@ describe("HistoryTransferControls", () => {
     );
     pickBundle("bundle");
 
-    await waitFor(() => expect(onImported).toHaveBeenCalledWith("g1"));
+    await waitFor(() =>
+      expect(onImported).toHaveBeenCalledWith({
+        gameId: "g1",
+        platform: "dragncards",
+      })
+    );
     // No target parameter at all: the bundle's header is what the service reads.
     expect(fetchMock.mock.calls[0][0]).toBe("/api/proxy/history/import");
   });
@@ -306,7 +317,12 @@ describe("HistoryTransferControls", () => {
     );
     pickBundle("custom", "g1 copy");
 
-    await waitFor(() => expect(onImported).toHaveBeenCalledWith("g1 copy"));
+    await waitFor(() =>
+      expect(onImported).toHaveBeenCalledWith({
+        gameId: "g1 copy",
+        platform: "dragncards",
+      })
+    );
     expect(fetchMock.mock.calls[0][0]).toBe(
       "/api/proxy/history/import?game_id=g1+copy"
     );
@@ -356,7 +372,10 @@ describe("HistoryTransferControls", () => {
     pickBundle("new");
 
     await waitFor(() => {
-      expect(onImported).toHaveBeenCalledWith("restored");
+      expect(onImported).toHaveBeenCalledWith({
+        gameId: "restored",
+        platform: "dragncards",
+      });
     });
     expect(onNotice).toHaveBeenCalledWith({
       kind: "success",
@@ -364,6 +383,38 @@ describe("HistoryTransferControls", () => {
         "Imported 12 events and 2 snapshots into restored (exported as g1) " +
         "from a full bundle.",
     });
+  });
+
+  it("selects the imported Marvel LCG partition", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          importResult({
+            game_id: "shared",
+            source_game_id: "g1",
+            platform: "marvel-lcg",
+          })
+        )
+      )
+    );
+    const onImported = vi.fn();
+
+    render(
+      <HistoryTransferControls
+        gameId={null}
+        onNotice={vi.fn()}
+        onImported={onImported}
+      />
+    );
+    pickBundle("new");
+
+    await waitFor(() =>
+      expect(onImported).toHaveBeenCalledWith({
+        gameId: "shared",
+        platform: "marvel-lcg",
+      })
+    );
   });
 
   it("says a minimal bundle carried no prompt material", async () => {

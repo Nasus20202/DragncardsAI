@@ -192,6 +192,7 @@ async def import_game(
     )
     return ImportResponse(
         game_id=result.game_id,
+        platform=header.platform,
         source_game_id=header.game_id,
         imported_events=result.imported_events,
         imported_snapshots=result.imported_snapshots,

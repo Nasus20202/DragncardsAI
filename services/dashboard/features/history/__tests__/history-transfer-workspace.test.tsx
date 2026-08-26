@@ -82,6 +82,7 @@ describe("history workspace export/import wiring", () => {
     listHistoryGames.mockResolvedValue(GAMES);
     importHistoryBundle.mockResolvedValue({
       game_id: "demo-001",
+      platform: "dragncards",
       source_game_id: "demo-001",
       imported_events: 4,
       imported_snapshots: 1,

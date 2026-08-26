@@ -8,7 +8,7 @@ import {
   disposeReconstructionViaBeacon,
   restoreGame,
 } from "@/features/history/lib/history-api";
-import { RestoreOutcome } from "@/features/shared/lib/types";
+import { GamePlatform, RestoreOutcome } from "@/features/shared/lib/types";
 
 /** The currently-mounted ephemeral reconstruction. */
 export interface Reconstruction {
@@ -18,6 +18,7 @@ export interface Reconstruction {
   seq: number;
   /** The game it was built from, so a stale board is never shown for another. */
   gameId: string;
+  platform: GamePlatform;
 }
 
 /**
@@ -26,6 +27,7 @@ export interface Reconstruction {
  */
 interface OpenFailure {
   gameId: string | null;
+  platform: GamePlatform;
   seq: number | null;
   message: string;
 }
@@ -73,7 +75,7 @@ export interface BoardReconstruction {
 export function useBoardReconstruction(
   gameId: string | null,
   selectedSeq: number | null,
-  platform: "dragncards" | "marvel-lcg" = "dragncards"
+  platform: GamePlatform = "dragncards"
 ): BoardReconstruction {
   const [built, setBuilt] = useState<Reconstruction | null>(null);
   const [isOpening, setIsOpening] = useState(false);
@@ -86,11 +88,17 @@ export function useBoardReconstruction(
   // truth for that fact and no render where the two disagree — an effect that
   // cleared it would necessarily paint the mismatch once first.
   const reconstruction =
-    built && built.gameId === gameId && built.seq === selectedSeq
+    built &&
+    built.gameId === gameId &&
+    built.platform === platform &&
+    built.seq === selectedSeq
       ? built
       : null;
   const error =
-    failure && failure.gameId === gameId && failure.seq === selectedSeq
+    failure &&
+    failure.gameId === gameId &&
+    failure.platform === platform &&
+    failure.seq === selectedSeq
       ? failure.message
       : null;
 
@@ -167,19 +175,23 @@ export function useBoardReconstruction(
   //   re-pointed at another, so there is nothing to keep — and a retained session
   //   survives the board being hidden, which makes this the only thing that
   //   reclaims it.
-  const reconGameRef = useRef<string | null>(gameId);
+  const reconGameRef = useRef<string | null>(
+    gameId ? `${platform}:${gameId}` : null
+  );
   useEffect(() => {
-    const gameChanged = reconGameRef.current !== gameId;
-    reconGameRef.current = gameId;
+    const gameKey = gameId ? `${platform}:${gameId}` : null;
+    const gameChanged = reconGameRef.current !== gameKey;
+    reconGameRef.current = gameKey;
     if (gameChanged && activeSessionRef.current) close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameId]);
+  }, [gameId, platform]);
 
   const open = useCallback(async () => {
     if (!gameId || selectedSeq === null) return;
     if (platform !== "dragncards") {
       setFailure({
         gameId,
+        platform,
         seq: selectedSeq,
         message: "This platform cannot be rewound into a throwaway copy.",
       });
@@ -240,13 +252,14 @@ export function useBoardReconstruction(
       activeSessionRef.current = sessionId;
       activeRoomSlugRef.current = roomSlug;
 
-      setBuilt({ sessionId, roomSlug, seq: selectedSeq, gameId });
+      setBuilt({ sessionId, roomSlug, seq: selectedSeq, gameId, platform });
     } catch (e) {
       // A failed restore leaves the retained session as it was: the
       // history-service does not delete a session it did not create, so it is
       // still ours to hold and reuse on the next attempt.
       setFailure({
         gameId,
+        platform,
         seq: selectedSeq,
         message:
           e instanceof Error

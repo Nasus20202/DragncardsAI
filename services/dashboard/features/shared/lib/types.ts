@@ -545,6 +545,8 @@ export interface JudgeConfig {
 export interface EvaluationRequestBody {
   scope: EvaluationScope;
   selection: EvaluationSelection;
+  /** Select the history partition to evaluate when game ids overlap. */
+  platform?: GamePlatform;
   force?: boolean;
   judge?: JudgeConfig;
 }
@@ -688,6 +690,8 @@ export type HistoryExportMode = "full" | "minimal";
 export interface HistoryImportResult {
   /** The game the history landed under (the requested target, or the bundle's). */
   game_id: string;
+  /** The imported bundle's recorded history partition. */
+  platform: GamePlatform;
   /** The `game_id` recorded in the imported bundle's header. */
   source_game_id: string;
   imported_events: number;
@@ -717,6 +721,8 @@ export type RestoreMode = "new" | "in_place";
 export interface RestoreRequestBody {
   target_seq: number;
   mode: RestoreMode;
+  /** Select the history partition to restore when game ids overlap. */
+  platform?: GamePlatform;
   /**
    * When true, the restore produces an EPHEMERAL, non-emitting session: it
    * records no history and is reaped server-side by TTL if the client never

@@ -356,6 +356,7 @@ async def test_round_trip_export_import_reproduces_the_history(client):
     assert imported.status_code == 200, imported.text
     body = imported.json()
     assert body["game_id"] == "g1copy"
+    assert body["platform"] == "dragncards"
     assert body["source_game_id"] == "g1"
     assert body["imported_events"] == 5
     assert body["first_seq"] == 1
@@ -428,6 +429,20 @@ async def test_import_defaults_the_target_to_the_bundle_game_id(client):
     assert imported.status_code == 200, imported.text
     assert imported.json()["game_id"] == "g1"
     assert len((await c.get("/games/g1/events")).json()["events"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_import_reports_the_bundle_platform(client):
+    c, _ = client
+    bundle = _bundle(header_overrides={"platform": "marvel-lcg"})
+
+    imported = await c.post(
+        "/import", params={"game_id": "marvel-copy"}, content=bundle
+    )
+
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["game_id"] == "marvel-copy"
+    assert imported.json()["platform"] == "marvel-lcg"
 
 
 # -- import rejections -------------------------------------------------------

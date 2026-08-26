@@ -180,6 +180,9 @@ class ImportResponse(BaseModel):
     """What an accepted import wrote, and where."""
 
     game_id: str
+    # The bundle header's partition; needed to select the right record when a
+    # DragnCards and Marvel LCG series share this game id.
+    platform: Platform = PLATFORM_DRAGNCARDS
     source_game_id: str
     imported_events: int
     imported_snapshots: int
