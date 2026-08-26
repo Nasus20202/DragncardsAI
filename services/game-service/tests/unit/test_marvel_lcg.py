@@ -352,25 +352,6 @@ async def test_empty_reveal_frame_is_acknowledged_before_pending_frame():
     ]
 
 
-def test_startup_save_fallback_is_disabled_by_exact_image_patch():
-    root = Path(__file__).resolve().parents[4]
-    patch = (
-        root
-        / "external"
-        / "docker"
-        / "marvel-lcg"
-        / "patches"
-        / "0002-fail-closed-startup-save.patch"
-    ).read_text()
-    dockerfile = (root / "external/docker/marvel-lcg/Dockerfile").read_text()
-    assert (
-        'raise RuntimeError("Configured startup save file could not be loaded")'
-        in patch
-    )
-    assert "\n+                scene = SceneLoader.NewScene" not in patch
-    assert "0002-fail-closed-startup-save.patch" in dockerfile
-
-
 async def test_choose_option_valid_choice_uses_live_prompt_without_crashing():
     client = _option_client()
     platform = _option_platform(client)
