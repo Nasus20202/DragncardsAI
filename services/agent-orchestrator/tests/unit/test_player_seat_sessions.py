@@ -7,6 +7,7 @@ subagent silently becomes permanent).
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -101,6 +102,57 @@ async def test_first_prompt_creates_and_records_the_seats_session(
     assert child_session is not None
     assert child_session.multi_turn_memory is True
     assert session_player_id(child_session) == "player1"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_prompts_schedule_only_the_winning_seat_session(
+    repository: Repository,
+    live_event_bus: InMemoryLiveEventBus,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session = await _table(repository)
+    first_handle, first_scheduled = _handler(repository, live_event_bus, session.id)
+    second_handle, second_scheduled = _handler(repository, live_event_bus, session.id)
+
+    original_claim = repository.set_player_agent_session
+    claim_barrier = asyncio.Barrier(2)
+
+    async def contend_for_claim(
+        _session_id: str, _player_id: str, _child_session_id: str
+    ) -> bool:
+        await claim_barrier.wait()
+        return await original_claim(_session_id, _player_id, _child_session_id)
+
+    monkeypatch.setattr(repository, "set_player_agent_session", contend_for_claim)
+
+    results = await asyncio.gather(
+        first_handle({"player_id": "player1", "prompt": "take your turn"}),
+        second_handle({"player_id": "player1", "prompt": "take your turn"}),
+    )
+
+    successes = [result for result in results if not result["is_error"]]
+    failures = [result for result in results if result["is_error"]]
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert len(first_scheduled) + len(second_scheduled) == 1
+
+    winning_job = await repository.get_job(_child_job_id(successes[0]))
+    assert winning_job is not None
+    seat = await repository.get_player_config(session.id, "player1")
+    assert seat is not None
+    assert seat.agent_session_id == winning_job.session_id
+
+    sessions, _ = await repository.list_sessions()
+    losing_sessions = [
+        item
+        for item in sessions
+        if session_player_id(item) == "player1" and item.id != winning_job.session_id
+    ]
+    assert len(losing_sessions) == 1
+    assert losing_sessions[0].status == "terminated"
+    jobs, count = await repository.list_session_jobs(losing_sessions[0].id)
+    assert jobs == []
+    assert count == 0
 
 
 @pytest.mark.asyncio
