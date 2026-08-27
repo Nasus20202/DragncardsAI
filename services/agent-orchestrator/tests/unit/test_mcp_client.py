@@ -27,9 +27,14 @@ def test_serialize_content_handles_supported_shapes():
     }
     assert client._serialize_content([1, 2]) == {"type": "text", "text": "[1, 2]"}
 
+
 def test_tool_input_schema_supports_old_and_new_mcp_sdk_fields():
-    old_sdk_tool = SimpleNamespace(inputSchema={"type": "object", "properties": {"old": {}}})
-    new_sdk_tool = SimpleNamespace(input_schema={"type": "object", "properties": {"new": {}}})
+    old_sdk_tool = SimpleNamespace(
+        inputSchema={"type": "object", "properties": {"old": {}}}
+    )
+    new_sdk_tool = SimpleNamespace(
+        input_schema={"type": "object", "properties": {"new": {}}}
+    )
     missing_schema_tool = SimpleNamespace()
 
     assert _tool_input_schema(old_sdk_tool)["properties"] == {"old": {}}

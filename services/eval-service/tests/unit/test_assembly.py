@@ -499,6 +499,7 @@ def test_legacy_move_context_stays_aggregate_with_inferred_player():
     assert [item.seq for item in move.context_before] == [2]
     assert [item.seq for item in move.context_after] == [4]
 
+
 def test_move_input_window_defaults_to_no_neighbours():
     move = assemble_move_input(_recorded_game(), target_seq=4)
     assert move.context_before == []
