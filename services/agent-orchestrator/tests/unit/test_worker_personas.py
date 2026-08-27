@@ -75,11 +75,13 @@ async def _child_job(repository: Repository, *, persona_snapshot=None):
             metadata_json={SESSION_PERSONA_KEY: persona_snapshot},
         )
     child_job = await repository.enqueue_prompt_job(
-        child_session.id, prompt="scout the board", metadata_json={}, max_attempts=1
+        child_session.id,
+        prompt="scout the board",
+        metadata_json={},
+        max_attempts=1,
+        parent_job_id=parent_job.id,
     )
     assert child_job is not None
-    await repository.set_parent_job_id(child_job.id, parent_job.id)
-
     claimed_parent = await repository.claim_next_job()
     claimed_child = await repository.claim_next_job()
     assert claimed_parent is not None and claimed_child is not None
@@ -170,6 +172,8 @@ async def test_without_an_allowlist_the_child_keeps_every_session_tool(
     await worker._run_job(job)
 
     assert EXPOSED_TOOL_NAME in _tool_names(bifrost)
+    assert "spawn_subagent" not in _tool_names(bifrost)
+    assert "wait_for_subagent" not in _tool_names(bifrost)
 
 
 @pytest.mark.asyncio
@@ -235,6 +239,45 @@ async def test_an_excluded_tool_cannot_be_invoked_by_name(
     assert results[0].payload_json["is_error"] is True
     text = json.dumps(results[0].payload_json)
     assert "Unknown tool requested" in text
+
+
+@pytest.mark.asyncio
+async def test_a_child_forged_spawn_call_creates_no_grandchild(
+    repository: Repository, skill_registry
+):
+    bifrost = FakeBifrost(
+        responses=[
+            ChatResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-spawn",
+                        name="spawn_subagent",
+                        arguments={"prompt": "nested"},
+                    )
+                ],
+                raw={},
+            ),
+            ChatResponse(content="continued", tool_calls=[], raw={}),
+        ]
+    )
+    worker = make_worker(
+        skill_registry=skill_registry,
+        repository=repository,
+        bifrost_client=bifrost,
+        mcp_client=FakeMcp(),
+    )
+    job = await _child_job(repository)
+
+    await worker._run_job(job)
+
+    assert "spawn_subagent" not in _tool_names(bifrost)
+    assert "wait_for_subagent" not in _tool_names(bifrost)
+    events = await repository.list_events(job.id)
+    assert "subagent_started" not in [event.event_type for event in events]
+    child_jobs, total = await repository.list_session_jobs(job.session_id)
+    assert total == 1
+    assert [item.id for item in child_jobs] == [job.id]
 
 
 @pytest.mark.asyncio

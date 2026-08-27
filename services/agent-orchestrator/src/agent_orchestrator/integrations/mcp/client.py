@@ -25,6 +25,14 @@ class McpToolDefinition:
 McpTransport = Literal["streamable-http", "sse"]
 
 
+def _tool_input_schema(tool: Any) -> dict[str, Any]:
+    """Read the MCP SDK's schema field across supported model versions."""
+    schema = getattr(tool, "inputSchema", None)
+    if schema is None:
+        schema = getattr(tool, "input_schema", None)
+    return schema or {"type": "object", "properties": {}}
+
+
 class McpClient:
     def __init__(self, timeout_seconds: float = 30.0):
         self._timeout_seconds = timeout_seconds
@@ -50,8 +58,8 @@ class McpClient:
         return [
             McpToolDefinition(
                 name=tool.name,
-                description=tool.description,
-                input_schema=tool.inputSchema or {"type": "object", "properties": {}},
+                description=getattr(tool, "description", None),
+                input_schema=_tool_input_schema(tool),
             )
             for tool in result.tools
         ]

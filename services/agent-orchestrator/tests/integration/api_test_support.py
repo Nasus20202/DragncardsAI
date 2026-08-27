@@ -40,18 +40,25 @@ DRAGNCARDS_HTTP_URL = os.environ.get("DRAGNCARDS_HTTP_URL", "http://localhost:40
 
 
 class FakeBifrost:
-    def __init__(self):
+    def __init__(self, responses: list[ChatResponse] | None = None):
         self.healthy = True
-        self.responses = [
-            ChatResponse(
-                content="",
-                tool_calls=[
-                    ToolCall(id="call-1", name="game-service_next_step", arguments={})
-                ],
-                raw={},
-            ),
-            ChatResponse(content="All set", tool_calls=[], raw={}),
-        ]
+        self.call_count = 0
+        self.responses = (
+            responses
+            if responses is not None
+            else [
+                ChatResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1", name="game-service_next_step", arguments={}
+                        )
+                    ],
+                    raw={},
+                ),
+                ChatResponse(content="All set", tool_calls=[], raw={}),
+            ]
+        )
 
     async def health(self) -> bool:
         return self.healthy
@@ -64,6 +71,7 @@ class FakeBifrost:
 
     async def chat_completion(self, *args, **kwargs):
         await asyncio.sleep(0.02)
+        self.call_count += 1
         on_delta = kwargs.get("on_delta")
         response = self.responses.pop(0)
         if on_delta is not None and response.content:
@@ -71,6 +79,26 @@ class FakeBifrost:
 
             await on_delta(ChatDelta(content=response.content))
         return response
+
+
+class TruncatingBifrost(FakeBifrost):
+    def __init__(self):
+        super().__init__(
+            responses=[
+                ChatResponse(
+                    content="SEGMENT_A",
+                    tool_calls=[],
+                    raw={},
+                    finish_reason="length",
+                ),
+                ChatResponse(
+                    content="SEGMENT_B",
+                    tool_calls=[],
+                    raw={},
+                    finish_reason="stop",
+                ),
+            ]
+        )
 
 
 class FakeMcp:
@@ -201,7 +229,12 @@ class UnreachableLiveEventBus(InMemoryLiveEventBus):
         return Subscriber()
 
 
-async def build_integration_app(tmp_path: Path, *, live_event_bus=None):
+async def build_integration_app(
+    tmp_path: Path,
+    *,
+    live_event_bus=None,
+    bifrost_client=None,
+):
     database_path = tmp_path / "integration.sqlite3"
     engine = create_engine(f"sqlite+aiosqlite:///{database_path}")
     await ensure_schema(engine)
@@ -220,7 +253,7 @@ async def build_integration_app(tmp_path: Path, *, live_event_bus=None):
             ENABLED_PROVIDER_IDS=INTEGRATION_ENABLED_PROVIDER_IDS,
         ),
         repository=repository,
-        bifrost_client=FakeBifrost(),
+        bifrost_client=bifrost_client or FakeBifrost(),
         live_event_bus=live_event_bus or InMemoryLiveEventBus(),
         mcp_client=FakeMcp(),
         skill_registry=SkillRegistry((skill_root,)),

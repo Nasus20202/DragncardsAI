@@ -494,7 +494,7 @@ async def _launch_child_agent(
     event_payload_extra: dict[str, Any] | None = None,
     multi_turn_memory: bool = False,
     existing_child_session: Any | None = None,
-    on_child_session_created: Callable[[str], Any] | None = None,
+    on_child_session_created: Callable[[str], Awaitable[bool]] | None = None,
 ) -> dict[str, Any]:
     """Create, announce, monitor, and schedule a child agent session.
 
@@ -547,7 +547,20 @@ async def _launch_child_agent(
         name = generate_agent_name(child_session.id, prompt)
         await repository.update_session(child_session.id, name=name)
     if on_child_session_created is not None:
-        await on_child_session_created(child_session.id)
+        claimed = await on_child_session_created(child_session.id)
+        if claimed is False:
+            try:
+                await repository.terminate_session(child_session.id)
+            except Exception:
+                logger.exception(
+                    "Failed to terminate child session %s after a lost seat claim",
+                    child_session.id,
+                )
+            return _text_result(
+                "This child lost a concurrent player-seat claim before it started. "
+                "Retry the prompt for that seat.",
+                is_error=True,
+            )
 
     if model_config is not None:
         # A resolved config with neither provider nor model means the parent had
@@ -626,11 +639,11 @@ async def _enqueue_child_job(
         prompt=prompt,
         metadata_json={"parent_job_id": job_id, **(event_payload_extra or {})},
         max_attempts=1,
+        parent_job_id=job_id,
     )
     if child_job is None:
         return _text_result("Failed to enqueue child job.", is_error=True)
 
-    await repository.set_parent_job_id(child_job.id, job_id)
     child_job_id = child_job.id
 
     started_payload: dict[str, Any] = {
@@ -980,7 +993,7 @@ def make_prompt_player_agent_handler(
             if player_config.skills_json is None and persona.skills is not None:
                 skills = persona.skills
 
-        async def record_seat_session(child_session_id: str) -> None:
+        async def record_seat_session(child_session_id: str) -> bool:
             recorded = await repository.set_player_agent_session(
                 session_id, player_id, child_session_id
             )
@@ -992,6 +1005,7 @@ def make_prompt_player_agent_handler(
                     session_id,
                     child_session_id,
                 )
+            return recorded
 
         return await _launch_child_agent(
             repository=repository,

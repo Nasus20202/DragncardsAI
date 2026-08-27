@@ -5,6 +5,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+
+from agent_orchestrator.runtime.player_agents import (
+    SESSION_ORCHESTRATOR_ID_KEY,
+    SESSION_PLAYER_ID_KEY,
+    SESSION_PLAYER_NAME_KEY,
+)
 from .app_test_support import build_test_app
 
 
@@ -195,6 +201,40 @@ def test_create_session_accepts_memory_settings(app):
     assert session["context_recent_message_limit"] == 3
     assert session["context_recent_tool_exchange_limit"] == 2
     assert session["metadata"] == {"source": "unit-test"}
+
+
+def test_public_session_metadata_cannot_claim_a_player_seat(app):
+    with TestClient(app) as client:
+        response = client.post(
+            "/sessions",
+            json={
+                "name": "untrusted",
+                "metadata": {
+                    "source": "unit-test",
+                    SESSION_PLAYER_ID_KEY: "player1",
+                    SESSION_PLAYER_NAME_KEY: "Captain",
+                    SESSION_ORCHESTRATOR_ID_KEY: "table",
+                },
+            },
+        )
+
+    assert response.status_code == 201
+    session = response.json()["session"]
+    assert session["metadata"] == {"source": "unit-test"}
+
+    patched = client.patch(
+        f"/sessions/{session['id']}",
+        json={
+            "metadata": {
+                "updated": "yes",
+                SESSION_PLAYER_ID_KEY: "player2",
+                SESSION_PLAYER_NAME_KEY: "Impostor",
+                SESSION_ORCHESTRATOR_ID_KEY: "other-table",
+            }
+        },
+    )
+    assert patched.status_code == 200
+    assert patched.json()["session"]["metadata"] == {"updated": "yes"}
 
 
 def test_update_session_persists_name_metadata_and_context_limits(app):

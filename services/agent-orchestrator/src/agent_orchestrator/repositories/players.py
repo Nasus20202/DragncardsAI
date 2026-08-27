@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from agent_orchestrator.repositories.base import utc_now
 from agent_orchestrator.storage.models import AgentSession, SessionPlayerConfig
@@ -75,12 +75,19 @@ class PlayerConfigRepositoryMixin:
         the loser is told ``False`` and its caller reuses the winner's session.
         """
         async with self._session_factory() as session, session.begin():
-            item = await session.get(SessionPlayerConfig, (session_id, player_id))
-            if item is None or item.agent_session_id is not None:
-                return False
-            item.agent_session_id = agent_session_id
-            item.updated_at = utc_now()
-            return True
+            result = await session.execute(
+                update(SessionPlayerConfig)
+                .where(
+                    SessionPlayerConfig.session_id == session_id,
+                    SessionPlayerConfig.player_id == player_id,
+                    SessionPlayerConfig.agent_session_id.is_(None),
+                )
+                .values(
+                    agent_session_id=agent_session_id,
+                    updated_at=utc_now(),
+                )
+            )
+            return result.rowcount == 1
 
     async def delete_player_config(self, session_id: str, player_id: str) -> bool:
         async with self._session_factory() as session, session.begin():

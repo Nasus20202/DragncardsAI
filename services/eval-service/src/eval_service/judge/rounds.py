@@ -40,14 +40,19 @@ def neighbour_events(
     direction: str,
     limit: int,
     span: tuple[int, int] | None = None,
+    player: str | None = None,
 ) -> list[StoredEvent]:
     """The agent moves neighbouring ``target_seq`` on one side, in seq order.
 
+    ``player`` confines the context to one seat's moves. A move-scoped judge must
+    not receive another seat's private reasoning or action sequence; ``None``
+    preserves the aggregate context used by legacy chat games and roll-ups.
+
     ``span`` is the ROUND the graded move belongs to. When it is given the
     selection is confined to that round: a move is judged as a step of the play
-    its round reveals, so context from an adjacent round is a different turn on a
-    different board and context that stops inside the round hides the rest of the
-    play. When ``span`` is None (no round could be detected for the move) the
+    its round reveals, so context from an adjacent round is a different turn on
+    a different board and context that stops inside the round hides the rest of
+    the play. When ``span`` is None (no round could be detected for the move) the
     selection falls back to the nearest moves across the whole timeline, so a
     move never loses its context because boundary detection produced nothing.
 
@@ -68,6 +73,7 @@ def neighbour_events(
         event
         for event in events
         if is_agent_move(event)
+        and (player is None or event.payload.get("player") == player)
         and (
             event.seq < target_seq if direction == "before" else event.seq > target_seq
         )

@@ -31,13 +31,27 @@ from agent_orchestrator.runtime.session_modes import (
 )
 
 
-class _Session:
-    """The two attributes seat resolution reads, and nothing else."""
+class _PlayerConfig:
+    def __init__(self, player_id: str, agent_session_id: str) -> None:
+        self.player_id = player_id
+        self.agent_session_id = agent_session_id
 
-    def __init__(self, session_id: str, metadata: dict[str, Any], mode: str) -> None:
+
+class _Session:
+    """The attributes seat resolution reads."""
+
+    def __init__(
+        self,
+        session_id: str,
+        metadata: dict[str, Any],
+        mode: str,
+        *,
+        player_configs: list[_PlayerConfig] | None = None,
+    ) -> None:
         self.id = session_id
         self.metadata_json = metadata
         self.session_mode = mode
+        self.player_configs = player_configs or []
 
 
 def _loader(*sessions: _Session):
@@ -61,7 +75,12 @@ def _seat(orchestrator_id: str = "table", player_id: str = "player1") -> _Sessio
 
 
 async def test_an_orchestrated_seat_resolves_to_its_own_seat() -> None:
-    table = _Session("table", {}, SESSION_MODE_ORCHESTRATED)
+    table = _Session(
+        "table",
+        {},
+        SESSION_MODE_ORCHESTRATED,
+        player_configs=[_PlayerConfig("player1", "seat-session")],
+    )
     seat = _seat()
 
     identity = await resolve_seat_identity(seat, load_session=_loader(table, seat))
@@ -69,6 +88,13 @@ async def test_an_orchestrated_seat_resolves_to_its_own_seat() -> None:
     assert identity is not None
     assert identity.player_id == "player1"
     assert identity.orchestrator_session_id == "table"
+
+
+async def test_an_unregistered_metadata_seat_holds_no_seat() -> None:
+    table = _Session("table", {}, SESSION_MODE_ORCHESTRATED)
+    seat = _seat()
+
+    assert await resolve_seat_identity(seat, load_session=_loader(table, seat)) is None
 
 
 async def test_the_orchestrating_job_holds_no_seat() -> None:

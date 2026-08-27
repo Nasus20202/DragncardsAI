@@ -125,6 +125,27 @@ def test_dragncards_normaliser_adds_neutral_phase_and_play_round():
     assert "pendingSeats" not in result
 
 
+def test_dragncards_beginning_of_round_is_passive_play_round_one():
+    result = DragnCardsNormaliser().normalise(
+        {"game": {"roundNumber": 0, "stepId": "0.0", "cardById": {}}},
+        plugin_name="marvel-champions",
+    )
+
+    assert result["playRound"] == 1
+    assert result["phase"] == "passive"
+    assert result["phaseLabel"] == "Beginning of Round"
+
+
+def test_dragncards_player_phase_is_the_only_playable_phase():
+    result = DragnCardsNormaliser().normalise(
+        {"game": {"roundNumber": 0, "stepId": "1.1", "cardById": {}}},
+        plugin_name="marvel-champions",
+    )
+
+    assert result["playRound"] == 1
+    assert result["phase"] == "player"
+
+
 def test_openapi_build_does_not_require_plugin_json(tmp_path):
     env = os.environ.copy()
     env["DRAGNCARDS_MC_PLUGIN_JSON_DIR"] = str(tmp_path / "missing-plugin")

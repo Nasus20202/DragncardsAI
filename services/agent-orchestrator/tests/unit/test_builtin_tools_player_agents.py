@@ -391,6 +391,11 @@ async def test_player_tools_are_registered_only_with_a_roster(
         job=make_job(parent_job_id="parent", job_type="prompt"),
         player_configs=[object()],
     )
+    compaction_with_roster = build_builtin_registry(
+        **common,
+        job=make_job(parent_job_id=None, job_type="compaction"),
+        player_configs=[object()],
+    )
 
     assert "prompt_player_agent" not in _tool_names(without_roster)
     assert "list_player_agents" not in _tool_names(without_roster)
@@ -400,6 +405,19 @@ async def test_player_tools_are_registered_only_with_a_roster(
     # The orchestrator still has the generic delegation tools.
     assert "spawn_subagent" in _tool_names(with_roster)
     assert "wait_for_subagent" in _tool_names(with_roster)
+    assert "ask_user" in _tool_names(with_roster)
 
-    # A player agent is itself a subagent and must not run the table.
-    assert "prompt_player_agent" not in _tool_names(child_with_roster)
+    # A player agent is itself a subagent and must not run the table or spawn.
+    for tool_name in (
+        "prompt_player_agent",
+        "list_player_agents",
+        "spawn_subagent",
+        "wait_for_subagent",
+        "ask_user",
+    ):
+        assert tool_name not in _tool_names(child_with_roster)
+        assert tool_name not in _tool_names(compaction_with_roster)
+
+    # Child-safe tools remain available.
+    assert "load_skill" in _tool_names(child_with_roster)
+    assert "load_skill_reference" in _tool_names(child_with_roster)

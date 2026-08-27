@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
-from agent_orchestrator.integrations.mcp.client import McpClient
+from agent_orchestrator.integrations.mcp.client import McpClient, _tool_input_schema
 
 
 @dataclass
@@ -25,6 +26,23 @@ def test_serialize_content_handles_supported_shapes():
         "text": "raw",
     }
     assert client._serialize_content([1, 2]) == {"type": "text", "text": "[1, 2]"}
+
+
+def test_tool_input_schema_supports_old_and_new_mcp_sdk_fields():
+    old_sdk_tool = SimpleNamespace(
+        inputSchema={"type": "object", "properties": {"old": {}}}
+    )
+    new_sdk_tool = SimpleNamespace(
+        input_schema={"type": "object", "properties": {"new": {}}}
+    )
+    missing_schema_tool = SimpleNamespace()
+
+    assert _tool_input_schema(old_sdk_tool)["properties"] == {"old": {}}
+    assert _tool_input_schema(new_sdk_tool)["properties"] == {"new": {}}
+    assert _tool_input_schema(missing_schema_tool) == {
+        "type": "object",
+        "properties": {},
+    }
 
 
 def test_http_client_applies_headers_and_timeout():

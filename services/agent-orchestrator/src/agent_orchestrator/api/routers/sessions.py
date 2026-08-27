@@ -62,8 +62,20 @@ from agent_orchestrator.runtime.history_emitter import (
     SESSION_GAME_ID_KEY,
     SESSION_RESTORED_CONTEXT_KEY,
 )
+from agent_orchestrator.runtime.player_agents import (
+    SESSION_ORCHESTRATOR_ID_KEY,
+    SESSION_PLAYER_ID_KEY,
+    SESSION_PLAYER_NAME_KEY,
+)
 from agent_orchestrator.storage.repository import Repository
 
+_SERVER_OWNED_METADATA_KEYS = frozenset(
+    {
+        SESSION_ORCHESTRATOR_ID_KEY,
+        SESSION_PLAYER_ID_KEY,
+        SESSION_PLAYER_NAME_KEY,
+    }
+)
 router = APIRouter(tags=["sessions"])
 
 
@@ -121,6 +133,8 @@ async def _metadata_with_session_persona(
     under a name the session does not report.
     """
     metadata = dict(base_metadata)
+    for key in _SERVER_OWNED_METADATA_KEYS:
+        metadata.pop(key, None)
     metadata.pop(SESSION_PERSONA_KEY, None)
     if persona_name is None:
         return metadata
@@ -329,6 +343,8 @@ async def update_session(
         # the snapshot, so the stored one is carried across verbatim.
         preserved = (existing.metadata_json or {}).get(SESSION_PERSONA_KEY)
         metadata = dict(changes["metadata_json"])
+        for key in _SERVER_OWNED_METADATA_KEYS:
+            metadata.pop(key, None)
         metadata.pop(SESSION_PERSONA_KEY, None)
         if preserved is not None:
             metadata[SESSION_PERSONA_KEY] = preserved

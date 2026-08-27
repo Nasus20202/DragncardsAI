@@ -170,6 +170,42 @@ describe("HistoryTranscript", () => {
     expect(onSelect).toHaveBeenCalledWith(1);
   });
 
+  it("labels attributed agent moves by player", () => {
+    renderTranscript([
+      {
+        ...AGENT_EVENT,
+        payload: {
+          ...AGENT_EVENT.payload,
+          player: "player1",
+        } as HistoryEvent["payload"],
+      },
+      {
+        ...AGENT_EVENT,
+        seq: 2,
+        event_id: "e2-agent",
+        payload: {
+          ...AGENT_EVENT.payload,
+          player: "player2",
+        } as HistoryEvent["payload"],
+      },
+      {
+        ...AGENT_EVENT,
+        seq: 3,
+        event_id: "e3-agent",
+      },
+    ]);
+
+    expect(screen.getByTestId("history-event-player-1")).toHaveTextContent(
+      "player1"
+    );
+    expect(screen.getByTestId("history-event-player-2")).toHaveTextContent(
+      "player2"
+    );
+    expect(
+      screen.queryByTestId("history-event-player-3")
+    ).not.toBeInTheDocument();
+  });
+
   it("nests verdicts under the graded event and expands on toggle", () => {
     const verdict: HistoryEvent = {
       seq: 3,

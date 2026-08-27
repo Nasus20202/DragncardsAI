@@ -81,6 +81,27 @@ The eval-service SHALL evaluate each agent move in the context of the round it b
 - **WHEN** the eval-service assembles the input for a move that is one call of a multi-call play, such as exhausting a character to pay for an ability whose effect a later call applies
 - **THEN** the input SHALL identify the round the move belongs to and SHALL present the round's other moves as the play the graded move is part of
 
+
+### Requirement: Attributed move context is seat-scoped
+When an agent move carries a player attribution, the eval-service SHALL restrict
+the neighbouring agent moves supplied as context for a move-scoped evaluation to
+that same player. Context for an attributed move SHALL NOT include another
+player's action, reasoning, or arguments. A move without player attribution SHALL
+retain aggregate neighbouring context for backward compatibility with legacy chat
+games.
+
+#### Scenario: A move receives only its seat's context
+- **WHEN** a move-scoped evaluation targets a `player1` move in a round that also
+  contains `player2` moves
+- **THEN** the assembled neighbouring context SHALL contain only `player1` agent
+  moves from the target's round
+
+#### Scenario: Legacy chat context remains aggregate
+- **WHEN** a move-scoped evaluation targets an agent move with no player
+  attribution
+- **THEN** the assembled neighbouring context SHALL retain the existing aggregate
+  selection across agent moves
+
 ### Requirement: Per-round evaluation
 The eval-service SHALL evaluate each round/turn in isolation, detecting round boundaries from the round/phase information on `game-service` state events, closing the final round on a terminal game status, and producing one round verdict per closed round.
 
