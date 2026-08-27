@@ -131,6 +131,15 @@ async def resolve_seat_identity(
     orchestrator = await load_session(orchestrator_session_id)
     if orchestrator is None or not is_orchestrated(orchestrator):
         return None
+    session_id = getattr(session, "id", None)
+    if not isinstance(session_id, str):
+        return None
+    if not any(
+        getattr(config, "player_id", None) == player_id
+        and getattr(config, "agent_session_id", None) == session_id
+        for config in getattr(orchestrator, "player_configs", ()) or ()
+    ):
+        return None
     return SeatIdentity(
         player_id=player_id,
         orchestrator_session_id=orchestrator_session_id,

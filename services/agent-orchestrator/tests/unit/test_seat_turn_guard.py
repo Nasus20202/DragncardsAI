@@ -358,6 +358,17 @@ async def _prepare_seat_session(
         headers_json={},
     )
     await repo.enable_mcp_for_session(seat.id, "game-service", enabled=True)
+    await repo.upsert_player_config(
+        orchestrator.id,
+        player_id,
+        display_name=None,
+        provider_id=None,
+        model_name=None,
+        gateway_options={},
+        provider_options={},
+        skills=[],
+    )
+    assert await repo.set_player_agent_session(orchestrator.id, player_id, seat.id)
     return orchestrator, seat
 
 

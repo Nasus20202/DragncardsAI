@@ -104,6 +104,28 @@ async def test_first_prompt_creates_and_records_the_seats_session(
 
 
 @pytest.mark.asyncio
+async def test_a_seat_claim_cannot_replace_an_existing_agent_session(
+    repository: Repository, live_event_bus: InMemoryLiveEventBus
+):
+    session = await _table(repository)
+    handle, _ = _handler(repository, live_event_bus, session.id)
+
+    result = await handle({"player_id": "player1", "prompt": "take your turn"})
+    child_job = await repository.get_job(_child_job_id(result))
+    assert child_job is not None
+
+    assert (
+        await repository.set_player_agent_session(
+            session.id, "player1", "another-agent-session"
+        )
+        is False
+    )
+    seat = await repository.get_player_config(session.id, "player1")
+    assert seat is not None
+    assert seat.agent_session_id == child_job.session_id
+
+
+@pytest.mark.asyncio
 async def test_later_prompt_reuses_the_seats_session(
     repository: Repository, live_event_bus: InMemoryLiveEventBus
 ):
