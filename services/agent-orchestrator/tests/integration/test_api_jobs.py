@@ -106,6 +106,56 @@ async def test_prompt_run_completes_background_job(app):
         assert filtered_events[0]["event_type"] == "tool_call"
 
 
+
+@pytest.mark.asyncio
+async def test_truncated_turn_continues_through_http_worker(truncating_app):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=truncating_app), base_url="http://test"
+    ) as client:
+        session_id = (
+            await client.post("/sessions", json={"name": "continuation"})
+        ).json()["session"]["id"]
+        model_response = await client.put(
+            f"/sessions/{session_id}/model-config",
+            json=INTEGRATION_MODEL_CONFIG,
+        )
+        assert model_response.status_code == 200
+
+        prompt_response = await client.post(
+            f"/sessions/{session_id}/prompts",
+            json={"prompt": "finish the response"},
+        )
+        assert prompt_response.status_code == 202
+        job_id = prompt_response.json()["job"]["id"]
+
+        for _ in range(80):
+            job_response = await client.get(f"/jobs/{job_id}")
+            if job_response.json()["job"]["status"] == "completed":
+                break
+            await asyncio.sleep(0.05)
+
+        job = job_response.json()["job"]
+        assert job["status"] == "completed"
+        assert job["result_text"] == "SEGMENT_ASEGMENT_B"
+
+        events_response = await client.get(f"/jobs/{job_id}/events")
+        assert events_response.status_code == 200
+        events = events_response.json()["events"]
+        event_types = [event["event_type"] for event in events]
+        marker = event_types.index("turn_continued")
+        assert event_types[marker - 1] == "model_output"
+        assert event_types[marker + 1] == "model_output"
+        assert event_types[-1] == "completion"
+        assert event_types.count("turn_continued") == 1
+
+        marker_event = events[marker]
+        assert marker_event["payload"] == {
+            "reason": "output_token_limit",
+            "finish_reason": "length",
+            "continuation": 1,
+            "max_continuations": 3,
+        }
+
 @pytest.mark.asyncio
 async def test_event_stream_replays_and_resumes(app):
     async with httpx.AsyncClient(
