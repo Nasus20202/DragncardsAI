@@ -672,6 +672,10 @@ const TranscriptEvent = memo(function TranscriptEvent({
   const isUser = event.actor === "user";
   const isAgent = event.actor === "agent";
   const actorLabel = isUser ? "User" : isAgent ? "Agent" : "Game";
+  const playerLabel =
+    isAgent && typeof event.payload.player === "string"
+      ? event.payload.player.trim() || null
+      : null;
   // The Chip color union does not include "secondary"; tint the user chip via
   // className so it reads distinctly from the agent/game chips.
   const actorColor = isUser ? "default" : isAgent ? "warning" : "accent";
@@ -717,6 +721,16 @@ const TranscriptEvent = memo(function TranscriptEvent({
           >
             {actorLabel}
           </Chip>
+          {playerLabel && (
+            <Chip
+              size="sm"
+              variant="soft"
+              color="default"
+              data-testid={`history-event-player-${event.seq}`}
+            >
+              {playerLabel}
+            </Chip>
+          )}
           {step && (
             <Chip
               size="sm"

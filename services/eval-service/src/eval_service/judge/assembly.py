@@ -321,6 +321,7 @@ def assemble_move_input(
         )
 
     payload = target.payload
+    target_player = player or payload.get("player")
     prior = _nearest_state(events, target_seq, direction="before")
     resulting = _nearest_state(events, target_seq, direction="after")
     boundary = round_span_containing(detect_round_boundaries(events), target_seq)
@@ -335,14 +336,24 @@ def assemble_move_input(
         prior_state=_state_of(prior) if prior else None,
         resulting_state=_state_of(resulting) if resulting else None,
         context_before=_neighbour_window(
-            events, target_seq, count=context_before, direction="before", span=span
+            events,
+            target_seq,
+            count=context_before,
+            direction="before",
+            span=span,
+            player=target_player,
         ),
         context_after=_neighbour_window(
-            events, target_seq, count=context_after, direction="after", span=span
+            events,
+            target_seq,
+            count=context_after,
+            direction="after",
+            span=span,
+            player=target_player,
         ),
         round_number=boundary[0] if boundary else None,
         round_span=span,
-        player=player or payload.get("player"),
+        player=target_player,
         session_mode=session_mode_of(target),
     )
 
@@ -354,6 +365,7 @@ def _neighbour_window(
     count: int,
     direction: str,
     span: tuple[int, int] | None = None,
+    player: str | None = None,
 ) -> list[NeighbourMove]:
     """The agent moves of ``span`` on one side of ``target_seq``, in seq order."""
     return [
@@ -364,7 +376,12 @@ def _neighbour_window(
             reasoning=event.payload.get("reasoning"),
         )
         for event in neighbour_events(
-            events, target_seq, direction=direction, limit=count, span=span
+            events,
+            target_seq,
+            direction=direction,
+            limit=count,
+            span=span,
+            player=player,
         )
     ]
 

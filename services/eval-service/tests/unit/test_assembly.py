@@ -459,6 +459,25 @@ def test_move_context_keeps_non_strategic_actions_as_context():
     ]
 
 
+
+def test_move_context_is_scoped_to_the_target_player():
+    events = [
+        state_event(game_id="g1", seq=1, round_number=0),
+        agent_event(game_id="g1", seq=2, action="player_one_before", player="player1"),
+        agent_event(game_id="g1", seq=3, action="player_two_before", player="player2"),
+        agent_event(game_id="g1", seq=4, action="player_one_target", player="player1"),
+        agent_event(game_id="g1", seq=5, action="player_two_after", player="player2"),
+        state_event(game_id="g1", seq=6, round_number=1),
+    ]
+
+    move = assemble_move_input(
+        events, target_seq=4, context_before=50, context_after=50
+    )
+
+    assert move.player == "player1"
+    assert [item.seq for item in move.context_before] == [2]
+    assert [item.seq for item in move.context_after] == []
+
 def test_move_input_window_defaults_to_no_neighbours():
     move = assemble_move_input(_recorded_game(), target_seq=4)
     assert move.context_before == []
