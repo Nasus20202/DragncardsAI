@@ -166,6 +166,7 @@ async def test_list_sessions_excludes_child_subagent_sessions(repository: Reposi
     assert [item.id for item in sessions] == [parent_session.id]
     assert await repository.get_session(child_session.id) is not None
 
+
 @pytest.mark.asyncio
 async def test_enqueue_prompt_job_persists_parent_before_returning(
     repository: Repository,

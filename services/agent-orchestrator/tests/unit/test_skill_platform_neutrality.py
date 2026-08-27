@@ -69,6 +69,7 @@ def test_marvel_coordinator_delegates_option_tools_to_the_seat_agent() -> None:
     assert "The seat agent calls `list_game_options`" in text
     assert "`choose_game_option`" in text
 
+
 def test_dragncards_round_loop_enters_player_phase_before_prompting() -> None:
     text = " ".join(DRAGNCARDS_COORDINATOR_LOOP.read_text(encoding="utf-8").split())
 
@@ -77,9 +78,11 @@ def test_dragncards_round_loop_enters_player_phase_before_prompting() -> None:
         "Prompt the first seat"
     )
     assert text.index("call `next_step`") < text.index(
-        "Re-read neutral state and require `phase == \"player\"`"
+        'Re-read neutral state and require `phase == "player"`'
     )
     assert "If the expected player phase is not observed, stop and report" in text
+
+
 def test_player_skill_scopes_every_state_read_to_the_assigned_seat() -> None:
     for path in PLAYER_SKILL_FILES:
         text = path.read_text(encoding="utf-8")

@@ -279,6 +279,7 @@ async def test_a_child_forged_spawn_call_creates_no_grandchild(
     assert total == 1
     assert [item.id for item in child_jobs] == [job.id]
 
+
 @pytest.mark.asyncio
 async def test_a_persona_prompt_cannot_hand_the_child_a_tool(
     repository: Repository, skill_registry

@@ -223,5 +223,7 @@ test("renders an automatically continued turn in the play transcript", async ({
     "continuation 1 of 3",
   );
   await expect(page.getByText("SEGMENT_A", { exact: true })).toBeVisible();
-  await expect(page.getByText("SEGMENT_ASEGMENT_B", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("SEGMENT_ASEGMENT_B", { exact: true }),
+  ).toBeVisible();
 });

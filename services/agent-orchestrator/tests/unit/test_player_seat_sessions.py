@@ -102,6 +102,7 @@ async def test_first_prompt_creates_and_records_the_seats_session(
     assert child_session.multi_turn_memory is True
     assert session_player_id(child_session) == "player1"
 
+
 @pytest.mark.asyncio
 async def test_later_prompt_reuses_the_seats_session(
     repository: Repository, live_event_bus: InMemoryLiveEventBus

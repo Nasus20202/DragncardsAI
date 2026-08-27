@@ -106,7 +106,6 @@ async def test_prompt_run_completes_background_job(app):
         assert filtered_events[0]["event_type"] == "tool_call"
 
 
-
 @pytest.mark.asyncio
 async def test_truncated_turn_continues_through_http_worker(truncating_app):
     async with httpx.AsyncClient(
@@ -155,6 +154,7 @@ async def test_truncated_turn_continues_through_http_worker(truncating_app):
             "continuation": 1,
             "max_continuations": 3,
         }
+
 
 @pytest.mark.asyncio
 async def test_event_stream_replays_and_resumes(app):

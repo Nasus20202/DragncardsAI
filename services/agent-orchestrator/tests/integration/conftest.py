@@ -40,7 +40,6 @@ async def app(tmp_path: Path):
     await engine.dispose()
 
 
-
 @pytest.fixture
 async def truncating_app(tmp_path: Path):
     app, engine = await build_integration_app(
@@ -49,6 +48,7 @@ async def truncating_app(tmp_path: Path):
     async with app.router.lifespan_context(app):
         yield app
     await engine.dispose()
+
 
 @pytest.fixture
 async def unreachable_live_bus_app(tmp_path: Path):
