@@ -133,7 +133,7 @@ services:
   # one-shot root helper makes upgrades safe without granting the game process
   # root or adding write access to the read-only application tree.
   marvel-lcg-init:
-    image: alpine:3.22
+    image: alpine:3.24
     user: "0:0"
     restart: "no"
     command:
