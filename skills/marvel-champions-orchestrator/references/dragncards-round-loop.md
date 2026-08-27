@@ -28,17 +28,33 @@ use an `instance_id` copied from the neutral state.
 4. Resolve hero and scenario set ids by name; never hardcode UUIDs.
 5. Load one hero deck per seat, then the villain/scenario set.
 6. Mulligan each seat and delegate a state read confirming the deck, hand, and hero.
-7. Record the first player and prompt the first seat.
+7. Read neutral state after setup. Record `playRound`, `stepId`, `phase`, `phaseLabel`,
+   and the first player.
+8. If the state is `stepId == "0.0"` and `phase == "passive"` (Beginning of Round),
+   the coordinator must call `next_step` once. Do not prompt a seat while the phase is
+   `passive`.
+9. Re-read neutral state and require `phase == "player"` before scheduling a seat. If
+   the expected player phase is not observed, stop and report the observed state; do not
+   prompt a seat and do not infer success from the `next_step` response.
+10. Prompt the first seat only after the player-phase checkpoint succeeds.
 
 ## Round order
 
-1. Record `playRound` and the first player.
-2. Prompt every non-defeated seat in player order; wait for and verify each report.
-3. Run `player_end_phase` once after every seat reports.
-4. Resolve the villain phase: acceleration threat, villain/minion activations with
+1. Re-read neutral state at the start of each player phase. Stop immediately if the
+   game is terminal.
+2. Record the observed `playRound` and first player. If the state is the DragnCards
+   Beginning-of-Round checkpoint (`stepId == "0.0"` and `phase == "passive"`), the
+   coordinator must call `next_step` once.
+3. Re-read neutral state and require `phase == "player"` before prompting any seat.
+   If the expected player phase is not observed, stop and report the observed state.
+   Do not prompt a seat while the phase is `passive` or `villain`.
+4. Prompt every non-defeated seat in player order; wait for and verify each report.
+5. Run `player_end_phase` once after every seat reports.
+6. Resolve the villain phase: acceleration threat, villain/minion activations with
    delegated seat decisions, encounter dealing, and encounter resolution.
-5. Pass the first-player marker and run `villain_end_phase`.
-6. Re-read state, check terminal conditions, and begin the next `playRound`.
+7. Pass the first-player marker and run `villain_end_phase`.
+8. Re-read state, check terminal conditions, and begin the next `playRound`, applying the
+   player-phase checkpoint before scheduling its first seat.
 
 The coordinator must not pay a hero's costs or choose a hero's attack, thwart, defense,
 or form change. A seat's player-phase action may be composed, but its report and the
