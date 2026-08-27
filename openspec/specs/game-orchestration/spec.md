@@ -73,6 +73,7 @@ How each transition is effected SHALL follow the platform, and the orchestrator 
 
 The round number the orchestrator reports SHALL be the neutral `playRound` carried on the game state, and the orchestrator SHALL NOT apply a per-platform correction of its own to it.
 
+
 #### Scenario: Player phase prompts every seat in player order
 - **WHEN** a round's player phase begins
 - **THEN** the orchestrator SHALL prompt each seat's player agent in player order starting from the current first player
@@ -99,6 +100,22 @@ The round number the orchestrator reports SHALL be the neutral `playRound` carri
 - **WHEN** the orchestrator reports the round it reached
 - **THEN** the number SHALL be the `playRound` carried on the neutral game state
 - **AND** the orchestrator SHALL NOT add or subtract a platform-specific offset of its own
+### Requirement: DragnCards player turns start in the player phase
+
+When an orchestrated DragnCards round is ready to dispatch its first player seat and the neutral game state is still outside the player phase, the orchestrator SHALL advance the platform through its required transition and SHALL confirm the resulting state is the player phase before prompting any seat. It SHALL report the round from the confirmed neutral `playRound` value and SHALL NOT ask a player agent to repair or undo a transition that belongs to the round loop.
+
+#### Scenario: Setup transitions before the first seat is prompted
+
+- **WHEN** an orchestrated DragnCards game is ready for its first seat but the neutral state reports setup or passive phase
+- **THEN** the orchestrator SHALL advance the game into the player phase
+- **AND** it SHALL confirm the neutral state reports `phase=player` before prompting the first seat
+- **AND** the first seat SHALL receive the confirmed neutral play-round value
+
+#### Scenario: A failed phase transition stops seat dispatch
+
+- **WHEN** the DragnCards transition does not produce a confirmed player phase
+- **THEN** the orchestrator SHALL report the transition failure
+- **AND** it SHALL NOT prompt a player seat or ask a seat to undo an unstarted turn
 
 ### Requirement: Orchestrator detects and reports game end
 The orchestrator SHALL check for the game's win and loss conditions each round and SHALL stop the round loop and report the outcome when one is met.
