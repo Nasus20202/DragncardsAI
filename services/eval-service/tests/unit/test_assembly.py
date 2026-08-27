@@ -478,6 +478,27 @@ def test_move_context_is_scoped_to_the_target_player():
     assert [item.seq for item in move.context_after] == []
 
 
+def test_legacy_move_context_stays_aggregate_with_inferred_player():
+    events = [
+        state_event(game_id="g1", seq=1, round_number=0),
+        agent_event(game_id="g1", seq=2, action="legacy_before"),
+        agent_event(game_id="g1", seq=3, action="legacy_target"),
+        agent_event(game_id="g1", seq=4, action="legacy_after"),
+        state_event(game_id="g1", seq=5, round_number=1),
+    ]
+
+    move = assemble_move_input(
+        events,
+        target_seq=3,
+        context_before=50,
+        context_after=50,
+        player="player1",
+    )
+
+    assert move.player == "player1"
+    assert [item.seq for item in move.context_before] == [2]
+    assert [item.seq for item in move.context_after] == [4]
+
 def test_move_input_window_defaults_to_no_neighbours():
     move = assemble_move_input(_recorded_game(), target_seq=4)
     assert move.context_before == []

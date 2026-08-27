@@ -321,7 +321,9 @@ def assemble_move_input(
         )
 
     payload = target.payload
-    target_player = player or payload.get("player")
+    recorded_player = payload.get("player")
+    target_player = player or recorded_player
+    context_player = recorded_player if isinstance(recorded_player, str) else None
     prior = _nearest_state(events, target_seq, direction="before")
     resulting = _nearest_state(events, target_seq, direction="after")
     boundary = round_span_containing(detect_round_boundaries(events), target_seq)
@@ -341,7 +343,7 @@ def assemble_move_input(
             count=context_before,
             direction="before",
             span=span,
-            player=target_player,
+            player=context_player,
         ),
         context_after=_neighbour_window(
             events,
@@ -349,7 +351,7 @@ def assemble_move_input(
             count=context_after,
             direction="after",
             span=span,
-            player=target_player,
+            player=context_player,
         ),
         round_number=boundary[0] if boundary else None,
         round_span=span,
