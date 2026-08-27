@@ -58,6 +58,7 @@ class McpClient:
         return [
             McpToolDefinition(
                 name=tool.name,
+                description=getattr(tool, "description", None),
                 input_schema=_tool_input_schema(tool),
             )
             for tool in result.tools
