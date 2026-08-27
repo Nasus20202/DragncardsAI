@@ -11,6 +11,12 @@
       "automerge": true
     },
     {
+      "description": "Bifrost Docker images use v-prefixed semver tags",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["maximhq/bifrost"],
+      "versioning": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
+    },
+    {
       "matchUpdateTypes": ["minor", "patch"],
       "automerge": true
     }
