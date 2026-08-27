@@ -92,6 +92,7 @@ async def test_first_prompt_creates_and_records_the_seats_session(
 
     child_job = await repository.get_job(_child_job_id(result))
     assert child_job is not None
+    assert child_job.parent_job_id == "orchestrating-job"
     seat = await repository.get_player_config(session.id, "player1")
     assert seat is not None
     assert seat.agent_session_id == child_job.session_id
@@ -100,7 +101,6 @@ async def test_first_prompt_creates_and_records_the_seats_session(
     assert child_session is not None
     assert child_session.multi_turn_memory is True
     assert session_player_id(child_session) == "player1"
-
 
 @pytest.mark.asyncio
 async def test_later_prompt_reuses_the_seats_session(
@@ -117,6 +117,8 @@ async def test_later_prompt_reuses_the_seats_session(
     assert first_job is not None and second_job is not None
     assert first_job.id != second_job.id
     assert first_job.session_id == second_job.session_id
+    assert first_job.parent_job_id == "orchestrating-job"
+    assert second_job.parent_job_id == "orchestrating-job"
 
 
 @pytest.mark.asyncio

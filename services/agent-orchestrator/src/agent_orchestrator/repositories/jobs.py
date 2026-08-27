@@ -39,6 +39,7 @@ class JobRepositoryMixin:
         prompt: str,
         metadata_json: dict[str, Any] | None,
         max_attempts: int,
+        parent_job_id: str | None = None,
     ) -> Job | None:
         async with self._session_factory() as session, session.begin():
             session_obj = await session.get(AgentSession, session_id)
@@ -51,6 +52,7 @@ class JobRepositoryMixin:
                 prompt=prompt,
                 metadata_json=metadata_json or {},
                 max_attempts=max_attempts,
+                parent_job_id=parent_job_id,
             )
             session.add(job)
             await session.flush()

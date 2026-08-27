@@ -106,7 +106,7 @@ async def test_spawn_subagent_child_failure_emitted_async(
 
 
 @pytest.mark.asyncio
-async def test_spawn_subagent_blocked_for_child_job(
+async def test_spawn_subagent_blocked_for_child_job_without_side_effects(
     repository: Repository,
     live_event_bus: InMemoryLiveEventBus,
 ):
@@ -115,6 +115,10 @@ async def test_spawn_subagent_blocked_for_child_job(
         session.id, prompt="hi", metadata_json={}, max_attempts=1
     )
     assert job is not None
+    scheduled: list[str] = []
+
+    async def schedule(child_job_id: str) -> None:
+        scheduled.append(child_job_id)
 
     handler = make_spawn_subagent_handler(
         repository=repository,
@@ -123,12 +127,20 @@ async def test_spawn_subagent_blocked_for_child_job(
         job_id=job.id,
         job=make_job(parent_job_id="some-parent-id", job_type="prompt"),
         skill_registry=SkillRegistry(()),
-        schedule_child_fn=None,
+        schedule_child_fn=schedule,
     )
 
     result = await handler({"prompt": "nested"})
     assert result["is_error"] is True
     assert "master" in result["content"][0]["text"].lower()
+
+    jobs, total = await repository.list_session_jobs(session.id)
+    assert total == 1
+    assert [item.id for item in jobs] == [job.id]
+    assert [event.event_type for event in await repository.list_events(job.id)] == [
+        "progress"
+    ]
+    assert scheduled == []
 
 
 @pytest.mark.asyncio

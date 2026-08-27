@@ -166,6 +166,30 @@ async def test_list_sessions_excludes_child_subagent_sessions(repository: Reposi
     assert [item.id for item in sessions] == [parent_session.id]
     assert await repository.get_session(child_session.id) is not None
 
+@pytest.mark.asyncio
+async def test_enqueue_prompt_job_persists_parent_before_returning(
+    repository: Repository,
+):
+    parent_session = await repository.create_session("parent", {})
+    child_session = await repository.create_session("child", {})
+    parent_job = await repository.enqueue_prompt_job(
+        parent_session.id, prompt="parent", metadata_json={}, max_attempts=1
+    )
+    assert parent_job is not None
+
+    child_job = await repository.enqueue_prompt_job(
+        child_session.id,
+        prompt="child",
+        metadata_json={"parent_job_id": parent_job.id},
+        max_attempts=1,
+        parent_job_id=parent_job.id,
+    )
+
+    assert child_job is not None
+    persisted = await repository.get_job(child_job.id)
+    assert persisted is not None
+    assert persisted.parent_job_id == parent_job.id
+
 
 @pytest.mark.asyncio
 async def test_job_repository_claims_oldest_and_filters_results(repository: Repository):

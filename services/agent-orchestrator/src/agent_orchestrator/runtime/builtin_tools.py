@@ -626,11 +626,11 @@ async def _enqueue_child_job(
         prompt=prompt,
         metadata_json={"parent_job_id": job_id, **(event_payload_extra or {})},
         max_attempts=1,
+        parent_job_id=job_id,
     )
     if child_job is None:
         return _text_result("Failed to enqueue child job.", is_error=True)
 
-    await repository.set_parent_job_id(child_job.id, job_id)
     child_job_id = child_job.id
 
     started_payload: dict[str, Any] = {
