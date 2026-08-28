@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
+from mcp.types import CallToolResult, TextContent, Tool
 
-from agent_orchestrator.integrations.mcp.client import McpClient, _tool_input_schema
+from agent_orchestrator.integrations.mcp.client import McpClient
 
 
 @dataclass
@@ -26,23 +28,6 @@ def test_serialize_content_handles_supported_shapes():
         "text": "raw",
     }
     assert client._serialize_content([1, 2]) == {"type": "text", "text": "[1, 2]"}
-
-
-def test_tool_input_schema_supports_old_and_new_mcp_sdk_fields():
-    old_sdk_tool = SimpleNamespace(
-        inputSchema={"type": "object", "properties": {"old": {}}}
-    )
-    new_sdk_tool = SimpleNamespace(
-        input_schema={"type": "object", "properties": {"new": {}}}
-    )
-    missing_schema_tool = SimpleNamespace()
-
-    assert _tool_input_schema(old_sdk_tool)["properties"] == {"old": {}}
-    assert _tool_input_schema(new_sdk_tool)["properties"] == {"new": {}}
-    assert _tool_input_schema(missing_schema_tool) == {
-        "type": "object",
-        "properties": {},
-    }
 
 
 def test_http_client_applies_headers_and_timeout():
@@ -82,3 +67,58 @@ def test_unpack_transport_streams_rejects_invalid_shapes():
 
     with pytest.raises(ValueError, match="MCP transport must yield"):
         client._unpack_transport_streams((object(),))
+
+
+@pytest.mark.asyncio
+async def test_list_tools_uses_mcp_v2_input_schema(monkeypatch: pytest.MonkeyPatch):
+    client = McpClient(timeout_seconds=30.0)
+    tool = Tool(
+        name="echo",
+        description="Echo input",
+        input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
+    )
+
+    class Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[tool])
+
+    @asynccontextmanager
+    async def session(*_args, **_kwargs):
+        yield Session()
+
+    monkeypatch.setattr(client, "_session", session)
+
+    tools = await client.list_tools("http://mcp.test", "streamable-http")
+
+    assert tools[0].input_schema == tool.input_schema
+
+
+@pytest.mark.asyncio
+async def test_call_tool_uses_mcp_v2_is_error(monkeypatch: pytest.MonkeyPatch):
+    client = McpClient(timeout_seconds=30.0)
+    result = CallToolResult(
+        content=[TextContent(type="text", text="ok")],
+        is_error=False,
+    )
+
+    class Session:
+        async def call_tool(self, name, arguments=None):
+            assert name == "echo"
+            assert arguments == {"text": "hello"}
+            return result
+
+    @asynccontextmanager
+    async def session(*_args, **_kwargs):
+        yield Session()
+
+    monkeypatch.setattr(client, "_session", session)
+
+    response = await client.call_tool(
+        "http://mcp.test",
+        "streamable-http",
+        "echo",
+        {"text": "hello"},
+    )
+
+    assert response["is_error"] is False
+    assert response["content"][0]["text"] == "ok"
