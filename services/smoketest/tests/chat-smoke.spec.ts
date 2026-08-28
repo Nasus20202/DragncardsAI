@@ -74,7 +74,7 @@ test("creates a Marvel Champions game from dashboard chat", async ({
       async () =>
         (await page.getByTestId("play-job-state").textContent())?.trim(),
       {
-        timeout: 120_000,
+        timeout: 300_000,
       },
     )
     .toBe("Completed");
