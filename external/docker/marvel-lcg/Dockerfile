@@ -3,7 +3,7 @@
 # as the Docker build context. Card art is deliberately not copied into this
 # image; the platform downloads it into the runtime asset volume on demand.
 
-FROM node:24.19.0-alpine AS frontend
+FROM node:24.20.0-alpine AS frontend
 
 WORKDIR /build
 COPY external/marvel-lcg/public/js ./public/js
