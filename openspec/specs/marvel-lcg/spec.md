@@ -72,10 +72,16 @@ live catalog, creation SHALL fail rather than selecting another entry.
 - **THEN** the driver SHALL fetch the corresponding scenario and deck documents
 - **AND** SHALL send those document texts in the descriptor in the same order
 
+#### Scenario: Catalog identifiers are passed through unchanged
+
+- **WHEN** a caller builds a creation request from the scenario and hero-deck entries returned by setup discovery
+- **THEN** the request SHALL contain those exact opaque identifiers without reconstructing them from paths or names
+- **AND** the driver SHALL resolve each identifier against the live creation catalog before fetching document content
+
 #### Scenario: Equivalent engine path spellings preserve a selected hero-deck id
 
 - **WHEN** setup discovery returns `./deck/starter/spider_man.json` and creation's live listing returns
-  the same document as `deck/starter/spider_man.json`
+the same document as `deck/starter/spider_man.json`
 - **THEN** the opaque id returned by setup discovery SHALL be accepted by creation
 - **AND** the driver SHALL fetch the path from the live creation listing
 - **AND** the driver SHALL send Spider-Man's document content in the new-game descriptor
