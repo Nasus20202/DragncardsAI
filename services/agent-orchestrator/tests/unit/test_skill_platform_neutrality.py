@@ -65,7 +65,14 @@ def test_marvel_coordinator_delegates_option_tools_to_the_seat_agent() -> None:
     text = MARVEL_COORDINATOR_LOOP.read_text(encoding="utf-8")
 
     assert "The coordinator observes" in text
-    assert "does not call `list_game_options` or `choose_game_option` itself" in text
+    assert (
+        "may call `list_game_options` only to obtain the authoritative current engine prompt"
+        in text
+    )
+    assert (
+        "must not choose an option or call `choose_game_option` on behalf of the player"
+        in text
+    )
     assert "The seat agent calls `list_game_options`" in text
     assert "`choose_game_option`" in text
 

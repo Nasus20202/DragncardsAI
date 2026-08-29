@@ -799,6 +799,49 @@ def test_agent_move_matches_the_marvel_evaluator_option_contract():
     }
 
 
+def test_agent_move_persists_coordinator_prompt_provenance():
+    provenance = {
+        "source": "coordinator",
+        "prompt": "Use the supplied player-turn rule.",
+        "orchestrator_session_id": "orchestrator-1",
+        "parent_job_id": "parent-1",
+        "child_job_id": "child-1",
+    }
+
+    envelope = HistoryEventEmitter.build_envelope(
+        game_id=GAME_ID,
+        intended_action="choose_game_option",
+        reasoning="choose the legal play",
+        arguments={"option_id": "option-7"},
+        conversation_context=[],
+        producer_offset=1,
+        platform=PLATFORM_MARVEL_LCG,
+        prompt_provenance=provenance,
+    )
+
+    assert envelope["payload"]["prompt_provenance"] == provenance
+
+
+def test_invalid_coordinator_provenance_is_not_persisted():
+    envelope = HistoryEventEmitter.build_envelope(
+        game_id=GAME_ID,
+        intended_action="choose_game_option",
+        reasoning="choose the legal play",
+        arguments={"option_id": "option-7"},
+        conversation_context=[],
+        producer_offset=1,
+        platform=PLATFORM_MARVEL_LCG,
+        prompt_provenance={
+            "source": "player",
+            "prompt": "Remove threat.",
+            "orchestrator_session_id": "orchestrator-1",
+            "parent_job_id": "parent-1",
+            "child_job_id": " ",
+        },
+    )
+
+    assert "prompt_provenance" not in envelope["payload"]
+
 def test_idempotency_key_is_stable_and_offset_dependent():
     a = build_idempotency_key(GAME_ID, "agent", 1)
     assert a == build_idempotency_key(GAME_ID, "agent", 1)

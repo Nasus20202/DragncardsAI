@@ -47,6 +47,34 @@ class MarvelLcgOptionIdentity(TypedDict):
     event: str
 
 
+class CoordinatorPromptProvenance(TypedDict):
+    """Server-set source metadata for a coordinator-issued child prompt."""
+
+    source: str
+    prompt: str
+    orchestrator_session_id: str
+    parent_job_id: str
+    child_job_id: str
+
+
+def _valid_coordinator_provenance(
+    value: CoordinatorPromptProvenance,
+) -> bool:
+    return (
+        value.get("source") == "coordinator"
+        and isinstance(value.get("prompt"), str)
+        and bool(value.get("prompt", "").strip())
+        and all(
+            isinstance(value.get(key), str) and bool(value.get(key).strip())
+            for key in (
+                "orchestrator_session_id",
+                "parent_job_id",
+                "child_job_id",
+            )
+        )
+    )
+
+
 # Resolution states an illegal-action finding can be recorded in.
 ILLEGAL_ACTION_STATUS_OPEN = "open"
 ILLEGAL_ACTION_STATUS_RESOLVED = "resolved"
@@ -527,6 +555,7 @@ class HistoryEventEmitter:
         session_mode: str = SESSION_MODE_CHAT,
         platform: str = DEFAULT_PLATFORM,
         marvel_lcg_option: MarvelLcgOptionIdentity | None = None,
+        prompt_provenance: CoordinatorPromptProvenance | None = None,
     ) -> dict[str, Any] | None:
         """Build and publish an agent move/decision envelope. Best-effort.
 
@@ -555,6 +584,7 @@ class HistoryEventEmitter:
                     session_mode=session_mode,
                     platform=platform,
                     marvel_lcg_option=marvel_lcg_option,
+                    prompt_provenance=prompt_provenance,
                 )
                 await self._bus.publish(envelope)
             return envelope
@@ -624,6 +654,7 @@ class HistoryEventEmitter:
         session_mode: str = SESSION_MODE_CHAT,
         platform: str = DEFAULT_PLATFORM,
         marvel_lcg_option: MarvelLcgOptionIdentity | None = None,
+        prompt_provenance: CoordinatorPromptProvenance | None = None,
     ) -> dict[str, Any]:
         # ``player`` names the seat that made this move in a multi-player
         # orchestrated game. It is omitted entirely for moves that belong to no
@@ -646,6 +677,10 @@ class HistoryEventEmitter:
             "conversation_context": conversation_context,
         }
         stamp_session_mode(payload, session_mode)
+        if prompt_provenance is not None and _valid_coordinator_provenance(
+            prompt_provenance
+        ):
+            payload["prompt_provenance"] = dict(prompt_provenance)
         if marvel_lcg_option is not None and resolved_platform == PLATFORM_MARVEL_LCG:
             payload[MARVEL_LCG_OPTION_PAYLOAD_KEY] = marvel_lcg_option
         if player:
