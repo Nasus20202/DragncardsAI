@@ -36,6 +36,7 @@ from agent_orchestrator.runtime.live_events import (
 )
 from agent_orchestrator.runtime.job_event_stream import JobEventStreamService
 from agent_orchestrator.runtime.request_limits import MaxBodySizeMiddleware
+from agent_orchestrator.runtime.session_dispatch_lock import SessionDispatchLock
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.runtime.worker import WorkerService
 from agent_orchestrator.storage.db import create_engine, create_session_factory
@@ -112,6 +113,7 @@ def create_app(
     mcp_client: McpClient | None = None,
     skill_registry: SkillRegistry | None = None,
     history_event_bus: HistoryEventBus | None = None,
+    session_dispatch_lock: SessionDispatchLock | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
 
@@ -121,6 +123,7 @@ def create_app(
         created_bifrost = None
         created_live_event_bus = None
         created_valkey_conn = None
+        created_session_dispatch_conn = None
         created_history_event_bus = None
         worker_task = None
 
@@ -160,7 +163,21 @@ def create_app(
         else:
             logger.info("Using injected Bifrost client")
             app.state.bifrost_client = bifrost_client
-
+        if session_dispatch_lock is not None:
+            resolved_session_dispatch_lock = session_dispatch_lock
+        elif settings.database_url.startswith("sqlite"):
+            # Unit apps inject SQLite and do not have a Valkey server. Production
+            # uses PostgreSQL and always gets the distributed lock below.
+            resolved_session_dispatch_lock = SessionDispatchLock(None)
+        else:
+            dispatch_connection = created_valkey_conn
+            if dispatch_connection is None:
+                parsed = urlparse(settings.valkey_url)
+                created_session_dispatch_conn = RespConnection(
+                    parsed.hostname or "localhost", parsed.port or 6379
+                )
+                dispatch_connection = created_session_dispatch_conn
+            resolved_session_dispatch_lock = SessionDispatchLock(dispatch_connection)
         if live_event_bus is None:
             logger.info(
                 "Initializing Valkey live event bus for %s", settings.valkey_url
@@ -226,6 +243,7 @@ def create_app(
             mcp_tool_catalog=app.state.mcp_tool_catalog,
             skill_registry=app.state.skill_registry,
             history_emitter=history_emitter,
+            session_dispatch_lock=resolved_session_dispatch_lock,
         )
         worker_task = asyncio.create_task(app.state.worker.run_forever())
         app.state.worker_task = worker_task
@@ -249,6 +267,8 @@ def create_app(
                 await created_live_event_bus.aclose()
             if created_history_event_bus is not None:
                 await created_history_event_bus.aclose()
+            if created_session_dispatch_conn is not None:
+                await created_session_dispatch_conn.aclose()
             if created_engine is not None:
                 await created_engine.dispose()
             shutdown_telemetry()

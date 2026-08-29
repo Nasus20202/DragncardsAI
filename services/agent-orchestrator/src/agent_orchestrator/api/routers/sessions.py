@@ -60,6 +60,7 @@ from agent_orchestrator.runtime.personas import (
 )
 from agent_orchestrator.runtime.history_emitter import (
     SESSION_GAME_ID_KEY,
+    SESSION_PLATFORM_KEY,
     SESSION_RESTORED_CONTEXT_KEY,
 )
 from agent_orchestrator.runtime.player_agents import (
@@ -71,6 +72,9 @@ from agent_orchestrator.storage.repository import Repository
 
 _SERVER_OWNED_METADATA_KEYS = frozenset(
     {
+        SESSION_GAME_ID_KEY,
+        SESSION_PLATFORM_KEY,
+        SESSION_RESTORED_CONTEXT_KEY,
         SESSION_ORCHESTRATOR_ID_KEY,
         SESSION_PLAYER_ID_KEY,
         SESSION_PLAYER_NAME_KEY,
@@ -115,6 +119,7 @@ async def _metadata_with_session_persona(
     *,
     base_metadata: dict[str, Any],
     persona_name: str | None,
+    preserved_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """``base_metadata`` with this session's own persona snapshot set or cleared.
 
@@ -135,6 +140,8 @@ async def _metadata_with_session_persona(
     metadata = dict(base_metadata)
     for key in _SERVER_OWNED_METADATA_KEYS:
         metadata.pop(key, None)
+        if preserved_metadata is not None and key in preserved_metadata:
+            metadata[key] = preserved_metadata[key]
     metadata.pop(SESSION_PERSONA_KEY, None)
     if persona_name is None:
         return metadata
@@ -331,24 +338,36 @@ async def update_session(
     # The session's own persona is stored as a name AND captured as a snapshot, so
     # setting it rewrites the metadata the same call may also be replacing. Merged
     # here, over whatever the client sent, because the snapshot is server-owned:
-    # a client can change the persona by NAME, never by writing the snapshot.
     if "session_persona" in changes:
         changes["metadata_json"] = await _metadata_with_session_persona(
             repo,
             base_metadata=changes.get("metadata_json", existing.metadata_json or {}),
             persona_name=changes["session_persona"],
+            preserved_metadata=existing.metadata_json or {},
         )
     elif "metadata_json" in changes:
         # A metadata write that does not touch the persona must not drop or forge
-        # the snapshot, so the stored one is carried across verbatim.
-        preserved = (existing.metadata_json or {}).get(SESSION_PERSONA_KEY)
+        # the snapshot or any other server-owned identity, so stored values are
+        # carried across verbatim.
+        existing_metadata = existing.metadata_json or {}
         metadata = dict(changes["metadata_json"])
         for key in _SERVER_OWNED_METADATA_KEYS:
             metadata.pop(key, None)
+            if key in existing_metadata:
+                metadata[key] = existing_metadata[key]
         metadata.pop(SESSION_PERSONA_KEY, None)
+        preserved = existing_metadata.get(SESSION_PERSONA_KEY)
         if preserved is not None:
             metadata[SESSION_PERSONA_KEY] = preserved
         changes["metadata_json"] = metadata
+
+    if "session_persona" in changes:
+        preserve_metadata_keys = set(_SERVER_OWNED_METADATA_KEYS)
+    elif "metadata_json" in changes:
+        preserve_metadata_keys = set(_SERVER_OWNED_METADATA_KEYS)
+        preserve_metadata_keys.add(SESSION_PERSONA_KEY)
+    else:
+        preserve_metadata_keys = None
 
     # The mode is applied through its own repository call because it is the one
     # session field with a precondition: it is frozen once the session has run a
@@ -366,7 +385,11 @@ async def update_session(
     if not changes:
         item = await repo.get_session(session_id)
     else:
-        item = await repo.update_session(session_id, **changes)
+        item = await repo.update_session(
+            session_id,
+            preserve_metadata_keys=preserve_metadata_keys,
+            **changes,
+        )
     if item is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"session": serialize_session_detail(item)}

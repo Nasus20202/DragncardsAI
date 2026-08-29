@@ -16,6 +16,7 @@ from agent_orchestrator.runtime.prompt_run import (
     PromptRunDependencies,
     PromptRunService,
 )
+from agent_orchestrator.runtime.session_dispatch_lock import SessionDispatchLock
 from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.models import Job
@@ -37,6 +38,7 @@ class WorkerService:
         mcp_tool_catalog: McpToolCatalog,
         skill_registry: SkillRegistry,
         history_emitter: HistoryEventEmitter | None = None,
+        session_dispatch_lock: SessionDispatchLock | None = None,
     ):
         self._settings = settings
         self._repository = repository
@@ -62,6 +64,7 @@ class WorkerService:
                 mcp_tool_catalog=mcp_tool_catalog,
                 skill_registry=skill_registry,
                 history_emitter=history_emitter,
+                session_dispatch_lock=session_dispatch_lock,
             ),
             transcript_service=self._transcript_service,
             schedule_child_job=self.run_child_job,

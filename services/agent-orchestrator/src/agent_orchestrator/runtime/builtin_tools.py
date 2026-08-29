@@ -12,7 +12,10 @@ from agent_orchestrator.repositories.questions import (
     QUESTION_STATUS_CLOSED,
 )
 from agent_orchestrator.runtime.display_names import generate_agent_name
-from agent_orchestrator.runtime.history_emitter import SESSION_GAME_ID_KEY
+from agent_orchestrator.runtime.history_emitter import (
+    SESSION_GAME_ID_KEY,
+    SESSION_PLATFORM_KEY,
+)
 from agent_orchestrator.runtime.live_event_resilience import LiveBusDegradation
 from agent_orchestrator.runtime.live_events import LiveEventBus
 from agent_orchestrator.runtime.personas import (
@@ -943,6 +946,17 @@ def make_prompt_player_agent_handler(
         # on, so its own prior turns replay into each invocation. In chat mode the
         # pre-orchestration behaviour is kept exactly — a memoryless child that is
         # terminated when its job ends.
+        parent_metadata = parent_session.metadata_json or {}
+        game_id = parent_metadata.get(SESSION_GAME_ID_KEY)
+        if not isinstance(game_id, str) or not game_id:
+            game_id = None
+        parent_platform = session_platform(parent_session)
+        if orchestrated and game_id is None:
+            return _text_result(
+                "Bind the orchestrator session to a game before prompting a player agent.",
+                is_error=True,
+            )
+
         existing_child_session = None
         if orchestrated and resolved.agent_session_id:
             existing_child_session = await repository.get_session(
@@ -956,6 +970,51 @@ def make_prompt_player_agent_handler(
                     session_id,
                     resolved.agent_session_id,
                 )
+            else:
+                child_metadata_existing = existing_child_session.metadata_json or {}
+                child_game_id = child_metadata_existing.get(SESSION_GAME_ID_KEY)
+                if child_game_id is not None and child_game_id != game_id:
+                    return _text_result(
+                        "The player agent session is bound to a different game.",
+                        is_error=True,
+                    )
+                child_platform_value = child_metadata_existing.get(
+                    SESSION_PLATFORM_KEY
+                )
+                if (
+                    child_platform_value is not None
+                    and session_platform(existing_child_session) != parent_platform
+                ):
+                    return _text_result(
+                        "The player agent session uses a different game platform.",
+                        is_error=True,
+                    )
+                if child_game_id is None:
+                    child_metadata_existing[SESSION_GAME_ID_KEY] = game_id
+                    if parent_platform != DEFAULT_PLATFORM:
+                        child_metadata_existing[SESSION_PLATFORM_KEY] = parent_platform
+                    updated_child = await repository.update_session(
+                        existing_child_session.id,
+                        preserve_metadata_keys={
+                            SESSION_GAME_ID_KEY,
+                            SESSION_PLATFORM_KEY,
+                        },
+                        metadata_json=child_metadata_existing,
+                    )
+                    if updated_child is None:
+                        return _text_result(
+                            "The player agent session no longer exists.",
+                            is_error=True,
+                        )
+                    if (
+                        (updated_child.metadata_json or {}).get(SESSION_GAME_ID_KEY)
+                        != game_id
+                    ):
+                        return _text_result(
+                            "The player agent session became bound to another game.",
+                            is_error=True,
+                        )
+                    existing_child_session = updated_child
 
         child_metadata: dict[str, Any] = {
             SESSION_PLAYER_ID_KEY: player_id,
@@ -963,13 +1022,10 @@ def make_prompt_player_agent_handler(
         }
         if resolved.display_name:
             child_metadata[SESSION_PLAYER_NAME_KEY] = resolved.display_name
-        parent_metadata = parent_session.metadata_json or {}
-        game_id = parent_metadata.get(SESSION_GAME_ID_KEY)
-        if isinstance(game_id, str) and game_id:
+        if game_id is not None:
             child_metadata[SESSION_GAME_ID_KEY] = game_id
-        parent_platform = session_platform(parent_session)
         if parent_platform != DEFAULT_PLATFORM:
-            child_metadata["platform"] = parent_platform
+            child_metadata[SESSION_PLATFORM_KEY] = parent_platform
 
         skills: list[str] | None = resolved.skills
         model_config: Any = resolved

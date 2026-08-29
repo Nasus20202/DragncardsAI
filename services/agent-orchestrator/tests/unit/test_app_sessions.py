@@ -6,6 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+from agent_orchestrator.runtime.history_emitter import (
+    SESSION_GAME_ID_KEY,
+    SESSION_PLATFORM_KEY,
+    SESSION_RESTORED_CONTEXT_KEY,
+)
 from agent_orchestrator.runtime.player_agents import (
     SESSION_ORCHESTRATOR_ID_KEY,
     SESSION_PLAYER_ID_KEY,
@@ -227,6 +232,8 @@ def test_public_session_metadata_cannot_claim_a_player_seat(app):
         json={
             "metadata": {
                 "updated": "yes",
+                SESSION_GAME_ID_KEY: "other-game",
+                SESSION_PLATFORM_KEY: "marvel-lcg",
                 SESSION_PLAYER_ID_KEY: "player2",
                 SESSION_PLAYER_NAME_KEY: "Impostor",
                 SESSION_ORCHESTRATOR_ID_KEY: "other-table",
@@ -235,6 +242,34 @@ def test_public_session_metadata_cannot_claim_a_player_seat(app):
     )
     assert patched.status_code == 200
     assert patched.json()["session"]["metadata"] == {"updated": "yes"}
+
+
+def test_metadata_patch_cannot_replace_or_erase_game_binding(app):
+    with TestClient(app) as client:
+        restored = client.post(
+            "/sessions/restore",
+            json={"game_id": "bound-game", "conversation_context": []},
+        )
+        assert restored.status_code == 201
+        session_id = restored.json()["session_id"]
+
+        patched = client.patch(
+            f"/sessions/{session_id}",
+            json={
+                "metadata": {
+                    "updated": "yes",
+                    SESSION_GAME_ID_KEY: "other-game",
+                    SESSION_PLATFORM_KEY: "marvel-lcg",
+                }
+            },
+        )
+
+    assert patched.status_code == 200
+    assert patched.json()["session"]["metadata"] == {
+        "updated": "yes",
+        SESSION_GAME_ID_KEY: "bound-game",
+        SESSION_RESTORED_CONTEXT_KEY: [],
+    }
 
 
 def test_update_session_persists_name_metadata_and_context_limits(app):

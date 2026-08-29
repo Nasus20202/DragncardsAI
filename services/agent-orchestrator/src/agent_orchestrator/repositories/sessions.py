@@ -165,6 +165,7 @@ class SessionRepositoryMixin:
             )
             return result.scalars().unique().first()
 
+
     async def get_active_session_by_game_id(self, game_id: str) -> AgentSession | None:
         """Return the most recently created active session bound to a game_id.
 
@@ -185,16 +186,38 @@ class SessionRepositoryMixin:
             return None
 
     async def update_session(
-        self, session_id: str, **changes: Any
+        self,
+        session_id: str,
+        *,
+        preserve_metadata_keys: set[str] | None = None,
+        **changes: Any,
     ) -> AgentSession | None:
+        """Update a session, optionally preserving server-owned metadata keys.
+
+        The protected metadata is merged inside the same transaction that writes
+        the row. Callers that prepared a replacement from an earlier read can
+        therefore not erase a binding captured concurrently.
+        """
         async with self._session_factory() as session, session.begin():
-            item = await session.get(AgentSession, session_id)
+            item = await session.get(
+                AgentSession,
+                session_id,
+                with_for_update=preserve_metadata_keys is not None,
+            )
             if item is None:
                 return None
             if "name" in changes:
                 item.name = changes["name"]
             if "metadata_json" in changes:
-                item.metadata_json = changes["metadata_json"]
+                metadata = changes["metadata_json"]
+                if preserve_metadata_keys:
+                    merged_metadata = dict(metadata)
+                    current_metadata = item.metadata_json or {}
+                    for key in preserve_metadata_keys:
+                        if key in current_metadata:
+                            merged_metadata[key] = current_metadata[key]
+                    metadata = merged_metadata
+                item.metadata_json = metadata
             if "context_recent_message_limit" in changes:
                 item.context_recent_message_limit = changes[
                     "context_recent_message_limit"

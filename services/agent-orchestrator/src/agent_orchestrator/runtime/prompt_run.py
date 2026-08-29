@@ -21,10 +21,15 @@ from agent_orchestrator.runtime.compaction import (
     perform_compaction,
 )
 from agent_orchestrator.runtime.context_estimate import estimate_request
+from agent_orchestrator.runtime.game_session_guard import (
+    GameSessionBindingViolation,
+    check_game_session_binding,
+)
 from agent_orchestrator.runtime.history_emitter import (
     MarvelLcgOptionIdentity,
     SESSION_GAME_ID_KEY,
     SESSION_PLATFORM_KEY,
+    SESSION_RESTORED_CONTEXT_KEY,
     HistoryEventEmitter,
     extract_game_id_from_arguments,
     extract_game_id_from_result,
@@ -61,8 +66,8 @@ from agent_orchestrator.runtime.seat_turn_guard import (
     TurnAuthorityViolation,
     check_turn_authority,
 )
+from agent_orchestrator.runtime.session_dispatch_lock import SessionDispatchLock
 from agent_orchestrator.runtime.session_modes import is_orchestrated, session_mode
-from agent_orchestrator.runtime.session_transcript import SessionTranscriptService
 from agent_orchestrator.runtime.skills import (
     JOB_INLINE_SKILLS_KEY,
     SkillRegistry,
@@ -102,7 +107,7 @@ def _decoded_values(value: Any):
     if isinstance(value, str):
         try:
             decoded = json.loads(value)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return
         if decoded != value:
             yield from _decoded_values(decoded)
@@ -255,6 +260,7 @@ class PromptRunDependencies:
     mcp_tool_catalog: McpToolCatalog
     skill_registry: SkillRegistry
     history_emitter: HistoryEventEmitter | None = None
+    session_dispatch_lock: SessionDispatchLock | None = None
 
 
 class PromptRunService:
@@ -272,11 +278,19 @@ class PromptRunService:
         self._mcp_tool_catalog = dependencies.mcp_tool_catalog
         self._skill_registry = dependencies.skill_registry
         self._history_emitter = dependencies.history_emitter
+        self._session_dispatch_lock = dependencies.session_dispatch_lock
         self._transcript_service = transcript_service
         self._schedule_child_job = schedule_child_job
         self._history_tasks: set[asyncio.Task[Any]] = set()
 
     async def run(self, job: Job) -> None:
+        if self._session_dispatch_lock is None:
+            await self._run_unserialized(job)
+            return
+        async with self._session_dispatch_lock.for_session(job.session_id):
+            await self._run_unserialized(job)
+
+    async def _run_unserialized(self, job: Job) -> None:
         with tracer.start_as_current_span(
             "agent_orchestrator.run_job",
             attributes={"job.id": job.id},
@@ -797,6 +811,35 @@ class PromptRunService:
                                 },
                             }
                         )
+                        # Bind every existing-game call before any seat or turn
+                        # preflight can read state and before the MCP client sees
+                        # the requested session_id. An unbound session is allowed
+                        # its first discovery call; `_capture_game_id` persists
+                        # that successful target below.
+                        definition = tool_mapping.get(tool_call.name)
+                        if definition is not None:
+                            binding_violation = check_game_session_binding(
+                                assignment=definition.assignment_name,
+                                tool_name=tool_call.name,
+                                arguments=tool_call.arguments,
+                                bound_game_id=self._session_game_id(session),
+                            )
+                            if binding_violation is not None:
+                                logger.warning(
+                                    "Job %s refused game-session binding for tool %s",
+                                    job.id,
+                                    tool_call.name,
+                                )
+                                await self.append_game_session_binding_refusal(
+                                    job_id=job.id,
+                                    session_id=session.id,
+                                    messages=messages,
+                                    tool_call_id=tool_call.id,
+                                    arguments=tool_call.arguments,
+                                    violation=binding_violation,
+                                )
+                                continue
+
                         # The seat guard, before either dispatch path. A seat may
                         # act only with its own cards, and that has to hold for
                         # every tool it can reach — builtin and MCP alike — so the
@@ -1271,7 +1314,17 @@ class PromptRunService:
             return
         session.metadata_json = metadata
         try:
-            await self._repository.update_session(session.id, metadata_json=metadata)
+            updated = await self._repository.update_session(
+                session.id,
+                preserve_metadata_keys={
+                    SESSION_GAME_ID_KEY,
+                    SESSION_PLATFORM_KEY,
+                    SESSION_RESTORED_CONTEXT_KEY,
+                },
+                metadata_json=metadata,
+            )
+            if updated is not None:
+                session.metadata_json = updated.metadata_json
         except Exception:
             logger.warning(
                 "Failed to persist game_id %s for session %s",
@@ -1944,6 +1997,55 @@ class PromptRunService:
             "seat_scope_violation",
             payload,
             durable_event_id=durable_event_id,
+        )
+        await self.append_tool_result_event(
+            job_id=job_id,
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            exposed_tool_name=violation.tool_name,
+            tool_name=violation.tool_name,
+            assignment=None,
+            server_url=None,
+            result=result,
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": json.dumps(result),
+            }
+        )
+
+    async def append_game_session_binding_refusal(
+        self,
+        *,
+        job_id: str,
+        session_id: str,
+        messages: list[dict[str, Any]],
+        tool_call_id: str,
+        arguments: dict[str, Any],
+        violation: GameSessionBindingViolation,
+    ) -> None:
+        """Answer a cross-game call without forwarding it to game-service.
+
+        The tool-call/result pair keeps the conversation replayable just like
+        other locally refused calls. The refusal deliberately carries no target
+        game response or identifier, so an attempted cross-game read cannot
+        disclose that game's state.
+        """
+        result = {
+            "is_error": True,
+            "content": [{"type": "text", "text": violation.message}],
+        }
+        await self.append_tool_call_event(
+            job_id=job_id,
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            exposed_tool_name=violation.tool_name,
+            tool_name=violation.tool_name,
+            assignment=None,
+            server_url=None,
+            arguments=arguments,
         )
         await self.append_tool_result_event(
             job_id=job_id,
