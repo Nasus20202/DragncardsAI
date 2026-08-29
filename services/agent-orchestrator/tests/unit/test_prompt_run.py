@@ -9,6 +9,7 @@ from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostError, ChatResponse, ToolCall
 from agent_orchestrator.integrations.mcp.client import McpToolDefinition
 from agent_orchestrator.integrations.mcp.tools import McpToolCatalog
+from agent_orchestrator.runtime.history_emitter import SESSION_GAME_ID_KEY
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
 from agent_orchestrator.runtime.player_agents import (
     SESSION_ORCHESTRATOR_ID_KEY,
@@ -66,16 +67,18 @@ class FakeBifrost:
 
 
 class FakeMcp:
-    def __init__(self):
+    def __init__(self, tool_names: tuple[str, ...] = ("next_step",)):
+        self.tool_names = tool_names
         self.calls = []
 
     async def list_tools(self, server_url, transport, headers=None):
         return [
             McpToolDefinition(
-                name="next_step",
-                description="Advance the game",
+                name=name,
+                description=f"Game tool {name}",
                 input_schema={"type": "object", "properties": {}},
             )
+            for name in self.tool_names
         ]
 
     async def call_tool(
@@ -312,6 +315,7 @@ async def _prepare_seat_session(
     *,
     player_id: str = "player1",
     orchestrator_mode: str = SESSION_MODE_ORCHESTRATED,
+    game_id: str | None = None,
 ):
     """A seat's own session: a tagged child under an orchestrating session.
 
@@ -323,12 +327,16 @@ async def _prepare_seat_session(
     orchestrator = await repo.create_session(
         "table", {}, session_mode=orchestrator_mode
     )
+    seat_metadata = {
+        SESSION_PLAYER_ID_KEY: player_id,
+        SESSION_ORCHESTRATOR_ID_KEY: orchestrator.id,
+    }
+    if game_id is not None:
+        seat_metadata[SESSION_GAME_ID_KEY] = game_id
+
     seat = await repo.create_session(
         f"seat-{player_id}",
-        {
-            SESSION_PLAYER_ID_KEY: player_id,
-            SESSION_ORCHESTRATOR_ID_KEY: orchestrator.id,
-        },
+        seat_metadata,
         multi_turn_memory=True,
     )
     await repo.set_model_config(
@@ -367,6 +375,7 @@ async def _run_single_tool_call(
     *,
     tool_name: str,
     arguments: dict,
+    mcp_tool_names: tuple[str, ...] = ("next_step",),
 ):
     """Run one job whose model asks for exactly one tool call, then finishes."""
     job = await repo.enqueue_prompt_job(
@@ -376,7 +385,7 @@ async def _run_single_tool_call(
     claimed = await repo.claim_next_job()
     assert claimed is not None
 
-    mcp = FakeMcp()
+    mcp = FakeMcp(mcp_tool_names)
     prompt_run = _make_prompt_run_service(
         repo,
         FakeBifrost(
@@ -396,6 +405,119 @@ async def _run_single_tool_call(
     )
     await prompt_run.run(claimed)
     return job, mcp, await repo.list_events(job.id)
+
+
+@pytest.mark.asyncio
+async def test_game_tool_allows_the_session_bound_game(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    seat = await _prepare_seat_session(repository, game_id="game-a")
+
+    _, mcp, events = await _run_single_tool_call(
+        repository,
+        skill_registry,
+        seat.id,
+        tool_name="game-service_next_step",
+        arguments={"session_id": "game-a"},
+    )
+
+    assert len(mcp.calls) == 1
+    assert mcp.calls[0]["arguments"] == {"session_id": "game-a"}
+    assert not [
+        event
+        for event in events
+        if event.event_type == "tool_result"
+        and event.payload_json.get("is_error")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_game_tool_rejects_a_different_game_before_dispatch(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    seat = await _prepare_seat_session(repository, game_id="game-a")
+
+    _, mcp, events = await _run_single_tool_call(
+        repository,
+        skill_registry,
+        seat.id,
+        tool_name="game-service_next_step",
+        arguments={"session_id": "game-b"},
+    )
+
+    assert mcp.calls == []
+    result = next(
+        event
+        for event in events
+        if event.event_type == "tool_result"
+    )
+    refusal = result.payload_json["result"]["content"][0]["text"]
+    assert result.payload_json["is_error"] is True
+    assert "game-a" not in refusal
+    assert "game-b" not in refusal
+    # A rejected call must not expose the downstream result (or any target state).
+    assert "done" not in refusal
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "mcp_tool_names"),
+    [
+        ("game-service_get_game_state", ("get_game_state",)),
+        ("game-service_next_step", ("next_step", "get_game_state")),
+    ],
+)
+@pytest.mark.asyncio
+async def test_game_binding_rejects_before_state_or_turn_preflight(
+    repository: Repository,
+    skill_registry: SkillRegistry,
+    tool_name: str,
+    mcp_tool_names: tuple[str, ...],
+):
+    seat = await _prepare_seat_session(repository, game_id="game-a")
+
+    _, mcp, events = await _run_single_tool_call(
+        repository,
+        skill_registry,
+        seat.id,
+        tool_name=tool_name,
+        arguments={"session_id": "game-b"},
+        mcp_tool_names=mcp_tool_names,
+    )
+
+    assert mcp.calls == []
+    result = next(
+        event
+        for event in events
+        if event.event_type == "tool_result"
+    )
+    assert result.payload_json["is_error"] is True
+    assert "game-b" not in result.payload_json["result"]["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_unbound_session_can_discover_and_bind_its_first_game(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    seat = await _prepare_seat_session(repository)
+
+    _, mcp, events = await _run_single_tool_call(
+        repository,
+        skill_registry,
+        seat.id,
+        tool_name="game-service_next_step",
+        arguments={"session_id": "game-b"},
+    )
+
+    assert len(mcp.calls) == 1
+    assert not [
+        event
+        for event in events
+        if event.event_type == "tool_result"
+        and event.payload_json.get("is_error")
+    ]
+    bound = await repository.get_session(seat.id)
+    assert bound is not None
+    assert (bound.metadata_json or {}).get(SESSION_GAME_ID_KEY) == "game-b"
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,9 @@ from agent_orchestrator.runtime.builtin_tools import (
     make_list_player_agents_handler,
     make_prompt_player_agent_handler,
 )
+from agent_orchestrator.runtime.history_emitter import SESSION_GAME_ID_KEY
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
+from agent_orchestrator.runtime.session_modes import SESSION_MODE_ORCHESTRATED
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.repository import Repository
 
@@ -189,11 +191,14 @@ async def test_prompt_player_agent_configures_the_child_from_the_seat(
 
 
 @pytest.mark.asyncio
-async def test_prompt_player_agent_inherits_when_the_seat_sets_nothing(
+async def test_prompt_player_agent_requires_bound_orchestrator_game(
     repository: Repository,
     live_event_bus: InMemoryLiveEventBus,
 ):
     session = await _orchestrator_session(repository)
+    await repository.update_session_mode(
+        session.id, session_mode=SESSION_MODE_ORCHESTRATED
+    )
     await repository.upsert_player_config(
         session.id,
         "player1",
@@ -220,14 +225,52 @@ async def test_prompt_player_agent_inherits_when_the_seat_sets_nothing(
 
     result = await handler({"player_id": "player1", "prompt": "Take your turn."})
 
-    child_job = await repository.get_job(_payload(result)["child_job_id"])
-    child_session = await repository.get_session(child_job.session_id)
-    assert child_session.model_config.provider_id == "openai"
-    assert child_session.model_config.model_name == "parent-model"
-    assert [s.skill_name for s in child_session.enabled_skills if s.enabled] == [
-        "parent-skill"
-    ]
-    assert "game_id" not in child_session.metadata_json
+    assert result["is_error"] is True
+    assert "Bind the orchestrator session to a game" in result["content"][0]["text"]
+
+@pytest.mark.asyncio
+async def test_prompt_player_agent_rejects_child_bound_to_another_game(
+    repository: Repository,
+    live_event_bus: InMemoryLiveEventBus,
+):
+    session = await _orchestrator_session(repository, game_id="game-a")
+    await repository.update_session_mode(
+        session.id, session_mode=SESSION_MODE_ORCHESTRATED
+    )
+    await repository.upsert_player_config(
+        session.id,
+        "player1",
+        display_name=None,
+        provider_id=None,
+        model_name=None,
+        gateway_options={},
+        provider_options={},
+        skills=None,
+    )
+    child = await repository.create_session(
+        "player1",
+        {SESSION_GAME_ID_KEY: "game-b", "player_id": "player1"},
+        multi_turn_memory=True,
+    )
+    await repository.set_player_agent_session(session.id, "player1", child.id)
+    parent_job = await repository.enqueue_prompt_job(
+        session.id, prompt="go", metadata_json={}, max_attempts=1
+    )
+    assert parent_job is not None
+
+    handler = make_prompt_player_agent_handler(
+        repository=repository,
+        live_event_bus=live_event_bus,
+        session_id=session.id,
+        job_id=parent_job.id,
+        job=make_job(parent_job_id=None, job_type="prompt"),
+        schedule_child_fn=None,
+    )
+
+    result = await handler({"player_id": "player1", "prompt": "Take your turn."})
+
+    assert result["is_error"] is True
+    assert "bound to a different game" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
