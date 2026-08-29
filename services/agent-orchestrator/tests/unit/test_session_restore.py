@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from agent_orchestrator.storage.db import create_session_factory
+from agent_orchestrator.storage.repository import Repository
 from .app_test_support import build_test_app
 
 GAME_ID = "22222222-2222-2222-2222-222222222222"
@@ -54,14 +56,13 @@ async def test_restore_new_mode_creates_session_with_matching_context(tmp_path: 
 async def test_restore_in_place_mode_resumes_existing_session(tmp_path: Path):
     app, engine = await build_test_app(tmp_path, enabled_provider_ids="lmstudio")
     try:
+        repo = Repository(create_session_factory(engine))
+        created = await repo.create_session(
+            name="live",
+            metadata_json={"game_id": GAME_ID},
+        )
+        existing_id = created.id
         with TestClient(app) as client:
-            # Seed an active session already bound to the game_id.
-            created = client.post(
-                "/sessions",
-                json={"name": "live", "metadata": {"game_id": GAME_ID}},
-            )
-            existing_id = created.json()["session"]["id"]
-
             response = client.post(
                 "/sessions/restore",
                 json={
