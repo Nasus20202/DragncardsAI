@@ -56,15 +56,29 @@ game-service driver SHALL accept only scenario and hero-deck ids returned by the
 catalog, resolve those ids to document content immediately before creation, and preserve the
 ordered `hero_decks` list when constructing `hero_json`.
 
+The driver SHALL derive catalog identity from the engine document's logical relative path. Equivalent
+representations that differ only by a leading `./` SHALL identify the same document for catalog
+membership checks, so an opaque id returned by setup discovery SHALL remain valid if the engine
+uses the equivalent spelling in the immediately subsequent listing. The driver SHALL retain the
+actual path returned by the live creation listing when fetching the document.
+
 The driver SHALL not accept a display name, an arbitrary filesystem path, a MarvelCDB import, or an
-untyped `plugin_info` mapping as an alternative setup identity. If a selected id is no longer in
-the live catalog, creation SHALL fail rather than selecting another entry.
+untyped `plugin_info` mapping as an alternative setup identity. If a selected id is no longer in the
+live catalog, creation SHALL fail rather than selecting another entry.
 
 #### Scenario: Selected catalog ids become document content
 
 - **WHEN** a caller selects one listed scenario id and two listed hero-deck ids in seat order
 - **THEN** the driver SHALL fetch the corresponding scenario and deck documents
 - **AND** SHALL send those document texts in the descriptor in the same order
+
+#### Scenario: Equivalent engine path spellings preserve a selected hero-deck id
+
+- **WHEN** setup discovery returns `./deck/starter/spider_man.json` and creation's live listing returns
+  the same document as `deck/starter/spider_man.json`
+- **THEN** the opaque id returned by setup discovery SHALL be accepted by creation
+- **AND** the driver SHALL fetch the path from the live creation listing
+- **AND** the driver SHALL send Spider-Man's document content in the new-game descriptor
 
 #### Scenario: A solo game is created from fetched document content
 

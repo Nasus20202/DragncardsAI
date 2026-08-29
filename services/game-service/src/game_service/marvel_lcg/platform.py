@@ -212,6 +212,23 @@ class MarvelLcgPlatform:
         return f"{kind}:{digest[:24]}"
 
     @staticmethod
+    def _catalog_path_variants(source_path: str) -> tuple[str, ...]:
+        """Return equivalent engine path spellings for catalog identity."""
+        if source_path.startswith("./"):
+            return source_path, source_path[2:]
+        return source_path, f"./{source_path}"
+
+    @classmethod
+    def _catalog_paths_by_id(
+        cls, kind: str, source_paths: Iterable[str]
+    ) -> dict[str, str]:
+        paths_by_id: dict[str, str] = {}
+        for source_path in source_paths:
+            for path_variant in cls._catalog_path_variants(source_path):
+                paths_by_id.setdefault(cls._catalog_id(kind, path_variant), source_path)
+        return paths_by_id
+
+    @staticmethod
     def _display_name(source_path: str) -> str:
         name = os.path.basename(source_path).rsplit(".", 1)[0]
         return name.replace("_", " ").replace("-", " ").strip() or source_path
@@ -245,10 +262,8 @@ class MarvelLcgPlatform:
     ) -> MarvelLcgCreateSpec:
         scenarios = await self._http_client.list_scenarios()
         decks = await self._http_client.list_starter_deck()
-        scenario_by_id = {
-            self._catalog_id("scenario", path): path for path in scenarios
-        }
-        hero_by_id = {self._catalog_id("hero-deck", path): path for path in decks}
+        scenario_by_id = self._catalog_paths_by_id("scenario", scenarios)
+        hero_by_id = self._catalog_paths_by_id("hero-deck", decks)
         self._scenario_paths_by_id = scenario_by_id
         self._hero_paths_by_id = hero_by_id
 
