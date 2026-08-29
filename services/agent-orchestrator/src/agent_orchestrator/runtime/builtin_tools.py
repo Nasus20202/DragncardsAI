@@ -1107,6 +1107,26 @@ def make_wait_for_subagent_handler(
         if not child_job_id:
             return _text_result("child_job_id is required.", is_error=True)
 
+        child_job = await repository.get_job(child_job_id)
+        if child_job is None:
+            return _text_result(
+                describe_child_outcome(
+                    child_job_id, ChildOutcome(kind="missing")
+                ),
+                is_error=True,
+            )
+        parent_job = await repository.get_job(job_id) if job_id else None
+        if (
+            not session_id
+            or parent_job is None
+            or parent_job.session_id != session_id
+            or child_job.parent_job_id != job_id
+        ):
+            return _text_result(
+                "Subagent job is not a child of the current parent job.",
+                is_error=True,
+            )
+
         async def parent_was_cancelled() -> bool:
             if not job_id:
                 return False
