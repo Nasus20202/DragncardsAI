@@ -247,5 +247,50 @@ async def make_completed_job_with_tool_exchange(
     return job.id
 
 
+async def make_running_job_with_tool_exchange(
+    repo: Repository,
+    session_id: str,
+    *,
+    prompt: str,
+    output: str,
+    tool_call_id: str,
+    tool_name: str,
+    result: dict,
+) -> str:
+    job = await repo.enqueue_prompt_job(
+        session_id, prompt=prompt, metadata_json={}, max_attempts=1
+    )
+    await repo.claim_next_job()
+    await repo.append_event(job.id, session_id, "model_output", {"text": output})
+    await repo.append_event(
+        job.id,
+        session_id,
+        "tool_call",
+        {
+            "tool_call_id": tool_call_id,
+            "exposed_tool_name": f"game-service_{tool_name}",
+            "tool_name": tool_name,
+            "assignment": "game-service",
+            "server_url": "http://localhost:4001/mcp/",
+            "arguments": {},
+        },
+    )
+    await repo.append_event(
+        job.id,
+        session_id,
+        "tool_result",
+        {
+            "tool_call_id": tool_call_id,
+            "exposed_tool_name": f"game-service_{tool_name}",
+            "tool_name": tool_name,
+            "assignment": "game-service",
+            "server_url": "http://localhost:4001/mcp/",
+            "is_error": False,
+            "result": result,
+        },
+    )
+    return job.id
+
+
 async def build_replay_messages(repo: Repository, session_id: str):
-    return await build_message_history(repo, session_id, "")
+    return await build_message_history(repo, session_id, "", include_running=True)

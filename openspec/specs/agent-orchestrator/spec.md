@@ -815,7 +815,7 @@ The system SHALL expose `GET /sessions/{session_id}/context` returning current c
 
 The session context metadata endpoint SHALL estimate context usage from the content the orchestrator would include in the next model request, rather than from cumulative historical job token totals.
 
-That estimate SHALL include the system prompt generated from active skill summaries and the persona catalogue, replayed prior messages after compaction and replay-window limits are applied, any conversation a restore attached to the session, and every tool definition the next top-level job would be offered — built-in tools as well as those exposed from active MCP assignments, gated by the session's mode and seat as a real job's registry gates them.
+That estimate SHALL include the system prompt generated from active skill summaries and the persona catalogue, replayed prior messages after compaction and replay-window limits are applied, any conversation a restore attached to the session, any currently running job's prompt and recorded job events (including in-progress tool calls, tool results, and model outputs), and every tool definition the next top-level job would be offered — built-in tools as well as those exposed from active MCP assignments, gated by the session's mode and seat as a real job's registry gates them.
 
 The endpoint describes the next **top-level** job on the session. For a session whose jobs run as subagents, the reported figure is that of a top-level job on it and will exceed what those jobs send; the agreement required with the auto-compaction trigger is agreement for top-level jobs.
 
@@ -859,6 +859,10 @@ Response SHALL include:
 #### Scenario: Session not found
 - **WHEN** a client sends `GET /sessions/{session_id}/context` for a non-existent session
 - **THEN** the response SHALL be HTTP 404
+
+#### Scenario: Running job events count toward context usage
+- **WHEN** a session has an active job with status `running` that has recorded a prompt and one or more `JobEvent`s
+- **THEN** `GET /sessions/{session_id}/context` SHALL include the running job's prompt and recorded events in the estimated next-request context usage
 
 ### Requirement: Session transcript construction has one source of truth
 The agent-orchestrator SHALL construct replay history, compaction checkpoint interpretation, and next-request context estimation from one session transcript Module.

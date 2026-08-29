@@ -14,6 +14,7 @@ from .context_api_test_support import (
     expected_token_breakdown,
     make_completed_job,
     make_completed_job_with_tool_exchange,
+    make_running_job_with_tool_exchange,
     make_session_with_model,
 )
 
@@ -154,6 +155,58 @@ async def test_get_context_metadata_uses_replay_window_not_full_history(tmp_path
         # estimate now costs the built-in tool definitions as well as the MCP
         # ones — the model is offered both.
         assert body["tokens_used"] < 4000
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_get_context_metadata_includes_running_job_events(tmp_path: Path):
+    app, engine, repo = await build_context_test_app(tmp_path)
+    session_id = await make_session_with_model(repo)
+    await make_completed_job(
+        repo, session_id, prompt="prior turn", output="prior reply"
+    )
+
+    try:
+        session = await repo.get_session(session_id)
+        assert session is not None
+
+        with TestClient(app) as client:
+            response_before = client.get(f"/sessions/{session_id}/context")
+            assert response_before.status_code == 200
+            tokens_before = response_before.json()["tokens_used"]
+            replay_before = response_before.json()["token_breakdown"]["replay"]
+
+            # Now create an active running job with tool calls and results
+            await make_running_job_with_tool_exchange(
+                repo,
+                session_id,
+                prompt="running turn with lots of details and state",
+                output="I am calling a tool to investigate",
+                tool_call_id="call_running_1",
+                tool_name="get_game_state",
+                result={"status": "in_progress", "zones": [{"cards": ["a", "b", "c"]}]},
+            )
+
+            response_during = client.get(f"/sessions/{session_id}/context")
+            assert response_during.status_code == 200
+            body_during = response_during.json()
+            tokens_during = body_during["tokens_used"]
+            replay_during = body_during["token_breakdown"]["replay"]
+
+            # Replay and total tokens must increase reflecting the running job's prompt and events
+            assert tokens_during > tokens_before
+            assert replay_during > replay_before
+
+            expected_messages = await build_replay_messages(repo, session_id)
+            expected_tokens = await expected_request_tokens(
+                app, session, expected_messages
+            )
+            expected_breakdown = await expected_token_breakdown(
+                app, session, expected_messages
+            )
+            assert body_during["tokens_used"] == expected_tokens
+            assert body_during["token_breakdown"] == expected_breakdown
     finally:
         await engine.dispose()
 
