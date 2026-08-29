@@ -264,13 +264,11 @@ provide the password through the source environment or `services/game-service/.e
 
 ### Node dependencies and build-script approvals
 
-The two Node projects — `services/dashboard` and `services/smoketest` — are separate pnpm
-projects, each with its own `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
-There is no root workspace, so install from the service directory:
+`services/dashboard` is a standalone pnpm project with its own `package.json`, `pnpm-lock.yaml`,
+and `pnpm-workspace.yaml`. There is no root workspace, so install from the service directory:
 
 ```bash
 cd services/dashboard && pnpm install --frozen-lockfile
-cd services/smoketest && pnpm install --frozen-lockfile
 ```
 
 pnpm refuses to run a dependency's install (build) script unless that package is named in
@@ -279,7 +277,7 @@ in, so a fresh clone installs exactly what CI and the Docker images install, wit
 running `pnpm approve-builds` and without an interactive prompt. Never approve builds
 interactively — that writes per-machine state that nobody else gets.
 
-Both projects also set `strictDepBuilds: true`, so an unapproved build script **fails the
+The dashboard also sets `strictDepBuilds: true`, so an unapproved build script **fails the
 install** rather than warning and carrying on. If a dependency bump introduces one, the
 install stops with `ERR_PNPM_IGNORED_BUILDS` naming the package. Treat that as a review
 step, not a formality: an entry set to `true` lets that third-party package execute code on

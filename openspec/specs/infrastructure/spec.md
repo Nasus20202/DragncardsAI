@@ -158,23 +158,6 @@ volumes.
   lifecycle policy
 - **AND** the engine's assets, runtime, and replay volumes SHALL remain present for the next start
 
-### Requirement: Local smoke-model runtime wiring
-The repository SHALL provide a documented local runtime path for a small `llama.cpp` model used by smoke tests, including the environment configuration needed for the dashboard and agent-orchestrator to target that model.
-
-The smoke-model runtime SHALL remain optional for developers who are not running the smoke workflow.
-
-#### Scenario: Smoke runtime can be started locally
-- **WHEN** a developer follows the documented smoke-test setup for the local model runtime
-- **THEN** the `llama.cpp` server SHALL be startable with the configured model artifact and reachable at the documented local endpoint
-
-#### Scenario: Smoke runtime can be started through compose profile helper
-- **WHEN** a developer runs the documented smoke helper or `make smoke-up` or `make smoke-model`
-- **THEN** Docker Compose SHALL start the `llama-cpp-smoke-model-cache` and `llama-cpp-smoke` services under the optional `smoke` profile using the documented environment defaults
-
-#### Scenario: Normal local stack does not require the smoke runtime
-- **WHEN** a developer starts the normal local stack without the smoke-test workflow
-- **THEN** the dashboard, game-service, and agent-orchestrator SHALL remain runnable without requiring the `llama.cpp` smoke-model process
-
 ### Requirement: Service runtime infrastructure wiring
 The repository's Compose configuration SHALL provide consistent runtime telemetry wiring for `game-service`, `agent-orchestrator`, `dashboard`, and the repo-managed Bifrost gateway when they run in the local stack.
 
@@ -514,9 +497,9 @@ undeclared one as an install failure, so that installing on a machine that has
 never seen this repository produces the same dependency tree as CI without any
 interactive approval step.
 
-`services/dashboard` and `services/smoketest` are independent pnpm projects:
-there is no root `package.json` and no repository-wide pnpm workspace, and each
-project is installed from its own directory. Each SHALL carry its declaration in
+`services/dashboard` is a standalone pnpm project:
+there is no root `package.json` and no repository-wide pnpm workspace, and the
+project is installed from its own directory. It SHALL carry its declaration in
 its own `pnpm-workspace.yaml`, which is the file pnpm 11 reads these settings
 from. The declaration SHALL NOT be recorded as `pnpm.onlyBuiltDependencies` in a
 `package.json`: that key belongs to pnpm 10 and is absent from pnpm 11, so it
@@ -544,7 +527,7 @@ rather than copied from another project or assumed from a package's reputation.
 
 Every install path SHALL pick these settings up without further configuration.
 That holds for the CI workflow, which runs `pnpm install --frozen-lockfile` in
-each project directory, and for the dashboard's Docker build, whose `deps` and
+the project directory, and for the dashboard's Docker build, whose `deps` and
 `builder` stages copy `pnpm-workspace.yaml` alongside `package.json` and
 `pnpm-lock.yaml`.
 
@@ -589,8 +572,7 @@ each project directory, and for the dashboard's Docker build, whose `deps` and
 
 #### Scenario: A project with no build scripts still pins the strict setting
 
-- **WHEN** a project such as `services/smoketest` has no dependency that
-  declares an install script
+- **WHEN** a Node project has no dependency that declares an install script
 - **THEN** it SHALL omit `allowBuilds` entirely and SHALL still set
   `strictDepBuilds: true`, so that a dependency which later introduces one is
   reviewed rather than skipped
