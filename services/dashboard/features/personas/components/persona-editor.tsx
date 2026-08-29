@@ -381,7 +381,10 @@ export function PersonaEditor() {
               (provider) => provider.provider_id === providerId
             );
             const nextModel = nextProvider?.models[0] ?? draft.modelName;
-            const nextEfforts = reasoningEffortsForModel(nextProvider, nextModel);
+            const nextEfforts = reasoningEffortsForModel(
+              nextProvider,
+              nextModel
+            );
             setDraft((current) => ({
               ...current,
               providerId,
@@ -402,7 +405,10 @@ export function PersonaEditor() {
           value={draft.modelName}
           disabled={modelItems.length === 0}
           onChange={(modelName) => {
-            const nextEfforts = reasoningEffortsForModel(selectedProvider, modelName);
+            const nextEfforts = reasoningEffortsForModel(
+              selectedProvider,
+              modelName
+            );
             setDraft((current) => ({
               ...current,
               modelName,
@@ -433,12 +439,10 @@ export function PersonaEditor() {
               label="Reasoning effort"
               items={reasoningEfforts.map((effort) => ({
                 value: effort,
-                label: effort,
+                label: effort.charAt(0).toUpperCase() + effort.slice(1),
               }))}
               value={draft.reasoningEffort}
-              onChange={(v) =>
-                set("reasoningEffort", v)
-              }
+              onChange={(v) => set("reasoningEffort", v)}
             />
             <TextInputField
               id="persona-reasoning-tokens"

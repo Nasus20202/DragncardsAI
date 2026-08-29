@@ -531,7 +531,7 @@ export interface EvaluationSelection {
 /** Reasoning override for the judge, mirroring the orchestrator's shape. */
 export interface JudgeReasoning {
   enabled: boolean;
-  effort?: "low" | "medium" | "high";
+  effort?: string;
   max_tokens?: number | null;
 }
 

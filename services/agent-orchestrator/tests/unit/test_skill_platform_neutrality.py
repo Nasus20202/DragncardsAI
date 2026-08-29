@@ -105,7 +105,10 @@ def test_marvel_lcg_missing_pending_seat_still_blocks_prompting() -> None:
     text = " ".join(MARVEL_COORDINATOR_LOOP.read_text(encoding="utf-8").split())
 
     assert "Prompt only after `pendingSeats` names a seat" in text
-    assert "If no seat is pending, wait for the next state rather than inventing a turn transition." in text
+    assert (
+        "If no seat is pending, wait for the next state rather than inventing a turn transition."
+        in text
+    )
     assert (
         "If a required value is missing or contradictory, perform one fresh state read and then "
         "stop if it is not resolved."

@@ -124,12 +124,16 @@ class ModelReasoning:
             else None
         )
         return cls(
-            mandatory=item.get("mandatory")
-            if isinstance(item.get("mandatory"), bool)
-            else None,
-            default_enabled=item.get("default_enabled")
-            if isinstance(item.get("default_enabled"), bool)
-            else None,
+            mandatory=(
+                item.get("mandatory")
+                if isinstance(item.get("mandatory"), bool)
+                else None
+            ),
+            default_enabled=(
+                item.get("default_enabled")
+                if isinstance(item.get("default_enabled"), bool)
+                else None
+            ),
             supported_efforts=supported_efforts,
             default_effort=(
                 str(item["default_effort"])
@@ -382,8 +386,14 @@ class BifrostClient:
 
     def _model_lookup_ids(self, provider_id: str, model_id: str) -> tuple[str, ...]:
         prefix = self._provider_prefixes[provider_id]
-        qualified = model_id if model_id.startswith(f"{prefix}/") else f"{prefix}/{model_id}"
-        bare = model_id[len(prefix) + 1 :] if model_id.startswith(f"{prefix}/") else model_id
+        qualified = (
+            model_id if model_id.startswith(f"{prefix}/") else f"{prefix}/{model_id}"
+        )
+        bare = (
+            model_id[len(prefix) + 1 :]
+            if model_id.startswith(f"{prefix}/")
+            else model_id
+        )
         return tuple(dict.fromkeys((model_id, qualified, bare)))
 
     async def _enrich_model_infos(
@@ -394,7 +404,9 @@ class BifrostClient:
         except Exception as exc:
             # The compatibility listing remains useful when rich metadata is
             # unavailable, so model discovery never depends on this enrichment.
-            logger.info("Could not enrich model capabilities from Bifrost (%s)", _brief(exc))
+            logger.info(
+                "Could not enrich model capabilities from Bifrost (%s)", _brief(exc)
+            )
             return models
 
         by_id: dict[str, ModelInfo] = {}
@@ -405,7 +417,11 @@ class BifrostClient:
         enriched: list[ModelInfo] = []
         for model in models:
             rich = next(
-                (by_id[candidate] for candidate in self._model_lookup_ids(provider_id, model.id) if candidate in by_id),
+                (
+                    by_id[candidate]
+                    for candidate in self._model_lookup_ids(provider_id, model.id)
+                    if candidate in by_id
+                ),
                 None,
             )
             if rich is None:
@@ -448,7 +464,11 @@ class BifrostClient:
             for candidate in self._model_lookup_ids(provider_id, model.id):
                 by_id.setdefault(candidate, model)
         model = next(
-            (by_id[candidate] for candidate in self._model_lookup_ids(provider_id, model_name) if candidate in by_id),
+            (
+                by_id[candidate]
+                for candidate in self._model_lookup_ids(provider_id, model_name)
+                if candidate in by_id
+            ),
             None,
         )
         return model.reasoning if model is not None else None

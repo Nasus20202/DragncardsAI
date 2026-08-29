@@ -454,7 +454,9 @@ async def test_list_providers_propagates_reasoning_capabilities(tmp_path: Path):
             ]
 
     app, engine = await build_test_app(
-        tmp_path, bifrost_client=CapabilityBifrostClient(), enabled_provider_ids="openai"
+        tmp_path,
+        bifrost_client=CapabilityBifrostClient(),
+        enabled_provider_ids="openai",
     )
     try:
         with TestClient(app) as client:
