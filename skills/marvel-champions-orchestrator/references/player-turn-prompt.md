@@ -14,21 +14,23 @@ Before prompting a seat, the coordinator MUST:
 1. Read `game-service_get_game_state` for the game and the seat's `player_n`. Use the
    platform-neutral `state` object returned by that call, not `/games/{id}/state/raw`, a
    cached tool result, or a player's report.
-2. Confirm that the state is internally usable: `playRound`, `phase`, `mode`, `players`,
-   and `zones` are present; `phase` is one of `setup`, `player`, `villain`, `passive`, or
-   `unknown`; and a present `pendingSeats` list is consistent with the seat being prompted.
-   `phaseLabel` is opaque text and MUST NOT be parsed to recover a phase or turn.
-3. For `marvel-lcg`, obtain the exact current `game-service_list_game_options` response
-   for the assigned seat. The prompt text, option identifiers, targets, payment choices,
-   and any other fields in that response are engine facts. Do not rewrite them as a
-   coordinator-authored choice.
+2. Confirm that the state is internally usable: `playRound`, `phase`, `mode`, `players`, and
+   `zones` are present, and `phase` is one of `setup`, `player`, `villain`, `passive`, or
+   `unknown`. `phaseLabel` is opaque text and MUST NOT be parsed to recover a phase or turn.
+   `pendingSeats` is optional on DragnCards and is not a source of turn authority there. For
+   DragnCards, a usable `phase=player` checkpoint is sufficient for the coordinator's configured
+   sequential seat schedule even when `activeSeat` and `firstPlayer` are absent. For `marvel-lcg`,
+   `pendingSeats` MUST be present and MUST include the seat being prompted.
+3. For `marvel-lcg`, obtain the exact current `game-service_list_game_options` response for the
+   assigned seat. The prompt text, option identifiers, targets, payment choices, and any other
+   fields in that response are engine facts. Do not rewrite them as a coordinator-authored choice.
 
-If a required field is missing or the checkpoint conflicts with the coordinator's last
-verified checkpoint, perform exactly one fresh authoritative state read. If the fresh read
-is still missing or contradictory, stop and report the observed state; do not prompt the
-seat and do not fill the gap from memory. A state change between rounds is expected and is
-not itself an error; the error is relying on two incompatible descriptions of the same
-checkpoint.
+If a required common field is missing or the checkpoint conflicts with the coordinator's last
+verified checkpoint, perform exactly one fresh authoritative state read. For `marvel-lcg`, the
+same applies when `pendingSeats` is absent or does not identify the assigned seat. If the fresh
+read is still missing or contradictory, stop and report the observed state; do not prompt the seat
+and do not fill the gap from memory. Absence of optional DragnCards turn metadata is not a
+missing required field when the phase is confirmed as `player`.
 
 The normalized state is the only source for board facts. In particular:
 

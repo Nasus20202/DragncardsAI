@@ -91,6 +91,31 @@ def test_player_session_system_prompt_invalidates_persistent_facts() -> None:
     assert "villainHitPoints" in prompt
 
 
+
+def test_player_session_turn_authority_is_platform_specific() -> None:
+    dragncards_prompt = build_subagent_system_prompt(
+        SkillRegistry(()),
+        [],
+        platform="dragncards",
+        player_session=True,
+    )
+    marvel_lcg_prompt = build_subagent_system_prompt(
+        SkillRegistry(()),
+        [],
+        platform="marvel-lcg",
+        player_session=True,
+    )
+    dragncards_prompt = " ".join(dragncards_prompt.split())
+    marvel_lcg_prompt = " ".join(marvel_lcg_prompt.split())
+
+    assert "absent `activeSeat`, `firstPlayer`, and `pendingSeats` metadata does not make" in (
+        dragncards_prompt
+    )
+    assert "coordinator owns the configured sequential seat order" in dragncards_prompt
+    assert "`pendingSeats` is engine-owned and must name your assigned seat" in marvel_lcg_prompt
+    assert "If it is absent, contradictory, or does not name you" in marvel_lcg_prompt
+    assert "coordinator owns the configured sequential seat order" not in marvel_lcg_prompt
+
 def _option_messages(options: list[dict[str, object]]) -> list[dict[str, object]]:
     return [
         {
