@@ -228,6 +228,7 @@ async def test_prompt_player_agent_requires_bound_orchestrator_game(
     assert result["is_error"] is True
     assert "Bind the orchestrator session to a game" in result["content"][0]["text"]
 
+
 @pytest.mark.asyncio
 async def test_prompt_player_agent_rejects_child_bound_to_another_game(
     repository: Repository,

@@ -363,7 +363,6 @@ async def test_marvel_hidden_scheme_state_does_not_invent_threat_change(repo):
     assert "unobserved_threat_removal" not in target.verdict_json["flags"]
 
 
-
 @pytest.mark.asyncio
 async def test_marvel_terminal_win_is_recorded_as_authoritative_evidence(repo):
     events = [
@@ -389,6 +388,7 @@ async def test_marvel_terminal_win_is_recorded_as_authoritative_evidence(repo):
 
     assert target.verdict_json["overall_score"] == 7
     assert "terminal_win" in target.verdict_json["flags"]
+
 
 @pytest.mark.asyncio
 async def test_verdict_records_actual_model_and_provider(repo):

@@ -165,7 +165,6 @@ class SessionRepositoryMixin:
             )
             return result.scalars().unique().first()
 
-
     async def get_active_session_by_game_id(self, game_id: str) -> AgentSession | None:
         """Return the most recently created active session bound to a game_id.
 

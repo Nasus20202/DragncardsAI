@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import {
-  contextMetadata,
   getApi,
   installMatchMedia,
   renderPlayWorkspace,
@@ -11,6 +10,14 @@ import {
 import type { ContextMetadata } from "@/features/shared/lib/types";
 
 const api = getApi();
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 describe("PlayWorkspace session selection", () => {
   beforeEach(() => {
@@ -99,7 +106,7 @@ describe("PlayWorkspace session selection", () => {
 
   it("clears context metadata on session change and ignores stale responses", async () => {
     const { promise: session1ContextPromise, resolve: resolveSession1Context } =
-      Promise.withResolvers<ContextMetadata>();
+      createDeferred<ContextMetadata>();
 
     api.listSessions.mockResolvedValue([
       sessionSummary,
@@ -123,7 +130,10 @@ describe("PlayWorkspace session selection", () => {
       })
     );
     api.listSessionMcps.mockResolvedValue([]);
-    api.listSessionJobs.mockResolvedValue({ jobs: [], page: { total: 0, limit: 50, offset: 0 } });
+    api.listSessionJobs.mockResolvedValue({
+      jobs: [],
+      page: { total: 0, limit: 50, offset: 0 },
+    });
     api.getContextMetadata.mockImplementation((id: string) => {
       if (id === "session-1") {
         return session1ContextPromise;

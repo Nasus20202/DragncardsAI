@@ -241,7 +241,7 @@ def _text(value: Any) -> str:
         return value
     try:
         return json.dumps(value, sort_keys=True, default=str)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return str(value)
 
 

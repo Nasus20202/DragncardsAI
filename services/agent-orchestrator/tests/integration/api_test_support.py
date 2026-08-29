@@ -88,22 +88,24 @@ class TruncatingBifrost(FakeBifrost):
         responses: list[ChatResponse] | None = None,
     ):
         super().__init__(
-            responses=responses
-            if responses is not None
-            else [
-                ChatResponse(
-                    content="SEGMENT_A",
-                    tool_calls=[],
-                    raw={},
-                    finish_reason="length",
-                ),
-                ChatResponse(
-                    content="SEGMENT_B",
-                    tool_calls=[],
-                    raw={},
-                    finish_reason="stop",
-                ),
-            ]
+            responses=(
+                responses
+                if responses is not None
+                else [
+                    ChatResponse(
+                        content="SEGMENT_A",
+                        tool_calls=[],
+                        raw={},
+                        finish_reason="length",
+                    ),
+                    ChatResponse(
+                        content="SEGMENT_B",
+                        tool_calls=[],
+                        raw={},
+                        finish_reason="stop",
+                    ),
+                ]
+            )
         )
 
 

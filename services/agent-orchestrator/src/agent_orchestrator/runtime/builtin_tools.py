@@ -978,9 +978,7 @@ def make_prompt_player_agent_handler(
                         "The player agent session is bound to a different game.",
                         is_error=True,
                     )
-                child_platform_value = child_metadata_existing.get(
-                    SESSION_PLATFORM_KEY
-                )
+                child_platform_value = child_metadata_existing.get(SESSION_PLATFORM_KEY)
                 if (
                     child_platform_value is not None
                     and session_platform(existing_child_session) != parent_platform
@@ -1006,10 +1004,9 @@ def make_prompt_player_agent_handler(
                             "The player agent session no longer exists.",
                             is_error=True,
                         )
-                    if (
-                        (updated_child.metadata_json or {}).get(SESSION_GAME_ID_KEY)
-                        != game_id
-                    ):
+                    if (updated_child.metadata_json or {}).get(
+                        SESSION_GAME_ID_KEY
+                    ) != game_id:
                         return _text_result(
                             "The player agent session became bound to another game.",
                             is_error=True,
@@ -1110,9 +1107,7 @@ def make_wait_for_subagent_handler(
         child_job = await repository.get_job(child_job_id)
         if child_job is None:
             return _text_result(
-                describe_child_outcome(
-                    child_job_id, ChildOutcome(kind="missing")
-                ),
+                describe_child_outcome(child_job_id, ChildOutcome(kind="missing")),
                 is_error=True,
             )
         parent_job = await repository.get_job(job_id) if job_id else None

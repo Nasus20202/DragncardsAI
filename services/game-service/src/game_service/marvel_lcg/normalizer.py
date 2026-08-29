@@ -99,9 +99,7 @@ def _integer(value: Any) -> int | None:
     return None
 
 
-def _active_villain_hit_points(
-    cards: Any, visible_seats: Iterable[int]
-) -> int | None:
+def _active_villain_hit_points(cards: Any, visible_seats: Iterable[int]) -> int | None:
     if not isinstance(cards, (list, tuple)):
         return None
     for card in cards:

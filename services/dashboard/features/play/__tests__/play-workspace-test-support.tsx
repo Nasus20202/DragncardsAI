@@ -144,7 +144,6 @@ vi.mock("@/features/play/components/play-transcript", () => ({
     errorText,
     streamState,
     selectedSession,
-    contextMetadata,
     onOpenSettings,
     settingsOpen,
   }: {
@@ -153,7 +152,6 @@ vi.mock("@/features/play/components/play-transcript", () => ({
     errorText: string | null;
     streamState: string;
     selectedSession: SessionDetail | null;
-    contextMetadata: ContextMetadata | null;
     onOpenSettings: () => void;
     settingsOpen: boolean;
   }) => (
