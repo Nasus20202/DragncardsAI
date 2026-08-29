@@ -1509,3 +1509,58 @@ async def test_a_normalised_finish_reason_wins_over_a_vendor_one():
         await client.aclose()
 
     assert response.finish_reason == "length"
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_models_preserves_reasoning_capability_states():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == httpx.URL("http://bifrost/v1/models")
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "openrouter/no-metadata"},
+                    {
+                        "id": "openrouter/selected",
+                        "reasoning": {"supported_efforts": ["minimal", "high"]},
+                    },
+                    {"id": "openrouter/no-reasoning", "reasoning": {"supported_efforts": []}},
+                ]
+            },
+            request=request,
+        )
+
+    client = await _build_client(handler)
+    try:
+        models = await client._fetch_all_models()
+    finally:
+        await client.aclose()
+
+    assert models[0].reasoning is None
+    assert models[1].reasoning is not None
+    assert models[1].reasoning.supported_efforts == ["minimal", "high"]
+    assert models[2].reasoning is not None
+    assert models[2].reasoning.supported_efforts == []
+
+
+@pytest.mark.asyncio
+async def test_cached_reasoning_capabilities_preserve_explicit_empty_list():
+    valkey = _FakeValkey()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "openrouter/no-reasoning", "reasoning": {"supported_efforts": []}}]},
+            request=request,
+        )
+
+    client = await _build_client(handler, valkey=valkey)
+    try:
+        await client._fetch_all_models()
+        cached = await client._fetch_all_models()
+    finally:
+        await client.aclose()
+
+    assert cached[0].reasoning is not None
+    assert cached[0].reasoning.supported_efforts == []
+    assert len(valkey.setex_calls) == 1

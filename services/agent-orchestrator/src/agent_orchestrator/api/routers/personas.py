@@ -12,8 +12,9 @@ one session is the whole reason a persona exists instead of a per-seat row.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from agent_orchestrator.api.reasoning import validate_reasoning_effort
 from agent_orchestrator.api.deps import (
     get_repository,
     get_settings,
@@ -58,6 +59,7 @@ async def get_persona(
 async def set_persona(
     name: str,
     body: PersonaRequest,
+    request: Request,
     repo: Repository = Depends(get_repository),
     settings: Settings = Depends(get_settings),
     registry: SkillRegistry = Depends(get_skill_registry),
@@ -79,6 +81,13 @@ async def set_persona(
 
     gateway_options = dict(body.gateway_options)
     if body.reasoning is not None:
+        if body.reasoning.enabled:
+            await validate_reasoning_effort(
+                request.app.state.bifrost_client,
+                provider_id=body.provider_id,
+                model_name=body.model_name,
+                effort=body.reasoning.effort,
+            )
         gateway_options = fold_reasoning(
             gateway_options,
             enabled=body.reasoning.enabled,

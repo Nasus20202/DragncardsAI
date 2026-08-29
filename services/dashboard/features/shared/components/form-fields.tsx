@@ -285,12 +285,14 @@ export function SwitchField({
   label,
   description,
   checked,
+  disabled,
   onChange,
 }: {
   id?: string;
   label: string;
   description?: string;
   checked: boolean;
+  disabled?: boolean;
   onChange: (v: boolean) => void;
 }) {
   return (
@@ -298,6 +300,7 @@ export function SwitchField({
       label={label}
       description={description}
       checked={checked}
+      disabled={disabled}
       onChange={onChange}
     />
   );

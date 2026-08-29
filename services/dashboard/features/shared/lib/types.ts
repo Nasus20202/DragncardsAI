@@ -7,10 +7,23 @@ export interface PageInfo {
   total: number;
 }
 
+export interface ModelReasoningCapabilities {
+  mandatory?: boolean;
+  default_enabled?: boolean;
+  supported_efforts?: string[];
+  default_effort?: string;
+}
+
+export interface ModelCapabilitiesResponse {
+  reasoning?: ModelReasoningCapabilities | null;
+}
+
 export interface ProviderResponse {
   provider_id: string;
   model_prefix: string;
   models: string[];
+  /** Optional model metadata; absent on catalogs from older orchestrators. */
+  model_capabilities?: Record<string, ModelCapabilitiesResponse>;
   available: boolean;
   error: string | null;
 }
@@ -351,7 +364,7 @@ export interface CustomMcpDraft {
 
 export interface ReasoningDraft {
   enabled: boolean;
-  effort: "low" | "medium" | "high";
+  effort: string;
   maxTokens: string;
 }
 

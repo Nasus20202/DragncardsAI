@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from agent_orchestrator.api.reasoning import validate_gateway_reasoning
 from agent_orchestrator.api.deps import (
     get_live_event_bus,
     get_mcp_tool_catalog,
@@ -464,11 +465,18 @@ async def terminate_session(
 async def set_model_config(
     session_id: str,
     body: ModelConfigRequest,
+    request: Request,
     repo: Repository = Depends(get_repository),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, ModelConfigResponse]:
     if body.provider_id not in settings.enabled_provider_ids:
         raise HTTPException(status_code=400, detail="Unsupported provider")
+    await validate_gateway_reasoning(
+        request.app.state.bifrost_client,
+        provider_id=body.provider_id,
+        model_name=body.model_name,
+        gateway_options=body.gateway_options,
+    )
     item = await repo.set_model_config(
         session_id,
         provider_id=body.provider_id,

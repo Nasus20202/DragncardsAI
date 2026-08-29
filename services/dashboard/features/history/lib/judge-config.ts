@@ -1,6 +1,7 @@
 import {
   clampModelToProvider,
   isWorking,
+  reasoningEffortsForModel,
 } from "@/features/play/lib/session-draft";
 import {
   DashboardConfig,
@@ -17,7 +18,7 @@ export interface JudgeDraft {
   providerId: string;
   modelName: string;
   reasoningEnabled: boolean;
-  reasoningEffort: "low" | "medium" | "high";
+  reasoningEffort: string;
   reasoningMaxTokens: string;
   promptOverride: string;
   selectedSkills: string[];

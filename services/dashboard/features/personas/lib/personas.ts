@@ -23,7 +23,7 @@ export interface PersonaDraft {
   providerId: string;
   modelName: string;
   reasoningEnabled: boolean;
-  reasoningEffort: "low" | "medium" | "high";
+  reasoningEffort: string;
   reasoningMaxTokens: string;
   /** `null` inherits the spawning session's skills; an array replaces them. */
   selectedSkills: string[] | null;
@@ -102,7 +102,10 @@ export function assemblePersonaRequest(draft: PersonaDraft): PersonaRequest {
   }
 
   if (draft.reasoningEnabled) {
-    body.reasoning = { enabled: true, effort: draft.reasoningEffort };
+    body.reasoning = { enabled: true };
+    if (draft.reasoningEffort) {
+      body.reasoning.effort = draft.reasoningEffort;
+    }
     const maxTokens = draft.reasoningMaxTokens.trim();
     if (maxTokens) {
       const parsed = Number(maxTokens);

@@ -9,6 +9,7 @@ import {
   modelOptionsForProvider,
   pruneSkillReferences,
 } from "@/features/history/lib/judge-config";
+import { reasoningEffortsForModel } from "@/features/play/lib/session-draft";
 import { JudgeSkillReferences } from "@/features/history/components/judge-skill-references";
 import {
   ComboSelectField,
@@ -26,12 +27,6 @@ export interface JudgeConfigPanelProps {
   disabled?: boolean;
   onChange: (next: JudgeDraft) => void;
 }
-
-const EFFORT_ITEMS = [
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-];
 
 /**
  * Play-parity judge configuration controls for the Evaluate panel: provider +
@@ -58,6 +53,15 @@ export function JudgeConfigPanel({
     draft.providerId,
     draft.modelName
   );
+  const selectedProvider = providers.find(
+    (provider) => provider.provider_id === draft.providerId
+  );
+  const reasoningEfforts = reasoningEffortsForModel(
+    selectedProvider,
+    draft.modelName
+  );
+  const reasoningEnabled =
+    draft.reasoningEnabled && reasoningEfforts.length > 0;
 
   // Keep the drafted model selectable even when the provider does not offer it,
   // mirroring the fallback `<option>` the plain select used to render.
@@ -108,7 +112,19 @@ export function JudgeConfigPanel({
           const modelName = nextModels.includes(draft.modelName)
             ? draft.modelName
             : (nextModels[0] ?? draft.modelName);
-          onChange({ ...draft, providerId, modelName });
+          const nextProvider = providers.find(
+            (provider) => provider.provider_id === providerId
+          );
+          const nextEfforts = reasoningEffortsForModel(nextProvider, modelName);
+          onChange({
+            ...draft,
+            providerId,
+            modelName,
+            reasoningEnabled: draft.reasoningEnabled && nextEfforts.length > 0,
+            reasoningEffort: nextEfforts.includes(draft.reasoningEffort)
+              ? draft.reasoningEffort
+              : (nextEfforts[0] ?? ""),
+          });
         }}
       />
 
@@ -120,28 +136,41 @@ export function JudgeConfigPanel({
         value={draft.modelName}
         disabled={disabled || modelOptions.length === 0}
         inputTestId="judge-model"
-        onChange={(model) => set("modelName", model)}
+        onChange={(model) => {
+          const nextEfforts = reasoningEffortsForModel(selectedProvider, model);
+          onChange({
+            ...draft,
+            modelName: model,
+            reasoningEnabled: draft.reasoningEnabled && nextEfforts.length > 0,
+            reasoningEffort: nextEfforts.includes(draft.reasoningEffort)
+              ? draft.reasoningEffort
+              : (nextEfforts[0] ?? ""),
+          });
+        }}
       />
 
       <ToggleInfoRow
         label="Reasoning"
-        checked={draft.reasoningEnabled}
-        disabled={disabled}
+        checked={reasoningEnabled}
+        disabled={disabled || reasoningEfforts.length === 0}
         testId="judge-reasoning-enabled"
         onChange={(enabled) => set("reasoningEnabled", enabled)}
       />
 
-      {draft.reasoningEnabled && (
+      {reasoningEnabled && (
         <>
           <SelectField
             id="judge-effort-field"
             label="Reasoning effort"
-            items={EFFORT_ITEMS}
+            items={reasoningEfforts.map((effort) => ({
+              value: effort,
+              label: effort,
+            }))}
             value={draft.reasoningEffort}
             disabled={disabled}
             triggerTestId="judge-reasoning-effort"
             onChange={(effort) =>
-              set("reasoningEffort", effort as "low" | "medium" | "high")
+              set("reasoningEffort", effort)
             }
           />
           <TextInputField

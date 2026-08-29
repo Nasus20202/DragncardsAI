@@ -13,6 +13,7 @@ import {
   setModelConfig,
 } from "@/features/play/lib/client-api";
 import { writeLastUsedDraft } from "@/features/play/lib/last-used-draft";
+import { normalizeReasoningDraft } from "@/features/play/lib/session-draft";
 import {
   deriveSubagentEntries,
   SubagentEntry,
@@ -119,14 +120,20 @@ function normalizeDraft(
   const allowedModels = [...new Set(selectedProvider.models)].sort(
     (left, right) => left.localeCompare(right)
   );
-  if (
-    allowedModels.length === 0 ||
-    allowedModels.includes(nextDraft.modelName)
-  ) {
+  const modelName =
+    allowedModels.length > 0 && !allowedModels.includes(nextDraft.modelName)
+      ? allowedModels[0]
+      : nextDraft.modelName;
+  const reasoning = normalizeReasoningDraft(
+    nextDraft.reasoning,
+    selectedProvider,
+    modelName
+  );
+  if (modelName === nextDraft.modelName && reasoning === nextDraft.reasoning) {
     return nextDraft;
   }
 
-  return { ...nextDraft, modelName: allowedModels[0] };
+  return { ...nextDraft, modelName, reasoning };
 }
 
 export function usePlaySession(): UsePlaySessionResult {

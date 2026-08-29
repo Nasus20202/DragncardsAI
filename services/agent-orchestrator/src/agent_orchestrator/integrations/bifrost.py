@@ -107,11 +107,69 @@ def _stop_reason_from_choice(choice: Any) -> str | None:
 
 
 @dataclass(frozen=True)
+class ModelReasoning:
+    """Optional reasoning capabilities reported by Bifrost for one model."""
+
+    mandatory: bool | None = None
+    default_enabled: bool | None = None
+    supported_efforts: list[str] | None = None
+    default_effort: str | None = None
+
+    @classmethod
+    def from_dict(cls, item: dict[str, Any]) -> "ModelReasoning":
+        raw_efforts = item.get("supported_efforts")
+        supported_efforts = (
+            [str(effort) for effort in raw_efforts]
+            if isinstance(raw_efforts, list)
+            else None
+        )
+        return cls(
+            mandatory=item.get("mandatory")
+            if isinstance(item.get("mandatory"), bool)
+            else None,
+            default_enabled=item.get("default_enabled")
+            if isinstance(item.get("default_enabled"), bool)
+            else None,
+            supported_efforts=supported_efforts,
+            default_effort=(
+                str(item["default_effort"])
+                if item.get("default_effort") is not None
+                else None
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        if self.mandatory is not None:
+            result["mandatory"] = self.mandatory
+        if self.default_enabled is not None:
+            result["default_enabled"] = self.default_enabled
+        if self.supported_efforts is not None:
+            result["supported_efforts"] = list(self.supported_efforts)
+        if self.default_effort is not None:
+            result["default_effort"] = self.default_effort
+        return result
+
+
+@dataclass(frozen=True)
 class ModelInfo:
     id: str
     name: str | None
     supported_methods: list[str]
     context_length: int | None = None
+    reasoning: ModelReasoning | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "supported_methods": list(self.supported_methods),
+        }
+        if self.context_length is not None:
+            result["context_length"] = self.context_length
+        if self.reasoning is not None:
+            result["reasoning"] = self.reasoning.to_dict()
+        return result
 
 
 class BifrostClient:
@@ -233,12 +291,33 @@ class BifrostClient:
         return {"providers": len(provider_ids), "keys_cleared": len(keys)}
 
     @staticmethod
+    def _model_to_dict(model: ModelInfo) -> dict[str, object]:
+        serializer = getattr(model, "to_dict", None)
+        if callable(serializer):
+            return serializer()
+        result: dict[str, object] = {
+            "id": model.id,
+            "name": getattr(model, "name", None),
+            "supported_methods": getattr(model, "supported_methods", []),
+        }
+        context_length = getattr(model, "context_length", None)
+        if context_length is not None:
+            result["context_length"] = context_length
+        return result
+
+    @staticmethod
     def _model_info_from_dict(item: dict) -> ModelInfo:
+        reasoning = item.get("reasoning")
         return ModelInfo(
             id=item["id"],
             name=item.get("name"),
             supported_methods=item.get("supported_methods") or [],
             context_length=item.get("context_length"),
+            reasoning=(
+                ModelReasoning.from_dict(reasoning)
+                if isinstance(reasoning, dict)
+                else None
+            ),
         )
 
     async def list_models(self, provider_id: str) -> list[ModelInfo]:
@@ -292,14 +371,7 @@ class BifrostClient:
         if ttl > 0:
             await self._cache_set(
                 provider_cache_key,
-                [
-                    {
-                        "id": m.id,
-                        "name": m.name,
-                        "supported_methods": m.supported_methods,
-                    }
-                    for m in result
-                ],
+                [self._model_to_dict(m) for m in result],
                 ttl,
             )
         # A successful listing clears any stale negative marker so the provider
@@ -307,6 +379,79 @@ class BifrostClient:
         if negative_ttl > 0:
             await self._cache_del(unavailable_key)
         return result
+
+    def _model_lookup_ids(self, provider_id: str, model_id: str) -> tuple[str, ...]:
+        prefix = self._provider_prefixes[provider_id]
+        qualified = model_id if model_id.startswith(f"{prefix}/") else f"{prefix}/{model_id}"
+        bare = model_id[len(prefix) + 1 :] if model_id.startswith(f"{prefix}/") else model_id
+        return tuple(dict.fromkeys((model_id, qualified, bare)))
+
+    async def _enrich_model_infos(
+        self, provider_id: str, models: list[ModelInfo]
+    ) -> list[ModelInfo]:
+        try:
+            rich_models = await self._fetch_all_models()
+        except Exception as exc:
+            # The compatibility listing remains useful when rich metadata is
+            # unavailable, so model discovery never depends on this enrichment.
+            logger.info("Could not enrich model capabilities from Bifrost (%s)", _brief(exc))
+            return models
+
+        by_id: dict[str, ModelInfo] = {}
+        for model in rich_models:
+            for candidate in self._model_lookup_ids(provider_id, model.id):
+                by_id.setdefault(candidate, model)
+
+        enriched: list[ModelInfo] = []
+        for model in models:
+            rich = next(
+                (by_id[candidate] for candidate in self._model_lookup_ids(provider_id, model.id) if candidate in by_id),
+                None,
+            )
+            if rich is None:
+                enriched.append(model)
+                continue
+            enriched.append(
+                ModelInfo(
+                    id=model.id,
+                    name=model.name or rich.name,
+                    supported_methods=model.supported_methods or rich.supported_methods,
+                    context_length=model.context_length or rich.context_length,
+                    reasoning=rich.reasoning,
+                )
+            )
+        return enriched
+
+    async def list_models_with_capabilities(self, provider_id: str) -> list[ModelInfo]:
+        """List provider models with best-effort rich reasoning metadata."""
+        models = await self.list_models(provider_id)
+        enriched = await self._enrich_model_infos(provider_id, models)
+        ttl = getattr(self, "_models_cache_ttl_int", 0)
+        if ttl > 0:
+            await self._cache_set(
+                self._provider_cache_key(provider_id),
+                [self._model_to_dict(model) for model in enriched],
+                ttl,
+            )
+        return enriched
+
+    async def get_model_reasoning(
+        self, provider_id: str, model_name: str
+    ) -> ModelReasoning | None:
+        """Return rich reasoning metadata, or ``None`` when it is unavailable."""
+        try:
+            rich_models = await self._fetch_all_models()
+        except Exception:
+            return None
+        by_id: dict[str, ModelInfo] = {}
+        for model in rich_models:
+            for candidate in self._model_lookup_ids(provider_id, model.id):
+                by_id.setdefault(candidate, model)
+        model = next(
+            (by_id[candidate] for candidate in self._model_lookup_ids(provider_id, model_name) if candidate in by_id),
+            None,
+        )
+        return model.reasoning if model is not None else None
 
     async def _list_models_uncached(self, provider_id: str) -> list[ModelInfo]:
         headers = {"x-bf-list-models-provider": self._provider_prefixes[provider_id]}
@@ -342,6 +487,11 @@ class BifrostClient:
                     id=str(model_id),
                     name=item.get("name"),
                     supported_methods=list(item.get("supported_methods") or []),
+                    reasoning=(
+                        ModelReasoning.from_dict(item["reasoning"])
+                        if isinstance(item.get("reasoning"), dict)
+                        else None
+                    ),
                 )
             )
         return result
@@ -389,20 +539,17 @@ class BifrostClient:
                     name=item.get("name"),
                     supported_methods=list(item.get("supported_methods") or []),
                     context_length=item.get("context_length"),
+                    reasoning=(
+                        ModelReasoning.from_dict(item["reasoning"])
+                        if isinstance(item.get("reasoning"), dict)
+                        else None
+                    ),
                 )
             )
         if ttl > 0:
             await self._cache_set(
                 cache_key,
-                [
-                    {
-                        "id": m.id,
-                        "name": m.name,
-                        "supported_methods": m.supported_methods,
-                        "context_length": m.context_length,
-                    }
-                    for m in result
-                ],
+                [m.to_dict() for m in result],
                 ttl,
             )
         return result
