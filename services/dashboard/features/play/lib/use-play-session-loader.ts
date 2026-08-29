@@ -57,6 +57,7 @@ interface UsePlaySessionLoaderOptions {
     providerId: string;
     modelName: string;
   } | null>;
+  isCurrentSessionId: (sessionId: string) => boolean;
   refreshContextMetadata: (sessionId: string) => Promise<void>;
   startStreaming: (jobId: string, afterId: string) => void;
   stopStreaming: () => void;
@@ -78,6 +79,7 @@ export function usePlaySessionLoader({
   setErrorText,
   setProvidersNotice,
   committedModelRef,
+  isCurrentSessionId,
   refreshContextMetadata,
   startStreaming,
   stopStreaming,
@@ -85,10 +87,16 @@ export function usePlaySessionLoader({
   const loadAllJobs = useCallback(
     async (sessionId: string): Promise<JobDetail[]> => {
       const summary = await listSessionJobs(sessionId);
+      if (!isCurrentSessionId(sessionId)) {
+        return [];
+      }
       const detailed = await Promise.all(
         summary.jobs.map((item) => getJob(item.id))
       );
       const sorted = [...detailed].sort(compareJobsOldestFirst);
+      if (!isCurrentSessionId(sessionId)) {
+        return sorted;
+      }
       setJobs(sorted);
 
       const unresolvedSubagentJobIds = listUnresolvedSubagentJobIds(sorted);
@@ -96,6 +104,9 @@ export function usePlaySessionLoader({
         const fetched = await Promise.allSettled(
           unresolvedSubagentJobIds.map((id) => getJob(id))
         );
+        if (!isCurrentSessionId(sessionId)) {
+          return sorted;
+        }
         const statusMap = new Map<string, string>();
         for (
           let index = 0;
@@ -114,7 +125,7 @@ export function usePlaySessionLoader({
 
       return sorted;
     },
-    [setChildJobStatuses, setJobs]
+    [isCurrentSessionId, setChildJobStatuses, setJobs]
   );
 
   useEffect(() => {
@@ -271,13 +282,20 @@ export function usePlaySessionLoader({
     const currentSessionId = selectedSessionId;
     const currentConfig = config;
 
+    let cancelled = false;
+
     async function loadSession() {
       try {
-        setStatusText("Loading session...");
+        if (!cancelled && isCurrentSessionId(currentSessionId)) {
+          setStatusText("Loading session...");
+        }
         const [nextSession, nextMcps] = await Promise.all([
           getSession(currentSessionId),
           listSessionMcps(currentSessionId),
         ]);
+        if (cancelled || !isCurrentSessionId(currentSessionId)) {
+          return;
+        }
         const hydratedSession = { ...nextSession, mcps: nextMcps };
         setSelectedSession(hydratedSession);
         const nextDraft = buildDraftFromSession(currentConfig, hydratedSession);
@@ -288,6 +306,9 @@ export function usePlaySessionLoader({
         };
 
         const allJobs = await loadAllJobs(currentSessionId);
+        if (cancelled || !isCurrentSessionId(currentSessionId)) {
+          return;
+        }
         void refreshContextMetadata(currentSessionId);
 
         const newestJob = allJobs.at(-1);
@@ -300,6 +321,9 @@ export function usePlaySessionLoader({
         setStatusText("Ready");
         setErrorText(null);
       } catch (error) {
+        if (cancelled || !isCurrentSessionId(currentSessionId)) {
+          return;
+        }
         setErrorText(
           error instanceof Error ? error.message : "Failed to load session"
         );
@@ -310,11 +334,13 @@ export function usePlaySessionLoader({
     void loadSession();
 
     return () => {
+      cancelled = true;
       stopStreaming();
     };
   }, [
     committedModelRef,
     config,
+    isCurrentSessionId,
     loadAllJobs,
     refreshContextMetadata,
     selectedSessionId,

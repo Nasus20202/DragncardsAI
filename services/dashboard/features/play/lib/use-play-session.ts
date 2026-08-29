@@ -17,6 +17,7 @@ import {
   deriveSubagentEntries,
   SubagentEntry,
 } from "@/features/play/lib/play-session-events";
+import { useContextMetadataPolling } from "@/features/play/lib/use-context-metadata-polling";
 import { usePlaySessionActions } from "@/features/play/lib/use-play-session-actions";
 import { useJobStreaming } from "@/features/play/lib/use-job-streaming";
 import { usePlaySessionLoader } from "@/features/play/lib/use-play-session-loader";
@@ -95,6 +96,11 @@ interface UsePlaySessionResult {
   deleteMcpFromRegistry: (mcpName: string) => Promise<void>;
 }
 
+type ContextRefreshState = {
+  promise: Promise<void>;
+  queued: boolean;
+};
+
 function normalizeDraft(
   nextDraft: SessionDraft | null,
   providers: ProviderResponse[]
@@ -147,6 +153,10 @@ export function usePlaySession(): UsePlaySessionResult {
   const [isCancellingExecution, setIsCancellingExecution] = useState(false);
   const [contextMetadata, setContextMetadata] =
     useState<ContextMetadata | null>(null);
+  const selectedSessionIdRef = useRef<string | null>(null);
+  const contextRefreshesRef = useRef(
+    new Map<string, ContextRefreshState>()
+  );
   const committedModelRef = useRef<{
     providerId: string;
     modelName: string;
@@ -189,7 +199,12 @@ export function usePlaySession(): UsePlaySessionResult {
   );
 
   const persistSelectedSessionId = useCallback((id: string | null) => {
+    const previousId = selectedSessionIdRef.current;
+    selectedSessionIdRef.current = id;
     setSelectedSessionId(id);
+    if (previousId !== id) {
+      setContextMetadata(null);
+    }
     writeSelectedSessionIdToUrl(id);
     if (typeof window === "undefined") {
       return;
@@ -201,14 +216,55 @@ export function usePlaySession(): UsePlaySessionResult {
     }
   }, []);
 
+  const isCurrentSessionId = useCallback(
+    (id: string) => selectedSessionIdRef.current === id,
+    []
+  );
+
+  // Keep one request per session in flight. A lifecycle trigger that arrives
+  // while one is running queues a trailing refresh so terminal state is not
+  // hidden behind a response that began before the trigger.
   const refreshContextMetadata = useCallback(async (sessionId: string) => {
-    try {
-      const metadata = await getContextMetadata(sessionId);
-      setContextMetadata(metadata);
-    } catch {
-      // Non-fatal: ignore metadata fetch errors
+    while (true) {
+      const inFlight = contextRefreshesRef.current.get(sessionId);
+      if (inFlight) {
+        inFlight.queued = true;
+        await inFlight.promise;
+        if (
+          !inFlight.queued ||
+          contextRefreshesRef.current.get(sessionId) !== inFlight
+        ) {
+          return;
+        }
+        contextRefreshesRef.current.delete(sessionId);
+        continue;
+      }
+
+      const request = getContextMetadata(sessionId)
+        .then((metadata) => {
+          if (isCurrentSessionId(sessionId)) {
+            setContextMetadata(metadata);
+          }
+        })
+        .catch(() => {
+          // Non-fatal: ignore metadata fetch errors
+        });
+      const state: ContextRefreshState = { promise: request, queued: false };
+      contextRefreshesRef.current.set(sessionId, state);
+      await request;
+      if (
+        !state.queued ||
+        contextRefreshesRef.current.get(sessionId) !== state
+      ) {
+        if (contextRefreshesRef.current.get(sessionId) === state) {
+          contextRefreshesRef.current.delete(sessionId);
+        }
+        return;
+      }
+      contextRefreshesRef.current.delete(sessionId);
     }
-  }, []);
+  }, [isCurrentSessionId]);
+
 
   const refreshSessions = useCallback(
     async (preserveSelected = true): Promise<SessionSummary[]> => {
@@ -246,6 +302,11 @@ export function usePlaySession(): UsePlaySessionResult {
       refreshContextMetadata,
       refreshSessions: refreshCurrentSessions,
     });
+  useContextMetadataPolling({
+    sessionId: selectedSessionId,
+    isActive: streamingJobId !== null,
+    refreshContextMetadata,
+  });
 
   const streamingJob = useMemo(
     () => jobs.find((job) => job.id === streamingJobId) ?? null,
@@ -280,6 +341,7 @@ export function usePlaySession(): UsePlaySessionResult {
     setErrorText,
     setProvidersNotice,
     committedModelRef,
+    isCurrentSessionId,
     refreshContextMetadata,
     startStreaming,
     stopStreaming,

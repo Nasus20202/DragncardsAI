@@ -144,6 +144,7 @@ vi.mock("@/features/play/components/play-transcript", () => ({
     errorText,
     streamState,
     selectedSession,
+    contextMetadata,
     onOpenSettings,
     settingsOpen,
   }: {
@@ -152,6 +153,7 @@ vi.mock("@/features/play/components/play-transcript", () => ({
     errorText: string | null;
     streamState: string;
     selectedSession: SessionDetail | null;
+    contextMetadata: ContextMetadata | null;
     onOpenSettings: () => void;
     settingsOpen: boolean;
   }) => (
@@ -179,6 +181,7 @@ vi.mock("@/features/play/components/play-prompt-box", () => ({
     selectedSession,
     activeJobId,
     cancelPending,
+    contextMetadata,
     attachedSkills,
     onPromptChange,
     onSubmit,
@@ -191,6 +194,7 @@ vi.mock("@/features/play/components/play-prompt-box", () => ({
     selectedSession: SessionDetail | null;
     activeJobId: string | null;
     cancelPending: boolean;
+    contextMetadata?: ContextMetadata | null;
     attachedSkills: string[];
     onPromptChange: (value: string) => void;
     onSubmit: () => void;
@@ -203,6 +207,9 @@ vi.mock("@/features/play/components/play-prompt-box", () => ({
       <div data-testid="prompt-session">{selectedSession?.id ?? "none"}</div>
       <div data-testid="active-job-id">{activeJobId ?? "none"}</div>
       <div data-testid="cancel-pending">{String(cancelPending)}</div>
+      <div data-testid="context-tokens">
+        {contextMetadata?.tokens_used ?? "none"}
+      </div>
       <div data-testid="prompt-attached-skills">{attachedSkills.join(",")}</div>
       {["skill-a", "skill-b"].map((skillName) => (
         <div key={skillName}>

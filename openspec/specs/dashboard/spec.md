@@ -189,6 +189,9 @@ The indicator SHALL update by re-fetching `GET /sessions/{session_id}/context` a
 - A job completes, fails, or is cancelled
 - A compaction fires
 - The user saves session configuration, including model, skill, MCP, or replay-limit changes
+- A generation starts, immediately and then periodically while that generation remains active
+
+While a generation is active, the dashboard SHALL schedule the next context refresh only after the previous refresh settles, so context requests for the same session SHALL NOT overlap. The active-generation polling SHALL stop and its timer SHALL be cleaned up when generation ends, the selected session changes, or the Play workspace unmounts. Existing loading and non-fatal error behavior SHALL remain unchanged.
 
 The progress bar SHALL change color based on usage ratio:
 - Below 70%: neutral
@@ -224,6 +227,30 @@ The progress bar SHALL change color based on usage ratio:
 - **WHEN** replay-window settings exclude older history from the next request
 - **THEN** the dashboard SHALL reflect the bounded estimate returned by the agent-orchestrator instead of implying that all prior messages still count equally
 
+#### Scenario: Context usage refreshes while generation is active
+- **WHEN** a selected session has an active generation
+- **THEN** the dashboard SHALL refresh context metadata immediately
+- **AND** SHALL re-fetch the context endpoint periodically until that generation ends
+- **AND** SHALL display each settled response in the context health indicator
+
+#### Scenario: Polling does not overlap context requests
+- **WHEN** a context refresh takes longer than the polling interval
+- **THEN** the dashboard SHALL wait for that request to settle before scheduling the next poll
+- **AND** SHALL NOT issue concurrent context requests for the same active generation
+
+#### Scenario: Polling cleans up when generation ends
+- **WHEN** an active generation completes, fails, or is cancelled
+- **THEN** the dashboard SHALL stop scheduling active-generation polls and SHALL immediately perform the existing terminal refresh
+- **AND** SHALL clear the polling timer
+
+#### Scenario: Polling cleans up when its dependencies change
+- **WHEN** the selected session changes or the Play workspace unmounts while polling
+- **THEN** the dashboard SHALL clear the active-generation timer
+- **AND** SHALL NOT schedule another poll for the previous session
+
+#### Scenario: Context refresh errors remain non-fatal
+- **WHEN** a context metadata request fails during initial refresh or polling
+- **THEN** the dashboard SHALL preserve the existing context display and continue the Play workspace without surfacing a new fatal error
 ### Requirement: Compact button
 The dashboard UI SHALL display a `Compact` button within the context health indicator widget. Clicking it SHALL send `POST /sessions/{session_id}/compact` and refresh the indicator on success.
 
