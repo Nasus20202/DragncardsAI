@@ -256,7 +256,9 @@ async def test_session_transcript_builds_context_metadata(
         request_tools=request_tools,
     )
 
-    replay_messages = await transcript.build_message_history(session.id, "")
+    replay_messages = await transcript.build_message_history(
+        session.id, "", include_running=True
+    )
     expected_breakdown = {
         "system_prompt": estimate_tokens_for_messages(
             [
@@ -280,3 +282,96 @@ async def test_session_transcript_builds_context_metadata(
     assert metadata.token_breakdown == expected_breakdown
     assert metadata.tokens_used == sum(expected_breakdown.values())
     assert 0.0 <= metadata.usage_ratio <= 1.0
+
+
+@pytest.mark.asyncio
+async def test_session_transcript_includes_running_job_events_in_context_metadata(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    session = await _make_session(repository)
+    await _complete_job(
+        repository, session.id, "first prompt", "first reply", tokens=100
+    )
+
+    transcript = SessionTranscriptService(repository)
+    mcp_tool_catalog = McpToolCatalog(FakeMcp())
+    reloaded_session = await repository.get_session(session.id)
+    assert reloaded_session is not None
+    request_tools = await resolve_session_request_tools(
+        mcp_tool_catalog=mcp_tool_catalog,
+        skill_registry=skill_registry,
+        repository=repository,
+        live_event_bus=InMemoryLiveEventBus(),
+        session=reloaded_session,
+    )
+
+    metadata_before = await transcript.build_context_metadata(
+        session.id,
+        128000,
+        skill_registry=skill_registry,
+        request_tools=request_tools,
+    )
+
+    # Create an active running job with prompt and events
+    running_job = await repository.enqueue_prompt_job(
+        session.id, prompt="second turn in progress", metadata_json={}, max_attempts=1
+    )
+    await repository.claim_next_job()
+    await repository.append_event(
+        running_job.id,
+        session.id,
+        "tool_call",
+        {
+            "tool_call_id": "tc_run_1",
+            "exposed_tool_name": "game-service_get_game_state",
+            "tool_name": "get_game_state",
+            "assignment": "game-service",
+            "server_url": "http://localhost:4001/mcp/",
+            "arguments": {},
+        },
+    )
+    await repository.append_event(
+        running_job.id,
+        session.id,
+        "tool_result",
+        {
+            "tool_call_id": "tc_run_1",
+            "exposed_tool_name": "game-service_get_game_state",
+            "tool_name": "get_game_state",
+            "assignment": "game-service",
+            "server_url": "http://localhost:4001/mcp/",
+            "is_error": False,
+            "result": {"villain": "Rhino", "hp": 14, "threat": 3},
+        },
+    )
+    await repository.append_event(
+        running_job.id,
+        session.id,
+        "model_output",
+        {"text": "I see Rhino at 14 HP. Continuing attack..."},
+    )
+
+    metadata_after = await transcript.build_context_metadata(
+        session.id,
+        128000,
+        skill_registry=skill_registry,
+        request_tools=request_tools,
+    )
+
+    assert (
+        metadata_after.token_breakdown["replay"]
+        > metadata_before.token_breakdown["replay"]
+    )
+    assert metadata_after.tokens_used > metadata_before.tokens_used
+
+    # Normal replay without include_running does not see running job
+    completed_replay = await transcript.build_message_history(
+        session.id, "", include_running=False
+    )
+    assert len(completed_replay) == 2  # first prompt + first reply
+
+    # Live replay sees both completed and running events
+    live_replay = await transcript.build_message_history(
+        session.id, "", include_running=True
+    )
+    assert len(live_replay) > 2

@@ -86,12 +86,15 @@ class SessionTranscriptService:
         self,
         session_id: str,
         current_job_id: str,
+        *,
+        include_running: bool = False,
     ) -> list[dict[str, Any]]:
         compaction = await self._repository.get_latest_compaction_record(session_id)
         prior_jobs = await self._repository.list_completed_jobs_for_replay(
             session_id,
             current_job_id=current_job_id,
             after_job_id=compaction.covers_up_to_job_id if compaction else None,
+            include_running=include_running,
         )
         replay_settings = await self._repository.get_session_replay_settings(session_id)
 
@@ -197,9 +200,8 @@ class SessionTranscriptService:
             replay_messages = list(restored_conversation_context(session_obj))
             if multi_turn_memory:
                 replay_messages += await self.build_message_history(
-                    session_id, current_job_id=""
+                    session_id, current_job_id="", include_running=True
                 )
-
         estimate = estimate_request(
             system_prompt=system_prompt,
             tools=request_tools if session_obj is not None else [],
@@ -222,9 +224,11 @@ async def build_message_history(
     repository: Repository,
     session_id: str,
     current_job_id: str,
+    *,
+    include_running: bool = False,
 ) -> list[dict[str, Any]]:
     return await SessionTranscriptService(repository).build_message_history(
-        session_id, current_job_id
+        session_id, current_job_id, include_running=include_running
     )
 
 

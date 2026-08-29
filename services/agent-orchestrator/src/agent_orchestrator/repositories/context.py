@@ -129,14 +129,20 @@ class ContextRepositoryMixin:
         *,
         current_job_id: str,
         after_job_id: str | None,
+        include_running: bool = False,
     ) -> list[Job]:
         """Return jobs for this session in chronological order for context replay.
 
-        Includes completed, interrupted, and failed jobs so that partial work
-        from interrupted/failed runs is visible to the next job's context.
+        Includes completed, interrupted, and failed jobs (and optionally running jobs
+        when estimating in-flight session context) so that partial work is visible.
         Excludes current_job_id.  If after_job_id is set, only returns jobs
         created strictly after that job (compaction checkpoint).
         """
+        statuses = (
+            ["completed", "interrupted", "failed", "running"]
+            if include_running
+            else ["completed", "interrupted", "failed"]
+        )
         async with self._session_factory() as session:
             query = (
                 select(Job)
@@ -146,7 +152,7 @@ class ContextRepositoryMixin:
                 .where(
                     Job.session_id == session_id,
                     Job.id != current_job_id,
-                    Job.status.in_(["completed", "interrupted", "failed"]),
+                    Job.status.in_(statuses),
                     Job.job_type != "compaction",
                 )
             )
