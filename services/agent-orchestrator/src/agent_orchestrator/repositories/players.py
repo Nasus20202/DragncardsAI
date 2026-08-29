@@ -89,6 +89,33 @@ class PlayerConfigRepositoryMixin:
             )
             return result.rowcount == 1
 
+    async def reset_player_agent_sessions(self, session_id: str) -> list[str]:
+        """Clear and return persistent seat sessions for a replay boundary.
+
+        The links are cleared in one transaction so a subsequent prompt cannot
+        reuse a child after the parent has moved to a replacement game. Callers
+        terminate the returned sessions separately to keep their transcripts.
+        """
+        async with self._session_factory() as session, session.begin():
+            result = await session.execute(
+                select(SessionPlayerConfig)
+                .where(
+                    SessionPlayerConfig.session_id == session_id,
+                    SessionPlayerConfig.agent_session_id.is_not(None),
+                )
+                .with_for_update()
+            )
+            items = list(result.scalars().unique())
+            agent_session_ids = [
+                item.agent_session_id
+                for item in items
+                if item.agent_session_id is not None
+            ]
+            for item in items:
+                item.agent_session_id = None
+                item.updated_at = utc_now()
+            return agent_session_ids
+
     async def delete_player_config(self, session_id: str, player_id: str) -> bool:
         async with self._session_factory() as session, session.begin():
             item = await session.get(SessionPlayerConfig, (session_id, player_id))

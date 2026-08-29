@@ -67,8 +67,13 @@ class FakeBifrost:
 
 
 class FakeMcp:
-    def __init__(self, tool_names: tuple[str, ...] = ("next_step",)):
+    def __init__(
+        self,
+        tool_names: tuple[str, ...] = ("next_step",),
+        results: dict[str, dict] | None = None,
+    ):
         self.tool_names = tool_names
+        self.results = results or {}
         self.calls = []
 
     async def list_tools(self, server_url, transport, headers=None):
@@ -87,7 +92,10 @@ class FakeMcp:
         self.calls.append(
             {"server_url": server_url, "tool_name": tool_name, "arguments": arguments}
         )
-        return {"is_error": False, "content": [{"type": "text", "text": "done"}]}
+        return self.results.get(
+            tool_name,
+            {"is_error": False, "content": [{"type": "text", "text": "done"}]},
+        )
 
 
 @pytest.fixture
@@ -376,6 +384,7 @@ async def _run_single_tool_call(
     tool_name: str,
     arguments: dict,
     mcp_tool_names: tuple[str, ...] = ("next_step",),
+    mcp_results: dict[str, dict] | None = None,
 ):
     """Run one job whose model asks for exactly one tool call, then finishes."""
     job = await repo.enqueue_prompt_job(
@@ -385,7 +394,7 @@ async def _run_single_tool_call(
     claimed = await repo.claim_next_job()
     assert claimed is not None
 
-    mcp = FakeMcp(mcp_tool_names)
+    mcp = FakeMcp(mcp_tool_names, results=mcp_results)
     prompt_run = _make_prompt_run_service(
         repo,
         FakeBifrost(
@@ -508,6 +517,129 @@ async def test_unbound_session_can_discover_and_bind_its_first_game(
     bound = await repository.get_session(seat.id)
     assert bound is not None
     assert (bound.metadata_json or {}).get(SESSION_GAME_ID_KEY) == "game-b"
+
+
+@pytest.mark.asyncio
+async def test_create_game_rebinds_and_rotates_persistent_seat_sessions(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    parent = await _prepare_session(repository)
+    await repository.update_session(
+        parent.id, metadata_json={SESSION_GAME_ID_KEY: "game-a"}
+    )
+    await repository.update_session_mode(
+        parent.id, session_mode=SESSION_MODE_ORCHESTRATED
+    )
+    await repository.upsert_player_config(
+        parent.id,
+        "player1",
+        display_name="Captain Marvel",
+        provider_id=None,
+        model_name=None,
+        gateway_options={},
+        provider_options={},
+        skills=[],
+    )
+    child = await repository.create_session(
+        "player1",
+        {
+            SESSION_GAME_ID_KEY: "game-a",
+            SESSION_ORCHESTRATOR_ID_KEY: parent.id,
+            SESSION_PLAYER_ID_KEY: "player1",
+        },
+    )
+    assert await repository.set_player_agent_session(parent.id, "player1", child.id)
+    creation_result = {
+        "is_error": False,
+        "content": [
+            {
+                "type": "text",
+                "text": '{"session":{"session_id":"game-b","platform":"marvel-lcg"}}',
+            }
+        ],
+    }
+
+    _, mcp, _ = await _run_single_tool_call(
+        repository,
+        skill_registry,
+        parent.id,
+        tool_name="game-service_create_game",
+        arguments={},
+        mcp_tool_names=("create_game",),
+        mcp_results={"create_game": creation_result},
+    )
+
+    assert len(mcp.calls) == 1
+    rebound = await repository.get_session(parent.id)
+    assert rebound is not None
+    assert (rebound.metadata_json or {})[SESSION_GAME_ID_KEY] == "game-b"
+    assert (rebound.metadata_json or {})["platform"] == "marvel-lcg"
+    seat = await repository.get_player_config(parent.id, "player1")
+    assert seat is not None
+    assert seat.agent_session_id is None
+    retired = await repository.get_session(child.id)
+    assert retired is not None
+    assert retired.status == "terminated"
+
+    _, followup_mcp, followup_events = await _run_single_tool_call(
+        repository,
+        skill_registry,
+        parent.id,
+        tool_name="game-service_next_step",
+        arguments={"session_id": "game-b"},
+    )
+    assert followup_mcp.calls[0]["arguments"] == {"session_id": "game-b"}
+    assert not [
+        event
+        for event in followup_events
+        if event.event_type == "tool_result" and event.payload_json.get("is_error")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_first_create_game_binding_does_not_rotate_seat_sessions(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    parent = await _prepare_session(repository)
+    await repository.update_session_mode(
+        parent.id, session_mode=SESSION_MODE_ORCHESTRATED
+    )
+    await repository.upsert_player_config(
+        parent.id,
+        "player1",
+        display_name=None,
+        provider_id=None,
+        model_name=None,
+        gateway_options={},
+        provider_options={},
+        skills=[],
+    )
+    child = await repository.create_session(
+        "player1",
+        {SESSION_ORCHESTRATOR_ID_KEY: parent.id, SESSION_PLAYER_ID_KEY: "player1"},
+    )
+    assert await repository.set_player_agent_session(parent.id, "player1", child.id)
+    creation_result = {
+        "is_error": False,
+        "content": [{"type": "text", "text": '{"session":{"session_id":"game-a"}}'}],
+    }
+
+    await _run_single_tool_call(
+        repository,
+        skill_registry,
+        parent.id,
+        tool_name="game-service_create_game",
+        arguments={},
+        mcp_tool_names=("create_game",),
+        mcp_results={"create_game": creation_result},
+    )
+
+    seat = await repository.get_player_config(parent.id, "player1")
+    assert seat is not None
+    assert seat.agent_session_id == child.id
+    preserved = await repository.get_session(child.id)
+    assert preserved is not None
+    assert preserved.status == "active"
 
 
 @pytest.mark.asyncio
@@ -826,3 +958,62 @@ async def test_a_seat_scope_refusal_is_published_under_its_durable_event_id(
         assert published[0].payload_json == stored[0].payload_json
     finally:
         await subscriber.aclose()
+
+
+@pytest.mark.asyncio
+async def test_game_binding_guard_refuses_prefixed_resolver_and_prevents_dispatch(
+    repository: Repository, skill_registry: SkillRegistry
+):
+    session = await _prepare_session(repository)
+    await repository.update_session(
+        session.id,
+        metadata_json={"game_id": "game-original"},
+    )
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="attach", metadata_json={}, max_attempts=1
+    )
+    assert job is not None
+    claimed = await repository.claim_next_job()
+    assert claimed is not None
+
+    mcp = FakeMcp(
+        ("attach_game",),
+        results={"attach_game": {"session_id": "game-foreign"}},
+    )
+    prompt_run = _make_prompt_run_service(
+        repository,
+        FakeBifrost(
+            responses=[
+                ChatResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            name="game-service_attach_game",
+                            arguments={"room_slug": "foreign-slug"},
+                        )
+                    ],
+                    raw={},
+                ),
+                ChatResponse(content="done", tool_calls=[], raw={}),
+            ]
+        ),
+        mcp,
+        skill_registry,
+    )
+
+    await prompt_run.run(claimed)
+
+    assert mcp.calls == []
+    stored = [
+        event
+        for event in await repository.list_events(job.id)
+        if event.event_type == "tool_result"
+    ]
+    assert len(stored) == 1
+    assert stored[0].payload_json.get("is_error") is True
+    assert "bound game" in str(stored[0].payload_json.get("result"))
+    assert "foreign-slug" not in str(stored[0].payload_json.get("result"))
+    refreshed_session = await repository.get_session(session.id)
+    assert refreshed_session is not None
+    assert refreshed_session.metadata_json.get("game_id") == "game-original"

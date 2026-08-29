@@ -118,23 +118,8 @@ class WorkerService:
         job = await self._repository.get_job(job_id)
         if job is None or job.status != "queued":
             return
-        # Claim the job manually
-        claimed = None
-        for _ in range(20):
-            claimed = await self._repository.claim_next_job()
-            if claimed is not None and claimed.id == job_id:
-                break
-            if claimed is not None:
-                # Put it back by treating it as a job we don't run
-                # This should not happen in normal usage; just log
-                logger.warning(
-                    "run_child_job claimed unexpected job %s while waiting for %s",
-                    claimed.id,
-                    job_id,
-                )
-                break
-            await asyncio.sleep(0.01)
-        if claimed is not None and claimed.id == job_id:
+        claimed = await self._repository.claim_job(job_id)
+        if claimed is not None:
             await self._run_job(claimed)
 
     async def stop(self) -> None:

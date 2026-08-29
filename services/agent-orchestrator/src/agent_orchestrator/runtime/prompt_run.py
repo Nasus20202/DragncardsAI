@@ -826,7 +826,7 @@ class PromptRunService:
                         if definition is not None:
                             binding_violation = check_game_session_binding(
                                 assignment=definition.assignment_name,
-                                tool_name=tool_call.name,
+                                tool_name=definition.actual_name,
                                 arguments=tool_call.arguments,
                                 bound_game_id=self._session_game_id(session),
                             )
@@ -1234,9 +1234,20 @@ class PromptRunService:
             if argument_game_id is not None and result_game_id is not None:
                 if argument_game_id != result_game_id:
                     return None
-            if existing is not None and (
-                argument_game_id not in (None, existing)
-                or result_game_id not in (None, existing)
+            replay_rebind = (
+                existing is not None
+                and is_orchestrated(session)
+                and tool_name == "create_game"
+                and result_game_id is not None
+                and result_game_id != existing
+            )
+            if (
+                existing is not None
+                and not replay_rebind
+                and (
+                    argument_game_id not in (None, existing)
+                    or result_game_id not in (None, existing)
+                )
             ):
                 return None
             extracted = result_game_id or argument_game_id
@@ -1251,6 +1262,7 @@ class PromptRunService:
                         arguments=arguments,
                         expected_game_id=extracted,
                     ),
+                    rotate_player_sessions=replay_rebind,
                 )
             # Session-creating tools are not themselves game moves.
             return None
@@ -1309,7 +1321,12 @@ class PromptRunService:
         return game_id
 
     async def _persist_game_id(
-        self, session: Any, game_id: str, *, platform: str | None = None
+        self,
+        session: Any,
+        game_id: str,
+        *,
+        platform: str | None = None,
+        rotate_player_sessions: bool = False,
     ) -> None:
         metadata = dict(getattr(session, "metadata_json", None) or {})
         changed = False
@@ -1323,17 +1340,32 @@ class PromptRunService:
             return
         session.metadata_json = metadata
         try:
-            updated = await self._repository.update_session(
-                session.id,
-                preserve_metadata_keys={
-                    SESSION_GAME_ID_KEY,
-                    SESSION_PLATFORM_KEY,
-                    SESSION_RESTORED_CONTEXT_KEY,
-                },
-                metadata_json=metadata,
-            )
-            if updated is not None:
-                session.metadata_json = updated.metadata_json
+            if rotate_player_sessions:
+                updated = await self._repository.replace_game_binding(
+                    session.id,
+                    game_id,
+                    platform=platform,
+                    metadata_json=metadata,
+                )
+            else:
+                updated = await self._repository.update_session(
+                    session.id,
+                    preserve_metadata_keys={
+                        SESSION_GAME_ID_KEY,
+                        SESSION_PLATFORM_KEY,
+                        SESSION_RESTORED_CONTEXT_KEY,
+                    },
+                    metadata_json=metadata,
+                )
+            if updated is None:
+                return
+            session.metadata_json = updated.metadata_json
+            if rotate_player_sessions:
+                old_child_ids = await self._repository.reset_player_agent_sessions(
+                    session.id
+                )
+                for child_id in old_child_ids:
+                    await self._repository.terminate_session(child_id)
         except Exception:
             logger.warning(
                 "Failed to persist game_id %s for session %s",

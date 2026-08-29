@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from agent_orchestrator.runtime.game_session_guard import (
     GameSessionBindingViolation,
     check_game_session_binding,
@@ -41,6 +43,28 @@ def test_unbound_session_can_make_first_discovery_call() -> None:
         )
         is None
     )
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("game-service_attach_game", {"room_slug": "foreign-room"}),
+        ("game-service_lookup_session_by_slug", {"room_slug": "foreign-room"}),
+        ("game-service_list_games", {}),
+    ],
+)
+def test_bound_session_refuses_existing_game_enumerators(
+    tool_name: str, arguments: dict
+) -> None:
+    violation = check_game_session_binding(
+        assignment="game-service",
+        tool_name=tool_name.removeprefix("game-service_"),
+        arguments=arguments,
+        bound_game_id="game-a",
+    )
+
+    assert isinstance(violation, GameSessionBindingViolation)
+    assert "foreign-room" not in violation.message
 
 
 def test_non_game_service_call_is_not_game_bound() -> None:

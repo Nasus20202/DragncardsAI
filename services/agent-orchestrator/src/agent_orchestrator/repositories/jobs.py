@@ -66,7 +66,8 @@ class JobRepositoryMixin:
         async with self._session_factory() as session, session.begin():
             stmt = (
                 select(Job)
-                .where(Job.status == "queued")
+                .join(AgentSession, Job.session_id == AgentSession.id)
+                .where(Job.status == "queued", AgentSession.status == "active")
                 .order_by(Job.created_at.asc())
                 .limit(1)
                 .with_for_update(skip_locked=True)
@@ -83,6 +84,29 @@ class JobRepositoryMixin:
         loaded = await self.get_job(job_id)
         assert loaded is not None
         return loaded
+
+    async def claim_job(self, job_id: str) -> Job | None:
+        """Atomically claim a queued job when its session is still active."""
+        async with self._session_factory() as session, session.begin():
+            stmt = (
+                select(Job)
+                .join(AgentSession, Job.session_id == AgentSession.id)
+                .where(
+                    Job.id == job_id,
+                    Job.status == "queued",
+                    AgentSession.status == "active",
+                )
+                .with_for_update(skip_locked=True)
+            )
+            result = await session.execute(stmt)
+            job = result.scalars().first()
+            if job is None:
+                return None
+            job.status = "running"
+            job.started_at = utc_now()
+            job.updated_at = utc_now()
+            job.attempts += 1
+        return await self.get_job(job_id)
 
     async def list_session_jobs(
         self,
