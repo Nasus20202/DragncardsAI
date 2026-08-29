@@ -1,12 +1,24 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class ModelReasoningResponse(BaseModel):
+    mandatory: bool | None = None
+    default_enabled: bool | None = None
+    supported_efforts: list[str] | None = None
+    default_effort: str | None = None
+
+
+class ModelCapabilitiesResponse(BaseModel):
+    reasoning: ModelReasoningResponse | None = None
 
 
 class ProviderResponse(BaseModel):
     provider_id: str
     model_prefix: str
     models: list[str]
+    model_capabilities: dict[str, ModelCapabilitiesResponse] = Field(default_factory=dict)
     available: bool
     error: str | None = None
 

@@ -113,9 +113,10 @@ export function applyReasoningToGatewayOptions(
     return nextOptions;
   }
 
-  const reasoningOptions: Record<string, JsonValue> = {
-    effort: reasoning.effort,
-  };
+  const reasoningOptions: Record<string, JsonValue> = {};
+  if (reasoning.effort) {
+    reasoningOptions.effort = reasoning.effort;
+  }
   const maxTokens = reasoning.maxTokens.trim();
   if (maxTokens) {
     const parsed = Number(maxTokens);
@@ -148,6 +149,47 @@ export function createDefaultDraft(config: DashboardConfig): SessionDraft {
     allowedSubagents: [],
     sessionMode: "chat",
   };
+}
+
+/**
+ * A provider the user can actually select right now: marked available and
+ * exposing at least one model.
+ */
+export const LEGACY_REASONING_EFFORTS = ["low", "medium", "high"] as const;
+
+/**
+ * Resolve the effort options advertised for one provider model. Missing
+ * metadata, including a missing supported_efforts field, retains the legacy
+ * options; an explicit empty list is authoritative and returns no options.
+ */
+export function reasoningEffortsForModel(
+  provider: ProviderResponse | undefined,
+  modelName: string
+): string[] {
+  const supportedEfforts =
+    provider?.model_capabilities?.[modelName]?.reasoning?.supported_efforts;
+  return supportedEfforts === undefined
+    ? [...LEGACY_REASONING_EFFORTS]
+    : [...supportedEfforts];
+}
+
+/**
+ * Keep a draft's effort valid when its provider/model changes. An explicit
+ * empty capability also disables reasoning because there is no selectable
+ * effort to send.
+ */
+export function normalizeReasoningDraft(
+  draft: ReasoningDraft,
+  provider: ProviderResponse | undefined,
+  modelName: string
+): ReasoningDraft {
+  const efforts = reasoningEffortsForModel(provider, modelName);
+  const effort = efforts.includes(draft.effort) ? draft.effort : efforts[0] ?? "";
+  const enabled = efforts.length > 0 && draft.enabled;
+  if (enabled === draft.enabled && effort === draft.effort) {
+    return draft;
+  }
+  return { ...draft, enabled, effort };
 }
 
 /**

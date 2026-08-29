@@ -17,7 +17,10 @@ import {
   TextInputField,
   TextareaField,
 } from "@/features/shared/components/form-fields";
-import { isWorking } from "@/features/play/lib/session-draft";
+import {
+  isWorking,
+  reasoningEffortsForModel,
+} from "@/features/play/lib/session-draft";
 import { McpSection } from "@/features/play/components/mcp-section";
 import { PersonaPicker } from "@/features/personas/components/persona-picker";
 import { SubagentAllowlist } from "@/features/personas/components/subagent-allowlist";
@@ -30,11 +33,15 @@ const MODE_LOCKED_REASON =
 
 function ReasoningSection({
   draft,
+  provider,
   set,
 }: {
   draft: SessionDraft;
+  provider: ProviderResponse | undefined;
   set: <K extends keyof SessionDraft>(key: K, value: SessionDraft[K]) => void;
 }) {
+  const efforts = reasoningEffortsForModel(provider, draft.modelName);
+  const reasoningDisabled = efforts.length === 0;
   return (
     <>
       <SwitchField
@@ -42,6 +49,7 @@ function ReasoningSection({
         label="Reasoning stream"
         description="Stream the model's chain-of-thought."
         checked={draft.reasoning.enabled}
+        disabled={reasoningDisabled}
         onChange={(value) =>
           set("reasoning", { ...draft.reasoning, enabled: value })
         }
@@ -52,16 +60,15 @@ function ReasoningSection({
           <SelectField
             id="cfg-effort"
             label="Reasoning effort"
-            items={[
-              { value: "low", label: "Low" },
-              { value: "medium", label: "Medium" },
-              { value: "high", label: "High" },
-            ]}
+            items={efforts.map((effort) => ({
+              value: effort,
+              label: effort,
+            }))}
             value={draft.reasoning.effort}
             onChange={(value) =>
               set("reasoning", {
                 ...draft.reasoning,
-                effort: value as "low" | "medium" | "high",
+                effort: value,
               })
             }
           />
@@ -243,7 +250,11 @@ export function PlayConfigPanel({
 
             <Separator />
 
-            <ReasoningSection draft={draft} set={set} />
+            <ReasoningSection
+              draft={draft}
+              provider={providers.find((p) => p.provider_id === draft.providerId)}
+              set={set}
+            />
 
             <Separator />
 

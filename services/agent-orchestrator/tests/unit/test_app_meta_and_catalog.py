@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_orchestrator.integrations.bifrost import BifrostClient, BifrostError
+from agent_orchestrator.integrations.bifrost import (
+    BifrostClient,
+    BifrostError,
+    ModelInfo,
+    ModelReasoning,
+)
 
 from .app_test_support import (
     UNIT_ENABLED_PROVIDER_IDS,
@@ -239,6 +244,7 @@ async def test_list_providers_keeps_unprefixed_lmstudio_models(tmp_path: Path):
                 "provider_id": "lmstudio",
                 "model_prefix": "lmstudio",
                 "models": ["lmstudio/backup-local-model"],
+                "model_capabilities": {},
                 "available": True,
                 "error": None,
             }
@@ -422,5 +428,61 @@ async def test_list_providers_includes_prefixed_models_for_openrouter(tmp_path: 
         providers = {item["provider_id"]: item for item in response.json()["providers"]}
         assert "openrouter" in providers
         assert providers["openrouter"]["models"] == ["openrouter/test-model"]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_list_providers_propagates_reasoning_capabilities(tmp_path: Path):
+    class CapabilityBifrostClient(FakeBifrostClient):
+        async def list_models_with_capabilities(self, provider_id: str):
+            assert provider_id == "openai"
+            return [
+                ModelInfo("openai/no-metadata", None, []),
+                ModelInfo(
+                    "openai/selected",
+                    None,
+                    [],
+                    reasoning=ModelReasoning(supported_efforts=["minimal", "high"]),
+                ),
+                ModelInfo(
+                    "openai/no-reasoning",
+                    None,
+                    [],
+                    reasoning=ModelReasoning(supported_efforts=[]),
+                ),
+            ]
+
+    app, engine = await build_test_app(
+        tmp_path, bifrost_client=CapabilityBifrostClient(), enabled_provider_ids="openai"
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get("/providers")
+        assert response.status_code == 200
+        provider = response.json()["providers"][0]
+        assert provider["models"] == [
+            "openai/no-metadata",
+            "openai/selected",
+            "openai/no-reasoning",
+        ]
+        assert provider["model_capabilities"] == {
+            "openai/selected": {
+                "reasoning": {
+                    "mandatory": None,
+                    "default_enabled": None,
+                    "supported_efforts": ["minimal", "high"],
+                    "default_effort": None,
+                }
+            },
+            "openai/no-reasoning": {
+                "reasoning": {
+                    "mandatory": None,
+                    "default_enabled": None,
+                    "supported_efforts": [],
+                    "default_effort": None,
+                }
+            },
+        }
     finally:
         await engine.dispose()

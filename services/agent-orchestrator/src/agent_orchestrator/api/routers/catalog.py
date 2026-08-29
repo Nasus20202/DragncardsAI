@@ -9,6 +9,8 @@ from agent_orchestrator.config import Settings
 from agent_orchestrator.integrations.bifrost import BifrostError
 from agent_orchestrator.runtime.skills import SkillRegistry, reference_files_under
 from agent_orchestrator.schemas.catalog import (
+    ModelCapabilitiesResponse,
+    ModelReasoningResponse,
     ProviderCacheRefreshResponse,
     ProviderResponse,
     SkillDefinitionResponse,
@@ -32,17 +34,28 @@ async def _build_provider_response(
     timeout_seconds: float,
 ) -> ProviderResponse:
     try:
+        list_models = getattr(
+            bifrost_client, "list_models_with_capabilities", bifrost_client.list_models
+        )
         model_infos = await asyncio.wait_for(
-            bifrost_client.list_models(provider_id),
+            list_models(provider_id),
             timeout=timeout_seconds,
         )
-        models = [
-            model.id for model in model_infos if model.id.startswith(f"{model_prefix}/")
+        selected_models = [
+            model for model in model_infos if model.id.startswith(f"{model_prefix}/")
         ]
+        model_capabilities = {
+            model.id: ModelCapabilitiesResponse(
+                reasoning=ModelReasoningResponse(**model.reasoning.to_dict())
+            )
+            for model in selected_models
+            if getattr(model, "reasoning", None) is not None
+        }
         return ProviderResponse(
             provider_id=provider_id,
             model_prefix=model_prefix,
-            models=models,
+            models=[model.id for model in selected_models],
+            model_capabilities=model_capabilities,
             available=True,
             error=None,
         )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -18,7 +18,7 @@ class PlayerReasoningConfig(StrictRequest):
     """
 
     enabled: bool = True
-    effort: Literal["low", "medium", "high"] | None = None
+    effort: str | None = Field(default=None, min_length=1, max_length=64)
     max_tokens: int | None = Field(default=None, ge=1)
 
 

@@ -22,7 +22,10 @@ import {
   formatAllowedTools,
   parseAllowedTools,
 } from "@/features/personas/lib/personas";
-import { isWorking } from "@/features/play/lib/session-draft";
+import {
+  isWorking,
+  reasoningEffortsForModel,
+} from "@/features/play/lib/session-draft";
 import {
   ComboSelectField,
   SelectField,
@@ -208,6 +211,12 @@ export function PersonaEditor() {
   const selectedProvider = providers.find(
     (provider) => provider.provider_id === draft.providerId
   );
+  const reasoningEfforts = reasoningEffortsForModel(
+    selectedProvider,
+    draft.modelName
+  );
+  const reasoningEnabled =
+    draft.reasoningEnabled && reasoningEfforts.length > 0;
   const modelItems = (selectedProvider?.models ?? []).map((model) => ({
     value: model,
     label: model,
@@ -367,7 +376,24 @@ export function PersonaEditor() {
           label="Provider"
           items={providerItems}
           value={draft.providerId}
-          onChange={(v) => set("providerId", v)}
+          onChange={(providerId) => {
+            const nextProvider = providers.find(
+              (provider) => provider.provider_id === providerId
+            );
+            const nextModel = nextProvider?.models[0] ?? draft.modelName;
+            const nextEfforts = reasoningEffortsForModel(nextProvider, nextModel);
+            setDraft((current) => ({
+              ...current,
+              providerId,
+              modelName: nextModel,
+              reasoningEnabled:
+                current.reasoningEnabled && nextEfforts.length > 0,
+              reasoningEffort: nextEfforts.includes(current.reasoningEffort)
+                ? current.reasoningEffort
+                : (nextEfforts[0] ?? ""),
+            }));
+            setIsDraftEdited(true);
+          }}
         />
         <ComboSelectField
           id="persona-model"
@@ -375,7 +401,19 @@ export function PersonaEditor() {
           items={modelItems}
           value={draft.modelName}
           disabled={modelItems.length === 0}
-          onChange={(v) => set("modelName", v)}
+          onChange={(modelName) => {
+            const nextEfforts = reasoningEffortsForModel(selectedProvider, modelName);
+            setDraft((current) => ({
+              ...current,
+              modelName,
+              reasoningEnabled:
+                current.reasoningEnabled && nextEfforts.length > 0,
+              reasoningEffort: nextEfforts.includes(current.reasoningEffort)
+                ? current.reasoningEffort
+                : (nextEfforts[0] ?? ""),
+            }));
+            setIsDraftEdited(true);
+          }}
         />
 
         <Separator />
@@ -384,22 +422,22 @@ export function PersonaEditor() {
           id="persona-reasoning"
           label="Reasoning"
           description="Ask the provider for a reasoning stream for this persona."
-          checked={draft.reasoningEnabled}
+          checked={reasoningEnabled}
+          disabled={reasoningEfforts.length === 0}
           onChange={(v) => set("reasoningEnabled", v)}
         />
-        {draft.reasoningEnabled && (
+        {reasoningEnabled && (
           <>
             <SelectField
               id="persona-effort"
               label="Reasoning effort"
-              items={[
-                { value: "low", label: "Low" },
-                { value: "medium", label: "Medium" },
-                { value: "high", label: "High" },
-              ]}
+              items={reasoningEfforts.map((effort) => ({
+                value: effort,
+                label: effort,
+              }))}
               value={draft.reasoningEffort}
               onChange={(v) =>
-                set("reasoningEffort", v as "low" | "medium" | "high")
+                set("reasoningEffort", v)
               }
             />
             <TextInputField
