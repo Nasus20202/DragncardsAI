@@ -149,6 +149,63 @@ async def test_marvel_catalog_ids_are_opaque_and_creation_preserves_deck_order()
     ]
 
 
+async def test_marvel_catalog_id_survives_leading_relative_path_change():
+    client = _catalog_client()
+    client.list_scenarios = AsyncMock(
+        side_effect=[
+            ["./data/scenarios/rhino.json"],
+            ["data/scenarios/rhino.json"],
+        ]
+    )
+    client.list_starter_deck = AsyncMock(
+        side_effect=[
+            ["./deck/starter/spider_man.json"],
+            ["deck/starter/spider_man.json"],
+        ]
+    )
+    client.get_scenario_json = AsyncMock(return_value='{"scenario":true}')
+    client.get_hero_json = AsyncMock(return_value='{"hero":"spider-man"}')
+
+    platform = MarvelLcgPlatform("http://engine", "password", http_client=client)
+    catalog = await platform.setup_catalog()
+    spider_id = catalog["hero_decks"][0]["id"]
+
+    assert spider_id == "hero-deck:377e837cafe661012d4e09eb"
+    await platform.create_table(
+        MagicMock(),
+        MarvelLcgCreateSpec(
+            platform="marvel-lcg",
+            scenario_id=catalog["scenarios"][0]["id"],
+            hero_decks=(HeroDeckSelection("player1", spider_id),),
+        ),
+    )
+
+    client.get_scenario_json.assert_awaited_once_with("data/scenarios/rhino.json")
+    client.get_hero_json.assert_awaited_once_with("deck/starter/spider_man.json")
+    assert client.new_game.await_args.args[0].hero_json == ['{"hero":"spider-man"}']
+
+
+async def test_marvel_catalog_aliases_do_not_accept_raw_paths():
+    client = _catalog_client()
+    platform = MarvelLcgPlatform("http://engine", "password", http_client=client)
+    scenario_id = platform._catalog_id("scenario", "scenario-a.json")
+
+    with pytest.raises(SessionError, match="Unknown marvel-lcg hero_deck_id"):
+        await platform.resolve_create_spec(
+            MarvelLcgCreateSpec(
+                platform="marvel-lcg",
+                scenario_id=scenario_id,
+                hero_decks=(
+                    HeroDeckSelection("player1", "./deck/starter/spider_man.json"),
+                ),
+            )
+        )
+
+    client.get_scenario_json.assert_not_awaited()
+    client.get_hero_json.assert_not_awaited()
+    client.new_game.assert_not_awaited()
+
+
 async def test_invalid_marvel_setup_fails_before_table_creation():
     client = _catalog_client()
     platform = MarvelLcgPlatform("http://engine", "password", http_client=client)
