@@ -28,27 +28,33 @@ use an `instance_id` copied from the neutral state.
 4. Resolve hero and scenario set ids by name; never hardcode UUIDs.
 5. Load one hero deck per seat, then the villain/scenario set.
 6. Mulligan each seat and delegate a state read confirming the deck, hand, and hero.
-7. Read neutral state after setup. Record `playRound`, `stepId`, `phase`, `phaseLabel`,
-   and the first player.
+7. Read neutral state after setup. Record `playRound`, `stepId`, `phase`, `phaseLabel`, and the
+   first-player value when it is present. The first-player value is optional in the normalized
+   DragnCards projection and is not a prerequisite for a player-phase turn.
 8. If the state is `stepId == "0.0"` and `phase == "passive"` (Beginning of Round),
    the coordinator must call `next_step` once. Do not prompt a seat while the phase is
    `passive`.
-9. Re-read neutral state and require `phase == "player"` before scheduling a seat. If
-   the expected player phase is not observed, stop and report the observed state; do not
-   prompt a seat and do not infer success from the `next_step` response.
-10. Prompt the first seat only after the player-phase checkpoint succeeds.
+9. Re-read neutral state and require `phase == "player"` before scheduling a seat. A confirmed
+   DragnCards player phase is sufficient even when `activeSeat`, `firstPlayer`, and
+   `pendingSeats` are absent; schedule the configured seats in sequential player order. If the
+   player phase is not observed, stop and report the observed state; do not prompt a seat and do
+   not infer success from the `next_step` response.
+10. Prompt the first configured seat only after the player-phase checkpoint succeeds.
+
 
 ## Round order
 
 1. Re-read neutral state at the start of each player phase. Stop immediately if the
    normalized state reports `mode=win` or `mode=loss`; never infer a terminal result from a
    card name, HP arithmetic, threat value, or a seat report.
-2. Record the observed `playRound`, `phase`, and first-player value. If the state is the
-   DragnCards Beginning-of-Round checkpoint (`stepId == "0.0"` and `phase == "passive"`),
+2. Record the observed `playRound`, `phase`, and first-player value when present. If the state is
+   the DragnCards Beginning-of-Round checkpoint (`stepId == "0.0"` and `phase == "passive"`),
    the coordinator must call `next_step` once.
-3. Re-read neutral state and require `phase == "player"` before prompting any seat. If the
-   expected player phase is not observed, report the observed normalized state and stop. Do
-   not prompt a seat while the phase is `passive` or `villain`.
+3. Re-read neutral state and require `phase == "player"` before prompting any seat. A confirmed
+   player phase remains usable without `activeSeat`, `firstPlayer`, or `pendingSeats`; prompt
+   every configured seat in sequential player order. If the expected player phase is not
+   observed, report the observed normalized state and stop. Do not prompt a seat while the phase
+   is `passive` or `villain`.
 4. For each configured seat in player order, build one prompt using
    `references/player-turn-prompt.md`: include only the latest verified normalized state and
    the seat's own visible projection. Wait for and verify each report before continuing.
@@ -59,7 +65,8 @@ use an `instance_id` copied from the neutral state.
 8. Re-read state, check normalized terminal mode, and begin the next `playRound`, applying the
    player-phase checkpoint before scheduling its first seat.
 
-The coordinator must not pay a hero's costs or choose a hero's attack, thwart, defense, or
-form change. A seat's player-phase action may be composed, but its report and the resulting
-normalized state are the evidence used for evaluation. A missing or contradictory checkpoint
-gets one fresh state read and then a stop; it never gets a guessed prompt.
+The coordinator must not pay a hero's costs or choose a hero's attack, thwart, defense, or form
+change. A seat's player-phase action may be composed, but its report and the resulting
+normalized state are the evidence used for evaluation. A missing common field or contradictory
+checkpoint gets one fresh state read and then a stop; absence of optional DragnCards turn
+metadata does not.

@@ -29,7 +29,11 @@ Player prompts are data-boundary messages, not opportunities for coordinator adv
 one from the latest successful normalized `game-service_get_game_state` response and, for
 `marvel-lcg`, the exact current `game-service_list_game_options` response. Never fill omitted
 state fields from an earlier checkpoint, a player report, printed card memory, or a guess.
-Missing or contradictory authority gets one fresh read and then a stop.
+Apply the platform's turn checkpoint: on DragnCards, a usable state with `phase=player` is
+sufficient to continue the configured sequential seat order even when `activeSeat`,
+`firstPlayer`, and `pendingSeats` are absent; on `marvel-lcg`, `pendingSeats` is engine-owned
+and the seat being prompted must be named there. A missing common state field or a contradiction
+gets one fresh read and then a stop if unresolved.
 
 ## Separation of authority
 
@@ -66,8 +70,10 @@ remaining authoritative HP or stage data with `mode=in progress` must be reporte
    and verify each seat has its expected hero and initial hand.
 3. **Observe:** read neutral state and record `playRound`, `phase`, `phaseLabel`, and
    terminal conditions. Treat `phaseLabel` as opaque.
-4. **Schedule:** prompt only the seat whose turn or pending decision the platform says
-   is active, then wait and verify its report.
+4. **Schedule:** on DragnCards, after a confirmed `phase: player`, prompt configured
+   seats in sequential order even when `activeSeat`, `firstPlayer`, or `pendingSeats`
+   is absent. On marvel-lcg, prompt only a seat the platform reports as active in
+   `pendingSeats`, then wait and verify its report.
 5. **Resolve:** apply only the shared automation assigned to the coordinator by the
    selected platform reference.
 6. **Report:** keep a compact round log and stop immediately on win, loss, or an

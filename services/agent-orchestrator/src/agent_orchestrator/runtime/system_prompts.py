@@ -145,17 +145,37 @@ context, not current state. At the beginning of every invocation, discard those 
 
 The current prompt's `AUTHORITATIVE STATE CHECKPOINT` is the only current board source. It
 must be a complete, normalized `game-service_get_game_state` state for your assigned seat.
-For `marvel-lcg`, the current `ENGINE PROMPT` is the exact successful
-`game-service_list_game_options` response for that seat. If either block is absent,
-incomplete, or contradictory, perform one fresh authoritative state read before any move.
-If the fresh read does not resolve the problem, stop and report the observed state; never
-fill a missing value from replayed context.
+Never fill a missing value from replayed context, a previous report, or a guess.
 
 Report a terminal outcome only when the latest normalized state reports `mode=win` or
 `mode=loss`, or the exact current engine response is terminal. Missing
 `villainHitPoints`, a threat value, an old HP value, a stage-looking card name, or a player
 claim never proves defeat. When authoritative HP or stage data remains and `mode` is
 `in progress`, report the game as ongoing."""
+
+DRAGNCARDS_PLAYER_SESSION_AUTHORITY = """For a `dragncards` session, a usable checkpoint has
+the common board fields (`playRound`, `phase`, `mode`, `players`, and `zones`) and
+`phase=player`; absent `activeSeat`, `firstPlayer`, and `pendingSeats` metadata does not make
+the checkpoint incomplete. The coordinator owns the configured sequential seat order, so use
+the current checkpoint for your own turn rather than stopping solely for those absent fields.
+If a common checkpoint field is absent or contradictory, perform one fresh authoritative state
+read; if it remains unresolved, stop and report the observed state."""
+
+MARVEL_LCG_PLAYER_SESSION_AUTHORITY = """For a `marvel-lcg` session, the current prompt also
+contains the exact successful `game-service_list_game_options` response for your seat.
+`pendingSeats` is engine-owned and must name your assigned seat before you act. If it is absent,
+contradictory, or does not name you, perform one fresh authoritative state read; if the fresh
+read does not resolve the problem, stop and report the observed state. A common checkpoint
+field that is absent or contradictory receives the same one fresh read and stop treatment."""
+
+
+def _player_session_memory_contract(platform: str) -> str:
+    authority = (
+        MARVEL_LCG_PLAYER_SESSION_AUTHORITY
+        if normalize_platform(platform) == PLATFORM_MARVEL_LCG
+        else DRAGNCARDS_PLAYER_SESSION_AUTHORITY
+    )
+    return f"{PLAYER_SESSION_MEMORY_CONTRACT}\n\n{authority}"
 
 
 def _skills_section(
@@ -254,7 +274,7 @@ def build_subagent_system_prompt(
     # This is inserted before any persona text so a user-authored persona cannot
     # weaken the seat's freshness or terminal-state contract.
     if player_session:
-        parts.append(PLAYER_SESSION_MEMORY_CONTRACT)
+        parts.append(_player_session_memory_contract(platform))
     persona_section = _persona_section(persona_prompt)
     if persona_section is not None:
         parts.append(persona_section)

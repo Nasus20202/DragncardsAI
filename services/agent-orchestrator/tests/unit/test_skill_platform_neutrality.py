@@ -82,12 +82,34 @@ def test_dragncards_round_loop_enters_player_phase_before_prompting() -> None:
 
     assert "Do not prompt a seat while the phase is `passive`." in text
     assert text.index("Read neutral state after setup") < text.index(
-        "Prompt the first seat"
+        "Prompt the first configured seat"
     )
     assert text.index("call `next_step`") < text.index(
         'Re-read neutral state and require `phase == "player"`'
     )
-    assert "If the expected player phase is not observed, stop and report" in text
+    assert "If the player phase is not observed, stop and report" in text
+
+
+def test_dragncards_missing_turn_metadata_keeps_configured_seat_schedule() -> None:
+    text = " ".join(DRAGNCARDS_COORDINATOR_LOOP.read_text(encoding="utf-8").split())
+
+    assert (
+        "A confirmed DragnCards player phase is sufficient even when `activeSeat`, "
+        "`firstPlayer`, and `pendingSeats` are absent"
+    ) in text
+    assert "prompt every configured seat in sequential player order" in text
+    assert "absence of optional DragnCards turn metadata does not" in text
+
+
+def test_marvel_lcg_missing_pending_seat_still_blocks_prompting() -> None:
+    text = " ".join(MARVEL_COORDINATOR_LOOP.read_text(encoding="utf-8").split())
+
+    assert "Prompt only after `pendingSeats` names a seat" in text
+    assert "If no seat is pending, wait for the next state rather than inventing a turn transition." in text
+    assert (
+        "If a required value is missing or contradictory, perform one fresh state read and then "
+        "stop if it is not resolved."
+    ) in text
 
 
 def test_player_skill_scopes_every_state_read_to_the_assigned_seat() -> None:
