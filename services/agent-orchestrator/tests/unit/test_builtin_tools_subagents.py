@@ -21,6 +21,33 @@ from .builtin_tools_test_support import (
 )
 
 
+async def _owned_parent_and_child(repository: Repository):
+    session = await repository.create_session("parent", {})
+    parent_job = await repository.enqueue_prompt_job(
+        session.id, prompt="orchestrate", metadata_json={}, max_attempts=1
+    )
+    assert parent_job is not None
+    child_session = await repository.create_session("child", {})
+    child_job = await repository.enqueue_prompt_job(
+        child_session.id,
+        prompt="child",
+        metadata_json={},
+        max_attempts=1,
+        parent_job_id=parent_job.id,
+    )
+    assert child_job is not None
+    return session, parent_job, child_job
+
+
+class RejectingLiveEventBus:
+    def __init__(self):
+        self.subscriptions: list[str] = []
+
+    async def subscribe(self, child_job_id: str):
+        self.subscriptions.append(child_job_id)
+        raise AssertionError("unauthorized waits must not subscribe")
+
+
 @pytest.mark.asyncio
 async def test_spawn_subagent_returns_immediately_with_child_job_id(
     repository: Repository,
@@ -231,9 +258,12 @@ async def test_wait_for_subagent_returns_error_for_missing_job(
     repository: Repository,
     live_event_bus: InMemoryLiveEventBus,
 ):
+    session, parent_job, _ = await _owned_parent_and_child(repository)
     handler = make_wait_for_subagent_handler(
         live_event_bus=live_event_bus,
         repository=repository,
+        session_id=session.id,
+        job_id=parent_job.id,
     )
 
     result = await handler({"child_job_id": "missing-job"})
@@ -247,17 +277,16 @@ async def test_wait_for_subagent_returns_completed_result_without_subscribing(
     repository: Repository,
     live_event_bus: InMemoryLiveEventBus,
 ):
-    session = await repository.create_session("child", {})
-    child_job = await repository.enqueue_prompt_job(
-        session.id, prompt="done", metadata_json={}, max_attempts=1
-    )
-    assert child_job is not None
+    session, parent_job, child_job = await _owned_parent_and_child(repository)
+    await repository.claim_next_job()
     await repository.claim_next_job()
     await repository.mark_job_completed(child_job.id, "child output")
 
     handler = make_wait_for_subagent_handler(
         live_event_bus=live_event_bus,
         repository=repository,
+        session_id=session.id,
+        job_id=parent_job.id,
     )
 
     result = await handler({"child_job_id": child_job.id})
@@ -267,15 +296,88 @@ async def test_wait_for_subagent_returns_completed_result_without_subscribing(
 
 
 @pytest.mark.asyncio
+async def test_wait_for_subagent_rejects_a_foreign_parent_without_polling(
+    repository: Repository,
+):
+    session, parent_job, _ = await _owned_parent_and_child(repository)
+    foreign_parent = await repository.enqueue_prompt_job(
+        session.id, prompt="other parent", metadata_json={}, max_attempts=1
+    )
+    assert foreign_parent is not None
+    foreign_child = await repository.enqueue_prompt_job(
+        session.id,
+        prompt="foreign child",
+        metadata_json={},
+        max_attempts=1,
+        parent_job_id=foreign_parent.id,
+    )
+    assert foreign_child is not None
+    await repository.mark_job_completed(foreign_child.id, "foreign secret")
+
+    bus = RejectingLiveEventBus()
+    handler = make_wait_for_subagent_handler(
+        live_event_bus=bus,
+        repository=repository,
+        session_id=session.id,
+        job_id=parent_job.id,
+    )
+
+    result = await handler({"child_job_id": foreign_child.id})
+
+    assert result["is_error"] is True
+    text = result["content"][0]["text"]
+    assert text == "Subagent job is not a child of the current parent job."
+    assert "foreign secret" not in text
+    assert bus.subscriptions == []
+
+
+@pytest.mark.asyncio
+async def test_wait_for_subagent_rejects_a_foreign_session_without_polling(
+    repository: Repository,
+):
+    session, parent_job, _ = await _owned_parent_and_child(repository)
+    foreign_session = await repository.create_session("foreign", {})
+    foreign_parent = await repository.enqueue_prompt_job(
+        foreign_session.id,
+        prompt="foreign parent",
+        metadata_json={},
+        max_attempts=1,
+    )
+    assert foreign_parent is not None
+    foreign_child = await repository.enqueue_prompt_job(
+        foreign_session.id,
+        prompt="foreign child",
+        metadata_json={},
+        max_attempts=1,
+        parent_job_id=foreign_parent.id,
+    )
+    assert foreign_child is not None
+    await repository.mark_job_completed(foreign_child.id, "foreign secret")
+
+    bus = RejectingLiveEventBus()
+    handler = make_wait_for_subagent_handler(
+        live_event_bus=bus,
+        repository=repository,
+        session_id=session.id,
+        job_id=foreign_parent.id,
+    )
+
+    result = await handler({"child_job_id": foreign_child.id})
+
+    assert result["is_error"] is True
+    text = result["content"][0]["text"]
+    assert text == "Subagent job is not a child of the current parent job."
+    assert "foreign secret" not in text
+    assert bus.subscriptions == []
+
+
+@pytest.mark.asyncio
 async def test_wait_for_subagent_returns_error_for_terminal_failure_status(
     repository: Repository,
     live_event_bus: InMemoryLiveEventBus,
 ):
-    session = await repository.create_session("child", {})
-    child_job = await repository.enqueue_prompt_job(
-        session.id, prompt="fail", metadata_json={}, max_attempts=1
-    )
-    assert child_job is not None
+    session, parent_job, child_job = await _owned_parent_and_child(repository)
+    await repository.claim_next_job()
     await repository.claim_next_job()
     await repository.mark_job_failed(
         child_job.id,
@@ -287,6 +389,8 @@ async def test_wait_for_subagent_returns_error_for_terminal_failure_status(
     handler = make_wait_for_subagent_handler(
         live_event_bus=live_event_bus,
         repository=repository,
+        session_id=session.id,
+        job_id=parent_job.id,
     )
 
     result = await handler({"child_job_id": child_job.id})
@@ -302,15 +406,13 @@ async def test_wait_for_subagent_waits_for_completion_event(
     repository: Repository,
     live_event_bus: InMemoryLiveEventBus,
 ):
-    session = await repository.create_session("child", {})
-    child_job = await repository.enqueue_prompt_job(
-        session.id, prompt="wait", metadata_json={}, max_attempts=1
-    )
-    assert child_job is not None
+    session, parent_job, child_job = await _owned_parent_and_child(repository)
 
     handler = make_wait_for_subagent_handler(
         live_event_bus=live_event_bus,
         repository=repository,
+        session_id=session.id,
+        job_id=parent_job.id,
     )
 
     async def publish_completion():
@@ -332,15 +434,13 @@ async def test_wait_for_subagent_returns_event_reason_on_failure(
     repository: Repository,
     live_event_bus: InMemoryLiveEventBus,
 ):
-    session = await repository.create_session("child", {})
-    child_job = await repository.enqueue_prompt_job(
-        session.id, prompt="wait", metadata_json={}, max_attempts=1
-    )
-    assert child_job is not None
+    session, parent_job, child_job = await _owned_parent_and_child(repository)
 
     handler = make_wait_for_subagent_handler(
         live_event_bus=live_event_bus,
         repository=repository,
+        session_id=session.id,
+        job_id=parent_job.id,
     )
 
     async def publish_failure():

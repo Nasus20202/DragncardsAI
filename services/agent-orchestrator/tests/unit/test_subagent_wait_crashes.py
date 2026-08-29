@@ -79,10 +79,14 @@ def _wait_handler(repository: Repository, bus, parent_job=None, **overrides):
     )
 
 
-def _default_wait_handler(repository: Repository, bus):
-    """A handler with the shipped budget, to prove the crash paths do not lean
-    on a shortened test timeout to escape."""
-    return make_wait_for_subagent_handler(live_event_bus=bus, repository=repository)
+def _default_wait_handler(repository: Repository, bus, parent_job):
+    """A handler with the shipped budget, bound to the current parent context."""
+    return make_wait_for_subagent_handler(
+        live_event_bus=bus,
+        repository=repository,
+        session_id=parent_job.session_id,
+        job_id=parent_job.id,
+    )
 
 
 def _text(result: dict) -> str:
@@ -114,7 +118,7 @@ async def test_wait_ends_with_the_cause_when_the_child_run_crashes(
     )
 
     waiting = asyncio.create_task(
-        _default_wait_handler(repository, bus)({"child_job_id": child.id})
+        _default_wait_handler(repository, bus, parent_job)({"child_job_id": child.id})
     )
     await asyncio.sleep(0)
     await worker._run_job(child)
@@ -152,7 +156,7 @@ async def test_wait_ends_when_the_childs_failure_handling_itself_crashes(
     )
 
     waiting = asyncio.create_task(
-        _default_wait_handler(repository, bus)({"child_job_id": child.id})
+        _default_wait_handler(repository, bus, parent_job)({"child_job_id": child.id})
     )
     await asyncio.sleep(0)
     await worker._run_job(child)
@@ -216,7 +220,7 @@ async def test_wait_returns_partial_work_of_an_interrupted_child(
     await repository.mark_job_interrupted(child.id, result_text="got halfway")
 
     result = await asyncio.wait_for(
-        _default_wait_handler(repository, bus)({"child_job_id": child.id}),
+        _default_wait_handler(repository, bus, parent_job)({"child_job_id": child.id}),
         timeout=BUDGET,
     )
     assert result["is_error"] is False
@@ -357,7 +361,7 @@ async def test_wait_reports_a_child_cancelled_by_the_parents_cancellation(
         live_event_bus=bus,
         repository=repository,
         session_id=parent_session.id,
-        job_id="",  # the parent's own cancellation must not mask the child's
+        job_id=parent_job.id,
         timeout_seconds=BUDGET,
         poll_interval_seconds=POLL,
     )
