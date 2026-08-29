@@ -2927,6 +2927,7 @@ The coordinator and player seats SHALL report a terminal outcome only when the l
 - **WHEN** normalized state omits `villainHitPoints`
 - **THEN** the coordinator and seat SHALL treat current health as unreported
 - **AND** SHALL NOT substitute zero or use absence as a win signal
+
 ### Requirement: Player agents can message each other and cannot message the orchestrator
 The system SHALL offer a message-sending tool to player-seat jobs of an orchestrated session, and SHALL NOT offer it to an orchestrating job or to any job of a `chat` session.
 

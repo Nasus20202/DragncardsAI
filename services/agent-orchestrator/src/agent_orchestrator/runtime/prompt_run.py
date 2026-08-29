@@ -56,6 +56,7 @@ from agent_orchestrator.runtime.player_agents import (
     SeatIdentity,
     build_seat_inbox_message,
     resolve_seat_identity,
+    session_orchestrator_session_id,
     session_player_id,
     wrap_illegal_action_finding,
     wrap_player_message,
@@ -220,17 +221,24 @@ def extract_marvel_lcg_option_identity(
                 if candidate_id != selected_id:
                     continue
                 name = _option_field(option, "name", "option_name", "optionName")
-                event = _option_field(option, "event", "event_name", "eventName")
+                option_event = _option_field(
+                    option, "event", "event_name", "eventName"
+                )
+                resolved_event = option_event
+                if not isinstance(resolved_event, str) or not resolved_event.strip():
+                    resolved_event = _option_field(
+                        value, "event", "event_name", "eventName"
+                    )
                 if (
                     isinstance(name, str)
                     and name.strip()
-                    and isinstance(event, str)
-                    and event.strip()
+                    and isinstance(resolved_event, str)
+                    and resolved_event.strip()
                 ):
                     return {
                         "id": candidate_id,
                         "name": name,
-                        "event": event,
+                        "event": resolved_event,
                     }
     return None
 
@@ -385,6 +393,14 @@ class PromptRunService:
                         ),
                     )
                 active_skills = enabled_skill_assignments(session.enabled_skills)
+                # Who this job is, resolved once from session metadata the agent
+                # cannot write. ``seat_identity`` is the caller's seat when this
+                # job is a player of an orchestrated game and ``None`` otherwise —
+                # including for a player child of a `chat` session, which must
+                # keep behaving exactly as it did before orchestrated mode.
+                seat_identity = await resolve_seat_identity(
+                    session, load_session=self._repository.get_session
+                )
                 # The persona snapshot was captured onto this session when the
                 # child was spawned, or when this session adopted a persona of its
                 # own. Either way it is read here, never the persona table, so
@@ -396,6 +412,7 @@ class PromptRunService:
                         active_skills,
                         persona_prompt=persona_prompt_from_snapshot(persona_snapshot),
                         platform=session_platform(session),
+                        player_session=seat_identity is not None,
                     )
                 else:
                     system_prompt = build_system_prompt(
@@ -422,15 +439,6 @@ class PromptRunService:
                 )
                 mcp_tools = self._mcp_tool_catalog.as_openai_tools(tool_definitions)
                 tool_mapping = self._mcp_tool_catalog.as_mapping(tool_definitions)
-
-                # Who this job is, resolved once from session metadata the agent
-                # cannot write. ``seat_identity`` is the caller's seat when this
-                # job is a player of an orchestrated game and ``None`` otherwise —
-                # including for a player child of a `chat` session, which must
-                # keep behaving exactly as it did before orchestrated mode.
-                seat_identity = await resolve_seat_identity(
-                    session, load_session=self._repository.get_session
-                )
                 builtin_registry = build_builtin_registry(
                     skill_registry=self._skill_registry,
                     repository=self._repository,
@@ -1042,6 +1050,9 @@ class PromptRunService:
                                 reasoning=response.content or "",
                                 messages=messages,
                                 session=session,
+                                prompt=full_job.prompt,
+                                job_id=job.id,
+                                parent_job_id=job.parent_job_id,
                                 marvel_lcg_option=marvel_lcg_option,
                             )
 
@@ -1394,6 +1405,9 @@ class PromptRunService:
         reasoning: str,
         messages: list[dict[str, Any]],
         session: Any = None,
+        prompt: str | None = None,
+        job_id: str | None = None,
+        parent_job_id: str | None = None,
         marvel_lcg_option: MarvelLcgOptionIdentity | None = None,
     ) -> None:
         """Fire-and-forget emission of an agent move/decision history event.
@@ -1401,7 +1415,9 @@ class PromptRunService:
         When the emitting session represents a player seat in an orchestrated
         multi-player game, the move is tagged with that seat so downstream
         evaluation attributes it exactly rather than inferring it from turn
-        order.
+        order. The parent prompt is also carried as server-set provenance when
+        this is a child move, allowing evaluators to distinguish coordinator
+        context from a seat's untrusted report.
 
         The session's mode travels alongside the seat, and the two are not
         redundant: the orchestrating agent's own moves carry the mode with no
@@ -1412,17 +1428,42 @@ class PromptRunService:
         if emitter is None or not emitter.enabled:
             return
         conversation_context = copy.deepcopy(messages)
-        coro = emitter.emit_agent_move(
-            game_id=game_id,
-            intended_action=tool_definition.actual_name,
-            reasoning=reasoning,
-            arguments=dict(arguments),
-            conversation_context=conversation_context,
-            player=session_player_id(session) if session is not None else None,
-            session_mode=session_mode(session),
-            platform=session_platform(session),
-            marvel_lcg_option=marvel_lcg_option,
+        prompt_provenance: dict[str, str] | None = None
+        orchestrator_session_id = (
+            session_orchestrator_session_id(session) if session is not None else None
         )
+        if (
+            orchestrator_session_id
+            and isinstance(prompt, str)
+            and prompt.strip()
+            and isinstance(job_id, str)
+            and job_id.strip()
+            and isinstance(parent_job_id, str)
+            and parent_job_id.strip()
+        ):
+            prompt_provenance = {
+                "source": "coordinator",
+                "prompt": prompt,
+                "orchestrator_session_id": orchestrator_session_id,
+                "parent_job_id": parent_job_id,
+                "child_job_id": job_id,
+            }
+        emit_kwargs: dict[str, Any] = {
+            "game_id": game_id,
+            "intended_action": tool_definition.actual_name,
+            "reasoning": reasoning,
+            "arguments": dict(arguments),
+            "conversation_context": conversation_context,
+            "player": session_player_id(session) if session is not None else None,
+            "session_mode": session_mode(session),
+            "platform": session_platform(session),
+            "marvel_lcg_option": marvel_lcg_option,
+        }
+        # DRA-85 adds this optional field to HistoryEventEmitter. Keep the
+        # kwargs conditional so ordinary moves omit it entirely.
+        if prompt_provenance is not None:
+            emit_kwargs["prompt_provenance"] = prompt_provenance
+        coro = emitter.emit_agent_move(**emit_kwargs)
         task = asyncio.create_task(coro)
         self._history_tasks.add(task)
         task.add_done_callback(self._history_tasks.discard)

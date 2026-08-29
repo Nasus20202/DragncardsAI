@@ -41,21 +41,25 @@ use an `instance_id` copied from the neutral state.
 ## Round order
 
 1. Re-read neutral state at the start of each player phase. Stop immediately if the
-   game is terminal.
-2. Record the observed `playRound` and first player. If the state is the DragnCards
-   Beginning-of-Round checkpoint (`stepId == "0.0"` and `phase == "passive"`), the
-   coordinator must call `next_step` once.
-3. Re-read neutral state and require `phase == "player"` before prompting any seat.
-   If the expected player phase is not observed, stop and report the observed state.
-   Do not prompt a seat while the phase is `passive` or `villain`.
-4. Prompt every non-defeated seat in player order; wait for and verify each report.
+   normalized state reports `mode=win` or `mode=loss`; never infer a terminal result from a
+   card name, HP arithmetic, threat value, or a seat report.
+2. Record the observed `playRound`, `phase`, and first-player value. If the state is the
+   DragnCards Beginning-of-Round checkpoint (`stepId == "0.0"` and `phase == "passive"`),
+   the coordinator must call `next_step` once.
+3. Re-read neutral state and require `phase == "player"` before prompting any seat. If the
+   expected player phase is not observed, report the observed normalized state and stop. Do
+   not prompt a seat while the phase is `passive` or `villain`.
+4. For each configured seat in player order, build one prompt using
+   `references/player-turn-prompt.md`: include only the latest verified normalized state and
+   the seat's own visible projection. Wait for and verify each report before continuing.
 5. Run `player_end_phase` once after every seat reports.
-6. Resolve the villain phase: acceleration threat, villain/minion activations with
-   delegated seat decisions, encounter dealing, and encounter resolution.
+6. Resolve the villain phase: acceleration threat, villain/minion activations with delegated
+   seat decisions, encounter dealing, and encounter resolution.
 7. Pass the first-player marker and run `villain_end_phase`.
-8. Re-read state, check terminal conditions, and begin the next `playRound`, applying the
+8. Re-read state, check normalized terminal mode, and begin the next `playRound`, applying the
    player-phase checkpoint before scheduling its first seat.
 
-The coordinator must not pay a hero's costs or choose a hero's attack, thwart, defense,
-or form change. A seat's player-phase action may be composed, but its report and the
-resulting neutral state are the evidence used for evaluation.
+The coordinator must not pay a hero's costs or choose a hero's attack, thwart, defense, or
+form change. A seat's player-phase action may be composed, but its report and the resulting
+normalized state are the evidence used for evaluation. A missing or contradictory checkpoint
+gets one fresh state read and then a stop; it never gets a guessed prompt.
