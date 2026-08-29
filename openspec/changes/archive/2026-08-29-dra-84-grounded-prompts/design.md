@@ -37,7 +37,7 @@ The runtime adds a dedicated player-session contract to the subagent system prom
 
 ### Gate terminal claims on state mode
 
-Both the reference and player-session system contract require `mode=win` or `mode=loss`, or an explicitly terminal current engine response, before reporting a terminal outcome. Missing `villainHitPoints` never means zero, and a main-scheme threat at its target does not establish villain defeat. The verified Rhino regression is documented as three ongoing checkpoints (`9/14`, `12/14`, and `14/14`) with `villainHitPoints=19` and `mode=in progress`.
+Both the reference and player-session system contract require `mode=win` or `mode=loss`, or an explicitly terminal current engine response, before reporting a terminal outcome. Missing `villainHitPoints` never means zero, and a main-scheme threat at its target does not establish villain defeat. The verified Rhino regression is documented as three ongoing checkpoints (`9/14`, `12/14`, and `14/14`) with 19 remaining HP (stage total `villainHitPoints=28` with 9 damage tokens) and `mode=in progress`.
 
 ### Keep the runtime discoverable
 

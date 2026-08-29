@@ -34,7 +34,7 @@ the latest normalized state reports different values
 #### Scenario: Rhino threat checkpoints remain current and non-terminal
 
 - **WHEN** verified normalized checkpoints report main-scheme threat `9/14`, `12/14`, and
-`14/14` while the active villain reports `villainHitPoints=19` and `mode=in progress`
+`14/14` while the active villain reports 19 remaining HP (stage total `villainHitPoints=28` with 9 damage tokens) and `mode=in progress`
 - **THEN** each prompt SHALL report the checkpoint as ongoing normalized state
 - **AND** the coordinator SHALL NOT report the villain as defeated from the final `14/14`
 checkpoint

@@ -50,8 +50,8 @@ Comment when something *deviates* — not per commit:
 
 Do not mark `Done` on a delegated agent's report. Verify yourself, then:
 
-1. Squash-merge the worktree branch into the integration branch, one commit, subject ending
-   ` (DRA-<n>)`.
+1. Squash-merge the worktree branch into the integration branch, one commit following the semantic
+   commit convention (e.g. `feat:`, `fix:`, `refactor:`), subject ending ` (DRA-<n>)`.
 2. Run the full check set on the merged tip (`./scripts/lint.sh`, `./scripts/test.sh unit`, the
    service test suites, `openspec validate --all`).
 3. Drive the running app through the feature or the fixed path where practical (Playwright MCP, not
@@ -72,7 +72,7 @@ Attach screenshots and recordings to the issue. They must not be left in the rep
 | --- | --- |
 | Branch | contains `dra-<n>` so Linear links it automatically |
 | Worktree directory | `wt-dra<n>` |
-| Squash commit subject | one line, ends with ` (DRA-<n>)`, no AI attribution |
+| Squash commit subject | semantic commit format (e.g. `feat(scope): ...`), one line, ends with ` (DRA-<n>)`, no AI attribution |
 | OpenSpec change directory | `dra-<n>-<slug>` |
 | PR body | one `Fixes DRA-<n>` line per issue in the batch — but do NOT open the PR unless the owner asks for it in that moment |
 
