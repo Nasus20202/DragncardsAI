@@ -1,78 +1,232 @@
 # Playing well
 
 Marvel Champions is a race: the villain's threat clock versus your damage clock. Every
-turn you are deciding which clock to push. All the heuristics below are written in terms
-of values you can read or derive from `get_game_state(session_id, player_n=<your assigned
-seat>)`; pass your assigned seat on every player-agent read.
+turn you decide which clock to push, but you must account for every active scheme effect
+before choosing a line. The procedure below uses only the normalized state and values
+that are explicitly supplied or looked up. It never fills an unavailable value with a
+standard-scenario guess.
+
+## Evidence-first planning pass
+
+Call `get_game_state(session_id, player_n=<your assigned seat>)` at the start of the turn
+and after every meaningful board change. Confirm `phase == "player"` before planning a
+player turn. Read the active main scheme as `zones.sharedMainScheme[0]` and inspect every
+card in `zones.sharedSideSchemes`; do not collapse side schemes into one generic threat
+total.
+
+For the main scheme, record:
+
+- `current_threat`: `sharedMainScheme[0].tokens.threat`. A missing token key is zero
+  because normalized tokens are sparse. A missing active main-scheme card is not zero; it
+  is an unavailable board fact and must be reported.
+- `target_threat`: the explicit `tokens.target_threat` value when present, or a value
+  returned by an allowed card lookup or supplied by the coordinator/human. Never infer a
+  target from a familiar scenario, card name, or the current phase.
+- `base_placement`: the explicit amount that will be placed during the next villain
+  phase for this scenario and player count. Use a value in state, an explicit
+  coordinator/human statement, or an explicit card/rules lookup. Do not silently use
+  one threat per player.
+- `acceleration`: every explicit acceleration value that applies to the main scheme,
+  including `tokens.acceleration` on the main scheme and on active side schemes when
+  the state says it contributes to main-scheme placement.
+- `alter_ego_scheme`: each known villain or minion scheme contribution for an activation
+  against a player currently in alter-ego form. Look up the visible enemy's printed
+  `scheme` value when the state does not carry it. A hidden boost card or unreported
+  modifier is not a number to add.
+The known values in this `alter_ego_scheme` term are the **known alter-ego schemes** in
+the minimum: enemy scheme contributions against players currently in alter-ego form.
+Unknown boosts remain excluded rather than guessed.
+
+If a required term is absent or non-numeric, name that term, ask the coordinator or
+human (or perform the permitted explicit lookup), and stop short of claiming an exact
+clock or safety result. A sparse optional token is different: its missing key means
+zero, but it never supplies a missing card, target, base placement, or required gain.
+
+## Side schemes: rank the effect, not just the threat
+
+Iterate `zones.sharedSideSchemes` and write one short entry for each named card before
+planning an attack or thwart. For each entry, copy its current `tokens.threat` and every
+non-zero effect indicator that is actually present:
+
+| Reported indicator | What it means for planning |
+| --- | --- |
+| `tokens.crisis` | Player cards cannot remove threat from the **main scheme** while the Crisis effect is active. Side-scheme threat remains a legal target; Crisis does not block removing threat from an eligible side scheme. |
+| `tokens.hazard` | Additional encounter pressure during the villain phase. Report the indicator; do not turn it into guessed damage, cards, or resources. |
+| `tokens.acceleration` | Additional threat placement on the main scheme when the state says this card's acceleration applies. Include the explicit value in the minimum projection. |
+| Explicit `tokens.hand` or `tokens.resource` denial | Hand or resource denial is active only when the corresponding normalized indicator is present. Report its value or presence without inventing a discarded-card or resource count. |
+| `tokens.threat` | Current threat on this side scheme. It is a separate target and is not main-scheme threat. |
+
+Apply these checks in order:
+
+1. If a Crisis indicator is non-zero and the current plan needs player-card removal from
+   the main scheme, mark that card as an action blocker and rank clearing/resolving it
+   first. Do not spend a player-card thwart on the main scheme while Crisis remains.
+2. Rank explicit acceleration by the amount it adds to the next placement. It changes
+   the threat clock immediately; never count a side scheme's threat as acceleration.
+3. Rank explicit Hazard indicators by their reported encounter pressure, then explicit
+   hand/resource denial by its reported value or presence.
+4. Use current side-scheme threat and the current available thwart to decide which
+   remaining scheme can actually be cleared. A high threat value alone does not grant an
+   unreported effect or make an unaffordable line legal.
+
+This is a conditional priority, not a reason to ignore a deterministic clock. If the
+minimum next-phase threat reaches the target, threat control outranks villain damage
+unless the state explicitly shows that no legal threat-control line exists. If Crisis
+blocks that line, say so and clear or resolve the blocker when possible. If an effect is
+not represented in the normalized card's tokens (and is not returned by an explicit
+permitted lookup), call it unknown; never infer it from the name or remembered text.
+
+## The minimum next-villain-phase threat
+
+Compute the known minimum before choosing between damage and threat control:
+
+```text
+minimum_next_main_threat = current_main_threat
+                          + explicit_base_placement
+                          + explicit_main_scheme_acceleration
+                          + sum(known_enemy_scheme_contributions_against_alter_ego_players)
+```
+
+`explicit_base_placement` is already the total placement for the current scenario and
+player count when that is what the explicit source reports. `explicit_main_scheme_acceleration`
+includes the main-scheme acceleration and every active side-scheme acceleration that
+the state explicitly says applies to the main scheme. Add only known villain/minion
+scheme values for players currently in alter-ego form. Do not add hidden boost cards,
+unknown card text, or guessed modifiers.
+
+Call the result a **minimum**, not a prediction of every villain-phase outcome:
+unknown boosts or later effects can increase the actual threat. If the target, base
+placement, an applicable acceleration value, or a required alter-ego enemy scheme
+contribution is unknown, state the missing value and refuse to claim an exact minimum
+clock or exact safety result. Refuse to claim an exact clock when a required target or
+gain is unknown; if all required terms are explicit, compare the sum with `target_threat`:
+
+- `minimum_next_main_threat >= target_threat`: flag deterministic next-phase
+  main-scheme lethal risk before ending the player phase.
+- A smaller margin means threat control is urgent; do not trade it for damage merely
+  because the villain's damage clock looks attractive.
+- A wide margin permits damage or board development only after the side-scheme effects
+  and any current hero-survival requirement are addressed.
+
+Recompute after clearing or adding a side scheme, changing form, changing available
+thwart, changing the main-scheme threat, or learning an explicit value. The old
+projection is stale after any of those changes.
+
+### Deterministic 9/14 checkpoint
+
+For a normalized state showing `sharedMainScheme[0].tokens.threat = 9` and
+`tokens.target_threat = 14`, suppose the explicit next-phase values are:
+`base_placement = 2`, `main-scheme acceleration = 1` (for example, from an active
+side scheme), and one known alter-ego enemy scheme contribution of `2`. The minimum is:
+For the deterministic Rhino-shaped multi-scheme read, keep the cards separate and rank
+their actual effects rather than adding their threat values:
+
+| Rank in the 9/14 risk line | Active card | Current tokens | Reason |
+| --- | --- | --- | --- |
+| 1 | Crowd Control | `threat=3`, `crisis=1` | Crisis blocks player-card removal from the main scheme. |
+| 2 | Highway Robbery | `threat=5`, `acceleration=1` | The explicit acceleration adds to the next main-scheme placement. |
+| 3 | Breakin' & Takin' | `threat=4`, `hazard=1` | Hazard adds encounter pressure, but not a guessed threat amount. |
+
+This ordering is conditional on the 9/14 line needing main-scheme control; if the current
+board supplies a different explicit clock or a legal answer, report the changed reason
+and re-rank from the observed indicators.
+
+```text
+9 + 2 + 1 + 2 = 14
+```
+
+Report **WARNING: minimum next-villain-phase threat reaches 14/14; deterministic
+main-scheme lethal risk** before reporting the player phase complete. If an active
+`tokens.crisis` side scheme is also present, state that player-card main-scheme
+removal is blocked and name the side scheme that must be cleared or resolved. If any
+of the four added terms is unknown, report the unknown instead of asserting that this
+checkpoint is safe or lethal.
+
+## Attack versus threat control
+
+Use the minimum projection and side-scheme ranking to choose the next legal play:
+
+- **Threat reaches the target on the minimum:** control threat first. Clear or resolve a
+  Crisis blocker, remove side-scheme threat, or use another explicitly legal effect.
+  Do not pretend a player-card thwart can remove main-scheme threat through Crisis.
+- **Threat is close but below the target:** favor the largest explicit clock reduction
+  and re-read state after it. Keep enough resources for a known defense or required
+  side-scheme answer.
+- **Threat has a demonstrated margin:** push villain damage or develop the board only
+  when no higher-ranked side-scheme effect and no survival requirement is being ignored.
+
+When you defer a side scheme, use this report shape:
+
+```text
+Deferred: <name> — current threat=<value>; effects=<non-zero indicators>.
+Reason: <current-state fact>, so <named higher-ranked line> is required first.
+```
+
+For example: `Deferred: Breakin' & Takin' — current threat=4; effects=hazard=1.
+Reason: current thwart=2 is reserved to clear Crowd Control's crisis=1 blocker before
+the 9/14 clock reaches 14/14.` Never write only “handle it later,” “not important,”
+or another reason that cannot be checked from the current state.
 
 ## The two clocks
 
-**Their clock — threat.** Per round the main scheme gains:
+**Their clock — threat.** Use the explicit minimum above. If the target or a required
+gain is unknown, report the missing value rather than calculating `rounds_until_loss`
+from a guessed denominator. When every term is known and the gain is positive:
 
-```
-threat_gain = scheme_acceleration + sharedMainScheme[0].tokens.acceleration
-            + sum(acceleration icons on cards in play)
-```
-
-You cannot read the scheme's base acceleration from the simplified state, but you can
-measure it: note `tokens.threat` at the start of two consecutive rounds and subtract your
-own thwarting. In a standard scenario it is typically 1 per player per round, plus any
-acceleration tokens the encounter deck has added.
-
-```
-rounds_until_loss = (target_threat - current_threat) / threat_gain
+```text
+rounds_until_loss = (target_threat - current_threat) / minimum_threat_gain
 ```
 
-If you do not know `target_threat` (see `resources/reading-state.md` — it is often not
-exposed), ask for it once at the start and cache it.
+This is a minimum clock: hidden boosts and later effects can shorten it. A zero known
+gain does not prove safety; state whether an unreported gain remains unknown.
 
-**Your clock — damage.** Villain remaining HP divided by your realistic damage per round.
+**Your clock — damage.** Villain remaining HP is the explicit `villainHitPoints` value
+minus `sharedVillain[0].tokens.damage` when that value is supplied by the state. Do not
+turn an omitted villain HP into zero. Compare realistic damage per round only after
+checking the threat clock, side-scheme effects, and whether your hero can survive:
 
+```text
+rounds_until_win = villain_remaining_hp / realistic_damage_per_round
 ```
-rounds_until_win = (villainHitPoints - villain_damage) / your_damage_per_round
-```
 
-## The core decision
+When the projected threat clock changes, replan the damage-versus-threat choice; never
+continue a damage line based on the previous snapshot.
 
-- `rounds_until_loss` clearly larger than `rounds_until_win` → **push damage.** Attack,
-  play attack events, develop attack upgrades.
-- `rounds_until_loss` at or below `rounds_until_win` → **thwart.** You cannot win a race
-  you lose first.
-- Both tight → build board. A turn spent playing two allies usually buys more than a turn
-  spent doing 3 damage, because allies act every subsequent round.
+## Side schemes and minions still compound
 
-Concretely: if the main scheme's `tokens.threat` will exceed the target within two rounds
-at the current gain rate, thwarting is not optional.
+Anything in your assigned engaged area is a compounding problem:
 
-## Side schemes and minions come first
+- Side schemes with explicit acceleration, Crisis, Hazard, denial, or urgent threat
+  outrank an ordinary damage line when their current effect changes the clock or blocks
+  the required answer. Clear one only when the observed board confirms it is gone.
+- Minions attack or scheme during every villain phase and block you from attacking the
+  villain. Kill them when the current threat projection permits it, unless the villain
+  is one hit from dying or another explicit blocker is more urgent.
 
-Anything in your `playerNEngaged` is a compounding problem:
-
-- **Side schemes** often carry acceleration or crisis effects and permanently raise
-  `threat_gain`. Clearing one this turn is worth more than the same thwart applied to the
-  main scheme.
-- **Minions** attack you every villain phase and block you from attacking the villain.
-  Kill them the turn they appear if you can, unless the villain is one hit from dying.
-
-Check `playerNEngaged` every turn before you plan anything else.
+Check both the shared side-scheme zone and your assigned engaged zone every turn.
 
 ## When to flip to alter-ego
 
 Flip when **all** of:
 
 - Your remaining HP (`hitPoints` − `tokens.damage`) is below roughly half your maximum.
-- You can afford to give up a hero-form turn — i.e. the threat clock is not about to run out.
+- You can afford to give up a hero-form turn — i.e. the recomputed threat clock is not
+  about to run out and no Crisis-blocked answer is being abandoned.
 - Your alter-ego `recover` value meaningfully closes the gap. Recovering 2 when you took
   4 last round is treading water.
 
 Flip **immediately** if remaining HP is at or below the villain's `attack` value plus a
-couple of boost icons — one bad villain phase defeats you and a defeated hero loses the game.
+couple of boost icons — one bad villain phase defeats you and a defeated hero loses the
+game.
 
 Do not flip when:
 
-- A minion is engaged with you. Alter-egos cannot defend well and you cannot attack it back.
-- You are the only player able to thwart and the scheme is close to target.
-- Your alter-ego side has a big draw or resource ability you cannot use profitably this turn.
+- A minion is engaged with you. Alter-egos cannot defend well and you cannot attack it
+  back.
+- You are the only player able to thwart and the recomputed main-scheme clock is close
+  to target.
+- Your alter-ego side has a big draw or resource ability you cannot use profitably this
+  turn.
 
 Alter-ego turns are also the best time to use alter-ego-only cards and to soak up an
 encounter you can survive. A hero at full HP that flips down for the ability is usually
@@ -88,23 +242,24 @@ play. A 3-cost card costs you four cards of hand: itself plus three resources.
 - Cards with `type_code: "resource"` are pure payment — spend them first.
 - Cards you will never play in this matchup are resources. Do not hoard a situational
   event for six rounds.
-- Look at your discard: it tells you what your deck has already given you and what is left.
+- Look at your discard: it tells you what your deck has already given you and what is
+  left.
 
 Rough shape: rounds 1–2 develop the board with cheap permanents, rounds 3+ convert the
 board into damage or thwart every turn while paying for one impactful card.
 
 ## Board development
 
-Cards in `playerNPlay2` that exhaust for value are the engine. Each one is a free action
-every round for the rest of the game. Ordering:
+Cards in your assigned play area that exhaust for value are the engine. Each one is a
+free action every round for the rest of the game. Ordering:
 
 1. Permanents that generate resources or cards.
 2. Allies with useful stats and abilities.
 3. Upgrades that raise your ATK / THW / DEF.
 4. One-shot events, played when they swing a specific turn.
 
-An ally is worth roughly its `health` in blocked damage plus its stats every round. Do not
-throw allies away chump-blocking early unless the alternative is your own defeat.
+An ally is worth roughly its `health` in blocked damage plus its stats every round. Do
+not throw allies away chump-blocking early unless the alternative is your own defeat.
 
 ## Efficiency checklist before you stop
 
@@ -112,13 +267,19 @@ Run this before you report your turn done:
 
 - Is my identity exhausted? If not, is there a reason (holding it to defend)?
 - Is every ally and support with a usable ability either exhausted or deliberately held?
-- Did I clear everything in `playerNEngaged` that I could?
-- Did I leave threat on a side scheme I could have finished?
+- Did I clear everything in my assigned engaged area that I could?
+- Did I re-read and rank every active `zones.sharedSideSchemes` card?
+- Did I recompute the minimum next-villain-phase threat from the final board?
+- Did I leave threat on a side scheme I could have finished, and if so did I report its
+  current threat/effects and a current-state reason?
+- If the final projection reaches target, did I report the deterministic lethal-risk
+  warning and any Crisis blocker before saying the phase is complete?
 - Do I have a card in hand I can still afford?
 - Did I apply every "Response:" and "Action:" I triggered?
 
 Wasted readiness is the single most common way an agent plays badly here — nothing in the
-harness reminds you that a card is still available.
+harness reminds you that a card is still available. End by reporting your board facts and
+the reason for any deliberate hold or deferral; never advance the phase yourself.
 
 ## Holding back deliberately
 
