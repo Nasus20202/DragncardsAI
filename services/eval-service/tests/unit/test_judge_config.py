@@ -62,6 +62,16 @@ def test_request_overrides_model_provider_reasoning(tmp_path):
     assert resolved.prompt_override == "custom rubric"
 
 
+def test_request_accepts_provider_advertised_reasoning_effort():
+    requested = JudgeConfig(
+        model_name="openrouter/google/gemma:free",
+        reasoning=JudgeReasoning(enabled=True, effort="minimal"),
+    )
+
+    assert requested.reasoning is not None
+    assert requested.reasoning.effort == "minimal"
+
+
 def test_partial_override_falls_back_to_defaults(tmp_path):
     # Only model overridden; provider derived from default provider setting.
     requested = JudgeConfig(model_name="openrouter/x/y")

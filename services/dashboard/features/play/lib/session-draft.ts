@@ -168,7 +168,7 @@ export function reasoningEffortsForModel(
 ): string[] {
   const supportedEfforts =
     provider?.model_capabilities?.[modelName]?.reasoning?.supported_efforts;
-  return supportedEfforts === undefined
+  return supportedEfforts == null
     ? [...LEGACY_REASONING_EFFORTS]
     : [...supportedEfforts];
 }

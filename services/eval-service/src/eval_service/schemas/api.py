@@ -110,7 +110,7 @@ class JudgeReasoning(StrictRequest):
     """Per-evaluation reasoning controls (mirrors the Play config shape)."""
 
     enabled: bool = False
-    effort: Literal["low", "medium", "high"] = "medium"
+    effort: str = "medium"
     # Optional reasoning token budget; positive integer (bounded) when provided.
     max_tokens: int | None = Field(default=None, ge=1, le=MAX_REASONING_TOKENS)
 

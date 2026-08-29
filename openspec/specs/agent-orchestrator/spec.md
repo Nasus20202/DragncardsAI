@@ -56,11 +56,16 @@ Terminating a session SHALL remain distinct from deleting it: termination ends t
 - **THEN** the other sessions and their jobs SHALL remain retrievable, the global skill and MCP registries SHALL be unchanged, and any job in another session that referenced a deleted job SHALL have that reference cleared
 
 ### Requirement: Model and provider configuration
+
 The system SHALL allow each agent session to configure the model provider, model name, gateway options, and provider-specific non-secret settings used for prompt execution.
 
 Provider model listings SHALL be cached in Valkey (not in process memory) so that all replicas share a consistent cache. The cache TTL SHALL be controlled by `PROVIDER_MODELS_CACHE_TTL_SECONDS`. When Valkey is unavailable, the system SHALL fall through to a live Bifrost fetch and SHALL NOT raise an error to the caller.
 
 `BifrostClient` SHALL NOT hold any mutable in-process state after construction. In particular, `self._models_cache` and `self._all_models_cache` SHALL NOT exist.
+
+The provider catalog SHALL preserve optional per-model reasoning metadata from Bifrost's rich `/v1/models` response. A model whose reasoning metadata is absent SHALL remain distinguishable from a model whose reasoning object has an explicitly empty `supported_efforts` list. The catalog SHALL retain existing model identifiers and SHALL expose the metadata additively so clients that only read the model identifier list remain compatible.
+
+When a configured reasoning effort is submitted for a model whose advertised `supported_efforts` is non-empty, the service SHALL accept only one of those advertised values. When the model's reasoning metadata is absent or does not advertise `supported_efforts`, the service SHALL accept the legacy `low`, `medium`, and `high` values. When the model advertises an explicitly empty `supported_efforts` list, the service SHALL reject a configured effort and SHALL allow a reasoning request only when no effort is sent.
 
 #### Scenario: Configure supported provider
 - **WHEN** a client configures a session with one of OpenRouter, Mistral, Claude, OpenAI, LM Studio, or Gemini
@@ -74,7 +79,28 @@ Provider model listings SHALL be cached in Valkey (not in process memory) so tha
 - **WHEN** two replicas of the agent-orchestrator both call `list_models` for the same provider within the TTL window
 - **THEN** the second call SHALL receive the cached value from Valkey and SHALL NOT issue a new HTTP request to Bifrost
 
+#### Scenario: Catalog preserves advertised reasoning efforts
+- **WHEN** Bifrost's rich `/v1/models` response includes a model with `reasoning.supported_efforts` equal to `['minimal', 'high']`
+- **THEN** the provider catalog SHALL return that model identifier and its exact advertised efforts to clients
+
+#### Scenario: Catalog preserves explicit lack of efforts
+- **WHEN** Bifrost's rich `/v1/models` response includes a model with `reasoning.supported_efforts` equal to `[]`
+- **THEN** the provider catalog SHALL return that model identifier with an explicit empty effort list rather than replacing it with the legacy values
+
+#### Scenario: Missing reasoning metadata keeps legacy validation
+- **WHEN** a client configures a model whose Bifrost reasoning metadata is absent and submits reasoning effort `medium`
+- **THEN** the service SHALL accept the configuration
+
+#### Scenario: Advertised efforts constrain configuration
+- **WHEN** a client configures a model advertising `['minimal', 'high']` and submits reasoning effort `medium`
+- **THEN** the service SHALL reject the configuration and SHALL identify the model's supported efforts
+
+#### Scenario: Explicitly unsupported reasoning omits effort
+- **WHEN** a client configures a model advertising an explicit empty `supported_efforts` list and submits reasoning without an effort
+- **THEN** the service SHALL accept the configuration without a `reasoning_effort` value in the request sent to Bifrost
+
 ### Requirement: Valkey-backed model listing cache
+
 The model cache SHALL store provider model listings in Valkey using native key TTL so that all replicas share a single consistent cache.
 
 Each cached entry SHALL be stored as a JSON-serialised list of model objects under a namespaced key and SHALL expire automatically after `PROVIDER_MODELS_CACHE_TTL_SECONDS` seconds.
@@ -82,6 +108,8 @@ Each cached entry SHALL be stored as a JSON-serialised list of model objects und
 The cache SHALL use the following key schema:
 - Per-provider listing: `agent-orchestrator:model-cache:provider:<provider_id>`
 - All-models listing: `agent-orchestrator:model-cache:all`
+
+Cached model objects SHALL retain the optional reasoning metadata and the distinction between an omitted `supported_efforts` field and an explicitly empty list.
 
 #### Scenario: Cache hit for provider listing
 - **WHEN** `list_models` is called for a `provider_id` whose Valkey key has not yet expired
@@ -102,6 +130,14 @@ The cache SHALL use the following key schema:
 #### Scenario: Caching disabled via zero TTL
 - **WHEN** `PROVIDER_MODELS_CACHE_TTL_SECONDS` is set to `0`
 - **THEN** the system SHALL skip all Valkey read and write operations and always fetch live from Bifrost
+
+#### Scenario: Cached reasoning metadata survives a round trip
+- **WHEN** a provider model listing containing advertised reasoning efforts is written to Valkey and read by another client
+- **THEN** the returned model SHALL contain the same effort values
+
+#### Scenario: Cached explicit empty efforts remain unsupported
+- **WHEN** a provider model listing containing `supported_efforts: []` is written to Valkey and read by another client
+- **THEN** the returned model SHALL retain an empty list rather than a legacy fallback
 
 ### Requirement: Shared Valkey connection module
 The low-level Valkey RESP connection SHALL be extracted into a shared module (`storage/valkey.py`) so that it can be reused across `ValkeyLiveEventBus` and `BifrostClient` without duplication.
@@ -3234,3 +3270,19 @@ The prompt's harness guidance — the tools a main job must not call directly an
 
 - **WHEN** the system prompt is rendered for a session
 - **THEN** the tool names it forbids calling directly in the main job SHALL be tools the session's platform actually exposes
+
+### Requirement: Player-turn prompt freshness follows platform turn authority
+
+The agent-orchestrator SHALL keep the shared normalized player-turn checkpoint platform-aware. The checkpoint SHALL require the common board fields needed to act, but SHALL treat `activeSeat`, `firstPlayer`, and `pendingSeats` as optional on DragnCards: a confirmed `phase=player` is sufficient for the coordinator to continue its configured sequential seat schedule. For marvel-lcg, the checkpoint SHALL require authoritative `pendingSeats` to name the assigned seat in addition to the common fields and SHALL preserve the one-fresh-read-then-stop rule when that engine-owned authority is absent or contradictory.
+
+#### Scenario: A DragnCards seat receives a usable checkpoint without turn metadata
+
+- **WHEN** a DragnCards player prompt carries a complete normalized state with `phase=player` but no `activeSeat`, `firstPlayer`, or `pendingSeats`
+- **THEN** the prompt contract SHALL treat the checkpoint as usable
+- **AND** the seat SHALL use the current state for its own action rather than stop solely because turn metadata is absent
+
+#### Scenario: A marvel-lcg seat cannot act without matching pending authority
+
+- **WHEN** a marvel-lcg player prompt carries a state with `phase=player` but no `pendingSeats` entry for the assigned seat
+- **THEN** the coordinator or seat SHALL perform one fresh authoritative state read
+- **AND** it SHALL stop without a move if the fresh state still does not identify the assigned seat

@@ -10,7 +10,7 @@ export interface PageInfo {
 export interface ModelReasoningCapabilities {
   mandatory?: boolean;
   default_enabled?: boolean;
-  supported_efforts?: string[];
+  supported_efforts?: string[] | null;
   default_effort?: string;
 }
 

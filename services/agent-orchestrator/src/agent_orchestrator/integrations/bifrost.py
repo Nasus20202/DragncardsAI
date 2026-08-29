@@ -394,7 +394,9 @@ class BifrostClient:
             if model_id.startswith(f"{prefix}/")
             else model_id
         )
-        return tuple(dict.fromkeys((model_id, qualified, bare)))
+        # Prefer the selected provider's qualified id. Bare aliases are only a
+        # compatibility fallback and may collide across providers.
+        return tuple(dict.fromkeys((qualified, model_id, bare)))
 
     async def _enrich_model_infos(
         self, provider_id: str, models: list[ModelInfo]
@@ -602,8 +604,21 @@ class BifrostClient:
             "model": self._resolve_model(provider_id, model_name),
             "messages": messages,
         }
-        payload.update(gateway_options)
-        payload.update(provider_options)
+        reserved = {"model", "messages", "tools", "tool_choice", "stream"}
+        payload.update(
+            {
+                key: value
+                for key, value in gateway_options.items()
+                if key not in reserved
+            }
+        )
+        payload.update(
+            {
+                key: value
+                for key, value in provider_options.items()
+                if key not in reserved
+            }
+        )
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"

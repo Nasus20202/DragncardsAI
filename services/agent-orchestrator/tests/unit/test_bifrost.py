@@ -1574,3 +1574,76 @@ async def test_cached_reasoning_capabilities_preserve_explicit_empty_list():
     assert cached[0].reasoning is not None
     assert cached[0].reasoning.supported_efforts == []
     assert len(valkey.setex_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_reasoning_lookup_prefers_the_selected_provider_qualified_id():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "openai/shared-model",
+                        "reasoning": {"supported_efforts": ["low"]},
+                    },
+                    {
+                        "id": "anthropic/shared-model",
+                        "reasoning": {"supported_efforts": ["minimal"]},
+                    },
+                ]
+            },
+            request=request,
+        )
+
+    client = BifrostClient(
+        "http://bifrost",
+        "",
+        {"openai": "openai", "anthropic": "anthropic"},
+    )
+    await client._http_client.aclose()
+    client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        reasoning = await client.get_model_reasoning("anthropic", "shared-model")
+    finally:
+        await client.aclose()
+
+    assert reasoning is not None
+    assert reasoning.supported_efforts == ["minimal"]
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_cannot_override_core_payload_fields():
+    captured: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}]},
+            request=request,
+        )
+
+    client = await _build_client(handler)
+    try:
+        await client.chat_completion(
+            "openai",
+            "gpt-4o-mini",
+            [{"role": "user", "content": "hello"}],
+            None,
+            {
+                "model": "other/model",
+                "messages": [{"role": "user", "content": "wrong"}],
+                "stream": True,
+                "reasoning": {"effort": "high"},
+            },
+            {"model": "another/model", "tools": [{"type": "function"}]},
+        )
+    finally:
+        await client.aclose()
+
+    assert captured["model"] == "gpt-4o-mini"
+    assert captured["messages"] == [{"role": "user", "content": "hello"}]
+    assert "stream" not in captured
+    assert "tools" not in captured
+    assert captured["reasoning"] == {"effort": "high"}

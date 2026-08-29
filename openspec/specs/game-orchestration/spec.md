@@ -73,7 +73,6 @@ How each transition is effected SHALL follow the platform, and the orchestrator 
 
 The round number the orchestrator reports SHALL be the neutral `playRound` carried on the game state, and the orchestrator SHALL NOT apply a per-platform correction of its own to it.
 
-
 #### Scenario: Player phase prompts every seat in player order
 - **WHEN** a round's player phase begins
 - **THEN** the orchestrator SHALL prompt each seat's player agent in player order starting from the current first player
@@ -100,6 +99,7 @@ The round number the orchestrator reports SHALL be the neutral `playRound` carri
 - **WHEN** the orchestrator reports the round it reached
 - **THEN** the number SHALL be the `playRound` carried on the neutral game state
 - **AND** the orchestrator SHALL NOT add or subtract a platform-specific offset of its own
+
 ### Requirement: DragnCards player turns start in the player phase
 
 When an orchestrated DragnCards round is ready to dispatch its first player seat and the neutral game state is still outside the player phase, the orchestrator SHALL advance the platform through its required transition and SHALL confirm the resulting state is the player phase before prompting any seat. It SHALL report the round from the confirmed neutral `playRound` value and SHALL NOT ask a player agent to repair or undo a transition that belongs to the round loop.
@@ -457,3 +457,31 @@ argument and required prompt identity when the session declares `move_surface: e
 - **WHEN** a session's available tool list is incomplete or cached
 - **THEN** the orchestrator SHALL use the session metadata and server-side refusal as authority
 - **AND** it SHALL not infer that one backend can accept the other backend's move surface
+
+### Requirement: Platform-specific turn checkpoints preserve each platform's authority
+
+The orchestrator SHALL apply the turn checkpoint appropriate to the bound game platform before prompting a player seat. For a DragnCards session, a normalized state with a usable `playRound`, `phase`, `mode`, `players`, and `zones` and `phase=player` SHALL authorize continuing through the configured seats in sequential player order; absent `activeSeat`, `firstPlayer`, and `pendingSeats` metadata SHALL NOT by itself block that continuation. For a `marvel-lcg` session, the orchestrator SHALL require the normalized `pendingSeats` list to identify the seat being prompted, because the rules engine owns turn scheduling; absence or contradiction of that authority SHALL trigger one fresh state read and then a stop without prompting if unresolved.
+
+#### Scenario: DragnCards continues a confirmed player phase without turn metadata
+
+- **WHEN** a DragnCards normalized state has `phase=player` and usable `playRound`, `mode`, `players`, and `zones`, but omits `activeSeat`, `firstPlayer`, and `pendingSeats`
+- **THEN** the orchestrator SHALL continue the current player phase using the configured seats in sequential order
+- **AND** it SHALL prompt the next configured seat only after the prior seat's report is received
+
+#### Scenario: DragnCards still blocks an unconfirmed phase
+
+- **WHEN** a DragnCards normalized state omits the turn metadata and its phase is `setup`, `passive`, `villain`, or `unknown`
+- **THEN** the orchestrator SHALL NOT prompt a player seat
+- **AND** it SHALL follow the existing platform transition or report the unresolved state
+
+#### Scenario: marvel-lcg missing pending-seat authority blocks prompting
+
+- **WHEN** a marvel-lcg normalized state is otherwise usable and reports `phase=player` but omits `pendingSeats` or does not name the configured seat
+- **THEN** the orchestrator SHALL perform one fresh authoritative state read
+- **AND** it SHALL stop without prompting that seat if the fresh state still lacks a matching pending seat
+
+#### Scenario: marvel-lcg pending-seat authority remains stronger than phase
+
+- **WHEN** a marvel-lcg normalized state names a configured seat in `pendingSeats`, even if its broad phase label is setup, passive, or otherwise non-player
+- **THEN** the orchestrator SHALL treat that pending seat as the engine-authorized decision owner
+- **AND** it SHALL not replace the engine's pending-seat decision with configured sequential scheduling
