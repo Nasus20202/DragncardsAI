@@ -180,14 +180,94 @@ rounds_until_loss = (target_threat - current_threat) / minimum_threat_gain
 This is a minimum clock: hidden boosts and later effects can shorten it. A zero known
 gain does not prove safety; state whether an unreported gain remains unknown.
 
-**Your clock — damage.** Villain remaining HP is the explicit `villainHitPoints` value
-minus `sharedVillain[0].tokens.damage` when that value is supplied by the state. Do not
-turn an omitted villain HP into zero. Compare realistic damage per round only after
-checking the threat clock, side-scheme effects, and whether your hero can survive:
+**Your clock — damage.** Check `mode` before calculating anything: `mode=win` or
+`mode=loss` is terminal and takes precedence over a stale damage or threat report. When
+the mode is non-terminal, identify the active stage as `zones.sharedVillain[0]`. Its
+current-stage remaining HP is:
 
 ```text
-rounds_until_win = villain_remaining_hp / realistic_damage_per_round
+current_stage_remaining = authoritative villainHitPoints
+                         - sharedVillain[0].tokens.damage
 ```
+
+`villainHitPoints` is the total for the **current stage only**; it is never cumulative
+victory damage. Require both numeric values when claiming an exact current-stage result.
+A missing `villainHitPoints`, active villain, or required damage token is unknown; do not
+turn it into zero.
+
+### Full villain path, not just the current stage
+
+After reading the active stage, identify every later stage from visible, non-`HIDDEN`
+entries in `zones.sharedVillainDeck` when that normalized zone is supplied. For each
+visible stage, use its authoritative HP when present or perform an explicit card/rules
+lookup for the known scenario, stage, and player-count context. A card name alone,
+remembered Rhino values, or a guessed mode multiplier is not a stage HP value. If a later
+stage is indicated but hidden, or if the deck zone is absent and no explicit lookup
+establishes that the active stage is final, report the later-stage requirement as
+unknown and refuse to call the full victory distance or race safe.
+
+When every remaining stage is known, calculate each stage separately:
+
+```text
+full_villain_damage = current_stage_remaining
+                    + stage_2_remaining
+                    + ...
+                    + final_stage_remaining
+```
+
+Excess damage does not carry from one stage to the next, so a current-stage defeat does
+not finish the path by itself. Compare `full_villain_damage` with only realistic legal
+damage from the current board, hand, and explicit resources. Use:
+
+```text
+rounds_until_win = full_villain_damage / credible_damage_per_round
+```
+
+Only call this a credible race when every stage and the repeatable damage line are known.
+Recompute after a stage advances, a damage action changes the board, a card/resource is
+spent, or any later-stage lookup becomes available.
+
+For example, Rhino I at an authoritative 19 current-stage HP with Rhino II still
+remaining is not a 19-damage victory. If an explicit lookup reports 15 HP for Rhino II,
+the known path is `19 + 15 = 34`; the agent must compare 34 with its credible legal
+damage and must not stop after defeating Rhino I.
+
+### Survival is a team-risk input
+
+Before choosing a race, inspect every seated entry in `players` and its identity in the
+corresponding `zones["playerNPlay1"]`. For each seat, derive:
+
+```text
+remaining_hero_hp = players.<playerN>.hitPoints
+                 - identity.tokens.damage
+```
+
+Use only explicit numeric values; a missing player, identity, HP, or damage value is
+unknown and must be reported rather than treated as zero. Positive low HP is a major
+team-risk input, not automatic game over. A hero is defeated only when its authoritative
+remaining HP is zero or less; game loss requires the authoritative terminal state or all
+players being eliminated.
+
+Read explicit incoming villain/minion attack or scheme values, explicit modifiers, and
+the legal defense, healing, ally-block, alter-ego, and resource lines currently available.
+Do not invent boost damage, a probability, a resource count, or a card effect. Compare:
+
+- **Race value:** the complete known villain path that the current legal board and
+  resources can finish before the next threat or survival window.
+- **Survival value:** the explicit team value of keeping a low-health hero alive and
+  preserving the defenses, healing, thwart, or resources that prevent the known loss line.
+
+If a known next villain phase can defeat a positive-HP hero, or the race would spend the
+only explicit defense/healing line, the expected team loss outweighs the race value unless
+the complete race demonstrably finishes first. Choose the legal survival line and report
+the hero's remaining HP, the known incoming value, the resource/board fact, and why it
+outranks damage. If the full race is not known or cannot finish before that window,
+switch to survival or the highest-value threat-control line; never continue a
+current-stage-only race because its HP looks small.
+
+When the hero is safe and every stage, threat term, board obligation, and damage/resource
+line is explicit, a credible damage race may continue. Otherwise state the unknown and
+replan; do not call uncertainty safety.
 
 When the projected threat clock changes, replan the damage-versus-threat choice; never
 continue a damage line based on the previous snapshot.
@@ -215,9 +295,10 @@ Flip when **all** of:
 - Your alter-ego `recover` value meaningfully closes the gap. Recovering 2 when you took
   4 last round is treading water.
 
-Flip **immediately** if remaining HP is at or below the villain's `attack` value plus a
-couple of boost icons — one bad villain phase defeats you and a defeated hero loses the
-game.
+Flip immediately if remaining HP is at or below the villain's explicitly known attack plus
+any explicitly reported modifier; hidden boost icons remain unknown, so do not declare a
+safe line from them. One defeated hero is eliminated, but game loss occurs only when all
+players are eliminated or normalized `mode=loss`.
 
 Do not flip when:
 
