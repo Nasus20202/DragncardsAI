@@ -1085,6 +1085,37 @@ def test_marvel_hand_owner_acl_reveals_engine_face_down_card_only_to_owner():
     assert spectator["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
 
 
+def test_marvel_hidden_hand_acl_ignores_dragncards_boost_marker():
+    """Marvel visibility remains ACL-driven, even with foreign card metadata."""
+    raw = {
+        "players": [
+            {
+                "hand_cards": [
+                    {
+                        **_visibility_card(
+                            "foreign-boost",
+                            "Marvel Owner Card",
+                            [0],
+                            is_face_up=False,
+                        ),
+                        "boost": True,
+                    }
+                ]
+            },
+            {},
+        ]
+    }
+    normaliser = MarvelLcgNormaliser(("player1", "player2"))
+
+    owner = normaliser.normalise(raw, player_n="player1")
+    other_seat = normaliser.normalise(raw, player_n="player2")
+    spectator = normaliser.normalise(raw, player_n=None)
+
+    assert owner["zones"]["player1Hand"][0]["name"] == "Marvel Owner Card"
+    assert other_seat["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
+    assert spectator["zones"]["player1Hand"] == [{"name": "HIDDEN", "stackSize": 1}]
+
+
 def test_marvel_state_malformed_visibility_metadata_fails_closed():
     raw = {
         "players": [

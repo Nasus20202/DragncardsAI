@@ -215,12 +215,50 @@ def test_translate_villain_encounter_phase():
     assert payload["options"]["action_list"] == ["ACTION_LIST", "villainEncounterPhase"]
 
 
-def test_translate_villain_end_phase():
-    action = VillainEndPhaseAction()
-    payload = translate_action(action)
-    assert payload["action"] == "evaluate"
-    assert payload["options"]["action_list"] == ["ACTION_LIST", "villainEndPhase"]
 
+
+def test_translate_villain_end_phase_cleans_authoritative_boost_cards():
+    """Cleanup addresses engine boost markers, never normalized HIDDEN entries."""
+    draw_payload = translate_action(DrawBoostAction(player_n="player1"))
+    end_payload = translate_action(VillainEndPhaseAction())
+
+    assert draw_payload["options"]["action_list"] == ["ACTION_LIST", "drawBoost"]
+    action_list = end_payload["options"]["action_list"]
+    cleanup, phase_transition = action_list
+
+    assert cleanup[0:2] == ["FOR_EACH_VAL", "$BOOST_CARD"]
+    assert cleanup[2] == [
+        "FILTER_CARDS",
+        "$BOOST_CARD",
+        ["EQUAL", "$BOOST_CARD.boost", True],
+    ]
+    assert cleanup[3][:3] == [
+        ["SET", "/cardById/$BOOST_CARD.id/rotation", 0],
+        ["SET", "/cardById/$BOOST_CARD.id/tokens", {}],
+        ["SET", "/cardById/$BOOST_CARD.id/boost", False],
+    ]
+    assert cleanup[3][3] == [
+        "COND",
+        [
+            "NOT",
+            ["EQUAL", "$BOOST_CARD.groupId", "sharedEncounterDiscard"],
+        ],
+        [
+            [
+                "MOVE_CARD",
+                "$BOOST_CARD.id",
+                "sharedEncounterDiscard",
+                -1,
+            ]
+        ],
+    ]
+    assert phase_transition == ["ACTION_LIST", "villainEndPhase"]
+
+    serialized = repr(action_list)
+    assert "DISCARD_CARD" not in serialized
+    assert "HIDDEN" not in serialized
+    assert "stackIds" not in serialized
+    assert "parentCardIds" not in serialized
 
 def test_translate_multiple_double_sided_villains():
     action = MultipleDoubleSidedVillainsAction()

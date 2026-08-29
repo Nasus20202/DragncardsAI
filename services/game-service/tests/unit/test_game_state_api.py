@@ -360,6 +360,46 @@ def test_simplify_marvel_state_hides_facedown_cards():
     assert card == {"name": "HIDDEN", "stackSize": 1}
 
 
+def test_simplify_dragncards_hides_boost_card_identity():
+    raw = {
+        "game": {
+            "roundNumber": 2,
+            "mode": "villain",
+            "playerData": {},
+            "cardById": {
+                "boost-card": {
+                    "databaseId": "secret-boost-database-id",
+                    "currentSide": "A",
+                    "groupId": "player1Engaged",
+                    "stackId": "boost-card",
+                    "sides": {"A": {"name": "Secret Boost Card"}},
+                    "exhausted": False,
+                    "rotation": -30,
+                    "boost": True,
+                    "tokens": {"boost": 1},
+                },
+            },
+            "groupById": {
+                "player1Engaged": {
+                    "stackIds": ["boost-card"],
+                },
+            },
+        }
+    }
+
+    result = simplify_dragncards_marvel_state(raw)
+    result_dict = result.model_dump() if hasattr(result, "model_dump") else result
+
+    # The engine-side marker remains in authoritative raw state for cleanup,
+    # while the normalized reader view remains count-only.
+    assert raw["game"]["cardById"]["boost-card"]["boost"] is True
+    assert result_dict["zones"]["player1Engaged"] == [
+        {"name": "HIDDEN", "stackSize": 1}
+    ]
+    assert "Secret Boost Card" not in repr(result_dict)
+    assert "secret-boost-database-id" not in repr(result_dict)
+
+
 def test_simplify_marvel_state_shows_exhausted_cards():
     raw = {
         "game": {

@@ -38,6 +38,53 @@ from game_service.schemas.base import StrictRequest
 # coupling runtime models to plugin metadata.
 
 
+def _dragncards_villain_end_phase_action_list() -> list[list[Any]]:
+    """Clean boost cards before delegating to the plugin phase transition.
+
+    ``drawBoost`` stores the card's authoritative identity in the engine's
+    ``cardById`` map while the normalised state intentionally exposes only a
+    ``HIDDEN`` count.  Keep cleanup on that engine-side marker instead of
+    asking a caller to identify a hidden card.  The direct move avoids the
+    plugin's ``DISCARD_CARD`` log, which includes the card face name.
+    """
+    return [
+        [
+            "FOR_EACH_VAL",
+            "$BOOST_CARD",
+            [
+                "FILTER_CARDS",
+                "$BOOST_CARD",
+                ["EQUAL", "$BOOST_CARD.boost", True],
+            ],
+            [
+                ["SET", "/cardById/$BOOST_CARD.id/rotation", 0],
+                ["SET", "/cardById/$BOOST_CARD.id/tokens", {}],
+                ["SET", "/cardById/$BOOST_CARD.id/boost", False],
+                [
+                    "COND",
+                    [
+                        "NOT",
+                        [
+                            "EQUAL",
+                            "$BOOST_CARD.groupId",
+                            "sharedEncounterDiscard",
+                        ],
+                    ],
+                    [
+                        [
+                            "MOVE_CARD",
+                            "$BOOST_CARD.id",
+                            "sharedEncounterDiscard",
+                            -1,
+                        ]
+                    ],
+                ],
+            ],
+        ],
+        ["ACTION_LIST", "villainEndPhase"],
+    ]
+
+
 class MoveCardAction(StrictRequest):
     """Move a card to a different group/position on the table."""
 
@@ -768,8 +815,8 @@ def _to_dragncards(action: GameAction) -> tuple[list, str, str | None]:
 
     if isinstance(action, VillainEndPhaseAction):
         return (
-            ["ACTION_LIST", "villainEndPhase"],
-            "End villain phase",
+            _dragncards_villain_end_phase_action_list(),
+            "End villain phase and clean boost cards",
             None,
         )
 
