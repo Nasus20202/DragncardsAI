@@ -31,11 +31,15 @@ async def _table(
     mode: str = SESSION_MODE_ORCHESTRATED,
     persona: str | None = None,
     platform: str | None = None,
+    game_id: str = "game-1",
 ):
     """An orchestrating session with one configured seat."""
+    metadata = {"game_id": game_id}
+    if platform is not None:
+        metadata["platform"] = platform
     session = await repo.create_session(
         "table",
-        {"platform": platform} if platform is not None else {},
+        metadata,
         session_mode=mode,
     )
     await repo.set_model_config(
