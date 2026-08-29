@@ -11,6 +11,7 @@ from urllib.parse import quote, unquote
 import httpx
 import pytest
 
+from game_service.api.models import SimplifiedGameState
 from game_service.coordination.history_emitter import NullHistoryEmitter
 from game_service.logic.exceptions import (
     EnumeratedOptionError,
@@ -1335,3 +1336,132 @@ async def test_html_200_is_authentication_error_before_json_parsing():
         client = MarvelLcgHttpClient("http://engine", "password", client=raw)
         with pytest.raises(MarvelLcgAuthenticationError):
             await client.list_scenarios()
+RHINO_FIXTURE = Path(__file__).parent / "fixtures" / "rhino_normalization.json"
+
+
+def _rhino_checkpoints() -> list[dict]:
+    return json.loads(RHINO_FIXTURE.read_text(encoding="utf-8"))["checkpoints"]
+
+
+@pytest.mark.parametrize(
+    ("checkpoint_index", "threat"),
+    [(0, 9), (1, 12), (2, 14)],
+)
+def test_recorded_rhino_checkpoints_normalize_villain_and_main_scheme(
+    checkpoint_index: int, threat: int
+):
+    checkpoint = _rhino_checkpoints()[checkpoint_index]
+    state = MarvelLcgNormaliser(("player1", "player2")).normalise(
+        checkpoint["world"], player_n="player1"
+    )
+
+    assert state["villainHitPoints"] == 19
+    assert state["mode"] == "in progress"
+    assert state["zones"]["sharedMainScheme"][0]["tokens"]["threat"] == threat
+    assert state["zones"]["sharedMainScheme"][0]["tokens"]["target_threat"] == 14
+
+
+def test_recorded_rhino_checkpoint_exposes_active_side_scheme_effects():
+    state = MarvelLcgNormaliser(("player1", "player2")).normalise(
+        _rhino_checkpoints()[0]["world"], player_n="player1"
+    )
+    side_schemes = {
+        card["name"]: card for card in state["zones"]["sharedSideSchemes"]
+    }
+
+    assert set(side_schemes) == {
+        "Crowd Control",
+        "Breakin' & Takin'",
+        "Highway Robbery",
+    }
+    assert side_schemes["Crowd Control"]["tokens"] == {
+        "threat": 3,
+        "crisis": 1,
+    }
+    assert side_schemes["Breakin' & Takin'"]["tokens"] == {
+        "threat": 4,
+        "hazard": 1,
+    }
+    assert side_schemes["Highway Robbery"]["tokens"] == {
+        "threat": 5,
+        "acceleration": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("Initialize", "setup"),
+        ("Scenario Setup", "setup"),
+        ("Resolve Mulligans", "setup"),
+        ("Init Finished", "setup"),
+        ("Player 1 Turn", "player"),
+        ("Player Turn End", "player"),
+        ("Main Scheme Place Threat", "villain"),
+        ("Enemy Activation", "villain"),
+        ("Deal Encounter Cards", "villain"),
+        ("Reveal Encounter Cards", "villain"),
+        ("End Phase", "passive"),
+        ("End Round", "passive"),
+        ("Start Round", "passive"),
+    ],
+)
+def test_marvel_engine_phase_labels_have_neutral_classification(
+    label: str, expected: str
+):
+    state = MarvelLcgNormaliser().normalise({"phase": label})
+
+    assert state["phase"] == expected
+    assert state["phaseLabel"] == label
+
+
+def test_unrecognized_marvel_phase_remains_unknown():
+    state = MarvelLcgNormaliser().normalise({"phase": "Future Engine Phase"})
+
+    assert state["phase"] == "unknown"
+    assert state["phaseLabel"] == "Future Engine Phase"
+
+
+def test_missing_marvel_villain_health_is_not_fabricated_as_zero():
+    raw = {
+        "players": [{}],
+        "area_villain": [
+            {
+                "id": 1,
+                "card_id": "villain",
+                "name": "Unknown Villain",
+                "card_type": "Villain",
+                "is_face_up": True,
+                "visible_for_players": [0],
+                "info": {"c_damage": 3},
+            }
+        ],
+    }
+
+    state = MarvelLcgNormaliser().normalise(raw, player_n="player1")
+
+    assert "villainHitPoints" not in state
+    assert "villainHitPoints" not in SimplifiedGameState.model_validate(
+        state
+    ).model_dump()
+
+
+def test_marvel_villain_health_accepts_encounter_villain_card_type():
+    raw = {
+        "players": [{}],
+        "area_villain": [
+            {
+                "id": 1,
+                "card_id": "rhino",
+                "name": "Rhino",
+                "card_type": "EncounterVillain",
+                "is_face_up": True,
+                "visible_for_players": [0],
+                "info": {"health": 19},
+            }
+        ],
+    }
+
+    state = MarvelLcgNormaliser().normalise(raw, player_n="player1")
+
+    assert state["villainHitPoints"] == 19

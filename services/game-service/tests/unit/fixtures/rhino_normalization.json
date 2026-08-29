@@ -1,0 +1,229 @@
+{
+  "checkpoints": [
+    {
+      "name": "main-scheme-9-of-14",
+      "world": {
+        "round_id": 3,
+        "phase": "Player 1 Turn",
+        "players": [{}, {}],
+        "area_villain": [
+          {
+            "id": 101,
+            "card_id": "01094",
+            "name": "Rhino",
+            "card_type": "Villain",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"health": 19, "c_damage": 9}
+          }
+        ],
+        "area_schemes_main": [
+          {
+            "id": 201,
+            "card_id": "01097b",
+            "name": "The Break-In!",
+            "card_type": "MainScheme",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"k_threat": 9, "target_threat": 14}
+          }
+        ],
+        "area_schemes_side": [
+          {
+            "id": 301,
+            "card_id": "01108",
+            "name": "Crowd Control",
+            "card_type": "SideScheme",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"k_threat": 3, "crisis": 1}
+          },
+          {
+            "id": 302,
+            "card_id": "01107",
+            "name": "Breakin' & Takin'",
+            "card_type": "SideScheme",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"k_threat": 4, "hazard": 1}
+          },
+          {
+            "id": 303,
+            "card_id": "01166",
+            "name": "Highway Robbery",
+            "card_type": "SideScheme",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"k_threat": 5, "acceleration_icon": 1}
+          }
+        ],
+        "_ask_players": [0]
+      }
+    },
+    {
+      "name": "main-scheme-12-of-14",
+      "world": {
+        "round_id": 4,
+        "phase": "Main Scheme Place Threat",
+        "players": [{}, {}],
+        "area_villain": [
+          {
+            "id": 101,
+            "card_id": "01094",
+            "name": "Rhino",
+            "card_type": "Villain",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"health": 19, "c_damage": 9}
+          }
+        ],
+        "area_schemes_main": [
+          {
+            "id": 201,
+            "card_id": "01097b",
+            "name": "The Break-In!",
+            "card_type": "MainScheme",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"k_threat": 12, "target_threat": 14}
+          }
+        ],
+        "area_schemes_side": [
+          {
+            "id": 301,
+            "card_id": "01108",
+            "name": "Crowd Control",
+            "card_type": "SideScheme",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"k_threat": 3, "crisis": 1}
+          },
+          {
+            "id": 302,
+            "card_id": "01107",
+            "name": "Breakin' & Takin'",
+            "card_type": "SideScheme",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"k_threat": 4, "hazard": 1}
+          },
+          {
+            "id": 303,
+            "card_id": "01166",
+            "name": "Highway Robbery",
+            "card_type": "SideScheme",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"k_threat": 5, "acceleration_icon": 1}
+          }
+        ],
+        "_ask_players": []
+      }
+    },
+    {
+      "name": "main-scheme-14-of-14",
+      "world": {
+        "round_id": 4,
+        "phase": "Enemy Activation",
+        "players": [{}, {}],
+        "area_villain": [
+          {
+            "id": 101,
+            "card_id": "01094",
+            "name": "Rhino",
+            "card_type": "Villain",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"health": 19, "c_damage": 9}
+          }
+        ],
+        "area_schemes_main": [
+          {
+            "id": 201,
+            "card_id": "01097b",
+            "name": "The Break-In!",
+            "card_type": "MainScheme",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"k_threat": 14, "target_threat": 14}
+          }
+        ],
+        "area_schemes_side": [
+          {
+            "id": 301,
+            "card_id": "01108",
+            "name": "Crowd Control",
+            "card_type": "SideScheme",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"k_threat": 3, "crisis": 1}
+          },
+          {
+            "id": 302,
+            "card_id": "01107",
+            "name": "Breakin' & Takin'",
+            "card_type": "SideScheme",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"k_threat": 4, "hazard": 1}
+          },
+          {
+            "id": 303,
+            "card_id": "01166",
+            "name": "Highway Robbery",
+            "card_type": "SideScheme",
+            "is_face_up": true,
+            "is_ready": true,
+            "visible_for_players": [0, 1],
+            "bind_object_id": 0,
+            "down_card_ids": [],
+            "info": {"k_threat": 5, "acceleration_icon": 1}
+          }
+        ],
+        "_ask_players": [1]
+      }
+    }
+  ]
+}

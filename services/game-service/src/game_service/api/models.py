@@ -224,7 +224,9 @@ class SimplifiedGameState(BaseModel):
 
     playRound: int | None = None
     mode: str = "unknown"
-    villainHitPoints: int = 0
+    villainHitPoints: int | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     stepId: str | int | None = None
     stepDescription: str | None = None
     phase: Literal["setup", "player", "villain", "passive", "unknown"] = "unknown"

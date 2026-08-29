@@ -10,6 +10,7 @@ from game_service.marvel_lcg.options import _visible
 
 _ZONE_MAP = {
     "area_schemes_main": "sharedMainScheme",
+    "area_schemes_side": "sharedSideSchemes",
     "main_schemes_deck": "sharedMainSchemeDeck",
     "area_villain": "sharedVillain",
     "villain_deck": "sharedVillainDeck",
@@ -39,22 +40,86 @@ _PLAYER_ZONE_MAP = {
 }
 
 
+_PHASES = {
+    "initialize": "setup",
+    "scenario setup": "setup",
+    "resolve mulligans": "setup",
+    "init finished": "setup",
+    "player turn": "player",
+    "player turn end": "player",
+    "main scheme place threat": "villain",
+    "enemy activation": "villain",
+    "deal encounter cards": "villain",
+    "reveal encounter cards": "villain",
+    "end phase": "passive",
+    "end round": "passive",
+    "start round": "passive",
+}
+
+_INFO_KEY_MAP = {
+    "k_threat": "threat",
+    "c_damage": "damage",
+    "k_damage": "damage",
+    "c_threat": "threat",
+    "k_acceleration_token": "acceleration",
+    "acceleration_icon": "acceleration",
+}
+
+
 def _phase(label: str) -> str:
-    value = label.lower()
+    value = label.strip().lower()
     if not value:
         return "unknown"
-    if any(
-        word in value
-        for word in ("mulligan", "setup", "choose hero", "select identity")
-    ):
-        return "setup"
-    if any(word in value for word in ("villain", "encounter", "scheme", "treachery")):
-        return "villain"
-    if any(word in value for word in ("player", "turn", "player phase")):
+    phase = _PHASES.get(value)
+    if phase is not None:
+        return phase
+    if re.fullmatch(r"player \d+ turn", value):
         return "player"
-    if any(word in value for word in ("resolve", "end of", "passive", "waiting")):
-        return "passive"
     return "unknown"
+
+
+def _normalise_info(info: Any) -> dict[str, Any]:
+    if not isinstance(info, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for key, value in info.items():
+        if not value:
+            continue
+        result[_INFO_KEY_MAP.get(str(key), str(key))] = value
+    return result
+
+
+def _integer(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and re.fullmatch(r"\s*[+-]?\d+\s*", value):
+        return int(value)
+    return None
+
+
+def _active_villain_hit_points(
+    cards: Any, visible_seats: Iterable[int]
+) -> int | None:
+    if not isinstance(cards, (list, tuple)):
+        return None
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        if card.get("bind_object_id") not in (None, 0, "0", ""):
+            continue
+        card_type = str(card.get("card_type", "")).lower()
+        if card_type and card_type not in {"villain", "enemy", "encountervillain"}:
+            continue
+        if not _visible(card, visible_seats):
+            continue
+        info = card.get("info")
+        if isinstance(info, dict):
+            health = _integer(info.get("health"))
+            if health is not None:
+                return health
+    return None
 
 
 def _resource_count(value: Any) -> int | None:
@@ -123,11 +188,9 @@ class MarvelLcgNormaliser:
             result["type"] = str(card_type)
         if not card.get("is_ready", True):
             result["exhausted"] = True
-        info = card.get("info")
-        if isinstance(info, dict):
-            tokens = {key: value for key, value in info.items() if value}
-            if tokens:
-                result["tokens"] = tokens
+        info = _normalise_info(card.get("info"))
+        if info:
+            result["tokens"] = info
         return SimplifiedCard(**result).model_dump(exclude_defaults=True) | {
             "stackSize": stack_size
         }
@@ -235,10 +298,17 @@ class MarvelLcgNormaliser:
         mode = world.get("mode")
         if not isinstance(mode, str):
             mode = "loss" if frame.get("render_id") == -1 else "in progress"
+        villain_hit_points = _active_villain_hit_points(
+            world.get("area_villain", []),
+            visible_seats or spectator_seats,
+        )
+        if villain_hit_points is None:
+            # Keep compatibility with an engine variant that explicitly reports
+            # a world-level value, but never turn an absent value into zero.
+            villain_hit_points = _integer(world.get("villain_hit_points"))
         result: dict[str, Any] = {
             "playRound": int(world.get("round_id", 0) or 0),
             "mode": mode,
-            "villainHitPoints": int(world.get("villain_hit_points", 0) or 0),
             "stepId": frame.get("current_step_id"),
             "stepDescription": phase_label or None,
             "phase": _phase(phase_label),
@@ -246,6 +316,8 @@ class MarvelLcgNormaliser:
             "players": players,
             "zones": {key: value for key, value in zones.items() if value},
         }
+        if villain_hit_points is not None:
+            result["villainHitPoints"] = villain_hit_points
         # This is intentionally present for marvel-lcg and absent for DragnCards.
         result["pendingSeats"] = pending
         return result
