@@ -184,7 +184,9 @@ export function normalizeReasoningDraft(
   modelName: string
 ): ReasoningDraft {
   const efforts = reasoningEffortsForModel(provider, modelName);
-  const effort = efforts.includes(draft.effort) ? draft.effort : efforts[0] ?? "";
+  const effort = efforts.includes(draft.effort)
+    ? draft.effort
+    : (efforts[0] ?? "");
   const enabled = efforts.length > 0 && draft.enabled;
   if (enabled === draft.enabled && effort === draft.effort) {
     return draft;

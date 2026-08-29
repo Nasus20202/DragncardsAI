@@ -215,8 +215,6 @@ def test_translate_villain_encounter_phase():
     assert payload["options"]["action_list"] == ["ACTION_LIST", "villainEncounterPhase"]
 
 
-
-
 def test_translate_villain_end_phase_cleans_authoritative_boost_cards():
     """Cleanup addresses engine boost markers, never normalized HIDDEN entries."""
     draw_payload = translate_action(DrawBoostAction(player_n="player1"))
@@ -259,6 +257,7 @@ def test_translate_villain_end_phase_cleans_authoritative_boost_cards():
     assert "HIDDEN" not in serialized
     assert "stackIds" not in serialized
     assert "parentCardIds" not in serialized
+
 
 def test_translate_multiple_double_sided_villains():
     action = MultipleDoubleSidedVillainsAction()

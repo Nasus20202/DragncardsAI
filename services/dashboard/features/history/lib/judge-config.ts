@@ -1,7 +1,6 @@
 import {
   clampModelToProvider,
   isWorking,
-  reasoningEffortsForModel,
 } from "@/features/play/lib/session-draft";
 import {
   DashboardConfig,
@@ -127,14 +126,20 @@ export function assembleJudgeConfig(
   }
 
   if (draft.reasoningEnabled) {
-    judge.reasoning = { enabled: true, effort: draft.reasoningEffort };
+    const reasoning: NonNullable<JudgeConfig["reasoning"]> = {
+      enabled: true,
+    };
+    if (draft.reasoningEffort.trim()) {
+      reasoning.effort = draft.reasoningEffort.trim();
+    }
     const maxTokens = draft.reasoningMaxTokens.trim();
     if (maxTokens) {
       const parsed = Number(maxTokens);
       if (Number.isInteger(parsed) && parsed > 0) {
-        judge.reasoning.max_tokens = parsed;
+        reasoning.max_tokens = parsed;
       }
     }
+    judge.reasoning = reasoning;
   }
 
   const prompt = draft.promptOverride.trim();

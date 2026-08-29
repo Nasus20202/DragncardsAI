@@ -164,14 +164,12 @@ export function JudgeConfigPanel({
             label="Reasoning effort"
             items={reasoningEfforts.map((effort) => ({
               value: effort,
-              label: effort,
+              label: effort.charAt(0).toUpperCase() + effort.slice(1),
             }))}
             value={draft.reasoningEffort}
             disabled={disabled}
             triggerTestId="judge-reasoning-effort"
-            onChange={(effort) =>
-              set("reasoningEffort", effort)
-            }
+            onChange={(effort) => set("reasoningEffort", effort)}
           />
           <TextInputField
             id="judge-max-tokens-field"

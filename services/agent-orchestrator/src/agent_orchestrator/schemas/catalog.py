@@ -18,7 +18,9 @@ class ProviderResponse(BaseModel):
     provider_id: str
     model_prefix: str
     models: list[str]
-    model_capabilities: dict[str, ModelCapabilitiesResponse] = Field(default_factory=dict)
+    model_capabilities: dict[str, ModelCapabilitiesResponse] = Field(
+        default_factory=dict
+    )
     available: bool
     error: str | None = None
 

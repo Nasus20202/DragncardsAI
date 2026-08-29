@@ -1524,7 +1524,10 @@ async def test_fetch_all_models_preserves_reasoning_capability_states():
                         "id": "openrouter/selected",
                         "reasoning": {"supported_efforts": ["minimal", "high"]},
                     },
-                    {"id": "openrouter/no-reasoning", "reasoning": {"supported_efforts": []}},
+                    {
+                        "id": "openrouter/no-reasoning",
+                        "reasoning": {"supported_efforts": []},
+                    },
                 ]
             },
             request=request,
@@ -1550,7 +1553,14 @@ async def test_cached_reasoning_capabilities_preserve_explicit_empty_list():
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={"data": [{"id": "openrouter/no-reasoning", "reasoning": {"supported_efforts": []}}]},
+            json={
+                "data": [
+                    {
+                        "id": "openrouter/no-reasoning",
+                        "reasoning": {"supported_efforts": []},
+                    }
+                ]
+            },
             request=request,
         )
 

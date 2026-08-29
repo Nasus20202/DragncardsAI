@@ -62,7 +62,7 @@ function ReasoningSection({
             label="Reasoning effort"
             items={efforts.map((effort) => ({
               value: effort,
-              label: effort,
+              label: effort.charAt(0).toUpperCase() + effort.slice(1),
             }))}
             value={draft.reasoning.effort}
             onChange={(value) =>
@@ -252,7 +252,9 @@ export function PlayConfigPanel({
 
             <ReasoningSection
               draft={draft}
-              provider={providers.find((p) => p.provider_id === draft.providerId)}
+              provider={providers.find(
+                (p) => p.provider_id === draft.providerId
+              )}
               set={set}
             />
 
