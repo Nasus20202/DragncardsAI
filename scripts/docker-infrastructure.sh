@@ -9,9 +9,7 @@
 # docker-compose.infra.yaml plus external/docker/docker-compose.yaml is
 # infrastructure, everything defined in docker-compose.yaml itself is an
 # application service. The ordinary marvel-lcg backend and its initializer are
-# included because they are no longer behind a Compose profile. The optional
-# smoke model remains intentionally outside this lifecycle.
-
+# included because they are no longer behind a Compose profile.
 set -euo pipefail
 
 ACTION="${1:-start}"
