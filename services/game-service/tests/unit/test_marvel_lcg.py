@@ -1367,6 +1367,8 @@ async def test_html_200_is_authentication_error_before_json_parsing():
         client = MarvelLcgHttpClient("http://engine", "password", client=raw)
         with pytest.raises(MarvelLcgAuthenticationError):
             await client.list_scenarios()
+
+
 RHINO_FIXTURE = Path(__file__).parent / "fixtures" / "rhino_normalization.json"
 
 
@@ -1402,9 +1404,7 @@ def test_recorded_rhino_checkpoint_exposes_active_side_scheme_effects():
     state = MarvelLcgNormaliser(("player1", "player2")).normalise(
         _rhino_checkpoints()[0]["world"], player_n="player1"
     )
-    side_schemes = {
-        card["name"]: card for card in state["zones"]["sharedSideSchemes"]
-    }
+    side_schemes = {card["name"]: card for card in state["zones"]["sharedSideSchemes"]}
 
     assert set(side_schemes) == {
         "Crowd Control",
@@ -1478,9 +1478,9 @@ def test_missing_marvel_villain_health_is_not_fabricated_as_zero():
     state = MarvelLcgNormaliser().normalise(raw, player_n="player1")
 
     assert "villainHitPoints" not in state
-    assert "villainHitPoints" not in SimplifiedGameState.model_validate(
-        state
-    ).model_dump()
+    assert (
+        "villainHitPoints" not in SimplifiedGameState.model_validate(state).model_dump()
+    )
 
 
 def test_marvel_villain_health_accepts_encounter_villain_card_type():

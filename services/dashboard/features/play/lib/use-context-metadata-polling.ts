@@ -33,12 +33,13 @@ export function useContextMetadataPolling({
       return inFlight;
     }
 
-    let refresh: Promise<void>;
-    refresh = refreshContextMetadataRef.current(currentSessionId).finally(() => {
-      if (inFlightRefreshesRef.current.get(currentSessionId) === refresh) {
-        inFlightRefreshesRef.current.delete(currentSessionId);
-      }
-    });
+    const refresh: Promise<void> = refreshContextMetadataRef
+      .current(currentSessionId)
+      .finally(() => {
+        if (inFlightRefreshesRef.current.get(currentSessionId) === refresh) {
+          inFlightRefreshesRef.current.delete(currentSessionId);
+        }
+      });
     inFlightRefreshesRef.current.set(currentSessionId, refresh);
     return refresh;
   }, []);

@@ -56,7 +56,9 @@ def _numeric(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
-def _effect_priority(card: dict[str, Any], *, main_control_needed: bool) -> tuple[int, ...]:
+def _effect_priority(
+    card: dict[str, Any], *, main_control_needed: bool
+) -> tuple[int, ...]:
     """Mirror the reference's deterministic effect ordering for regression data."""
     tokens = card["tokens"]
     crisis_blocker = int(main_control_needed and _numeric(tokens.get("crisis")) > 0)
@@ -95,7 +97,10 @@ def _minimum_next_threat(
         base_placement is None
         or main_acceleration is None
         or alter_ego_scheme is None
-        or any(not isinstance(value, int) or isinstance(value, bool) for value in alter_ego_scheme)
+        or any(
+            not isinstance(value, int) or isinstance(value, bool)
+            for value in alter_ego_scheme
+        )
     ):
         return None
     return current + base_placement + main_acceleration + sum(alter_ego_scheme)
@@ -127,7 +132,10 @@ def test_multiple_active_side_schemes_keep_distinct_effect_priorities() -> None:
     table_start = strategy.index("| Rank in the 9/14 risk line |")
     table_end = strategy.index("This ordering is conditional", table_start)
     table = strategy[table_start:table_end]
-    positions = [table.index(name) for name in ("Crowd Control", "Highway Robbery", "Breakin' & Takin'")]
+    positions = [
+        table.index(name)
+        for name in ("Crowd Control", "Highway Robbery", "Breakin' & Takin'")
+    ]
     assert positions == sorted(positions)
 
 
@@ -141,7 +149,10 @@ def test_crisis_blocks_main_scheme_threat_removal() -> None:
 
     assert crisis["tokens"]["crisis"] == 1
     assert "player cards cannot remove threat from the **main scheme**" in strategy
-    assert "do not spend a player-card thwart on the main scheme while crisis remains" in strategy
+    assert (
+        "do not spend a player-card thwart on the main scheme while crisis remains"
+        in strategy
+    )
     assert "side-scheme threat remains a legal target" in strategy
 
 
@@ -151,12 +162,15 @@ def test_minimum_projection_hits_9_of_14_checkpoint() -> None:
 
     assert main["tokens"]["threat"] == 9
     assert main["tokens"]["target_threat"] == 14
-    assert _minimum_next_threat(
-        RHINO_RISK_STATE,
-        base_placement=2,
-        main_acceleration=1,
-        alter_ego_scheme=[2],
-    ) == 14
+    assert (
+        _minimum_next_threat(
+            RHINO_RISK_STATE,
+            base_placement=2,
+            main_acceleration=1,
+            alter_ego_scheme=[2],
+        )
+        == 14
+    )
     assert "9 + 2 + 1 + 2 = 14" in strategy
     assert "WARNING: minimum next-villain-phase threat reaches 14/14" in strategy
     assert "before reporting the player phase complete" in strategy
@@ -177,12 +191,15 @@ def test_unknown_required_gain_refuses_an_exact_clock(
 ) -> None:
     strategy = " ".join(_strategy().lower().split())
 
-    assert _minimum_next_threat(
-        RHINO_RISK_STATE,
-        base_placement=base_placement,
-        main_acceleration=main_acceleration,
-        alter_ego_scheme=alter_ego_scheme,
-    ) is None
+    assert (
+        _minimum_next_threat(
+            RHINO_RISK_STATE,
+            base_placement=base_placement,
+            main_acceleration=main_acceleration,
+            alter_ego_scheme=alter_ego_scheme,
+        )
+        is None
+    )
     assert "state the missing value and refuse to claim an exact minimum" in strategy
     assert "refuse to claim an exact clock" in strategy
     assert "do not silently use one threat per player" in strategy
@@ -203,8 +220,19 @@ def test_unknown_target_is_not_called_safe_and_plans_recompute() -> None:
 def test_deferred_side_scheme_requires_current_state_reason() -> None:
     strategy = _strategy()
 
-    assert "Deferred: <name> — current threat=<value>; effects=<non-zero indicators>." in strategy
-    assert "Reason: <current-state fact>, so <named higher-ranked line> is required first." in strategy
-    assert "Deferred: Breakin' & Takin' — current threat=4; effects=hazard=1." in strategy
-    assert "current thwart=2 is reserved to clear Crowd Control's crisis=1 blocker" in strategy
+    assert (
+        "Deferred: <name> — current threat=<value>; effects=<non-zero indicators>."
+        in strategy
+    )
+    assert (
+        "Reason: <current-state fact>, so <named higher-ranked line> is required first."
+        in strategy
+    )
+    assert (
+        "Deferred: Breakin' & Takin' — current threat=4; effects=hazard=1." in strategy
+    )
+    assert (
+        "current thwart=2 is reserved to clear Crowd Control's crisis=1 blocker"
+        in strategy
+    )
     assert "never write only “handle it later,” “not important,”" in strategy.lower()

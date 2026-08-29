@@ -27,9 +27,7 @@ RHINO_MULTI_STAGE_STATE: dict[str, Any] = {
     "zones": {
         "sharedVillain": [{"name": "Rhino I", "tokens": {"damage": 0}}],
         "sharedVillainDeck": [{"name": "Rhino II", "tokens": {"damage": 0}}],
-        "sharedMainScheme": [
-            {"name": "The Break-In!", "tokens": {"threat": 4}}
-        ],
+        "sharedMainScheme": [{"name": "The Break-In!", "tokens": {"threat": 4}}],
         "player1Play1": [{"name": "Spider-Man", "tokens": {"damage": 0}}],
     },
 }
@@ -44,9 +42,7 @@ LOW_HEALTH_STATE: dict[str, Any] = {
     "villainHitPoints": 19,
     "zones": {
         "sharedVillain": [{"name": "Rhino I", "tokens": {"damage": 6}}],
-        "sharedMainScheme": [
-            {"name": "The Break-In!", "tokens": {"threat": 8}}
-        ],
+        "sharedMainScheme": [{"name": "The Break-In!", "tokens": {"threat": 8}}],
         "player1Play1": [{"name": "Spider-Man", "tokens": {"damage": 8}}],
         "player1Engaged": [{"name": "Hydra Soldier", "tokens": {"damage": 0}}],
         "player2Play1": [{"name": "Captain Marvel", "tokens": {"damage": 1}}],
@@ -136,12 +132,11 @@ def _is_int(value: Any) -> bool:
 def test_current_stage_hp_is_not_the_full_rhino_victory_path() -> None:
     strategy = _strategy()
 
-    current_only = RHINO_MULTI_STAGE_STATE["villainHitPoints"] - RHINO_MULTI_STAGE_STATE[
-        "zones"
-    ]["sharedVillain"][0]["tokens"]["damage"]
-    complete_path = _full_villain_damage(
-        RHINO_MULTI_STAGE_STATE, {"Rhino II": 15}
+    current_only = (
+        RHINO_MULTI_STAGE_STATE["villainHitPoints"]
+        - RHINO_MULTI_STAGE_STATE["zones"]["sharedVillain"][0]["tokens"]["damage"]
     )
+    complete_path = _full_villain_damage(RHINO_MULTI_STAGE_STATE, {"Rhino II": 15})
 
     assert current_only == 19
     assert complete_path == 34
@@ -181,7 +176,10 @@ def test_low_health_hero_outweighs_a_race_that_misses_the_survival_window() -> N
         credible_damage_per_round=8,
         survival_window_rounds=2,
     )
-    assert "positive low hp is a major team-risk input, not automatic game over" in strategy
+    assert (
+        "positive low hp is a major team-risk input, not automatic game over"
+        in strategy
+    )
     assert "the expected team loss outweighs the race value" in strategy
     assert "switch to survival or the highest-value threat-control line" in strategy
     assert "game loss occurs only when all players are eliminated" in strategy

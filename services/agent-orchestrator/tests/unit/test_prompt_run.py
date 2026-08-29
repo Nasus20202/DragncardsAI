@@ -426,8 +426,7 @@ async def test_game_tool_allows_the_session_bound_game(
     assert not [
         event
         for event in events
-        if event.event_type == "tool_result"
-        and event.payload_json.get("is_error")
+        if event.event_type == "tool_result" and event.payload_json.get("is_error")
     ]
 
 
@@ -446,11 +445,7 @@ async def test_game_tool_rejects_a_different_game_before_dispatch(
     )
 
     assert mcp.calls == []
-    result = next(
-        event
-        for event in events
-        if event.event_type == "tool_result"
-    )
+    result = next(event for event in events if event.event_type == "tool_result")
     refusal = result.payload_json["result"]["content"][0]["text"]
     assert result.payload_json["is_error"] is True
     assert "game-a" not in refusal
@@ -485,11 +480,7 @@ async def test_game_binding_rejects_before_state_or_turn_preflight(
     )
 
     assert mcp.calls == []
-    result = next(
-        event
-        for event in events
-        if event.event_type == "tool_result"
-    )
+    result = next(event for event in events if event.event_type == "tool_result")
     assert result.payload_json["is_error"] is True
     assert "game-b" not in result.payload_json["result"]["content"][0]["text"]
 
@@ -512,8 +503,7 @@ async def test_unbound_session_can_discover_and_bind_its_first_game(
     assert not [
         event
         for event in events
-        if event.event_type == "tool_result"
-        and event.payload_json.get("is_error")
+        if event.event_type == "tool_result" and event.payload_json.get("is_error")
     ]
     bound = await repository.get_session(seat.id)
     assert bound is not None

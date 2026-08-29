@@ -108,7 +108,7 @@ def _decoded_values(value: Any):
     if isinstance(value, str):
         try:
             decoded = json.loads(value)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return
         if decoded != value:
             yield from _decoded_values(decoded)
@@ -221,9 +221,7 @@ def extract_marvel_lcg_option_identity(
                 if candidate_id != selected_id:
                     continue
                 name = _option_field(option, "name", "option_name", "optionName")
-                option_event = _option_field(
-                    option, "event", "event_name", "eventName"
-                )
+                option_event = _option_field(option, "event", "event_name", "eventName")
                 resolved_event = option_event
                 if not isinstance(resolved_event, str) or not resolved_event.strip():
                     resolved_event = _option_field(

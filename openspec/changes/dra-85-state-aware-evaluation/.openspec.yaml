@@ -1,4 +1,0 @@
-schema: spec-driven
-created: 2026-08-29
-goal: Prevent false-positive Marvel verdicts by validating effects and terminal
-  outcomes

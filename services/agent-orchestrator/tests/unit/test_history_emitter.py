@@ -842,6 +842,7 @@ def test_invalid_coordinator_provenance_is_not_persisted():
 
     assert "prompt_provenance" not in envelope["payload"]
 
+
 def test_idempotency_key_is_stable_and_offset_dependent():
     a = build_idempotency_key(GAME_ID, "agent", 1)
     assert a == build_idempotency_key(GAME_ID, "agent", 1)

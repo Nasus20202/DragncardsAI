@@ -161,9 +161,7 @@ export function usePlaySession(): UsePlaySessionResult {
   const [contextMetadata, setContextMetadata] =
     useState<ContextMetadata | null>(null);
   const selectedSessionIdRef = useRef<string | null>(null);
-  const contextRefreshesRef = useRef(
-    new Map<string, ContextRefreshState>()
-  );
+  const contextRefreshesRef = useRef(new Map<string, ContextRefreshState>());
   const committedModelRef = useRef<{
     providerId: string;
     modelName: string;
@@ -231,47 +229,49 @@ export function usePlaySession(): UsePlaySessionResult {
   // Keep one request per session in flight. A lifecycle trigger that arrives
   // while one is running queues a trailing refresh so terminal state is not
   // hidden behind a response that began before the trigger.
-  const refreshContextMetadata = useCallback(async (sessionId: string) => {
-    while (true) {
-      const inFlight = contextRefreshesRef.current.get(sessionId);
-      if (inFlight) {
-        inFlight.queued = true;
-        await inFlight.promise;
+  const refreshContextMetadata = useCallback(
+    async (sessionId: string) => {
+      while (true) {
+        const inFlight = contextRefreshesRef.current.get(sessionId);
+        if (inFlight) {
+          inFlight.queued = true;
+          await inFlight.promise;
+          if (
+            !inFlight.queued ||
+            contextRefreshesRef.current.get(sessionId) !== inFlight
+          ) {
+            return;
+          }
+          contextRefreshesRef.current.delete(sessionId);
+          continue;
+        }
+
+        const request = getContextMetadata(sessionId)
+          .then((metadata) => {
+            if (isCurrentSessionId(sessionId)) {
+              setContextMetadata(metadata);
+            }
+          })
+          .catch(() => {
+            // Non-fatal: ignore metadata fetch errors
+          });
+        const state: ContextRefreshState = { promise: request, queued: false };
+        contextRefreshesRef.current.set(sessionId, state);
+        await request;
         if (
-          !inFlight.queued ||
-          contextRefreshesRef.current.get(sessionId) !== inFlight
+          !state.queued ||
+          contextRefreshesRef.current.get(sessionId) !== state
         ) {
+          if (contextRefreshesRef.current.get(sessionId) === state) {
+            contextRefreshesRef.current.delete(sessionId);
+          }
           return;
         }
         contextRefreshesRef.current.delete(sessionId);
-        continue;
       }
-
-      const request = getContextMetadata(sessionId)
-        .then((metadata) => {
-          if (isCurrentSessionId(sessionId)) {
-            setContextMetadata(metadata);
-          }
-        })
-        .catch(() => {
-          // Non-fatal: ignore metadata fetch errors
-        });
-      const state: ContextRefreshState = { promise: request, queued: false };
-      contextRefreshesRef.current.set(sessionId, state);
-      await request;
-      if (
-        !state.queued ||
-        contextRefreshesRef.current.get(sessionId) !== state
-      ) {
-        if (contextRefreshesRef.current.get(sessionId) === state) {
-          contextRefreshesRef.current.delete(sessionId);
-        }
-        return;
-      }
-      contextRefreshesRef.current.delete(sessionId);
-    }
-  }, [isCurrentSessionId]);
-
+    },
+    [isCurrentSessionId]
+  );
 
   const refreshSessions = useCallback(
     async (preserveSelected = true): Promise<SessionSummary[]> => {
