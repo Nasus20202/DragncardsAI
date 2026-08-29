@@ -274,6 +274,23 @@ async def test_job_repository_cancel_and_failure_branches(repository: Repository
 
 
 @pytest.mark.asyncio
+async def test_terminating_session_cancels_queued_jobs(repository: Repository):
+    session = await _create_session_with_model(repository)
+    job = await repository.enqueue_prompt_job(
+        session.id, prompt="hello", metadata_json={}, max_attempts=1
+    )
+    assert job is not None
+
+    await repository.terminate_session(session.id)
+
+    cancelled = await repository.get_job(job.id)
+    assert cancelled is not None
+    assert cancelled.status == "cancelled"
+    assert cancelled.cancellation_requested_at is not None
+    assert await repository.claim_next_job() is None
+
+
+@pytest.mark.asyncio
 async def test_enqueue_prompt_job_rejects_terminated_sessions(repository: Repository):
     session = await repository.create_session("demo", {})
     await repository.terminate_session(session.id)

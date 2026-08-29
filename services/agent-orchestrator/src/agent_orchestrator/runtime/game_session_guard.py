@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+_EXISTING_GAME_RESOLVER_TOOLS = frozenset({"attach_game", "lookup_session_by_slug"})
+
 
 @dataclass(frozen=True)
 class GameSessionBindingViolation:
@@ -45,14 +47,16 @@ def check_game_session_binding(
 
     An unbound session is allowed to make its first game-service call. The
     existing result/argument capture path then records that game's id, preserving
-    first-call discovery. Calls that do not carry a string ``session_id`` are left
-    to the game-service request validation; catalog/lifecycle tools such as game
-    creation do not target an existing session and therefore remain available.
+    first-call discovery. Calls that enumerate or resolve existing game
+    instances are refused once a session is bound because their arguments do not
+    carry a comparable canonical game id.
     """
     if assignment != "game-service" or not bound_game_id:
         return None
     if not isinstance(arguments, dict):
         return None
+    if tool_name in _EXISTING_GAME_RESOLVER_TOOLS or tool_name == "list_games":
+        return GameSessionBindingViolation(tool_name=tool_name)
     requested_game_id = arguments.get("session_id")
     if not isinstance(requested_game_id, str) or not requested_game_id:
         return None

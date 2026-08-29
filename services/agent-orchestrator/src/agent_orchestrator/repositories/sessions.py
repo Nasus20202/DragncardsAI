@@ -232,6 +232,40 @@ class SessionRepositoryMixin:
             item.updated_at = utc_now()
         return await self.get_session(session_id)
 
+    async def replace_game_binding(
+        self,
+        session_id: str,
+        game_id: str,
+        *,
+        platform: str | None = None,
+        metadata_json: dict[str, Any] | None = None,
+    ) -> AgentSession | None:
+        """Replace a session's game binding for an explicit replay boundary.
+
+        Unlike ordinary metadata updates, this is an internal lifecycle
+        operation that intentionally overwrites the server-owned binding while
+        holding the session row lock.
+        """
+        async with self._session_factory() as session, session.begin():
+            item = await session.get(
+                AgentSession,
+                session_id,
+                with_for_update=True,
+            )
+            if item is None:
+                return None
+            metadata = dict(item.metadata_json or {})
+            if metadata_json is not None:
+                metadata.update(metadata_json)
+            metadata["game_id"] = game_id
+            if platform is None:
+                metadata.pop("platform", None)
+            else:
+                metadata["platform"] = platform
+            item.metadata_json = metadata
+            item.updated_at = utc_now()
+        return await self.get_session(session_id)
+
     async def get_session_replay_settings(self, session_id: str) -> AgentSession | None:
         async with self._session_factory() as session:
             return await session.get(AgentSession, session_id)
@@ -287,9 +321,23 @@ class SessionRepositoryMixin:
             item = await session.get(AgentSession, session_id)
             if item is None:
                 return None
+            active_job_ids = list(
+                (
+                    await session.execute(
+                        select(Job.id).where(
+                            Job.session_id == session_id,
+                            Job.status.in_(["queued", "running"]),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
             item.status = "terminated"
             item.terminated_at = utc_now()
             item.updated_at = utc_now()
+        for job_id in active_job_ids:
+            await self.request_cancel(job_id)
         return await self.get_session(session_id)
 
     async def delete_session(self, session_id: str) -> bool:

@@ -12,6 +12,10 @@ from agent_orchestrator.runtime.builtin_tools import (
 )
 from agent_orchestrator.runtime.history_emitter import SESSION_GAME_ID_KEY
 from agent_orchestrator.runtime.live_events import InMemoryLiveEventBus
+from agent_orchestrator.runtime.player_agents import (
+    SESSION_ORCHESTRATOR_ID_KEY,
+    SESSION_PLAYER_ID_KEY,
+)
 from agent_orchestrator.runtime.session_modes import SESSION_MODE_ORCHESTRATED
 from agent_orchestrator.runtime.skills import SkillRegistry
 from agent_orchestrator.storage.repository import Repository
@@ -465,3 +469,91 @@ async def test_player_tools_are_registered_only_with_a_roster(
     # Child-safe tools remain available.
     assert "load_skill" in _tool_names(child_with_roster)
     assert "load_skill_reference" in _tool_names(child_with_roster)
+
+
+@pytest.mark.asyncio
+async def test_replay_after_failure_rebinds_to_new_game_and_spawns_fresh_player_agent(
+    repository: Repository,
+    live_event_bus: InMemoryLiveEventBus,
+):
+    session = await _orchestrator_session(repository, game_id="game-failed")
+    await repository.update_session_mode(
+        session.id, session_mode=SESSION_MODE_ORCHESTRATED
+    )
+    await repository.upsert_player_config(
+        session.id,
+        "player1",
+        display_name="Iron Man",
+        provider_id=None,
+        model_name=None,
+        gateway_options={},
+        provider_options={},
+        skills=[],
+    )
+    old_child = await repository.create_session(
+        "player1",
+        {
+            SESSION_GAME_ID_KEY: "game-failed",
+            SESSION_ORCHESTRATOR_ID_KEY: session.id,
+            SESSION_PLAYER_ID_KEY: "player1",
+        },
+    )
+    await repository.set_player_agent_session(session.id, "player1", old_child.id)
+
+    # Simulate job failure on game-failed
+    failed_job = await repository.enqueue_prompt_job(
+        session.id, prompt="play", metadata_json={}, max_attempts=1
+    )
+    assert failed_job is not None
+    await repository.mark_job_failed(
+        failed_job.id,
+        error_code="provider_error",
+        error_message="Provider timeout",
+        retryable=False,
+    )
+
+    # Safe replay path: create_game replaces game binding and resets seat sessions
+    await repository.replace_game_binding(session.id, "game-recovered")
+    old_child_ids = await repository.reset_player_agent_sessions(session.id)
+    for child_id in old_child_ids:
+        await repository.terminate_session(child_id)
+
+    assert old_child_ids == [old_child.id]
+    retired = await repository.get_session(old_child.id)
+    assert retired is not None
+    assert retired.status == "terminated"
+
+    # Subsequent prompt on replay creates fresh player session bound to new game
+    replay_job = await repository.enqueue_prompt_job(
+        session.id, prompt="replay game", metadata_json={}, max_attempts=1
+    )
+    assert replay_job is not None
+
+    scheduled: list[str] = []
+
+    async def fake_schedule(child_job_id: str):
+        scheduled.append(child_job_id)
+        await live_event_bus.publish(
+            child_job_id, "completion", {"text": "TURN COMPLETE"}
+        )
+
+    handler = make_prompt_player_agent_handler(
+        repository=repository,
+        live_event_bus=live_event_bus,
+        session_id=session.id,
+        job_id=replay_job.id,
+        job=make_job(parent_job_id=None, job_type="prompt"),
+        schedule_child_fn=fake_schedule,
+    )
+
+    result = await handler({"player_id": "player1", "prompt": "Play new game turn."})
+    assert result["is_error"] is False
+    child_job = await repository.get_job(_payload(result)["child_job_id"])
+    assert child_job is not None
+    new_child = await repository.get_session(child_job.session_id)
+    assert new_child is not None
+    assert new_child.id != old_child.id
+    assert new_child.status == "active"
+    assert new_child.metadata_json["game_id"] == "game-recovered"
+    assert new_child.metadata_json["player_id"] == "player1"
+    assert new_child.metadata_json["orchestrator_session_id"] == session.id
