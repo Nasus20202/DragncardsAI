@@ -2319,14 +2319,18 @@ def build_builtin_registry(
                         "Send a prompt to one seat's player agent — the agent that plays "
                         "that hero. Use this for every decision that belongs to a player: "
                         "their turn during the player phase, and any choice an encounter "
-                        "card or activation hands to that specific player. "
-                        "The player agent runs with that seat's own model, reasoning, and "
-                        "skills, and has NO memory of previous turns, so the prompt must be "
-                        "fully self-contained: game session id, seat id, hero and form, "
-                        "round number, the board summary it needs, and exactly what to "
-                        "report back. Returns immediately with child_job_id; retrieve the "
-                        "seat's report with wait_for_subagent. Never decide a hero's play "
-                        "yourself."
+                        "card or activation hands to that specific player. The player "
+                        "session is persistent in orchestrated mode, so prior prompt and "
+                        "tool context is historical and cannot supply current facts. Build "
+                        "the prompt with references/player-turn-prompt.md from the latest "
+                        "verified normalized game-service_get_game_state response and, "
+                        "for marvel-lcg, the exact current game-service_list_game_options "
+                        "response. Do not invent rules, stats, card locations, outcomes, "
+                        "or advice about which option to take. If required state is "
+                        "contradictory, make one fresh authoritative state read and stop "
+                        "if it is not resolved. Returns immediately with child_job_id; "
+                        "retrieve the seat's report with wait_for_subagent. Never decide "
+                        "a hero's play yourself."
                     ),
                     parameters={
                         "type": "object",
@@ -2341,8 +2345,10 @@ def build_builtin_registry(
                             "prompt": {
                                 "type": "string",
                                 "description": (
-                                    "The fully self-contained prompt for this seat's turn "
-                                    "or decision."
+                                    "A prompt using player-turn-prompt.md: include the "
+                                    "latest normalized state checkpoint and the exact "
+                                    "current engine response when the platform supplies "
+                                    "one. Include no coordinator-authored facts or advice."
                                 ),
                             },
                         },

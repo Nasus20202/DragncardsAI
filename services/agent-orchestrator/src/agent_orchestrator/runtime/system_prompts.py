@@ -137,6 +137,27 @@ SUBAGENT_SYSTEM_PROMPT_PARTS = (
 )
 
 
+PLAYER_SESSION_MEMORY_CONTRACT = """## Player-session state contract
+
+This is a persistent player-seat session. Earlier prompts, tool results, card facts, threat
+values, HP values, phases, stages, option identifiers, and terminal claims are historical
+context, not current state. At the beginning of every invocation, discard those facts.
+
+The current prompt's `AUTHORITATIVE STATE CHECKPOINT` is the only current board source. It
+must be a complete, normalized `game-service_get_game_state` state for your assigned seat.
+For `marvel-lcg`, the current `ENGINE PROMPT` is the exact successful
+`game-service_list_game_options` response for that seat. If either block is absent,
+incomplete, or contradictory, perform one fresh authoritative state read before any move.
+If the fresh read does not resolve the problem, stop and report the observed state; never
+fill a missing value from replayed context.
+
+Report a terminal outcome only when the latest normalized state reports `mode=win` or
+`mode=loss`, or the exact current engine response is terminal. Missing
+`villainHitPoints`, a threat value, an old HP value, a stage-looking card name, or a player
+claim never proves defeat. When authoritative HP or stage data remains and `mode` is
+`in progress`, report the game as ongoing."""
+
+
 def _skills_section(
     skill_registry: SkillRegistry, assignments: list[Any]
 ) -> str | None:
@@ -227,8 +248,13 @@ def build_subagent_system_prompt(
     *,
     persona_prompt: str | None = None,
     platform: str = DEFAULT_PLATFORM,
+    player_session: bool = False,
 ) -> str:
     parts = _platform_prompt_parts(SUBAGENT_SYSTEM_PROMPT_PARTS, platform)
+    # This is inserted before any persona text so a user-authored persona cannot
+    # weaken the seat's freshness or terminal-state contract.
+    if player_session:
+        parts.append(PLAYER_SESSION_MEMORY_CONTRACT)
     persona_section = _persona_section(persona_prompt)
     if persona_section is not None:
         parts.append(persona_section)

@@ -27,23 +27,30 @@ DragnCards typed actions, load groups, or phase helpers for this platform.
 
 ## Prompt loop
 
-Repeat until the neutral state reports win, loss, or a service failure:
+Repeat until the normalized state reports `mode=win`, `mode=loss`, or a service failure:
 
-1. Read `get_game_state`; treat `playRound` as authoritative and `phaseLabel` as opaque.
-2. If `pendingSeats` names a seat, prompt exactly that seat. The coordinator observes
-   the pending set but does not call `list_game_options` or `choose_game_option` itself.
-   If no seat is pending, wait for the next state rather than inventing a turn transition.
-3. The seat agent calls `list_game_options`, chooses by stable `option_id`, and submits
-   exactly once with `choose_game_option`, including the resolved targets, payments,
-   `prompt_id`, and `prompt_version` returned by the options read.
-   It reports the selected option and result to the coordinator.
+1. Read `get_game_state` for the game and retain the complete normalized state checkpoint.
+   Treat `playRound`, `phase`, `mode`, `players`, `zones`, and a present `pendingSeats` list
+   as authoritative. Treat `phaseLabel` as opaque. If a required value is missing or
+   contradictory, perform one fresh state read and then stop if it is not resolved.
+2. If `pendingSeats` names a seat, prompt exactly that seat using
+   `references/player-turn-prompt.md`. The coordinator may read `list_game_options` to copy
+   the exact current engine response but never chooses from it. The prompt must carry the
+   latest verified normalized state and that exact response; the coordinator does not
+   synthesize rules, card statistics, outcomes, or a preferred choice. If no seat is pending,
+   wait for the next state rather than inventing a turn transition.
+3. The seat agent reads `list_game_options` for its assigned seat, chooses by stable
+   `option_id`, and submits exactly once with `choose_game_option`, including the resolved
+   targets, payments, `prompt_id`, and `prompt_version` returned by the options read. It
+   reports the selected option and result to the coordinator.
 4. Wait for the seat report, then verify that the prompt changed or the seat left
-   `pendingSeats`; a response status alone is not confirmation.
-5. If the identical prompt and option ids recur, record the rejected choice, do not send
-   it again, and ask the seat to choose another legal option or report the stuck state.
-6. Re-read neutral state, update the compact round log, and continue.
+   `pendingSeats`; a response status alone is not confirmation. Re-read normalized state
+   before accepting any result or terminal claim.
+5. If the identical prompt and option ids recur, record the rejected choice, do not send it
+   again, and ask the seat to choose another legal option or report the stuck state.
+6. Update the compact round log from the new normalized checkpoint and continue.
 
-Ending a turn is an enumerated option, not a coordinator call. The engine enforces turn
-order, phase transitions, costs, legal targets, and the once-per-turn form rule. A seat
-acting while absent from `pendingSeats` is still recorded as an illegal-action finding,
-because the engine may silently discard that submission.
+Ending a turn is an engine-owned option, not a coordinator call. The engine enforces turn
+order, phase transitions, costs, legal targets, and the once-per-turn form rule. A seat acting
+while absent from `pendingSeats` is still recorded as an illegal-action finding because the
+engine may silently discard that submission.
