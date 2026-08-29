@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from agent_orchestrator.config import Settings
+from agent_orchestrator.integrations.bifrost import ChatResponse
 
 from ..settings_env import scrub_settings_env, settings_env_var_names
 from .api_test_support import (
@@ -44,6 +45,45 @@ async def app(tmp_path: Path):
 async def truncating_app(tmp_path: Path):
     app, engine = await build_integration_app(
         tmp_path, bifrost_client=TruncatingBifrost()
+    )
+    async with app.router.lifespan_context(app):
+        yield app
+    await engine.dispose()
+
+
+@pytest.fixture
+async def capped_truncating_app(tmp_path: Path):
+    app, engine = await build_integration_app(
+        tmp_path,
+        bifrost_client=TruncatingBifrost(
+            responses=[
+                ChatResponse(
+                    content="SEGMENT_A",
+                    tool_calls=[],
+                    raw={},
+                    finish_reason="length",
+                ),
+                ChatResponse(
+                    content="SEGMENT_B",
+                    tool_calls=[],
+                    raw={},
+                    finish_reason="length",
+                ),
+            ]
+        ),
+        settings_overrides={"auto_continue_max_continuations": 1},
+    )
+    async with app.router.lifespan_context(app):
+        yield app
+    await engine.dispose()
+
+
+@pytest.fixture
+async def kill_switch_truncating_app(tmp_path: Path):
+    app, engine = await build_integration_app(
+        tmp_path,
+        bifrost_client=TruncatingBifrost(),
+        settings_overrides={"auto_continue_truncated_turns": False},
     )
     async with app.router.lifespan_context(app):
         yield app

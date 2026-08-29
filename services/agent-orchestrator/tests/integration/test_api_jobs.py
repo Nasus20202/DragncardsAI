@@ -156,6 +156,82 @@ async def test_truncated_turn_continues_through_http_worker(truncating_app):
         }
 
 
+async def _run_prompt_through_http(app, *, name: str) -> tuple[dict, list[dict]]:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        session_response = await client.post("/sessions", json={"name": name})
+        assert session_response.status_code == 201
+        session_id = session_response.json()["session"]["id"]
+
+        model_response = await client.put(
+            f"/sessions/{session_id}/model-config",
+            json=INTEGRATION_MODEL_CONFIG,
+        )
+        assert model_response.status_code == 200
+
+        prompt_response = await client.post(
+            f"/sessions/{session_id}/prompts",
+            json={"prompt": "finish the response"},
+        )
+        assert prompt_response.status_code == 202
+        job_id = prompt_response.json()["job"]["id"]
+
+        for _ in range(80):
+            job_response = await client.get(f"/jobs/{job_id}")
+            if job_response.json()["job"]["status"] == "completed":
+                break
+            await asyncio.sleep(0.05)
+
+        events_response = await client.get(f"/jobs/{job_id}/events")
+        assert events_response.status_code == 200
+        return job_response.json()["job"], events_response.json()["events"]
+
+
+@pytest.mark.asyncio
+async def test_truncated_turn_stops_at_http_continuation_cap(capped_truncating_app):
+    job, events = await _run_prompt_through_http(
+        capped_truncating_app, name="continuation-cap"
+    )
+
+    assert job["status"] == "completed"
+    assert job["result_text"] == "SEGMENT_ASEGMENT_B"
+    event_types = [
+        event["event_type"] for event in events if event["event_type"] != "progress"
+    ]
+    assert event_types == [
+        "model_output",
+        "turn_continued",
+        "model_output",
+        "completion",
+    ]
+    marker_event = events[
+        next(
+            index
+            for index, event in enumerate(events)
+            if event["event_type"] == "turn_continued"
+        )
+    ]
+    assert marker_event["payload"]["continuation"] == 1
+    assert marker_event["payload"]["max_continuations"] == 1
+
+
+@pytest.mark.asyncio
+async def test_truncated_turn_http_kill_switch_completes_without_continuing(
+    kill_switch_truncating_app,
+):
+    job, events = await _run_prompt_through_http(
+        kill_switch_truncating_app, name="continuation-disabled"
+    )
+
+    assert job["status"] == "completed"
+    assert job["result_text"] == "SEGMENT_A"
+    event_types = [
+        event["event_type"] for event in events if event["event_type"] != "progress"
+    ]
+    assert event_types == ["model_output", "completion"]
+
+
 @pytest.mark.asyncio
 async def test_event_stream_replays_and_resumes(app):
     async with httpx.AsyncClient(

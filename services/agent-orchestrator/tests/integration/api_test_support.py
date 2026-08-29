@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -82,9 +83,14 @@ class FakeBifrost:
 
 
 class TruncatingBifrost(FakeBifrost):
-    def __init__(self):
+    def __init__(
+        self,
+        responses: list[ChatResponse] | None = None,
+    ):
         super().__init__(
-            responses=[
+            responses=responses
+            if responses is not None
+            else [
                 ChatResponse(
                     content="SEGMENT_A",
                     tool_calls=[],
@@ -234,6 +240,7 @@ async def build_integration_app(
     *,
     live_event_bus=None,
     bifrost_client=None,
+    settings_overrides: dict[str, Any] | None = None,
 ):
     database_path = tmp_path / "integration.sqlite3"
     engine = create_engine(f"sqlite+aiosqlite:///{database_path}")
@@ -246,12 +253,16 @@ async def build_integration_app(
     test_skill.mkdir()
     (test_skill / "SKILL.md").write_text("Play safely", encoding="utf-8")
 
+    settings_values: dict[str, Any] = {
+        "database_url": f"sqlite+aiosqlite:///{database_path}",
+        "SKILL_ROOTS": str(skill_root),
+        "ENABLED_PROVIDER_IDS": INTEGRATION_ENABLED_PROVIDER_IDS,
+    }
+    if settings_overrides:
+        settings_values.update(settings_overrides)
+
     app = create_app(
-        settings=Settings(
-            database_url=f"sqlite+aiosqlite:///{database_path}",
-            SKILL_ROOTS=str(skill_root),
-            ENABLED_PROVIDER_IDS=INTEGRATION_ENABLED_PROVIDER_IDS,
-        ),
+        settings=Settings(**settings_values),
         repository=repository,
         bifrost_client=bifrost_client or FakeBifrost(),
         live_event_bus=live_event_bus or InMemoryLiveEventBus(),
