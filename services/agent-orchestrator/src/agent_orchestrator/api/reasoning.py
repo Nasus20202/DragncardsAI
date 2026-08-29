@@ -9,11 +9,23 @@ from agent_orchestrator.runtime.player_agents import REASONING_EFFORTS
 
 
 def _effort_from_gateway_options(options: dict[str, Any]) -> str | None:
-    reasoning = options.get("reasoning")
-    if not isinstance(reasoning, dict):
+    if "reasoning" not in options:
         return None
-    effort = reasoning.get("effort")
-    return effort if isinstance(effort, str) else None
+    reasoning = options["reasoning"]
+    if not isinstance(reasoning, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="gateway_options.reasoning must be an object",
+        )
+    if "effort" not in reasoning or reasoning["effort"] is None:
+        return None
+    effort = reasoning["effort"]
+    if not isinstance(effort, str) or not effort.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="gateway_options.reasoning.effort must be a non-empty string",
+        )
+    return effort
 
 
 async def validate_reasoning_effort(

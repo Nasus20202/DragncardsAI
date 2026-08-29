@@ -6,6 +6,7 @@ import {
   createNewSessionDraft,
   parseOptionalPositiveInteger,
   parseJsonObject,
+  reasoningEffortsForModel,
 } from "@/features/play/lib/session-draft";
 import {
   DashboardConfig,
@@ -218,5 +219,20 @@ describe("session draft helpers", () => {
       parseOptionalPositiveInteger("0", "Recent message limit")
     ).toBeNull();
     expect(parseOptionalPositiveInteger("3", "Recent message limit")).toBe(3);
+  });
+  it("falls back when reasoning metadata is null", () => {
+    const selected = provider({
+      provider_id: "openai",
+      models: ["gpt-4o-mini"],
+      model_capabilities: {
+        "gpt-4o-mini": { reasoning: { supported_efforts: null } },
+      },
+    });
+
+    expect(reasoningEffortsForModel(selected, "gpt-4o-mini")).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
   });
 });
