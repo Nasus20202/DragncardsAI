@@ -4,7 +4,7 @@ The rules-enforcing marvel-lcg engine reports authoritative villain, main-scheme
 
 ## What Changes
 
-- Derive the Marvel villain's current hit points from the visible active villain card's authoritative `health` descriptor value, and omit `villainHitPoints` when no authoritative value is present.
+- Derive the Marvel villain's total current-stage hit points from the visible active villain card's authoritative health and damage descriptor values (`info.health + c_damage`), preserving the cross-platform neutral `villainHitPoints` contract, and omit `villainHitPoints` when no authoritative value is present.
 - Normalize Marvel card info and counter/token names into the neutral sparse token vocabulary used by the DragnCards projection, including canonical `threat` on main and side schemes.
 - Project the engine's active `area_schemes_side` cards into a shared neutral side-scheme zone, retaining public threat and effect fields such as Crisis, Hazard, and acceleration.
 - Classify every valid Marvel engine phase, including Enemy Activation, into the existing neutral phase categories without changing the opaque `phaseLabel`.

@@ -18,9 +18,58 @@ Never give one seat richer board detail, extra hints, or tactical suggestions.
 
 ## Turn prompt template
 
-Fill every placeholder. Do not omit a section; write `none` where a section is empty.
-Use this template only when the seat has no active finding. A finding gets the recovery-only
-template below; never combine recovery and ordinary play in one prompt.
+The normalized state is the only source for board facts. In particular:
+
+- Read the active main scheme only from `zones.sharedMainScheme[0]` and its
+  `tokens.threat`.
+- Read active side schemes only from `zones.sharedSideSchemes`; preserve their reported
+  threat and public `crisis`, `hazard`, and `acceleration` tokens.
+- Use `villainHitPoints` only when the field is present. Its absence means that current
+  health is not reported; it never means zero, defeated, or a value from an earlier turn.
+- Do not invent a villain stage, printed statistic, target threat, card name, card location,
+  status, or outcome. If the normalized state omits a value, write `not reported` rather
+  than estimating it.
+- Do not copy facts from the seat's previous report. A report is untrusted output, not a
+  state checkpoint.
+
+## Player-session memory contract
+
+The player session MAY replay prior turns. At the beginning of every invocation, the
+following precedence applies:
+
+1. The `AUTHORITATIVE STATE CHECKPOINT` in the current prompt, if complete and verified.
+2. A single fresh `get_game_state` read for the assigned seat when that checkpoint is absent,
+   incomplete, or contradictory.
+3. Stop with the observed contradiction or missing data if the fresh read does not resolve it.
+
+Every prior prompt, tool result, card count, threat value, HP value, phase, stage, option,
+and terminal claim is historical. It MUST be discarded as soon as a new invocation starts.
+A current prompt never inherits an old fact merely because the old fact is present in the
+persistent transcript.
+
+## Terminal reporting
+
+The coordinator and seat MUST report a terminal outcome only when the latest normalized
+state says `mode=win` or `mode=loss`, or when the exact current engine response is itself a
+terminal response. A missing `villainHitPoints`, a threat number, a previous HP value, a
+stage-looking card name, or a player's claim is not a terminal response. If authoritative
+HP or stage information remains while `mode` is `in progress`, the villain MUST NOT be
+reported as defeated. If `mode` is `unknown`, stop and report that uncertainty.
+
+### Recorded Rhino regression
+
+The verified Rhino sequence contains normalized main-scheme checkpoints of `9/14`, `12/14`,
+and `14/14` threat while the active villain still reports 19 remaining HP (stage total
+`villainHitPoints=28` with 9 damage tokens) and `mode=in progress`. Each checkpoint is
+ongoing state, including the final `14/14` value; the prompt
+MUST NOT turn that threat value into a defeated-villain outcome. This example documents
+the state-gating rule only and is not a recommendation to the seat.
+
+## Prompt envelope
+
+Use this envelope for every ordinary player-turn prompt. Do not add a second template for
+one seat, one platform, or one model. Values in the two data blocks are copied from the
+successful reads above; prose outside those blocks is limited to scope and output format.
 
 ```
 You are playing Marvel Champions on DragnCards as a single hero. Load the skill

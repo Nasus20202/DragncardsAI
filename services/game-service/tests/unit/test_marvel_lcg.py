@@ -1355,7 +1355,13 @@ def test_recorded_rhino_checkpoints_normalize_villain_and_main_scheme(
         checkpoint["world"], player_n="player1"
     )
 
-    assert state["villainHitPoints"] == 19
+    assert state["villainHitPoints"] == 28
+    assert state["zones"]["sharedVillain"][0]["tokens"]["damage"] == 9
+    remaining_hp = (
+        state["villainHitPoints"]
+        - state["zones"]["sharedVillain"][0]["tokens"]["damage"]
+    )
+    assert remaining_hp == 19
     assert state["mode"] == "in progress"
     assert state["zones"]["sharedMainScheme"][0]["tokens"]["threat"] == threat
     assert state["zones"]["sharedMainScheme"][0]["tokens"]["target_threat"] == 14
@@ -1465,3 +1471,30 @@ def test_marvel_villain_health_accepts_encounter_villain_card_type():
     state = MarvelLcgNormaliser().normalise(raw, player_n="player1")
 
     assert state["villainHitPoints"] == 19
+
+
+def test_marvel_villain_hit_points_preserves_total_stage_health_and_derived_remaining():
+    raw = {
+        "players": [{}],
+        "area_villain": [
+            {
+                "id": 1,
+                "card_id": "rhino",
+                "name": "Rhino",
+                "card_type": "Villain",
+                "is_face_up": True,
+                "visible_for_players": [0],
+                "info": {"health": 19, "c_damage": 9},
+            }
+        ],
+    }
+
+    state = MarvelLcgNormaliser().normalise(raw, player_n="player1")
+
+    assert state["villainHitPoints"] == 28
+    assert state["zones"]["sharedVillain"][0]["tokens"]["damage"] == 9
+    remaining_hp = (
+        state["villainHitPoints"]
+        - state["zones"]["sharedVillain"][0]["tokens"]["damage"]
+    )
+    assert remaining_hp == 19

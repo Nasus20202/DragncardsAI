@@ -117,8 +117,14 @@ def _active_villain_hit_points(
         info = card.get("info")
         if isinstance(info, dict):
             health = _integer(info.get("health"))
+            damage = (
+                _integer(info.get("c_damage"))
+                or _integer(info.get("k_damage"))
+                or _integer(info.get("damage"))
+                or 0
+            )
             if health is not None:
-                return health
+                return health + damage
     return None
 
 

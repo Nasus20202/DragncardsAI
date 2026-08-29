@@ -62,6 +62,9 @@ class MoveInput:
     # recorded before the mode existed, so a projection of an old game is the
     # projection it always was.
     session_mode: str = SESSION_MODE_CHAT
+    # Server-set coordinator prompt provenance for a child player move. Legacy
+    # chat moves omit it rather than receiving an inferred source.
+    prompt_provenance: dict[str, Any] | None = None
 
 
 @dataclass
@@ -244,6 +247,22 @@ def _integer_value(value: Any) -> int | None:
     return None
 
 
+def _prompt_provenance(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Return validated coordinator metadata carried by a move payload."""
+    raw = payload.get("prompt_provenance")
+    if not isinstance(raw, dict) or raw.get("source") != "coordinator":
+        return None
+    prompt = raw.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return None
+    provenance: dict[str, Any] = {"source": "coordinator", "prompt": prompt}
+    for key in ("orchestrator_session_id", "parent_job_id", "child_job_id"):
+        value = raw.get(key)
+        if isinstance(value, str) and value:
+            provenance[key] = value
+    return provenance
+
+
 def _state_of(event: StoredEvent) -> dict[str, Any] | None:
     """Return a producer state only when the event carries a JSON object state."""
     if event.actor != "game-service":
@@ -337,6 +356,7 @@ def assemble_move_input(
         arguments=payload.get("arguments"),
         prior_state=_state_of(prior) if prior else None,
         resulting_state=_state_of(resulting) if resulting else None,
+        prompt_provenance=_prompt_provenance(payload),
         context_before=_neighbour_window(
             events,
             target_seq,

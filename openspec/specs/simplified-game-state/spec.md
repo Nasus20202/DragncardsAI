@@ -307,13 +307,16 @@ A consumer SHALL NOT infer turn authority from `pendingSeats` on a platform that
 ### Requirement: Marvel state carries authoritative current values and active schemes
 For marvel-lcg, every scalar and card value included in the platform-neutral state projection SHALL come from the engine's current world descriptor. The projection SHALL omit an unavailable numeric fact rather than substitute a value that changes its meaning.
 
+The neutral `villainHitPoints` field SHALL represent the total hit points of the active villain stage across platforms. For marvel-lcg, when the active villain's `info.health` represents current remaining health, the normalizer SHALL reconstruct the stage total as `info.health + damage` (where damage is read from `c_damage`, `k_damage`, or `damage`), while exposing the damage counter as `tokens.damage` on the card in `sharedVillain`, so that consumers derive remaining health as `villainHitPoints - sharedVillain[0].tokens.damage`.
+
 The marvel-lcg projection SHALL expose the active main scheme in `sharedMainScheme`, active side schemes in `sharedSideSchemes`, and the active villain in `sharedVillain`. Visible scheme cards SHALL carry a sparse `tokens.threat` value equal to the engine's current threat counter. Side-scheme cards SHALL retain their public effect indicators under canonical token names, including `crisis`, `hazard`, and `acceleration` when reported by the engine.
 
-#### Scenario: A Rhino checkpoint preserves the current villain health
-- **WHEN** a visible Rhino I descriptor reports current `info.health` as `19`
-- **THEN** the normalized state SHALL report `villainHitPoints` as `19`
+#### Scenario: A Rhino checkpoint reconstructs total current-stage villain hit points
+- **WHEN** a visible Rhino I descriptor reports current `info.health` as `19` and `c_damage` as `9`
+- **THEN** the normalized state SHALL report `villainHitPoints` as `28`
+- **AND** `sharedVillain[0].tokens.damage` SHALL report `9`
+- **AND** consumers derive the villain's remaining health as `19` (`28 - 9`)
 - **AND** the state SHALL not report the villain as defeated solely because a world-level villain HP field is absent
-
 #### Scenario: An unavailable villain health value is omitted
 - **WHEN** the active villain descriptor has no authoritative current health value
 - **THEN** the normalized state SHALL omit `villainHitPoints`

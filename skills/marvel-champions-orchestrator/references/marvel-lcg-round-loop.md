@@ -2,8 +2,10 @@
 
 Load only for a `marvel-lcg` session. This engine adjudicates rules, asks named seats for
 decisions, and advances turns as part of accepted options. The coordinator observes and
-schedules; it does not synthesize a phase-advancing call.
-
+schedules; it may call `list_game_options` only to obtain the authoritative current engine prompt
+for delegation. It must not choose an option or call `choose_game_option` on behalf of the player,
+and does not synthesize a phase-advancing call. The seat agent calls `list_game_options` and
+`choose_game_option` to take actions.
 ## Setup order
 
 1. Call `game-service_list_game_setup_catalog` with

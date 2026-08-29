@@ -7,9 +7,9 @@ from collections.abc import Awaitable, Callable
 from eval_service.config import Settings
 from eval_service.integrations.bifrost import BifrostError, BifrostJudgeClient
 from eval_service.integrations.history import HistoryClient
-from eval_service.judge.actions import non_strategic_reason, recorded_action
 from eval_service.judge.assembly import (
     BoundaryUndetectedError,
+    MoveInput,
     assemble_game_input,
     assemble_move_input,
     assemble_round_input,
@@ -22,7 +22,9 @@ from eval_service.judge.config import (
     UnknownSkillError,
     provider_from_model,
 )
+from eval_service.judge.actions import non_strategic_reason, recorded_action
 from eval_service.judge.events import is_agent_move
+from eval_service.judge.evidence import validate_marvel_move_verdict
 from eval_service.judge.reference_budget import reference_budget
 from eval_service.judge.parse import VerdictParseError, parse_verdict
 from eval_service.judge.prompt import (
@@ -377,12 +379,13 @@ class Evaluator:
             ),
         )
 
+        move_input: MoveInput | None = None
         if scope == "move":
             # A move is graded in the context of ITS ROUND: the assembly resolves
             # the containing round and attaches that round's other moves either
             # side. The two settings are backstops on a pathological round, not
             # the window itself.
-            move = assemble_move_input(
+            move_input = assemble_move_input(
                 events,
                 target_seq,
                 context_before=self._settings.eval_judge_move_context_before,
@@ -390,7 +393,7 @@ class Evaluator:
                 player=player,
             )
             messages = build_move_messages(
-                move,
+                move_input,
                 prompt_override=config.prompt_override,
                 skills=skills,
                 skill_references=skill_references,
@@ -473,7 +476,7 @@ class Evaluator:
                     gateway_options=gateway_options,
                     on_token=on_token if attempt == 1 else None,
                 )
-                return parse_verdict(
+                parsed = parse_verdict(
                     response_text,
                     scope=scope,  # type: ignore[arg-type]
                     target_seq=target_seq,
@@ -485,6 +488,9 @@ class Evaluator:
                     provider=config.provider,
                     evaluator_version=self._settings.evaluator_version,
                 )
+                if move_input is not None:
+                    parsed = validate_marvel_move_verdict(parsed, move_input)
+                return parsed
             except (BifrostError, VerdictParseError) as exc:
                 logger.info(
                     "judge attempt %d/%d failed for game=%s seq=%s: %s",

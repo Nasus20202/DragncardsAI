@@ -27,15 +27,16 @@ zero.
 
 ## Decisions
 
-### Derive villain health from the active card descriptor
+### Derive villain health from the active card descriptor and current damage
 
-Read the first visible active villain card's numeric `info.health` value and emit it as the
-neutral top-level `villainHitPoints`. If a compatible engine variant explicitly reports a
-numeric world-level `villain_hit_points`, use it only when no active-card value is available.
-Emit the field only when one of those authoritative values is an integer (or a strict integer
-string if the engine uses one); do not use a default or fabricated zero. This preserves the
-engine's current-health semantics, including a real value of zero.
-
+Read the first visible active villain card's numeric `info.health` value (remaining HP) and add
+current damage (`c_damage`, `k_damage`, or `damage`) to emit the cross-platform neutral top-level
+`villainHitPoints` (representing total HP of the current villain stage). The damage counter is
+simultaneously normalized as `tokens.damage` on the card in `sharedVillain`, so consumers uniformly
+calculate remaining HP as `villainHitPoints - sharedVillain[0].tokens.damage`. If a compatible engine
+variant explicitly reports a numeric world-level `villain_hit_points`, use it only when no active-card
+value is available. Emit the field only when one of those authoritative values is an integer (or a
+strict integer string if the engine uses one); do not use a default or fabricated zero.
 **Alternatives rejected:** Summing all `area_villain` cards would make the existing singular
 neutral field ambiguous for scenarios with multiple villains. Falling back to printed catalog
 HP would be stale after damage and would violate the authoritative-world requirement.
