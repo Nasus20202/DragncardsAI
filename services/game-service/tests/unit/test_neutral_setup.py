@@ -149,7 +149,7 @@ async def test_marvel_catalog_ids_are_opaque_and_creation_preserves_deck_order()
     ]
 
 
-async def test_marvel_catalog_id_survives_leading_relative_path_change():
+async def test_marvel_catalog_ids_survive_leading_relative_path_change():
     client = _catalog_client()
     client.list_scenarios = AsyncMock(
         side_effect=[
@@ -159,30 +159,50 @@ async def test_marvel_catalog_id_survives_leading_relative_path_change():
     )
     client.list_starter_deck = AsyncMock(
         side_effect=[
-            ["./deck/starter/spider_man.json"],
-            ["deck/starter/spider_man.json"],
+            [
+                "./deck/starter/spider_man.json",
+                "./deck/starter/captain_marvel.json",
+            ],
+            [
+                "deck/starter/spider_man.json",
+                "deck/starter/captain_marvel.json",
+            ],
         ]
     )
     client.get_scenario_json = AsyncMock(return_value='{"scenario":true}')
-    client.get_hero_json = AsyncMock(return_value='{"hero":"spider-man"}')
+    client.get_hero_json = AsyncMock(
+        side_effect=['{"hero":"spider-man"}', '{"hero":"captain-marvel"}']
+    )
 
     platform = MarvelLcgPlatform("http://engine", "password", http_client=client)
     catalog = await platform.setup_catalog()
-    spider_id = catalog["hero_decks"][0]["id"]
+    scenario_id = catalog["scenarios"][0]["id"]
+    hero_selections = tuple(
+        HeroDeckSelection(f"player{index}", entry["id"])
+        for index, entry in enumerate(catalog["hero_decks"], start=1)
+    )
 
-    assert spider_id == "hero-deck:377e837cafe661012d4e09eb"
+    assert scenario_id.startswith("scenario:")
+    assert all(entry["id"].startswith("hero-deck:") for entry in catalog["hero_decks"])
     await platform.create_table(
         MagicMock(),
         MarvelLcgCreateSpec(
             platform="marvel-lcg",
-            scenario_id=catalog["scenarios"][0]["id"],
-            hero_decks=(HeroDeckSelection("player1", spider_id),),
+            scenario_id=scenario_id,
+            hero_decks=hero_selections,
         ),
     )
 
     client.get_scenario_json.assert_awaited_once_with("data/scenarios/rhino.json")
-    client.get_hero_json.assert_awaited_once_with("deck/starter/spider_man.json")
-    assert client.new_game.await_args.args[0].hero_json == ['{"hero":"spider-man"}']
+    assert client.get_hero_json.await_args_list == [
+        call("deck/starter/spider_man.json"),
+        call("deck/starter/captain_marvel.json"),
+    ]
+    assert client.new_game.await_args.args[0].hero_json == [
+        '{"hero":"spider-man"}',
+        '{"hero":"captain-marvel"}',
+    ]
+    assert platform.held_seats == ("player1", "player2")
 
 
 async def test_marvel_catalog_aliases_do_not_accept_raw_paths():
