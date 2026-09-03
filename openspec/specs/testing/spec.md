@@ -85,6 +85,13 @@ An integration test SHALL name the platform it needs. A test that requires a pla
 - **WHEN** an integration test creates a game session on either platform
 - **THEN** the session SHALL be deleted in teardown so later tests start from a clean state
 
+### Requirement: DragnCards plugin artifacts remain engine-compatible
+The integration suite SHALL validate that the checked-in DragnCards plugin artifacts contain only executable DragnLang variable definitions before exercising live plugin workflows.
+
+#### Scenario: Plugin automation variables have valid names
+- **WHEN** the integration suite loads the Marvel Champions plugin automation artifact
+- **THEN** every `VAR` operation SHALL define a non-empty variable name beginning with `$`
+
 ### Requirement: Integration coverage for live DragnCards connectivity
 Integration tests SHALL verify that the Game Service can establish and maintain the live connection behaviors it depends on.
 

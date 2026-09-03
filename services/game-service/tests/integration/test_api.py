@@ -12,7 +12,9 @@ the asyncio event loop (which would prevent the WebSocket receiver task from run
 Tests that only need synchronous HTTP (health, list, 404 checks) use TestClient.
 """
 
+import json
 import os
+from pathlib import Path
 
 import httpx
 import pytest
@@ -38,6 +40,38 @@ PLUGIN_REGISTRY = {
         "name": "Marvel Champions",
     }
 }
+
+
+def test_mc_plugin_automation_variables_are_valid():
+    """The loaded plugin must not contain empty DragnLang variable names."""
+    plugin_file = (
+        Path(__file__).resolve().parents[4]
+        / "external"
+        / "dragncards-mc-plugin"
+        / "json"
+        / "automation.json"
+    )
+    automation = json.loads(plugin_file.read_text())
+
+    def operations(value):
+        if isinstance(value, dict):
+            for child in value.values():
+                yield from operations(child)
+        elif isinstance(value, list):
+            if value and value[0] == "VAR":
+                yield value
+            for child in value:
+                yield from operations(child)
+
+    invalid = [
+        operation
+        for operation in operations(automation)
+        if len(operation) < 2
+        or not isinstance(operation[1], str)
+        or not operation[1].startswith("$")
+    ]
+
+    assert invalid == []
 
 
 @pytest.fixture

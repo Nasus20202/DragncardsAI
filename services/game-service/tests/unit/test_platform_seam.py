@@ -38,6 +38,13 @@ def test_both_platform_drivers_satisfy_the_shared_protocol():
     assert marvel.action_catalog()["actions"] == []
 
 
+def test_game_session_created_at_defaults_to_utc_aware_datetime():
+    session = GameSession(session_id="session-1", driver=_driver())
+
+    assert session.created_at.tzinfo is not None
+    assert session.created_at.utcoffset() == timezone.utc.utcoffset(None)
+
+
 def test_marvel_catalog_preserves_platform_move_surface_metadata():
     marvel = MarvelLcgPlatform("http://engine", "password", http_client=object())
     response = SessionActionsResponse(
