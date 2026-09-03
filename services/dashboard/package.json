@@ -35,7 +35,7 @@
     "zod": "4.5.4"
   },
   "devDependencies": {
-    "@eslint/compat": "2.1.0",
+    "@eslint/compat": "2.1.1",
     "@tailwindcss/postcss": "4.3.3",
     "@tailwindcss/typography": "^0.5.19",
     "@testing-library/jest-dom": "7.0.1",
