@@ -39,6 +39,10 @@ Deleting an EPHEMERAL session SHALL close its DragnCards room as part of the tea
 - **WHEN** a client sends `GET /games` or invokes the `list_games` MCP tool
 - **THEN** the Game Service SHALL return a list of all active game sessions with their IDs, plugin names, and creation timestamps
 
+#### Scenario: Session creation timestamp is UTC-aware
+- **WHEN** the Game Service creates a session without an explicitly supplied creation timestamp
+- **THEN** the session SHALL use a timezone-aware timestamp representing UTC
+
 #### Scenario: Export session state for setup automation
 - **WHEN** a client sends an HTTP export request for an active session
 - **THEN** the Game Service SHALL return a versioned snapshot document containing the session plugin identity and the game payload required to restore that state later

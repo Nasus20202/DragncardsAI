@@ -15,7 +15,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from game_service.coordination.history_emitter import (
@@ -62,6 +62,11 @@ def _extract_alert_text(alert: dict) -> str | None:
     return None
 
 
+def _utc_now() -> datetime:
+    """Return the current UTC time as an aware datetime."""
+    return datetime.now(timezone.utc)
+
+
 @dataclass
 class GameSession:
     """Represents a single active game session."""
@@ -71,7 +76,7 @@ class GameSession:
     plugin_id: int | None = None
     plugin_version: int | None = None
     room_slug: str = ""
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=_utc_now)
     platform: PlatformSlug = DRAGNCARDS_PLATFORM
     driver: GamePlatform | None = None
     # Untyped constructor-only compatibility handles for older DragnCards tests
