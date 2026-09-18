@@ -1,6 +1,6 @@
 services:
   otel-lgtm:
-    image: grafana/otel-lgtm:0.33.0
+    image: grafana/otel-lgtm:0.33.1
     restart: unless-stopped
     volumes:
       - otel-lgtm-data:/data
