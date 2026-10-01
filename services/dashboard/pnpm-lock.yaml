@@ -216,7 +216,7 @@ importers:
         version: 4.0.1
       swagger-ui:
         specifier: ^5.32.5
-        version: 5.33.0(@types/react@19.3.0)(debug@4.4.3)
+        version: 5.33.1(@types/react@19.3.0)(debug@4.4.3)
       swagger-ui-react:
         specifier: 5.33.0
         version: 5.33.0(@types/react@19.3.0)(debug@4.4.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -3761,8 +3761,8 @@ packages:
       react: '>=16.8.0 <20'
       react-dom: '>=16.8.0 <20'
 
-  swagger-ui@5.33.0:
-    resolution: {integrity: sha512-E93oVGnUfNuxtBKhhJdglYc6nfPqihQ1kgwh8I707pU+hOfR4DA+twpJJdkqSQ42asVqIaklYvej3M23HScLfg==}
+  swagger-ui@5.33.1:
+    resolution: {integrity: sha512-JA18ZGrQqupJkfr8GTmpYVmLJWXV0dC6PGwLaD6q3inJ+4up022A/B0/wPzmiDcDrxnLAKro9lsxXzTs6cW+lA==}
 
   tailwind-variants@3.3.1:
     resolution: {integrity: sha512-4pAvwUtM4HKBiRZftncAbpn6V9Hhwoa5Fl7O2u5zbp7Z5Cvu+/o/6+176WY3WCEES209543quG8zFIcXCsc5Jw==}
@@ -8306,7 +8306,7 @@ snapshots:
       - debug
       - supports-color
 
-  swagger-ui@5.33.0(@types/react@19.3.0)(debug@4.4.3):
+  swagger-ui@5.33.1(@types/react@19.3.0)(debug@4.4.3):
     dependencies:
       '@babel/runtime-corejs3': 7.29.7
       '@scarf/scarf': 1.4.0
