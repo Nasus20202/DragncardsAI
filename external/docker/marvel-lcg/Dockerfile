@@ -11,7 +11,7 @@ COPY external/marvel-lcg/public/js ./public/js
 RUN corepack enable && \
     pnpm dlx --package=typescript tsc --project public/js/tsconfig.json
 
-FROM python:3.14.7-alpine
+FROM python:3.14.8-alpine
 
 ENV HOME=/tmp
 
